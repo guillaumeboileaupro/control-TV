@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TypeVar
 
@@ -31,6 +33,7 @@ from control_tv.domain import (
     DeviceStatus,
     DeviceUnavailableError,
     DiscoveryError,
+    InvalidArgumentError,
     MediaRequest,
     MediaStatus,
     OperationTimeoutError,
@@ -70,11 +73,20 @@ class PyChromecastTransport:
         *,
         connection_timeout: float = 10.0,
         request_timeout: float = 10.0,
+        recovery_timeout: float = 5.0,
         discoverer: Discoverer = _default_discoverer,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        for name, timeout in (
+            ("connection_timeout", connection_timeout),
+            ("request_timeout", request_timeout),
+            ("recovery_timeout", recovery_timeout),
+        ):
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise InvalidArgumentError(f"{name} must be a finite number > 0: {timeout}")
         self._connection_timeout = connection_timeout
         self._request_timeout = request_timeout
+        self._recovery_timeout = recovery_timeout
         self._discoverer = discoverer
         self._now = now
         self._casts: dict[DeviceId, Chromecast] = {}
@@ -211,6 +223,26 @@ class PyChromecastTransport:
     def _ready(self, device_id: DeviceId) -> Chromecast:
         cast_device = self._cast(device_id)
         try:
+            return self._wait_ready(cast_device, device_id)
+        except (OperationTimeoutError, DeviceUnavailableError) as first_error:
+            self._discard(device_id, cast_device)
+            try:
+                self.discover(timeout=self._recovery_timeout)
+            except DiscoveryError as discovery_error:
+                raise DeviceUnavailableError(
+                    f"device {device_id} could not be rediscovered: {discovery_error.message}",
+                    device_id=device_id,
+                ) from discovery_error
+            recovered = self._casts.get(device_id)
+            if recovered is None:
+                raise DeviceUnavailableError(
+                    f"device {device_id} was not found during bounded rediscovery",
+                    device_id=device_id,
+                ) from first_error
+            return self._wait_ready(recovered, device_id)
+
+    def _wait_ready(self, cast_device: Chromecast, device_id: DeviceId) -> Chromecast:
+        try:
             cast_device.wait(timeout=self._connection_timeout)
         except pychromecast.RequestTimeout as error:
             raise OperationTimeoutError(
@@ -221,6 +253,11 @@ class PyChromecastTransport:
                 f"device {device_id} is unavailable: {error}", device_id=device_id
             ) from error
         return cast_device
+
+    def _discard(self, device_id: DeviceId, cast_device: Chromecast) -> None:
+        self._casts.pop(device_id, None)
+        with suppress(PyChromecastError, OSError):
+            cast_device.disconnect(timeout=self._connection_timeout)
 
     def _receiver_status(self, cast_device: Chromecast, device_id: DeviceId) -> None:
         response = WaitResponse(self._request_timeout, "receiver status")

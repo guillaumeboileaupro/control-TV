@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -17,6 +18,7 @@ from control_tv.domain import (
     DeviceNotFoundError,
     DeviceUnavailableError,
     DiscoveryError,
+    InvalidArgumentError,
     MediaRequest,
     OperationTimeoutError,
     PlaybackState,
@@ -54,9 +56,9 @@ class FakeMediaController:
         self.acknowledge_load = True
 
     def _call(self, name: str, *args: object, **kwargs: object) -> None:
+        self.calls.append((name, args, kwargs))
         if self.error is not None:
             raise self.error
-        self.calls.append((name, args, kwargs))
 
     def play_media(self, url: str, content_type: str, **kwargs: object) -> None:
         self._call("load_media", url, content_type, **kwargs)
@@ -126,12 +128,13 @@ def make_transport(
     browser = browser or FakeBrowser()
 
     def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
-        assert timeout == 2.5
+        assert timeout in (2.5, 1.0)
         return [cast(Chromecast, cast_device)], browser
 
     transport = PyChromecastTransport(
         connection_timeout=3.0,
         request_timeout=4.0,
+        recovery_timeout=1.0,
         discoverer=discoverer,
         now=lambda: NOW,
     )
@@ -276,3 +279,83 @@ def test_close_disconnects_and_forgets_cached_devices() -> None:
     assert cast_device.disconnect_calls == [3.0]
     with pytest.raises(DeviceNotFoundError):
         transport.play(DEVICE_ID)
+
+
+def test_stale_connection_is_rediscovered_once_by_uuid_before_command() -> None:
+    stale = FakeCast()
+    stale.wait_error = OSError("stale address")
+    recovered = FakeCast()
+    browser = FakeBrowser()
+    calls: list[float] = []
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        calls.append(timeout)
+        selected = stale if len(calls) == 1 else recovered
+        return [cast(Chromecast, selected)], browser
+
+    transport = PyChromecastTransport(
+        connection_timeout=3.0,
+        request_timeout=4.0,
+        recovery_timeout=1.0,
+        discoverer=discoverer,
+    )
+    transport.discover(timeout=2.5)
+
+    transport.play(DEVICE_ID)
+
+    assert calls == [2.5, 1.0]
+    assert stale.disconnect_calls == [3.0]
+    assert [call[0] for call in stale.media_controller.calls] == []
+    assert [call[0] for call in recovered.media_controller.calls] == ["play"]
+
+
+def test_rediscovery_without_same_uuid_does_not_send_command() -> None:
+    stale = FakeCast()
+    stale.wait_error = OSError("stale address")
+    other = FakeCast()
+    other.uuid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    other.cast_info.uuid = other.uuid
+    discovered: list[FakeCast] = [stale]
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        selected = discovered.pop(0) if discovered else other
+        return [cast(Chromecast, selected)], FakeBrowser()
+
+    transport = PyChromecastTransport(
+        recovery_timeout=1.0,
+        discoverer=discoverer,
+    )
+    transport.discover(timeout=2.5)
+
+    with pytest.raises(DeviceUnavailableError, match="not found during bounded rediscovery"):
+        transport.play(DEVICE_ID)
+
+    assert stale.media_controller.calls == []
+    assert other.media_controller.calls == []
+
+
+def test_command_failure_is_not_replayed_automatically() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.error = OSError("connection lost after send")
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(DeviceUnavailableError):
+        transport.play(DEVICE_ID)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["play"]
+    assert cast_device.wait_timeouts == [3.0]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: PyChromecastTransport(connection_timeout=0.0),
+        lambda: PyChromecastTransport(request_timeout=-1.0),
+        lambda: PyChromecastTransport(recovery_timeout=float("inf")),
+    ],
+)
+def test_transport_requires_positive_finite_timeouts(
+    build: Callable[[], PyChromecastTransport],
+) -> None:
+    with pytest.raises(InvalidArgumentError, match="must be a finite number > 0"):
+        build()

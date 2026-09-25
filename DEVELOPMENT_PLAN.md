@@ -50,7 +50,7 @@ Deliverables:
 - [x] LAN discovery using the selected Chromecast integration;
 - [x] stable device selection separate from display names;
 - [x] bounded discovery/connection timeouts;
-- [ ] connection lifecycle and recovery from unavailable devices;
+- [x] connection lifecycle and bounded recovery from stale device addresses;
 - [x] receiver/device status retrieval.
 
 Exit criteria:
