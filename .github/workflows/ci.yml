@@ -48,3 +48,67 @@ jobs:
       - name: Clean disposable build/test output
         if: always()
         run: python3 scripts/dev.py clean
+
+  tauri:
+    name: Tauri shell (Rust and frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      # Tauri 2's Linux runtime/build dependencies (webkit2gtk, appindicator, rsvg);
+      # matches what a Debian/Ubuntu desktop needs to build and run this application.
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            build-essential
+
+      # @stable is this action's own documented usage, not a moving-tag shortcut: it
+      # deliberately resolves to whatever Rust's current stable release is, which is the
+      # point of using it instead of a fixed toolchain version.
+      - name: Install the Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # The Python environment is needed too: `cargo test` spawns the real
+      # control_tv.bridge process to prove the Rust <-> Python boundary actually works,
+      # not just that each side compiles in isolation.
+      - name: Install the locked, reproducible Python environment
+        run: python3 scripts/dev.py setup
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Type-check and format-check the frontend
+        run: python3 scripts/dev.py ui-check
+
+      - name: Format, lint and test the Tauri shell crate
+        run: python3 scripts/dev.py rust-check
+
+      - name: Build the frontend and the Tauri application (debug profile)
+        run: npx --prefix ui tauri build --debug --bundles deb
+
+      - name: Inspect remaining project-owned generated footprint
+        if: always()
+        run: python3 scripts/dev.py disk-usage
+
+      - name: Clean disposable build/test output
+        if: always()
+        run: python3 scripts/dev.py clean
