@@ -66,6 +66,8 @@ class FakeTransport:
     `fail_commands_with`: commands cannot be delivered and raise this error.
     `discover_error`: discovery cannot run and raises this error.
     `status_errors`: errors raised, in order, by the next `get_status` calls.
+    `status_effects`: deterministic external TV mutations applied before successive status
+    snapshots, including pre-command reads.
     `clock`: when set, `get_status` can simulate the wall-clock cost of a real network read
     by advancing this clock (via `status_read_delay`/`hang_status_reads`) before returning -
     it should be the same `FakeClock` the `ControlService` under test uses, so both sides
@@ -84,6 +86,7 @@ class FakeTransport:
     fail_commands_with: ControlError | None = None
     discover_error: ControlError | None = None
     status_errors: list[ControlError] = field(default_factory=list)
+    status_effects: list[Callable[[], None]] = field(default_factory=list)
     clock: FakeClock | None = None
     status_read_delay: float = 0.0
     hang_status_reads: bool = False
@@ -127,6 +130,8 @@ class FakeTransport:
                 self._pending = None
             else:
                 self._pending = (polls_left - 1, effect)
+        if self.status_effects:
+            self.status_effects.pop(0)()
         tv = self.tv
         if tv.connection is not ConnectionState.CONNECTED:
             return DeviceStatus(
