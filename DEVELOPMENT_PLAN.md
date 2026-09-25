@@ -37,12 +37,12 @@ Deliverables:
 - [x] explicit errors and operation results;
 - [x] integrate the selected Python Chromecast modules behind a focused adapter;
 - [ ] add native/Rust components only where a measured or platform requirement justifies them;
-- [x] focused deterministic unit tests.
+- [x] focused deterministic unit tests for domain and shared control behavior.
 
 Exit criteria:
 - [x] control/domain behavior is testable independently of the UI;
-- [x] GUI/MCP concerns are absent from low-level Cast integration;
-- [x] tests cover meaningful deterministic behavior.
+- [x] GUI/MCP concerns are absent from the domain and shared control layer;
+- [x] tests cover meaningful deterministic control behavior, including explicit confirmation and unconfirmed observations.
 
 ## Active review follow-up
 
@@ -50,6 +50,14 @@ Exit criteria:
 - [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
 - [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
 - [ ] **Physical validation still required:** exercise discovery, replacement cleanup, stale-connection recovery, command acknowledgement and observed state on a real Chromecast/Google TV.
+
+## Current implementation status - shared control service
+
+- [x] Reproducible Python 3.12 environment is pinned with uv, `.python-version`, and committed `uv.lock`; setup fails when the lockfile is stale or uv is unavailable.
+- [x] Shared control confirmation reports only device state actually observed; missing, contradictory, and disconnected states remain explicitly unconfirmed in deterministic tests.
+- [x] Real-hardware evidence is required before any hardware/platform checkbox can be completed.
+- [x] Coverage (95% minimum) and installed-dependency quality commands are implemented and validated; deterministic command tests cover orchestration and fail-fast behavior, and the defensive verification invariant is explicit.
+- [ ] Physical Chromecast/Google TV validation remains required; no hardware validation was performed in these commits.
 
 ## Phase 2 - Cast discovery and connection
 
@@ -142,18 +150,19 @@ Exit criteria:
 
 ### Continuous integration
 
-- [ ] create the primary GitHub Actions CI workflow;
-- [ ] run CI on pull requests targeting `main`;
-- [ ] run CI on pushes to `main`;
-- [ ] install the Python environment reproducibly from the selected dependency/lock mechanism;
-- [ ] verify dependency and lockfile consistency;
-- [ ] run `ruff check`;
-- [ ] run `ruff format --check`;
-- [ ] run `mypy --strict`;
-- [ ] run `pytest`;
-- [ ] run `python -m pip check`;
-- [ ] generate test coverage reporting and enforce the selected quality gate;
-- [ ] make required quality failures fail the CI job;
+- [x] create the primary GitHub Actions CI workflow (`.github/workflows/ci.yml`);
+- [x] run CI on pull requests targeting `main`;
+- [x] run CI on pushes to `main`;
+- [x] install the Python environment reproducibly with `uv sync --locked`;
+- [x] verify lockfile and dependency consistency with `--locked` and `uv pip check`;
+- [x] run `ruff check`;
+- [x] run `ruff format --check`;
+- [x] run `mypy --strict`;
+- [x] run `pytest`;
+- [x] generate terminal coverage reporting and enforce a 95% minimum;
+- [x] make required local quality failures fail the CI job;
+- [x] validate the workflow in a hosted GitHub Actions run (run `36127683296`, all steps passed);
+- [x] replace the deprecated Node 20 `actions/checkout` runtime reported by the first hosted run with SHA-pinned v5.0.1 (Node 24);
 - [ ] require applicable CI checks before a pull request is considered merge-ready.
 
 ### Application build CI
@@ -209,60 +218,6 @@ Verify:
 - [ ] required CI checks are green for the release commit;
 - [ ] repository contains no credentials or generated build/temp output;
 - [ ] build disk usage remains understood and controlled.
-
-## CI/CD
-
-### CI - Qualité et tests
-
-- [ ] Créer le workflow GitHub Actions principal
-- [ ] Déclencher la CI sur les pull requests vers `main`
-- [ ] Déclencher la CI sur les pushes vers `main`
-- [ ] Installer l'environnement Python de manière reproductible
-- [ ] Vérifier le lockfile et les dépendances
-- [ ] Exécuter `ruff check`
-- [ ] Exécuter `ruff format --check`
-- [ ] Exécuter `mypy --strict`
-- [ ] Exécuter `pytest`
-- [ ] Exécuter `python -m pip check`
-- [ ] Générer le rapport de couverture
-- [ ] Faire échouer la CI si les quality gates ne passent pas
-
-### CI - Application
-
-- [ ] Vérifier le build Tauri 2
-- [ ] Vérifier le build frontend
-- [ ] Vérifier l'intégration Python/Tauri
-- [ ] Ajouter les contrôles Linux
-- [ ] Ajouter les contrôles Windows
-- [ ] Ajouter les contrôles Android
-- [ ] Séparer clairement build CI et validation matérielle Chromecast/TV
-
-### CD - Packaging
-
-- [ ] Construire le paquet Debian
-- [ ] Construire l'installateur Windows
-- [ ] Construire l'APK Android
-- [ ] Conserver les artefacts de build GitHub Actions
-- [ ] Versionner automatiquement les artefacts
-- [ ] Générer les checksums
-- [ ] Préparer les release notes
-
-### CD - Releases
-
-- [ ] Définir la stratégie de versionnement
-- [ ] Déclencher les builds de release sur tag
-- [ ] Publier les artefacts dans une GitHub Release
-- [ ] Vérifier les artefacts avant publication
-- [ ] Prévoir signature des artefacts lorsque nécessaire
-- [ ] Ne jamais considérer un package comme validé sur une plateforme sans test réel correspondant
-
-### Maintenance
-
-- [ ] Activer Dependabot ou mécanisme équivalent
-- [ ] Ajouter une CI de contrôle des mises à jour de dépendances
-- [ ] Ajouter les contrôles de sécurité pertinents
-- [ ] Définir la politique de rétention des artefacts
-- [ ] Nettoyer systématiquement les artefacts temporaires après les builds locaux
 
 ## Mandatory build/temp cleanup
 
