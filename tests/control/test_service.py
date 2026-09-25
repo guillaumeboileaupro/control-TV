@@ -92,7 +92,7 @@ def test_confirmation_waits_for_a_slow_tv(transport: FakeTransport, clock: FakeC
     result = service.pause(DEVICE_ID)
 
     assert result.confirmation is Confirmation.CONFIRMED
-    assert transport.status_reads() == 3
+    assert transport.status_reads() == 4  # one identity snapshot, then three confirmation reads
     assert clock.sleeps == [0.25, 0.25]
 
 
@@ -167,14 +167,17 @@ def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
     transport.hang_status_reads = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    result = service.pause(DEVICE_ID)
+    result = service.set_volume(DEVICE_ID, 0.7)
 
     # The one read that was attempted consumed exactly the whole budget by itself (as a
     # spec-compliant transport must: it never blocks longer than the `timeout` it was
     # given), so nothing remains afterwards for a second attempt: the only recorded
     # "sleep" is the read itself, the service's own scheduler never gets to run.
     assert transport.status_reads() == 1
-    assert transport.calls == [("pause", (DEVICE_ID,)), ("get_status", (DEVICE_ID, 1.0))]
+    assert transport.calls == [
+        ("set_volume", (DEVICE_ID, 0.7)),
+        ("get_status", (DEVICE_ID, 1.0)),
+    ]
     assert clock.now == pytest.approx(1.0)
     assert clock.sleeps == [1.0]
     assert result.confirmation is Confirmation.UNCONFIRMED
@@ -191,7 +194,7 @@ def test_each_poll_is_given_only_the_time_actually_remaining(
     transport.ignore_commands = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    service.pause(DEVICE_ID)
+    service.set_volume(DEVICE_ID, 0.7)
 
     status_read_timeouts = [args[1] for name, args in transport.calls if name == "get_status"]
     assert status_read_timeouts == [pytest.approx(1.0), pytest.approx(0.6), pytest.approx(0.2)]
@@ -209,7 +212,7 @@ def test_expiration_never_exceeds_the_global_budget_regardless_of_poll_interval(
     transport.hang_status_reads = True
     service = make_service(transport, clock, confirm_timeout=2.5, poll_interval=1.0)
 
-    result = service.pause(DEVICE_ID)
+    result = service.set_volume(DEVICE_ID, 0.7)
 
     assert clock.now == pytest.approx(2.5)
     assert transport.status_reads() == 1
@@ -225,7 +228,7 @@ def test_a_match_confirmed_just_before_the_deadline_is_accepted(
     transport.status_read_delay = 0.99
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.pause(DEVICE_ID)
+    result = service.set_volume(DEVICE_ID, 0.7)
 
     assert clock.now == pytest.approx(0.99)
     assert result.confirmation is Confirmation.CONFIRMED
@@ -244,7 +247,7 @@ def test_a_match_arriving_after_the_deadline_is_never_confirmed(
     transport.status_read_delay = 1.01
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.pause(DEVICE_ID)
+    result = service.set_volume(DEVICE_ID, 0.7)
 
     assert clock.now == pytest.approx(1.01)
     assert result.confirmation is Confirmation.UNCONFIRMED
@@ -299,7 +302,7 @@ def test_a_command_that_cannot_be_delivered_raises_and_never_returns_a_result(
     transport.fail_commands_with = DeviceUnavailableError("no route", device_id=DEVICE_ID)
 
     with pytest.raises(DeviceUnavailableError) as excinfo:
-        service.pause(DEVICE_ID)
+        service.set_volume(DEVICE_ID, 0.7)
 
     assert excinfo.value.code is ErrorCode.DEVICE_UNAVAILABLE
     assert transport.sent() == []
@@ -330,10 +333,25 @@ def test_a_transient_status_failure_recovers(transport: FakeTransport, clock: Fa
     transport.status_errors = [DeviceUnavailableError("blip")]
     service = make_service(transport, clock)
 
-    result = service.pause(DEVICE_ID)
+    result = service.set_volume(DEVICE_ID, 0.7)
 
     assert result.confirmation is Confirmation.CONFIRMED
     assert transport.status_reads() == 2
+
+
+def test_playback_command_without_precommand_identity_is_sent_but_unconfirmed(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_errors = [DeviceUnavailableError("pre-command status unavailable")]
+    service = make_service(transport, clock)
+
+    result = service.pause(DEVICE_ID)
+
+    assert transport.sent() == ["pause"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.detail is not None
+    assert "media identity was not reported before the command" in result.detail
 
 
 # --- per-command expectations ---------------------------------------------------------------
@@ -364,6 +382,50 @@ def test_stop_is_confirmed_when_the_tv_is_idle(
     assert result.command is Command.STOP
     assert result.confirmed
     assert transport.tv.playback is PlaybackState.IDLE
+
+
+@pytest.mark.parametrize(
+    ("command", "initial_state", "replacement_state"),
+    [
+        ("play", PlaybackState.PAUSED, PlaybackState.PLAYING),
+        ("pause", PlaybackState.PLAYING, PlaybackState.PAUSED),
+        ("stop", PlaybackState.PLAYING, PlaybackState.IDLE),
+    ],
+)
+def test_playback_command_is_not_confirmed_by_replaced_media(
+    transport: FakeTransport,
+    clock: FakeClock,
+    command: str,
+    initial_state: PlaybackState,
+    replacement_state: PlaybackState,
+) -> None:
+    replacement = "http://media.local/replacement.mp4"
+
+    def replace_media() -> None:
+        transport.tv.content_id = replacement
+        transport.tv.playback = replacement_state
+
+    transport.tv.playback = initial_state
+    transport.ignore_commands = True
+    transport.status_effects = [lambda: None, replace_media]
+    service = make_service(transport, clock)
+
+    if command == "play":
+        result = service.play(DEVICE_ID)
+    elif command == "pause":
+        result = service.pause(DEVICE_ID)
+    else:
+        result = service.stop(DEVICE_ID)
+
+    assert transport.sent() == [command]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.content_id == replacement
+    assert result.observed.media.playback_state is replacement_state
+    assert result.detail is not None
+    assert f"loaded content changed to {replacement!r} from {MOVIE_URL!r}" in result.detail
+    assert clock.now == pytest.approx(1.0)
 
 
 def test_load_media_is_confirmed_by_the_content_the_tv_reports(

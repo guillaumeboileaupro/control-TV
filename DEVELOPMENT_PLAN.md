@@ -75,6 +75,14 @@ Exit criteria:
 
 ## Phase 3 - Media controls
 
+Current playback-confirmation audit:
+- [x] audit load, play, pause, stop, volume and mute confirmation against missing, contradictory, disconnected and late observations;
+- [x] load remains bound to the requested URL, while volume and mute require an observed receiver value matching the request within the existing global deadline;
+- [x] **Implemented and targeted-test validated:** prevent play, pause and stop from being confirmed by the expected playback state on different or unidentified media;
+- [x] deterministic negative coverage verifies all three transitions, unavailable pre-command identity and the global deadline; removing the identity guard makes all four focused mutation tests fail;
+- [x] complete local Ruff, format, strict mypy, 252-test suite, 98.07% coverage and dependency checks pass;
+- [ ] physical Chromecast/Google TV validation remains required; automated fakes are not hardware evidence;
+
 Current confirmation-synchronization iteration:
 - [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
 - [x] deterministic targeted tests cover matching media, replaced media, missing media identity, contradictory positions and the unchanged global confirmation deadline;

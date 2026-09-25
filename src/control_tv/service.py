@@ -74,11 +74,18 @@ def _checked_id(device_id: DeviceId) -> DeviceId:
     return device_id
 
 
-def _playback_in(*states: PlaybackState) -> ExpectedState:
+def _playback_in(expected_content_id: str | None, *states: PlaybackState) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
+        if expected_content_id is None:
+            return Observation(False, "media identity was not reported before the command")
+        if media.content_id != expected_content_id:
+            return Observation(
+                False,
+                f"loaded content changed to {media.content_id!r} from {expected_content_id!r}",
+            )
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
 
     return check
@@ -209,23 +216,35 @@ class ControlService:
 
     def play(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        expected_content_id = self._playback_content_id(device_id)
         self._transport.play(device_id)
         return self._verify(
-            Command.PLAY, device_id, _playback_in(PlaybackState.PLAYING), "playback playing"
+            Command.PLAY,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.PLAYING),
+            "playback playing",
         )
 
     def pause(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        expected_content_id = self._playback_content_id(device_id)
         self._transport.pause(device_id)
         return self._verify(
-            Command.PAUSE, device_id, _playback_in(PlaybackState.PAUSED), "playback paused"
+            Command.PAUSE,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.PAUSED),
+            "playback paused",
         )
 
     def stop(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        expected_content_id = self._playback_content_id(device_id)
         self._transport.stop(device_id)
         return self._verify(
-            Command.STOP, device_id, _playback_in(PlaybackState.IDLE), "playback stopped"
+            Command.STOP,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.IDLE),
+            "playback stopped",
         )
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
@@ -270,6 +289,23 @@ class ControlService:
         return self._verify(
             Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"
         )
+
+    def _playback_content_id(self, device_id: DeviceId) -> str | None:
+        """Best-effort media identity captured before a playback command is sent.
+
+        A failed read must not turn an otherwise deliverable command into a delivery error.
+        Without a pre-command identity the command is still sent once, but later playback
+        state cannot prove which media reached that state and therefore cannot confirm it.
+        """
+        if self._confirm_timeout is None or self._confirm_timeout <= 0:
+            return None
+        try:
+            status = self._transport.get_status(device_id, timeout=self._status_timeout)
+        except ControlError:
+            return None
+        if status.connection is not ConnectionState.CONNECTED or status.media is None:
+            return None
+        return status.media.content_id
 
     def _verify(
         self,
