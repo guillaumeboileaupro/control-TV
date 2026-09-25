@@ -19,7 +19,12 @@ class CastTransport(Protocol):
     - translate library failures into `ControlError` subclasses;
     - return from a command method only when the command was delivered, never when it was
       merely requested locally;
-    - report in `get_status` only what was observed on the TV.
+    - report in `get_status` only what was observed on the TV;
+    - never let a network wait inside `get_status` run longer than the `timeout` it was
+      given: raise (typically `OperationTimeoutError` or `DeviceUnavailableError`) rather
+      than exceed it, so that a caller enforcing its own deadline (see
+      `ControlService._verify`) can bound every single read by its own remaining budget
+      and a slow or hung device can never itself blow past that budget.
 
     A command method says nothing about whether the TV reached the requested state; that is
     verified by reading `get_status`.
@@ -27,7 +32,7 @@ class CastTransport(Protocol):
 
     def discover(self, *, timeout: float) -> Sequence[Device]: ...
 
-    def get_status(self, device_id: DeviceId) -> DeviceStatus: ...
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus: ...
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> None: ...
 

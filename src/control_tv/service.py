@@ -52,6 +52,7 @@ ExpectedState = Callable[[DeviceStatus], Observation]
 
 DEFAULT_DISCOVERY_TIMEOUT = 5.0
 DEFAULT_CONFIRM_TIMEOUT = 5.0
+DEFAULT_STATUS_TIMEOUT = 5.0
 DEFAULT_POLL_INTERVAL = 0.25
 DEFAULT_SEEK_TOLERANCE = 2.0
 DEFAULT_VOLUME_TOLERANCE = 0.01
@@ -146,6 +147,7 @@ class ControlService:
         transport: CastTransport,
         *,
         confirm_timeout: float | None = DEFAULT_CONFIRM_TIMEOUT,
+        status_timeout: float = DEFAULT_STATUS_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         seek_tolerance: float = DEFAULT_SEEK_TOLERANCE,
         volume_tolerance: float = DEFAULT_VOLUME_TOLERANCE,
@@ -155,6 +157,10 @@ class ControlService:
         _require(
             confirm_timeout is None or (_is_finite(confirm_timeout) and confirm_timeout >= 0),
             f"confirm_timeout must be None or a finite number >= 0: {confirm_timeout}",
+        )
+        _require(
+            _is_finite(status_timeout) and status_timeout > 0,
+            f"status_timeout must be a finite number > 0: {status_timeout}",
         )
         _require(
             _is_finite(poll_interval) and poll_interval > 0,
@@ -170,6 +176,7 @@ class ControlService:
         )
         self._transport = transport
         self._confirm_timeout = confirm_timeout
+        self._status_timeout = status_timeout
         self._poll_interval = poll_interval
         self._seek_tolerance = seek_tolerance
         self._volume_tolerance = volume_tolerance
@@ -184,7 +191,7 @@ class ControlService:
         return list(self._transport.discover(timeout=timeout))
 
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
-        return self._transport.get_status(_checked_id(device_id))
+        return self._transport.get_status(_checked_id(device_id), timeout=self._status_timeout)
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> CommandResult:
         device_id = _checked_id(device_id)
@@ -219,7 +226,7 @@ class ControlService:
             f"seek position must be a finite number >= 0: {position_seconds}",
             device_id,
         )
-        media = self._transport.get_status(device_id).media
+        media = self._transport.get_status(device_id, timeout=self._status_timeout).media
         if media is not None and media.supports_seek is False:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
@@ -264,8 +271,13 @@ class ControlService:
         """Read the TV status until `expected` holds or the time budget is spent.
 
         The command was already sent by the caller; this only decides CONFIRMED versus
-        UNCONFIRMED. On UNCONFIRMED, `detail` states plainly what the TV last reported -
-        never a guess at what the missing command might have done.
+        UNCONFIRMED. `confirm_timeout` is a strict global budget: each status read is
+        given only whatever remains of it (`CastTransport.get_status`'s own `timeout`
+        contract requires it to never block longer than that), so a slow or hung read can
+        never itself exceed the budget, and a status that only arrives after the budget
+        expired is never used to confirm - it is evidence that came too late. On
+        UNCONFIRMED, `detail` states plainly what the TV last reported, or why nothing
+        could be read at all - never a guess at what the missing command might have done.
         """
         timeout = self._confirm_timeout
         if timeout is None:
@@ -278,12 +290,22 @@ class ControlService:
         last_error: ControlError | None = None
         last_observation: Observation | None = None
         while True:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                break
             try:
-                status = self._transport.get_status(device_id)
+                status = self._transport.get_status(device_id, timeout=remaining)
             except ControlError as error:
                 last_error = error
             else:
                 last_status, last_error = status, None
+                if self._clock() >= deadline:
+                    # The read itself succeeded, but only after the window closed: that
+                    # evidence arrived too late to confirm anything.
+                    last_observation = Observation(
+                        False, "the device answered after the confirmation window expired"
+                    )
+                    break
                 if status.connection is not ConnectionState.CONNECTED:
                     last_observation = Observation(False, f"connection is {status.connection}")
                 else:
@@ -302,11 +324,13 @@ class ControlService:
 
         if last_error is not None:
             detail = f"command sent; could not read the TV status: {last_error.message}"
-        else:
-            # Every loop iteration above sets last_error or last_observation before the
-            # deadline is checked, so at least one full iteration guarantees this.
-            assert last_observation is not None
+        elif last_observation is not None:
             detail = f"command sent; expected {description}, but {last_observation.description}"
+        else:
+            detail = (
+                f"command sent; the confirmation budget ({timeout:g}s) expired "
+                "before a status could be read"
+            )
         return CommandResult(
             command=command,
             device_id=device_id,

@@ -15,6 +15,7 @@ from control_tv.domain import (
     DeviceStatus,
     MediaRequest,
     MediaStatus,
+    OperationTimeoutError,
     PlaybackState,
     ReceiverStatus,
 )
@@ -65,6 +66,15 @@ class FakeTransport:
     `fail_commands_with`: commands cannot be delivered and raise this error.
     `discover_error`: discovery cannot run and raises this error.
     `status_errors`: errors raised, in order, by the next `get_status` calls.
+    `clock`: when set, `get_status` can simulate the wall-clock cost of a real network read
+    by advancing this clock (via `status_read_delay`/`hang_status_reads`) before returning -
+    it should be the same `FakeClock` the `ControlService` under test uses, so both sides
+    agree on how much of the confirmation budget a read actually consumed.
+    `status_read_delay`: simulated seconds a *successful* `get_status` call takes.
+    `hang_status_reads`: when true, `get_status` always consumes exactly the `timeout` it
+    was given and then raises `OperationTimeoutError` - a read that respects its bound but
+    never completes usefully within it (as opposed to one that ignores its bound entirely,
+    which a spec-compliant transport must never do).
     """
 
     device_id: DeviceId = DEVICE_ID
@@ -74,6 +84,9 @@ class FakeTransport:
     fail_commands_with: ControlError | None = None
     discover_error: ControlError | None = None
     status_errors: list[ControlError] = field(default_factory=list)
+    clock: FakeClock | None = None
+    status_read_delay: float = 0.0
+    hang_status_reads: bool = False
     tv: TvState = field(default_factory=TvState)
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
     _pending: tuple[int, Callable[[], None]] | None = None
@@ -93,11 +106,20 @@ class FakeTransport:
             Device(id=self.device_id, friendly_name="Living room", host="192.168.1.20", port=8009)
         ]
 
-    def get_status(self, device_id: DeviceId) -> DeviceStatus:
-        self.calls.append(("get_status", (device_id,)))
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        self.calls.append(("get_status", (device_id, timeout)))
         self._require_known(device_id)
+        if self.hang_status_reads:
+            if self.clock is not None:
+                self.clock.sleep(timeout)
+            raise OperationTimeoutError(
+                f"timed out reading status from {device_id} after {timeout:g}s",
+                device_id=device_id,
+            )
         if self.status_errors:
             raise self.status_errors.pop(0)
+        if self.clock is not None and self.status_read_delay:
+            self.clock.sleep(self.status_read_delay)
         if self._pending is not None:
             polls_left, effect = self._pending
             if polls_left == 0:
