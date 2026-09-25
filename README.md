@@ -73,4 +73,4 @@ assets/                    project assets
 
 ## Status
 
-Phase 1 (shared control foundation) is in progress. The domain vocabulary and the control service exist and are tested against an in-memory fake TV. The PyChromecast transport now implements discovery, bounded UUID-based connection recovery, status and media/volume commands behind the shared interface. There is still no UI, no MCP adapter or packaging. Nothing has been validated on a real Chromecast or Google TV device.
+The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Physical validation remains entirely open; follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming Chromecast or Google TV behavior. There is still no UI, MCP adapter or packaging.

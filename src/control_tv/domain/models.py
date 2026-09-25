@@ -7,10 +7,12 @@ asked for is never stored in it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import NewType
+from urllib.parse import urlsplit
 
 from control_tv.domain.errors import InvalidArgumentError
 
@@ -42,6 +44,38 @@ class PlaybackState(StrEnum):
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise InvalidArgumentError(message)
+
+
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$%&+.^_~-]*\Z")
+_MEDIA_TYPE_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9!#$%&+.^_~-]*/[A-Za-z0-9][A-Za-z0-9!#$%&+.^_~-]*\Z"
+)
+
+
+def _valid_media_url(value: str) -> bool:
+    if value != value.strip() or any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port  # Invalid or out-of-range ports raise ValueError.
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in {"http", "https"} and parsed.hostname is not None
+
+
+def _valid_content_type(value: str) -> bool:
+    if value != value.strip() or any(character in value for character in "\r\n\0"):
+        return False
+    media_type, separator, parameters = value.partition(";")
+    if _MEDIA_TYPE_RE.fullmatch(media_type) is None:
+        return False
+    if not separator:
+        return True
+    for part in parameters.split(";"):
+        name, equals, value = part.partition("=")
+        if not equals or _TOKEN_RE.fullmatch(name.strip()) is None or not value.strip():
+            return False
+    return True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -123,12 +157,23 @@ class DeviceStatus:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MediaRequest:
-    """What to load on a device. URL and content-type validation is added with Phase 3."""
+    """A validated network media target ready for the Cast transport."""
 
     url: str
     content_type: str
     title: str | None = None
 
     def __post_init__(self) -> None:
-        _require(bool(self.url.strip()), "media url must not be blank")
-        _require(bool(self.content_type.strip()), "media content type must not be blank")
+        _require(
+            _valid_media_url(self.url),
+            "media url must be an absolute HTTP(S) URL without whitespace",
+        )
+        _require(
+            _valid_content_type(self.content_type),
+            "media content type must be a valid MIME media type",
+        )
+        _require(
+            self.title is None
+            or (bool(self.title.strip()) and not any(c in self.title for c in "\r\n\0")),
+            "media title must be non-blank and contain no control characters",
+        )

@@ -95,6 +95,8 @@ class PyChromecastTransport:
         self._casts: dict[DeviceId, Chromecast] = {}
 
     def discover(self, *, timeout: float) -> list[Device]:
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise InvalidArgumentError(f"discovery timeout must be a finite number > 0: {timeout}")
         browser: object | None = None
         try:
             casts, browser = self._discoverer(timeout)
@@ -132,6 +134,9 @@ class PyChromecastTransport:
         deadline = self._clock() + timeout
         cast_device = self._ready_bounded(device_id, deadline)
         self._receiver_status_bounded(cast_device, device_id, deadline)
+        # Defense in depth: a library callback that violated its own timeout must never
+        # let an over-budget snapshot escape as a successful status read.
+        self._budget(self._request_timeout, deadline, device_id)
         receiver = cast_device.status
         media = cast_device.media_controller.status
         return DeviceStatus(
@@ -188,6 +193,10 @@ class PyChromecastTransport:
         )
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> None:
+        if not math.isfinite(position_seconds) or position_seconds < 0:
+            raise InvalidArgumentError(
+                f"seek position must be a finite number >= 0: {position_seconds}"
+            )
         cast_device = self._ready(device_id)
         self._command(
             device_id,
@@ -198,6 +207,8 @@ class PyChromecastTransport:
         )
 
     def set_volume(self, device_id: DeviceId, level: float) -> None:
+        if not math.isfinite(level) or not 0 <= level <= 1:
+            raise InvalidArgumentError(f"volume must be a finite number from 0 to 1: {level}")
         cast_device = self._ready(device_id)
         self._command(
             device_id,
@@ -206,6 +217,8 @@ class PyChromecastTransport:
         )
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> None:
+        if not isinstance(muted, bool):
+            raise InvalidArgumentError(f"muted must be a boolean: {muted!r}")
         cast_device = self._ready(device_id)
         self._command(
             device_id,
@@ -270,7 +283,7 @@ class PyChromecastTransport:
             return self._wait_ready(cast_device, device_id, timeout=connect_budget)
         except (OperationTimeoutError, DeviceUnavailableError) as first_error:
             self._casts.pop(device_id, None)
-            self._disconnect(cast_device)
+            self._disconnect_bounded(cast_device, deadline)
             try:
                 self.discover(timeout=self._budget(self._recovery_timeout, deadline, device_id))
             except DiscoveryError as discovery_error:
@@ -315,9 +328,15 @@ class PyChromecastTransport:
             ) from error
         return cast_device
 
-    def _disconnect(self, cast_device: Chromecast) -> None:
+    def _disconnect(self, cast_device: Chromecast, *, timeout: float | None = None) -> None:
+        wait_timeout = self._connection_timeout if timeout is None else timeout
         with suppress(PyChromecastError, OSError):
-            cast_device.disconnect(timeout=self._connection_timeout)
+            cast_device.disconnect(timeout=wait_timeout)
+
+    def _disconnect_bounded(self, cast_device: Chromecast, deadline: float) -> None:
+        """Signal shutdown and wait no longer than the status budget still available."""
+        remaining = max(0.0, deadline - self._clock())
+        self._disconnect(cast_device, timeout=min(self._connection_timeout, remaining))
 
     def _receiver_status_bounded(
         self, cast_device: Chromecast, device_id: DeviceId, deadline: float
