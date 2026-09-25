@@ -96,9 +96,12 @@ class PyChromecastTransport:
         try:
             casts, browser = self._discoverer(timeout)
             discovered = [self._device(cast_device) for cast_device in casts]
-            self._casts.update(
-                (DeviceId(str(cast_device.uuid)), cast_device) for cast_device in casts
-            )
+            for cast_device in casts:
+                device_id = DeviceId(str(cast_device.uuid))
+                previous = self._casts.get(device_id)
+                if previous is not None and previous is not cast_device:
+                    self._disconnect(previous)
+                self._casts[device_id] = cast_device
             return discovered
         except DiscoveryError:
             raise
@@ -195,10 +198,11 @@ class PyChromecastTransport:
         )
 
     def close(self) -> None:
-        """Disconnect every cached socket worker owned by this adapter."""
-        for cast_device in self._casts.values():
-            cast_device.disconnect(timeout=self._connection_timeout)
+        """Disconnect every cached socket worker owned by this adapter exactly once."""
+        casts = list(self._casts.values())
         self._casts.clear()
+        for cast_device in casts:
+            self._disconnect(cast_device)
 
     @staticmethod
     def _device(cast_device: Chromecast) -> Device:
@@ -225,7 +229,8 @@ class PyChromecastTransport:
         try:
             return self._wait_ready(cast_device, device_id)
         except (OperationTimeoutError, DeviceUnavailableError) as first_error:
-            self._discard(device_id, cast_device)
+            self._casts.pop(device_id, None)
+            self._disconnect(cast_device)
             try:
                 self.discover(timeout=self._recovery_timeout)
             except DiscoveryError as discovery_error:
@@ -254,8 +259,7 @@ class PyChromecastTransport:
             ) from error
         return cast_device
 
-    def _discard(self, device_id: DeviceId, cast_device: Chromecast) -> None:
-        self._casts.pop(device_id, None)
+    def _disconnect(self, cast_device: Chromecast) -> None:
         with suppress(PyChromecastError, OSError):
             cast_device.disconnect(timeout=self._connection_timeout)
 
@@ -298,12 +302,18 @@ class PyChromecastTransport:
             MEDIA_PLAYER_STATE_UNKNOWN,
         ):
             return None
+        playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN)
+        position = (
+            status.adjusted_current_time
+            if playback_state is PlaybackState.PLAYING
+            else status.current_time
+        )
         return MediaStatus(
-            playback_state=_STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN),
+            playback_state=playback_state,
             content_id=status.content_id,
             content_type=status.content_type,
             title=status.title,
-            position_seconds=status.current_time,
+            position_seconds=position,
             duration_seconds=status.duration,
             supports_seek=status.supports_seek,
         )

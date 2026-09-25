@@ -48,6 +48,18 @@ class FakeReceiverController:
         callback_function(True, {})  # type: ignore[operator]
 
 
+class ControlledMediaStatus(PyMediaStatus):
+    def __init__(self, adjusted: float) -> None:
+        super().__init__()
+        self._adjusted = adjusted
+
+    @property
+    def adjusted_current_time(self) -> float:
+        value = self._adjusted
+        self._adjusted += 1.0
+        return value
+
+
 class FakeMediaController:
     def __init__(self) -> None:
         self.status = PyMediaStatus()
@@ -275,6 +287,7 @@ def test_close_disconnects_and_forgets_cached_devices() -> None:
     transport, _ = make_transport(cast_device)
 
     transport.close()
+    transport.close()
 
     assert cast_device.disconnect_calls == [3.0]
     with pytest.raises(DeviceNotFoundError):
@@ -359,3 +372,59 @@ def test_transport_requires_positive_finite_timeouts(
 ) -> None:
     with pytest.raises(InvalidArgumentError, match="must be a finite number > 0"):
         build()
+
+
+def test_repeated_discovery_disconnects_only_the_superseded_same_uuid_instance() -> None:
+    first = FakeCast()
+    replacement = FakeCast()
+    discoveries = iter((first, replacement, replacement))
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        return [cast(Chromecast, next(discoveries))], FakeBrowser()
+
+    transport = PyChromecastTransport(connection_timeout=3.0, discoverer=discoverer)
+
+    transport.discover(timeout=1.0)
+    assert first.disconnect_calls == []
+
+    transport.discover(timeout=1.0)
+    assert first.disconnect_calls == [3.0]
+    assert replacement.disconnect_calls == []
+
+    transport.discover(timeout=1.0)
+    assert first.disconnect_calls == [3.0]
+    assert replacement.disconnect_calls == []
+
+    transport.close()
+    transport.close()
+    assert first.disconnect_calls == [3.0]
+    assert replacement.disconnect_calls == [3.0]
+
+
+def test_playing_media_uses_adjusted_position_between_cast_events() -> None:
+    status = ControlledMediaStatus(adjusted=18.5)
+    status.player_state = "PLAYING"
+    status.content_id = "https://media.local/movie.mp4"
+    status.current_time = 12.0
+
+    first = PyChromecastTransport._media_status(status)
+    second = PyChromecastTransport._media_status(status)
+
+    assert first is not None
+    assert second is not None
+    assert first.playback_state is PlaybackState.PLAYING
+    assert first.position_seconds == 18.5
+    assert second.position_seconds == 19.5
+
+
+def test_paused_media_keeps_last_reported_position() -> None:
+    status = ControlledMediaStatus(adjusted=18.5)
+    status.player_state = "PAUSED"
+    status.content_id = "https://media.local/movie.mp4"
+    status.current_time = 12.0
+
+    observed = PyChromecastTransport._media_status(status)
+
+    assert observed is not None
+    assert observed.playback_state is PlaybackState.PAUSED
+    assert observed.position_seconds == 12.0

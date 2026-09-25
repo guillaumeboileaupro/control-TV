@@ -44,6 +44,13 @@ Exit criteria:
 - [x] GUI/MCP concerns are absent from low-level Cast integration;
 - [x] tests cover meaningful deterministic behavior.
 
+## Active review follow-up
+
+- [x] **Implemented and automation-validated:** disconnect each superseded PyChromecast instance before replacing the same UUID; repeated discovery and idempotent `close()` are covered by deterministic tests.
+- [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
+- [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
+- [ ] **Physical validation still required:** exercise discovery, replacement cleanup, stale-connection recovery, command acknowledgement and observed state on a real Chromecast/Google TV.
+
 ## Phase 2 - Cast discovery and connection
 
 Deliverables:
