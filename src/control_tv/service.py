@@ -302,10 +302,11 @@ class ControlService:
 
         if last_error is not None:
             detail = f"command sent; could not read the TV status: {last_error.message}"
-        elif last_observation is not None:
-            detail = f"command sent; expected {description}, but {last_observation.description}"
         else:
-            detail = f"command sent; the TV status could not be read within {timeout:g}s"
+            # Every loop iteration above sets last_error or last_observation before the
+            # deadline is checked, so at least one full iteration guarantees this.
+            assert last_observation is not None
+            detail = f"command sent; expected {description}, but {last_observation.description}"
         return CommandResult(
             command=command,
             device_id=device_id,

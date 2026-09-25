@@ -28,7 +28,9 @@ Prerequisite: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). `uv` re
 ```bash
 python3 scripts/dev.py setup        # create .venv from uv.lock (uv sync --locked)
 python3 scripts/dev.py lock         # regenerate uv.lock after changing a dependency
-python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest
+python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest, dependency check
+python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
+python3 scripts/dev.py depcheck     # verify installed dependency consistency
 python3 scripts/dev.py lint         # lint and format check only
 python3 scripts/dev.py typecheck    # mypy only
 python3 scripts/dev.py test         # pytest only

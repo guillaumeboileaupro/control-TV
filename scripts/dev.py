@@ -9,7 +9,9 @@ Commands:
   lint         ruff check and ruff format --check
   typecheck    mypy (strict)
   test         pytest
-  check        lint, typecheck and test
+  coverage     pytest with coverage of src/control_tv, enforcing a minimum
+  depcheck     verify every installed package's declared requirements are met
+  check        lint, typecheck, test and depcheck (the CI quality gate)
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -42,6 +44,10 @@ EGG_INFO_SCAN_DIRS = (".", "src")
 
 CLEAN = "clean"
 DIST_CLEAN = "dist-clean"
+# Measured at 99% when this was introduced (one defensive, since-removed unreachable
+# line); leaves headroom for new code without weakening the gate. Raise deliberately,
+# never lower it to make a failing build pass.
+COVERAGE_MIN = 95
 
 
 @dataclass(frozen=True)
@@ -259,8 +265,27 @@ def cmd_test(root: Path) -> int:
     return _run(root, ["-m", "pytest"])
 
 
+def cmd_coverage(root: Path) -> int:
+    """Coverage of the shared control/domain package only, not of tests or scripts/dev.py."""
+    return _run(
+        root,
+        [
+            "-m",
+            "pytest",
+            "--cov=control_tv",
+            "--cov-report=term-missing",
+            f"--cov-fail-under={COVERAGE_MIN}",
+        ],
+    )
+
+
+def cmd_depcheck(root: Path) -> int:
+    """Every installed package's declared requirements are actually satisfied."""
+    return _run_uv(root, ["pip", "check"])
+
+
 def cmd_check(root: Path) -> int:
-    for step in (cmd_lint, cmd_typecheck, cmd_test):
+    for step in (cmd_lint, cmd_typecheck, cmd_test, cmd_depcheck):
         code = step(root)
         if code != 0:
             return code
@@ -270,7 +295,18 @@ def cmd_check(root: Path) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("setup", "lock", "lint", "typecheck", "test", "check", "disk-usage"):
+    names = (
+        "setup",
+        "lock",
+        "lint",
+        "typecheck",
+        "test",
+        "coverage",
+        "depcheck",
+        "check",
+        "disk-usage",
+    )
+    for name in names:
         sub.add_parser(name)
     for name in (CLEAN, DIST_CLEAN):
         cleaner = sub.add_parser(name)
@@ -289,6 +325,8 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "lint": cmd_lint,
         "typecheck": cmd_typecheck,
         "test": cmd_test,
+        "coverage": cmd_coverage,
+        "depcheck": cmd_depcheck,
         "check": cmd_check,
         "disk-usage": cmd_disk_usage,
     }

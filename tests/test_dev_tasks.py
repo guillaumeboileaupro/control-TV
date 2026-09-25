@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import ModuleType
 
@@ -286,3 +287,85 @@ def test_lock_regenerates_the_lockfile(
     assert dev.main(["lock"], root=repo) == 0
 
     assert log.read_text().splitlines() == ["lock"]
+
+
+def test_coverage_runs_pytest_with_project_threshold(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[Path, list[str]]] = []
+
+    def fake_run(root: Path, args: Sequence[str]) -> int:
+        calls.append((root, list(args)))
+        return 0
+
+    monkeypatch.setattr(dev, "_run", fake_run)
+
+    assert dev.main(["coverage"], root=repo) == 0
+    assert calls == [
+        (
+            repo,
+            [
+                "-m",
+                "pytest",
+                "--cov=control_tv",
+                "--cov-report=term-missing",
+                f"--cov-fail-under={dev.COVERAGE_MIN}",
+            ],
+        )
+    ]
+
+
+def test_depcheck_runs_uv_pip_check(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "uv-calls.log"
+    _fake_uv(monkeypatch, tmp_path, log)
+
+    assert dev.main(["depcheck"], root=repo) == 0
+
+    assert log.read_text().splitlines() == ["pip check"]
+
+
+def test_check_runs_every_quality_step_in_order(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def step(name: str) -> Callable[[Path], int]:
+        def run(root: Path) -> int:
+            assert root == repo
+            calls.append(name)
+            return 0
+
+        return run
+
+    for name in ("lint", "typecheck", "test", "depcheck"):
+        monkeypatch.setattr(dev, f"cmd_{name}", step(name))
+
+    assert dev.main(["check"], root=repo) == 0
+    assert calls == ["lint", "typecheck", "test", "depcheck"]
+
+
+def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def successful(name: str) -> Callable[[Path], int]:
+        def run(root: Path) -> int:
+            assert root == repo
+            calls.append(name)
+            return 0
+
+        return run
+
+    def fail_typecheck(root: Path) -> int:
+        assert root == repo
+        calls.append("typecheck")
+        return 7
+
+    monkeypatch.setattr(dev, "cmd_lint", successful("lint"))
+    monkeypatch.setattr(dev, "cmd_typecheck", fail_typecheck)
+    monkeypatch.setattr(dev, "cmd_test", successful("test"))
+    monkeypatch.setattr(dev, "cmd_depcheck", successful("depcheck"))
+
+    assert dev.main(["check"], root=repo) == 7
+    assert calls == ["lint", "typecheck"]
