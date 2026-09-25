@@ -33,8 +33,8 @@ Exit criteria:
 
 Deliverables:
 - [ ] define shared control/domain interfaces used by GUI and MCP;
-- [ ] Python project/package structure and typed device/connection models;
-- [ ] explicit errors and operation results;
+- [x] Python project/package structure and typed device/connection models;
+- [x] explicit errors and operation results;
 - [ ] integrate the selected Python Chromecast modules behind a focused adapter;
 - [ ] add native/Rust components only where a measured or platform requirement justifies them;
 - [ ] focused deterministic unit tests.
