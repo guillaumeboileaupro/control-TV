@@ -9,6 +9,7 @@ from pathlib import Path
 import control_tv.domain as domain
 
 DOMAIN_DIR = Path(domain.__file__).parent
+CONTROL_MODULES = ("ports.py", "service.py")
 
 
 def imported_modules(source: str) -> set[str]:
@@ -52,3 +53,14 @@ def test_public_exports_all_resolve() -> None:
     assert domain.__all__ == sorted(domain.__all__)
     for name in domain.__all__:
         assert hasattr(domain, name), name
+
+
+def test_control_layer_stays_independent_of_cast_libraries_ui_and_mcp() -> None:
+    offenders = {
+        f"{name}: {module}"
+        for name in CONTROL_MODULES
+        for module in imported_modules((DOMAIN_DIR.parent / name).read_text())
+        if not (module.split(".")[0] in sys.stdlib_module_names or module.startswith("control_tv"))
+    }
+
+    assert offenders == set()

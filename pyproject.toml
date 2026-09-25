@@ -25,6 +25,7 @@ control_tv = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
 
 [tool.mypy]
