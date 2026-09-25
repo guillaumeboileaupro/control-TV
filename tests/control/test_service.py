@@ -7,6 +7,7 @@ import pytest
 
 from control_tv.domain import (
     Command,
+    CommandRejectedError,
     Confirmation,
     ConnectionState,
     DeviceId,
@@ -579,3 +580,19 @@ def test_invalid_configuration_is_rejected(
 ) -> None:
     with pytest.raises(InvalidArgumentError):
         build(transport)
+
+
+def test_receiver_rejection_raises_without_confirmation_or_invented_result(
+    transport: FakeTransport, service: ControlService
+) -> None:
+    transport.fail_commands_with = CommandRejectedError(
+        "receiver rejected load", device_id=DEVICE_ID
+    )
+    request = MediaRequest(url="https://media.local/rejected.mp4", content_type="video/mp4")
+
+    with pytest.raises(CommandRejectedError) as excinfo:
+        service.load_media(DEVICE_ID, request)
+
+    assert excinfo.value.code is ErrorCode.COMMAND_REJECTED
+    assert transport.sent() == []
+    assert transport.status_reads() == 0

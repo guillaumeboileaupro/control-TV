@@ -75,6 +75,10 @@ Exit criteria:
 
 ## Phase 3 - Media controls
 
+Current command-result hardening iteration:
+- [x] **Implemented and automation-validated:** commands not sent (`RequestFailed` -> unavailable) are distinct from receiver-declared media rejection (`LOAD_FAILED` -> rejected), and neither command is replayed;
+- [x] deterministic coverage proves unavailable, ambiguous and explicitly rejected delivery never produces a `CommandResult` or invented confirmation;
+
 Current hardening iteration:
 - [x] **Review follow-up implemented and automation-validated:** valid optional whitespace before MIME parameter delimiters is accepted without weakening malformed MIME rejection;
 - [x] **Implemented and automation-validated:** stale-instance cleanup inside `get_status` is capped by the remaining caller deadline; exhausted budgets signal non-blocking shutdown and never start rediscovery;
@@ -91,7 +95,7 @@ Deliverables:
 - [ ] validation of URLs, content types, ranges and application identifiers.
 
 Exit criteria:
-- [ ] supported operations have explicit results/errors;
+- [x] supported operations have explicit results/errors, automation-validated across sent/confirmed/unavailable/timeout/rejected outcomes;
 - [ ] real-device validation distinguishes a sent command from a confirmed resulting state.
 
 ## Phase 4 - Lightweight Tauri UI
