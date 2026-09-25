@@ -11,14 +11,18 @@ Commands:
   test         pytest
   coverage     pytest with coverage of src/control_tv, enforcing a minimum
   depcheck     verify every installed package's declared requirements are met
-  check        lint, typecheck, test and depcheck (the CI quality gate)
+  check        lint, typecheck, test and depcheck (the Python quality gate)
+  rust-check   cargo fmt --check, clippy -D warnings and cargo test (src-tauri/)
+  ui-check     tsc --noEmit and prettier --check (ui/, after `npm install` there)
   disk-usage   free disk space and size of project-owned generated output
-  clean        remove disposable generated output (keeps .venv and dist/)
+  clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
 
 `setup` and `lock` shell out to `uv` (https://docs.astral.sh/uv/) so that every install
-is pinned to the committed lockfile; every other command only needs the resulting
-`.venv` and otherwise uses the standard library only.
+is pinned to the committed lockfile; every other Python command only needs the resulting
+`.venv` and otherwise uses the standard library only. `rust-check` needs `cargo`
+(https://rustup.rs/); `ui-check` needs `npm` and `ui/node_modules` (run `npm install`
+in `ui/` first) - neither is installed or invoked by this script.
 
 Cleanup only ever deletes paths from the fixed allowlist below, resolved inside the
 repository. Shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) are never touched.
@@ -70,11 +74,14 @@ TARGETS: tuple[Target, ...] = (
     Target("temp", CLEAN, "project scratch directory"),
     Target("target", CLEAN, "Rust build output"),
     Target("src-tauri/target", CLEAN, "Tauri/Rust build output"),
+    Target("src-tauri/gen/schemas", CLEAN, "Tauri capability schema (auto-generated)"),
     Target("src-tauri/gen/android/.gradle", CLEAN, "Android project-local Gradle state"),
     Target("src-tauri/gen/android/build", CLEAN, "Android build output"),
     Target("src-tauri/gen/android/app/build", CLEAN, "Android app build output"),
     Target(".gradle", CLEAN, "project-local Gradle state"),
+    Target("ui/dist", CLEAN, "frontend build output"),
     Target(".venv", DIST_CLEAN, "development virtual environment"),
+    Target("ui/node_modules", DIST_CLEAN, "frontend npm dependencies"),
     Target("dist", DIST_CLEAN, "release deliverables (reproducible)"),
 )
 
@@ -292,6 +299,51 @@ def cmd_check(root: Path) -> int:
     return 0
 
 
+def _missing_tool(name: str, hint: str) -> int:
+    print(f"error: {name} is required for this command (see {hint})", file=sys.stderr)
+    return 2
+
+
+def _run_in(cwd: Path, root: Path, args: Sequence[str]) -> int:
+    print("+", " ".join(args), f"(in {cwd.relative_to(root)})")
+    return subprocess.call(list(args), cwd=cwd)
+
+
+def cmd_rust_check(root: Path) -> int:
+    """cargo fmt --check, clippy (deny warnings) and test for the Tauri shell crate."""
+    if shutil.which("cargo") is None:
+        return _missing_tool("cargo", "https://rustup.rs/")
+    cwd = root / "src-tauri"
+    steps = (
+        ["cargo", "fmt", "--check"],
+        ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+        ["cargo", "test"],
+    )
+    for args in steps:
+        code = _run_in(cwd, root, args)
+        if code != 0:
+            return code
+    return 0
+
+
+def cmd_ui_check(root: Path) -> int:
+    """TypeScript typecheck and Prettier format check for the frontend."""
+    if shutil.which("npm") is None:
+        return _missing_tool("npm", "https://nodejs.org/")
+    cwd = root / "ui"
+    if not (cwd / "node_modules").exists():
+        print(
+            "error: ui/node_modules is missing; run `npm install` in ui/ first",
+            file=sys.stderr,
+        )
+        return 2
+    for script in ("typecheck", "format:check"):
+        code = _run_in(cwd, root, ["npm", "run", script])
+        if code != 0:
+            return code
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -304,6 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
         "coverage",
         "depcheck",
         "check",
+        "rust-check",
+        "ui-check",
         "disk-usage",
     )
     for name in names:
@@ -328,6 +382,8 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "coverage": cmd_coverage,
         "depcheck": cmd_depcheck,
         "check": cmd_check,
+        "rust-check": cmd_rust_check,
+        "ui-check": cmd_ui_check,
         "disk-usage": cmd_disk_usage,
     }
     return handlers[command](root)

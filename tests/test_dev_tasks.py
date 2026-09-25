@@ -49,6 +49,7 @@ def repo(tmp_path: Path) -> Path:
         ".git/config",
         "src-tauri/Cargo.toml",
         "src-tauri/gen/android/settings.gradle",
+        "ui/package.json",
     ):
         _write(root / tracked)
     return root
@@ -67,7 +68,10 @@ def _generate(root: Path) -> None:
         "src-tauri/gen/android/build/out.apk",
         "src-tauri/gen/android/app/build/out.apk",
         "src-tauri/gen/android/.gradle/state",
+        "src-tauri/gen/schemas/desktop-schema.json",
         ".gradle/state",
+        "ui/dist/index.html",
+        "ui/node_modules/pkg/index.js",
         "src/control_tv/__pycache__/__init__.cpython-312.pyc",
         "tests/__pycache__/test_x.cpython-312.pyc",
         "src/control_tv.egg-info/PKG-INFO",
@@ -94,6 +98,7 @@ TRACKED = {
     ".git/config",
     "src-tauri/Cargo.toml",
     "src-tauri/gen/android/settings.gradle",
+    "ui/package.json",
 }
 
 
@@ -106,6 +111,7 @@ def test_clean_removes_disposable_output_only(repo: Path) -> None:
         ".venv/lib/site.py",
         ".venv/lib/__pycache__/site.cpython-312.pyc",
         "dist/control-tv.deb",
+        "ui/node_modules/pkg/index.js",
     }
 
 
@@ -117,6 +123,7 @@ def test_dist_clean_removes_all_reproducible_output(repo: Path) -> None:
     assert _remaining(repo) == TRACKED
     assert not (repo / ".venv").exists()
     assert not (repo / "dist").exists()
+    assert not (repo / "ui" / "node_modules").exists()
 
 
 def test_dry_run_removes_nothing(repo: Path) -> None:
@@ -236,21 +243,31 @@ def test_quality_commands_require_setup(repo: Path, capsys: pytest.CaptureFixtur
     assert "setup" in capsys.readouterr().err
 
 
-def _no_uv_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point PATH at an empty directory so `uv` cannot be found."""
+def _no_tool_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point PATH at an empty directory so no external tool can be found."""
     empty = tmp_path / "empty-path"
     empty.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty))
 
 
-def _fake_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log: Path) -> None:
-    """Put a fake `uv` on PATH that appends its argv to `log` and exits 0."""
+def _fake_tool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, log: Path) -> None:
+    """Put a fake `name` on PATH that appends its argv (joined) as one line to `log`."""
     bin_dir = tmp_path / "fake-bin"
     bin_dir.mkdir(exist_ok=True)
-    script = bin_dir / "uv"
+    script = bin_dir / name
     script.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+
+def _no_uv_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point PATH at an empty directory so `uv` cannot be found."""
+    _no_tool_on_path(monkeypatch, tmp_path)
+
+
+def _fake_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log: Path) -> None:
+    """Put a fake `uv` on PATH that appends its argv to `log` and exits 0."""
+    _fake_tool(monkeypatch, tmp_path, "uv", log)
 
 
 @pytest.mark.parametrize("command", ["setup", "lock"])
@@ -369,3 +386,71 @@ def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.Mon
 
     assert dev.main(["check"], root=repo) == 7
     assert calls == ["lint", "typecheck"]
+
+
+def test_rust_check_requires_cargo(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _no_tool_on_path(monkeypatch, tmp_path)
+
+    assert dev.main(["rust-check"], root=repo) == 2
+    assert "cargo is required" in capsys.readouterr().err
+
+
+def test_rust_check_runs_fmt_clippy_and_test_in_src_tauri(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "cargo-calls.log"
+    _fake_tool(monkeypatch, tmp_path, "cargo", log)
+
+    assert dev.main(["rust-check"], root=repo) == 0
+
+    assert log.read_text().splitlines() == [
+        "fmt --check",
+        "clippy --all-targets -- -D warnings",
+        "test",
+    ]
+
+
+def test_rust_check_stops_after_the_first_failure(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "cargo"
+    # `fmt --check` fails; `clippy`/`test` must never run.
+    script.write_text('#!/bin/sh\n[ "$1" = "fmt" ] && exit 1\nexit 0\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+    assert dev.main(["rust-check"], root=repo) == 1
+
+
+def test_ui_check_requires_npm(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _no_tool_on_path(monkeypatch, tmp_path)
+
+    assert dev.main(["ui-check"], root=repo) == 2
+    assert "npm is required" in capsys.readouterr().err
+
+
+def test_ui_check_requires_node_modules(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_tool(monkeypatch, tmp_path, "npm", tmp_path / "npm-calls.log")
+
+    assert dev.main(["ui-check"], root=repo) == 2
+    assert "ui/node_modules is missing" in capsys.readouterr().err
+
+
+def test_ui_check_runs_typecheck_and_format_check(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (repo / "ui" / "node_modules").mkdir(parents=True)
+    log = tmp_path / "npm-calls.log"
+    _fake_tool(monkeypatch, tmp_path, "npm", log)
+
+    assert dev.main(["ui-check"], root=repo) == 0
+
+    assert log.read_text().splitlines() == ["run typecheck", "run format:check"]
