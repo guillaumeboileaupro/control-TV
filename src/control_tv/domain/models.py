@@ -67,7 +67,7 @@ def _valid_content_type(value: str) -> bool:
     if value != value.strip() or any(character in value for character in "\r\n\0"):
         return False
     media_type, separator, parameters = value.partition(";")
-    if _MEDIA_TYPE_RE.fullmatch(media_type) is None:
+    if _MEDIA_TYPE_RE.fullmatch(media_type.rstrip()) is None:
         return False
     if not separator:
         return True
