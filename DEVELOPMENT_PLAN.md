@@ -130,7 +130,67 @@ Exit criteria:
 - [ ] package build and installation/launch validation are tracked separately;
 - [ ] each claimed platform is installed and launched on that platform before validation is recorded.
 
-## Phase 8 - Release readiness
+## Phase 8 - CI/CD
+
+### Continuous integration
+
+- [ ] create the primary GitHub Actions CI workflow;
+- [ ] run CI on pull requests targeting `main`;
+- [ ] run CI on pushes to `main`;
+- [ ] install the Python environment reproducibly from the selected dependency/lock mechanism;
+- [ ] verify dependency and lockfile consistency;
+- [ ] run `ruff check`;
+- [ ] run `ruff format --check`;
+- [ ] run `mypy --strict`;
+- [ ] run `pytest`;
+- [ ] run `python -m pip check`;
+- [ ] generate test coverage reporting and enforce the selected quality gate;
+- [ ] make required quality failures fail the CI job;
+- [ ] require applicable CI checks before a pull request is considered merge-ready.
+
+### Application build CI
+
+- [ ] verify the Tauri 2 build;
+- [ ] verify the frontend build;
+- [ ] verify Python/Tauri integration;
+- [ ] add Linux build checks;
+- [ ] add Windows build checks;
+- [ ] add Android build checks;
+- [ ] keep CI build success distinct from real Chromecast/TV hardware validation.
+
+### Continuous delivery and packaging
+
+- [ ] build the Debian/Ubuntu package;
+- [ ] build the Windows installer/application artifact;
+- [ ] build the Android APK;
+- [ ] retain controlled build artifacts from release workflows;
+- [ ] apply consistent artifact versioning;
+- [ ] generate checksums for release artifacts;
+- [ ] generate or prepare release notes.
+
+### Releases
+
+- [ ] define the project versioning strategy;
+- [ ] trigger release builds from the selected tag/release mechanism;
+- [ ] publish verified artifacts to GitHub Releases;
+- [ ] verify release artifacts before publication;
+- [ ] document and implement signing where required;
+- [ ] never mark a package/platform as validated without the corresponding real installation/launch test.
+
+### CI/CD maintenance
+
+- [ ] configure automated dependency update monitoring where appropriate;
+- [ ] run CI against dependency update pull requests;
+- [ ] add relevant security checks;
+- [ ] define artifact retention policy;
+- [ ] keep local build cleanup requirements independent from CI runner cleanup.
+
+Exit criteria:
+- [ ] pull requests cannot be considered merge-ready until required CI checks pass;
+- [ ] release artifacts are produced reproducibly by automation;
+- [ ] CI/build validation, package validation and physical-device validation remain explicitly distinct.
+
+## Phase 9 - Release readiness
 
 Verify:
 - [ ] manual control without AI/MCP;
@@ -138,6 +198,7 @@ Verify:
 - [ ] Cast operations on real hardware;
 - [ ] MCP adapter independently;
 - [ ] Android, Windows and Debian/Ubuntu packages;
+- [ ] required CI checks are green for the release commit;
 - [ ] repository contains no credentials or generated build/temp output;
 - [ ] build disk usage remains understood and controlled.
 
@@ -165,4 +226,4 @@ At the end of each implementation iteration:
 
 ## Progress rule
 
-Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan in the iteration that changes project state.
+Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan continuously in the same iteration that changes project state, including newly discovered work, review findings and blockers. Do not defer plan synchronization until the end of an iteration.
