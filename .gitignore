@@ -1,12 +1,19 @@
 # Rust / Tauri build output
 /target/
 /src-tauri/target/
+/src-tauri/gen/schemas/
 
 # Android generated/build output
 /src-tauri/gen/android/.gradle/
 /src-tauri/gen/android/build/
 /src-tauri/gen/android/app/build/
 .gradle/
+
+# Frontend (ui/) generated output
+/ui/node_modules/
+/ui/dist/
+/ui/dist-ssr/
+*.local
 
 # Python generated output
 .venv/

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>control-TV</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <!--
+      Application shell skeleton. Real views (device discovery/selection, receiver and
+      media state, playback controls, volume/mute, error/unavailable states) are built
+      as this section grows; see src/main.ts for the same structure on the TypeScript
+      side. Nothing here talks to Chromecast directly - every action goes through the
+      Tauri commands defined in src-tauri/src/lib.rs, which forward to the shared
+      Python control layer (src/control_tv/bridge.py). No control logic is duplicated
+      here.
+    -->
+    <main class="app">
+      <header class="app-header">
+        <h1>control-TV</h1>
+        <p id="backend-status" class="status" role="status">Checking control backend…</p>
+      </header>
+
+      <!-- Device discovery / selection (Phase 4 next step) -->
+      <section class="panel" aria-labelledby="devices-heading">
+        <div class="panel-header">
+          <h2 id="devices-heading">Devices</h2>
+          <button id="discover-button" type="button">Discover devices</button>
+        </div>
+        <p id="devices-message" class="message"></p>
+        <ul id="devices-list" class="devices"></ul>
+      </section>
+
+      <!-- Placeholders for the next slices: receiver/media state, playback controls,
+           volume/mute. Left empty and unstyled on purpose - no UI is built for them
+           until the corresponding bridge methods and Tauri commands exist. -->
+      <section class="panel panel-placeholder" aria-hidden="true">
+        <p>Receiver/media state, playback controls, and volume/mute follow here.</p>
+      </section>
+    </main>
+  </body>
+</html>
