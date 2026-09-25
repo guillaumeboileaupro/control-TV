@@ -32,7 +32,7 @@ Exit criteria:
 ## Phase 1 - Shared control foundation
 
 Deliverables:
-- [ ] define shared control/domain interfaces used by GUI and MCP;
+- [x] define shared control/domain interfaces used by GUI and MCP;
 - [x] Python project/package structure and typed device/connection models;
 - [x] explicit errors and operation results;
 - [ ] integrate the selected Python Chromecast modules behind a focused adapter;
@@ -40,7 +40,7 @@ Deliverables:
 - [ ] focused deterministic unit tests.
 
 Exit criteria:
-- [ ] control/domain behavior is testable independently of the UI;
+- [x] control/domain behavior is testable independently of the UI;
 - [ ] GUI/MCP concerns are absent from low-level Cast integration;
 - [ ] tests cover meaningful deterministic behavior.
 

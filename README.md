@@ -52,10 +52,12 @@ python3 scripts/dev.py dist-clean [--dry-run] # clean, plus .venv and dist/
 ## Repository layout
 
 ```text
-src/control_tv/   Python package (shared control layer, to be built out)
-tests/            deterministic unit tests
-scripts/dev.py    development, cleanup and disk-usage commands
-assets/           project assets
+src/control_tv/domain/     typed models, errors and command results (pure Python)
+src/control_tv/ports.py    CastTransport and TvControl interfaces
+src/control_tv/service.py  ControlService: validation and sent-versus-confirmed verification
+tests/                     deterministic unit tests (in-memory fake TV, fake clock)
+scripts/dev.py             development, cleanup and disk-usage commands
+assets/                    project assets
 ```
 
 ## Development principles
@@ -69,4 +71,4 @@ assets/           project assets
 
 ## Status
 
-Phase 0: repository and development tooling. The package is an empty skeleton: there is no Cast discovery, no control code, no UI, no MCP adapter and no packaging yet. Nothing has been validated on a real Chromecast or Google TV device.
+Phase 1 (shared control foundation) is in progress. The domain vocabulary and the control service exist and are tested against an in-memory fake TV. There is no real Cast transport yet (no `pychromecast` adapter), no UI, no MCP adapter and no packaging. Nothing has been validated on a real Chromecast or Google TV device.
