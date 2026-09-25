@@ -7,6 +7,7 @@ never touched.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -232,3 +233,56 @@ def test_format_size(size: int, expected: str) -> None:
 def test_quality_commands_require_setup(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert dev.main(["test"], root=repo) == 2
     assert "setup" in capsys.readouterr().err
+
+
+def _no_uv_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point PATH at an empty directory so `uv` cannot be found."""
+    empty = tmp_path / "empty-path"
+    empty.mkdir(exist_ok=True)
+    monkeypatch.setenv("PATH", str(empty))
+
+
+def _fake_uv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log: Path) -> None:
+    """Put a fake `uv` on PATH that appends its argv to `log` and exits 0."""
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "uv"
+    script.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+
+@pytest.mark.parametrize("command", ["setup", "lock"])
+def test_setup_and_lock_require_uv(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    _no_uv_on_path(monkeypatch, tmp_path)
+
+    assert dev.main([command], root=repo) == 2
+    assert "uv is required" in capsys.readouterr().err
+
+
+def test_setup_syncs_the_locked_environment(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "uv-calls.log"
+    _fake_uv(monkeypatch, tmp_path, log)
+
+    assert dev.main(["setup"], root=repo) == 0
+
+    assert log.read_text().splitlines() == ["sync --locked"]
+
+
+def test_lock_regenerates_the_lockfile(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "uv-calls.log"
+    _fake_uv(monkeypatch, tmp_path, log)
+
+    assert dev.main(["lock"], root=repo) == 0
+
+    assert log.read_text().splitlines() == ["lock"]
