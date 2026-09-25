@@ -20,8 +20,9 @@ Build a lightweight standalone Chromecast / Google TV controller for Android, Wi
 Deliverables:
 - [x] repository hygiene and generated-file exclusions;
 - [x] documented architecture and development plan;
-- [ ] reproducible local development commands;
-- [ ] explicit `clean`, `dist-clean` and disk-usage inspection commands once build tooling exists;
+- [x] reproducible local development commands;
+- [x] explicit `clean`, `dist-clean` and disk-usage inspection commands for the current Python tooling;
+- [ ] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output once that tooling exists, validated against real generated output;
 - [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
 
 Exit criteria:
@@ -31,39 +32,46 @@ Exit criteria:
 ## Phase 1 - Shared control foundation
 
 Deliverables:
-- [ ] define shared control/domain interfaces used by GUI and MCP;
-- [ ] Python project/package structure and typed device/connection models;
-- [ ] explicit errors and operation results;
-- [ ] integrate the selected Python Chromecast modules behind a focused adapter;
+- [x] define shared control/domain interfaces used by GUI and MCP;
+- [x] Python project/package structure and typed device/connection models;
+- [x] explicit errors and operation results;
+- [x] integrate the selected Python Chromecast modules behind a focused adapter;
 - [ ] add native/Rust components only where a measured or platform requirement justifies them;
-- [ ] focused deterministic unit tests.
+- [x] focused deterministic unit tests.
 
 Exit criteria:
-- [ ] control/domain behavior is testable independently of the UI;
-- [ ] GUI/MCP concerns are absent from low-level Cast integration;
-- [ ] tests cover meaningful deterministic behavior.
+- [x] control/domain behavior is testable independently of the UI;
+- [x] GUI/MCP concerns are absent from low-level Cast integration;
+- [x] tests cover meaningful deterministic behavior.
+
+## Active review follow-up
+
+- [x] **Implemented and automation-validated:** disconnect each superseded PyChromecast instance before replacing the same UUID; repeated discovery and idempotent `close()` are covered by deterministic tests.
+- [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
+- [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
+- [ ] **Physical validation still required:** exercise discovery, replacement cleanup, stale-connection recovery, command acknowledgement and observed state on a real Chromecast/Google TV.
 
 ## Phase 2 - Cast discovery and connection
 
 Deliverables:
-- [ ] LAN discovery using the selected Chromecast integration;
-- [ ] stable device selection separate from display names;
-- [ ] bounded discovery/connection timeouts;
-- [ ] connection lifecycle and recovery from unavailable devices;
-- [ ] receiver/device status retrieval.
+- [x] LAN discovery using the selected Chromecast integration;
+- [x] stable device selection separate from display names;
+- [x] bounded discovery/connection timeouts;
+- [x] connection lifecycle and bounded recovery from stale device addresses;
+- [x] receiver/device status retrieval.
 
 Exit criteria:
 - [ ] at least one real compatible device can be discovered and addressed when hardware validation is available;
-- [ ] failures are represented explicitly rather than as false success.
+- [x] failures are represented explicitly rather than as false success.
 
 ## Phase 3 - Media controls
 
 Deliverables:
-- [ ] play/load supported media;
-- [ ] pause/resume and stop;
-- [ ] seek where supported;
-- [ ] volume and mute;
-- [ ] receiver/media state synchronization;
+- [x] play/load supported media;
+- [x] pause/resume and stop;
+- [x] seek where supported;
+- [x] volume and mute;
+- [x] receiver/media state synchronization;
 - [ ] validation of URLs, content types, ranges and application identifiers.
 
 Exit criteria:

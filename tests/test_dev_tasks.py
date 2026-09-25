@@ -1,0 +1,234 @@
+"""Tests for the project-owned cleanup logic in scripts/dev.py.
+
+Every test runs against a fake repository under `tmp_path`; the real repository is
+never touched.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+DEV_PATH = Path(__file__).resolve().parent.parent / "scripts" / "dev.py"
+
+
+def _load_dev() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("control_tv_dev_script", DEV_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+dev = _load_dev()
+
+
+def _write(path: Path, content: str = "x") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    root = tmp_path / "repo"
+    for tracked in (
+        "pyproject.toml",
+        "README.md",
+        "src/control_tv/__init__.py",
+        "tests/test_x.py",
+        "scripts/dev.py",
+        ".git/config",
+        "src-tauri/Cargo.toml",
+        "src-tauri/gen/android/settings.gradle",
+    ):
+        _write(root / tracked)
+    return root
+
+
+def _generate(root: Path) -> None:
+    for generated in (
+        ".pytest_cache/CACHEDIR.TAG",
+        ".mypy_cache/meta.json",
+        ".ruff_cache/cache",
+        "htmlcov/index.html",
+        "build/lib/mod.py",
+        "tmp/scratch.txt",
+        "target/debug/app",
+        "src-tauri/target/release/app",
+        "src-tauri/gen/android/build/out.apk",
+        "src-tauri/gen/android/app/build/out.apk",
+        "src-tauri/gen/android/.gradle/state",
+        ".gradle/state",
+        "src/control_tv/__pycache__/__init__.cpython-312.pyc",
+        "tests/__pycache__/test_x.cpython-312.pyc",
+        "src/control_tv.egg-info/PKG-INFO",
+        "control_tv.egg-info/PKG-INFO",
+        "run.log",
+        ".coverage",
+        ".venv/lib/site.py",
+        ".venv/lib/__pycache__/site.cpython-312.pyc",
+        "dist/control-tv.deb",
+    ):
+        _write(root / generated)
+
+
+def _remaining(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+
+TRACKED = {
+    "pyproject.toml",
+    "README.md",
+    "src/control_tv/__init__.py",
+    "tests/test_x.py",
+    "scripts/dev.py",
+    ".git/config",
+    "src-tauri/Cargo.toml",
+    "src-tauri/gen/android/settings.gradle",
+}
+
+
+def test_clean_removes_disposable_output_only(repo: Path) -> None:
+    _generate(repo)
+
+    assert dev.main(["clean"], root=repo) == 0
+
+    assert _remaining(repo) == TRACKED | {
+        ".venv/lib/site.py",
+        ".venv/lib/__pycache__/site.cpython-312.pyc",
+        "dist/control-tv.deb",
+    }
+
+
+def test_dist_clean_removes_all_reproducible_output(repo: Path) -> None:
+    _generate(repo)
+
+    assert dev.main(["dist-clean"], root=repo) == 0
+
+    assert _remaining(repo) == TRACKED
+    assert not (repo / ".venv").exists()
+    assert not (repo / "dist").exists()
+
+
+def test_dry_run_removes_nothing(repo: Path) -> None:
+    _generate(repo)
+    before = _remaining(repo)
+
+    assert dev.main(["dist-clean", "--dry-run"], root=repo) == 0
+
+    assert _remaining(repo) == before
+
+
+def test_clean_on_repo_without_generated_output_is_a_noop(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert dev.main(["clean"], root=repo) == 0
+
+    assert _remaining(repo) == TRACKED
+    assert "0 project-owned path(s)" in capsys.readouterr().out
+
+
+def test_symlink_target_is_unlinked_not_followed(repo: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "shared-cache"
+    keep = _write(outside / "registry.bin")
+    (repo / "target").symlink_to(outside, target_is_directory=True)
+
+    assert dev.main(["clean"], root=repo) == 0
+
+    assert not (repo / "target").exists()
+    assert not (repo / "target").is_symlink()
+    assert keep.exists()
+
+
+def test_symlinked_scan_directory_is_not_descended(repo: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    keep = _write(outside / "__pycache__" / "x.pyc")
+    (repo / "tests").rename(repo / "tests_real")
+    (repo / "tests").symlink_to(outside, target_is_directory=True)
+
+    assert dev.main(["clean"], root=repo) == 0
+
+    assert keep.exists()
+
+
+def test_paths_outside_repository_are_refused(repo: Path, tmp_path: Path) -> None:
+    victim = _write(tmp_path / "victim" / "data.txt")
+
+    with pytest.raises(dev.UnsafeTargetError):
+        dev.remove_paths([victim.parent], repo)
+
+    assert victim.exists()
+
+
+def test_repository_root_and_git_directory_are_refused(repo: Path) -> None:
+    with pytest.raises(dev.UnsafeTargetError):
+        dev.remove_paths([repo], repo)
+    with pytest.raises(dev.UnsafeTargetError):
+        dev.remove_paths([repo / ".git"], repo)
+    with pytest.raises(dev.UnsafeTargetError):
+        dev.remove_paths([repo / ".git" / "config"], repo)
+
+    assert (repo / ".git" / "config").exists()
+
+
+def test_unsafe_target_aborts_before_any_deletion(repo: Path, tmp_path: Path) -> None:
+    _generate(repo)
+    outside = _write(tmp_path / "victim" / "data.txt").parent
+
+    with pytest.raises(dev.UnsafeTargetError):
+        dev.remove_paths([repo / "target", outside], repo)
+
+    assert (repo / "target").exists()
+
+
+def test_disk_usage_reports_sizes(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write(repo / ".venv" / "big.bin", "x" * 2048)
+    _write(repo / ".pytest_cache" / "a", "y" * 10)
+
+    assert dev.main(["disk-usage"], root=repo) == 0
+
+    out = capsys.readouterr().out
+    assert "Free disk on" in out
+    assert ".venv" in out
+    assert "2.0 KiB" in out
+    assert ".pytest_cache" in out
+    assert "Total project-owned generated output:" in out
+
+
+def test_path_size_counts_nested_files_without_following_symlinks(
+    repo: Path, tmp_path: Path
+) -> None:
+    _write(repo / "target" / "a.bin", "x" * 100)
+    _write(repo / "target" / "sub" / "b.bin", "x" * 50)
+    big = _write(tmp_path / "outside" / "huge.bin", "x" * 100_000)
+    (repo / "target" / "link").symlink_to(big.parent, target_is_directory=True)
+
+    size = dev.path_size(repo / "target")
+
+    assert 150 <= size < 100_000
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (0, "0 B"),
+        (1023, "1023 B"),
+        (1024, "1.0 KiB"),
+        (5 * 1024**2, "5.0 MiB"),
+        (3 * 1024**3, "3.0 GiB"),
+    ],
+)
+def test_format_size(size: int, expected: str) -> None:
+    assert dev.format_size(size) == expected
+
+
+def test_quality_commands_require_setup(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert dev.main(["test"], root=repo) == 2
+    assert "setup" in capsys.readouterr().err
