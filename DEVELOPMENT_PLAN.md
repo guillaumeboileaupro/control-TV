@@ -161,7 +161,7 @@ Exit criteria:
 - [x] run `pytest`;
 - [x] generate terminal coverage reporting and enforce a 95% minimum;
 - [x] make required local quality failures fail the CI job;
-- [x] validate the workflow in a hosted GitHub Actions run (run `36127683296`, all steps passed);
+- [x] validate the workflow in a hosted GitHub Actions run (run `36127802255`, all steps passed with checkout v5.0.1);
 - [x] replace the deprecated Node 20 `actions/checkout` runtime reported by the first hosted run with SHA-pinned v5.0.1 (Node 24);
 - [ ] require applicable CI checks before a pull request is considered merge-ready.
 
