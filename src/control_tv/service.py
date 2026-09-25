@@ -97,11 +97,20 @@ def _loaded(url: str) -> ExpectedState:
     return check
 
 
-def _position_near(target: float, tolerance: float) -> ExpectedState:
+def _position_near(
+    target: float, tolerance: float, expected_content_id: str | None
+) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
+        if expected_content_id is None:
+            return Observation(False, "media identity was not reported before the command")
+        if media.content_id != expected_content_id:
+            return Observation(
+                False,
+                f"loaded content changed to {media.content_id!r} from {expected_content_id!r}",
+            )
         if media.position_seconds is None:
             return Observation(False, "position was not reported")
         matched = abs(media.position_seconds - target) <= tolerance
@@ -227,6 +236,7 @@ class ControlService:
             device_id,
         )
         media = self._transport.get_status(device_id, timeout=self._status_timeout).media
+        expected_content_id = media.content_id if media is not None else None
         if media is not None and media.supports_seek is False:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
@@ -235,7 +245,7 @@ class ControlService:
         return self._verify(
             Command.SEEK,
             device_id,
-            _position_near(position_seconds, self._seek_tolerance),
+            _position_near(position_seconds, self._seek_tolerance, expected_content_id),
             f"position near {position_seconds:g}s",
         )
 

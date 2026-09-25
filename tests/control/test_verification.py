@@ -110,11 +110,33 @@ def test_loaded_matches_right_content_in_a_loaded_state() -> None:
 
 
 def test_position_near_reports_no_media_session() -> None:
-    assert _position_near(10.0, 1.0)(status()).description == "no active media session"
+    observation = _position_near(10.0, 1.0, URL)(status())
+
+    assert observation.matched is False
+    assert observation.description == "no active media session"
+
+
+def test_position_near_requires_a_previously_observed_media_identity() -> None:
+    observation = _position_near(10.0, 1.0, None)(
+        status(media=MediaStatus(content_id=URL, position_seconds=10.0))
+    )
+
+    assert observation.matched is False
+    assert observation.description == "media identity was not reported before the command"
+
+
+def test_position_near_rejects_a_matching_position_on_replaced_media() -> None:
+    replacement = "http://media.local/replacement.mp4"
+    observation = _position_near(10.0, 1.0, URL)(
+        status(media=MediaStatus(content_id=replacement, position_seconds=10.0))
+    )
+
+    assert observation.matched is False
+    assert observation.description == f"loaded content changed to {replacement!r} from {URL!r}"
 
 
 def test_position_near_reports_when_the_device_does_not_report_a_position() -> None:
-    observation = _position_near(10.0, 1.0)(status(media=MediaStatus()))
+    observation = _position_near(10.0, 1.0, URL)(status(media=MediaStatus(content_id=URL)))
 
     assert observation.matched is False
     assert observation.description == "position was not reported"
@@ -122,7 +144,9 @@ def test_position_near_reports_when_the_device_does_not_report_a_position() -> N
 
 @pytest.mark.parametrize(("position", "matched"), [(9.0, True), (11.0, True), (7.0, False)])
 def test_position_near_applies_the_tolerance(position: float, matched: bool) -> None:
-    observation = _position_near(10.0, 1.0)(status(media=MediaStatus(position_seconds=position)))
+    observation = _position_near(10.0, 1.0, URL)(
+        status(media=MediaStatus(content_id=URL, position_seconds=position))
+    )
 
     assert observation.matched is matched
     assert observation.description == f"position is {position:g}s"

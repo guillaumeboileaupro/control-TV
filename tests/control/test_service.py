@@ -417,6 +417,49 @@ def test_seek_is_unconfirmed_when_the_position_does_not_move(
     assert service.seek(DEVICE_ID, 120.0).confirmation is Confirmation.UNCONFIRMED
 
 
+def test_seek_is_not_confirmed_by_matching_position_on_replaced_media(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    replacement = "http://media.local/replacement.mp4"
+
+    def replace_media() -> None:
+        transport.tv.content_id = replacement
+        transport.tv.position = 120.0
+
+    transport.ignore_commands = True
+    transport.status_effects = [lambda: None, replace_media]
+    service = make_service(transport, clock)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert transport.sent() == ["seek"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.content_id == replacement
+    assert result.observed.media.position_seconds == 120.0
+    assert result.detail is not None
+    assert f"loaded content changed to {replacement!r} from {MOVIE_URL!r}" in result.detail
+    assert clock.now == pytest.approx(1.0)
+
+
+def test_seek_without_precommand_media_identity_remains_unconfirmed(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.tv.content_id = None
+    service = make_service(transport, clock)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert transport.sent() == ["seek"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.position_seconds == 120.0
+    assert result.detail is not None
+    assert "media identity was not reported before the command" in result.detail
+
+
 def test_seek_is_refused_before_sending_when_the_media_cannot_seek(
     service: ControlService, transport: FakeTransport
 ) -> None:

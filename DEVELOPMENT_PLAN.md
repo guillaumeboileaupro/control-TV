@@ -75,6 +75,13 @@ Exit criteria:
 
 ## Phase 3 - Media controls
 
+Current confirmation-synchronization iteration:
+- [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
+- [x] deterministic targeted tests cover matching media, replaced media, missing media identity, contradictory positions and the unchanged global confirmation deadline;
+- [x] complete local lint, format, strict typing, test, 98.01% coverage and dependency gates pass; hosted CI remains a separate PR requirement;
+- [ ] distinguish replacement sessions that reuse the exact same `content_id`; this needs a stable media-session identifier in the shared status model and must be coordinated with the open Tauri bridge PR before changing that interface;
+- [ ] physical Chromecast/Google TV validation remains required; no fake or automated test completes it;
+
 Current command-result hardening iteration:
 - [x] **P2 review follow-up implemented and automation-validated:** `MEDIA_STATUS` is the only successful terminal LOAD response; every other terminal response is rejected before confirmation;
 - [x] **Implemented and automation-validated:** commands not sent (`RequestFailed` -> unavailable) are distinct from receiver-declared media rejection (`LOAD_FAILED` -> rejected), and neither command is replayed;
