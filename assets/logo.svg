@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">control-TV</title>
+  <desc id="desc">Minimal television and cast symbol</desc>
+  <defs>
+    <linearGradient id="g" x1="96" y1="96" x2="416" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#g)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 136V112h288v264H232"/>
+    <path d="M216 400h80"/>
+    <path d="M112 304a96 96 0 0 1 96 96"/>
+    <path d="M112 240a160 160 0 0 1 160 160"/>
+  </g>
+  <circle cx="112" cy="400" r="18" fill="url(#g)"/>
+</svg>
