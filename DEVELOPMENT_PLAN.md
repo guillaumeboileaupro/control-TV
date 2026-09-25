@@ -76,6 +76,7 @@ Exit criteria:
 ## Phase 3 - Media controls
 
 Current command-result hardening iteration:
+- [x] **P2 review follow-up implemented and automation-validated:** `MEDIA_STATUS` is the only successful terminal LOAD response; every other terminal response is rejected before confirmation;
 - [x] **Implemented and automation-validated:** commands not sent (`RequestFailed` -> unavailable) are distinct from receiver-declared media rejection (`LOAD_FAILED` -> rejected), and neither command is replayed;
 - [x] deterministic coverage proves unavailable, ambiguous and explicitly rejected delivery never produces a `CommandResult` or invented confirmation;
 

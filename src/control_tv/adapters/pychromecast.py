@@ -17,7 +17,7 @@ from pychromecast.controllers.media import (
     MEDIA_PLAYER_STATE_PAUSED,
     MEDIA_PLAYER_STATE_PLAYING,
     MEDIA_PLAYER_STATE_UNKNOWN,
-    TYPE_LOAD_FAILED,
+    TYPE_MEDIA_STATUS,
 )
 from pychromecast.controllers.media import (
     MediaStatus as PyMediaStatus,
@@ -174,11 +174,13 @@ class PyChromecastTransport:
         )
         self._command(device_id, "load media", response.wait_response)
         response_data = response.response
-        if response_data is not None and response_data.get("type") == TYPE_LOAD_FAILED:
-            detail = response_data.get("detailedErrorCode")
+        response_type = response_data.get("type") if response_data is not None else None
+        if response_type != TYPE_MEDIA_STATUS:
+            detail = response_data.get("detailedErrorCode") if response_data is not None else None
             suffix = "" if detail is None else f" (detailed error {detail})"
             raise CommandRejectedError(
-                f"device {device_id} rejected load media with LOAD_FAILED{suffix}",
+                f"device {device_id} rejected load media with terminal response "
+                f"{response_type!r}{suffix}",
                 device_id=device_id,
             )
 
