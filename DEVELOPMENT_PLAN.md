@@ -210,6 +210,60 @@ Verify:
 - [ ] repository contains no credentials or generated build/temp output;
 - [ ] build disk usage remains understood and controlled.
 
+## CI/CD
+
+### CI - Qualité et tests
+
+- [ ] Créer le workflow GitHub Actions principal
+- [ ] Déclencher la CI sur les pull requests vers `main`
+- [ ] Déclencher la CI sur les pushes vers `main`
+- [ ] Installer l'environnement Python de manière reproductible
+- [ ] Vérifier le lockfile et les dépendances
+- [ ] Exécuter `ruff check`
+- [ ] Exécuter `ruff format --check`
+- [ ] Exécuter `mypy --strict`
+- [ ] Exécuter `pytest`
+- [ ] Exécuter `python -m pip check`
+- [ ] Générer le rapport de couverture
+- [ ] Faire échouer la CI si les quality gates ne passent pas
+
+### CI - Application
+
+- [ ] Vérifier le build Tauri 2
+- [ ] Vérifier le build frontend
+- [ ] Vérifier l'intégration Python/Tauri
+- [ ] Ajouter les contrôles Linux
+- [ ] Ajouter les contrôles Windows
+- [ ] Ajouter les contrôles Android
+- [ ] Séparer clairement build CI et validation matérielle Chromecast/TV
+
+### CD - Packaging
+
+- [ ] Construire le paquet Debian
+- [ ] Construire l'installateur Windows
+- [ ] Construire l'APK Android
+- [ ] Conserver les artefacts de build GitHub Actions
+- [ ] Versionner automatiquement les artefacts
+- [ ] Générer les checksums
+- [ ] Préparer les release notes
+
+### CD - Releases
+
+- [ ] Définir la stratégie de versionnement
+- [ ] Déclencher les builds de release sur tag
+- [ ] Publier les artefacts dans une GitHub Release
+- [ ] Vérifier les artefacts avant publication
+- [ ] Prévoir signature des artefacts lorsque nécessaire
+- [ ] Ne jamais considérer un package comme validé sur une plateforme sans test réel correspondant
+
+### Maintenance
+
+- [ ] Activer Dependabot ou mécanisme équivalent
+- [ ] Ajouter une CI de contrôle des mises à jour de dépendances
+- [ ] Ajouter les contrôles de sécurité pertinents
+- [ ] Définir la politique de rétention des artefacts
+- [ ] Nettoyer systématiquement les artefacts temporaires après les builds locaux
+
 ## Mandatory build/temp cleanup
 
 At every build/test/package iteration:
@@ -235,3 +289,5 @@ At the end of each implementation iteration:
 ## Progress rule
 
 Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan continuously in the same iteration that changes project state, including newly discovered work, review findings and blockers. Do not defer plan synchronization until the end of an iteration.
+
+A deliverable or exit criterion whose wording refers to real hardware, a real device or a real platform is checked `[x]` only after that validation actually ran on that hardware/platform, with the evidence recorded in the handoff. Passing automated tests against a fake/simulated transport, fake TV, fake clock or emulator is real, valuable engineering progress, but it is never by itself sufficient to check such an item; simulated validation is never substituted for or presented as hardware validation. When a deliverable bundles implementation with hardware validation (for example "receiver/media state synchronization"), split it in this file into two lines - one for the implementation, checked once it is built and covered by deterministic tests, and one for real-device validation, checked only once that validation actually happened - rather than checking the combined line early.
