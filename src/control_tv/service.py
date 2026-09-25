@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from control_tv.domain import (
     Command,
@@ -33,7 +34,21 @@ from control_tv.domain import (
 )
 from control_tv.ports import CastTransport
 
-ExpectedState = Callable[[DeviceStatus], bool]
+
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """What was actually seen on the TV for one command, regardless of what it expected.
+
+    `description` is always a plain, factual statement of what was observed - never a
+    restatement of what was hoped for, and never invented when the TV reported nothing:
+    the absence of a media session is reported as exactly that, not as an idle/stopped state.
+    """
+
+    matched: bool
+    description: str
+
+
+ExpectedState = Callable[[DeviceStatus], Observation]
 
 DEFAULT_DISCOVERY_TIMEOUT = 5.0
 DEFAULT_CONFIRM_TIMEOUT = 5.0
@@ -59,49 +74,62 @@ def _checked_id(device_id: DeviceId) -> DeviceId:
 
 
 def _playback_in(*states: PlaybackState) -> ExpectedState:
-    def check(status: DeviceStatus) -> bool:
-        return status.media is not None and status.media.playback_state in states
+    def check(status: DeviceStatus) -> Observation:
+        media = status.media
+        if media is None:
+            return Observation(False, "no active media session")
+        return Observation(media.playback_state in states, f"playback is {media.playback_state}")
 
     return check
 
 
 def _loaded(url: str) -> ExpectedState:
-    def check(status: DeviceStatus) -> bool:
+    def check(status: DeviceStatus) -> Observation:
         media = status.media
-        return (
-            media is not None and media.content_id == url and media.playback_state in _LOADED_STATES
-        )
+        if media is None:
+            return Observation(False, "no active media session")
+        if media.content_id != url:
+            return Observation(False, f"loaded content is {media.content_id!r}, not {url!r}")
+        matched = media.playback_state in _LOADED_STATES
+        return Observation(matched, f"content is loaded but playback is {media.playback_state}")
 
     return check
 
 
 def _position_near(target: float, tolerance: float) -> ExpectedState:
-    def check(status: DeviceStatus) -> bool:
+    def check(status: DeviceStatus) -> Observation:
         media = status.media
-        return (
-            media is not None
-            and media.position_seconds is not None
-            and abs(media.position_seconds - target) <= tolerance
-        )
+        if media is None:
+            return Observation(False, "no active media session")
+        if media.position_seconds is None:
+            return Observation(False, "position was not reported")
+        matched = abs(media.position_seconds - target) <= tolerance
+        return Observation(matched, f"position is {media.position_seconds:g}s")
 
     return check
 
 
 def _volume_near(level: float, tolerance: float) -> ExpectedState:
-    def check(status: DeviceStatus) -> bool:
+    def check(status: DeviceStatus) -> Observation:
         receiver = status.receiver
-        return (
-            receiver is not None
-            and receiver.volume_level is not None
-            and abs(receiver.volume_level - level) <= tolerance
-        )
+        if receiver is None:
+            return Observation(False, "no receiver status")
+        if receiver.volume_level is None:
+            return Observation(False, "volume level was not reported")
+        matched = abs(receiver.volume_level - level) <= tolerance
+        return Observation(matched, f"volume is {receiver.volume_level:g}")
 
     return check
 
 
 def _muted_is(muted: bool) -> ExpectedState:
-    def check(status: DeviceStatus) -> bool:
-        return status.receiver is not None and status.receiver.muted is muted
+    def check(status: DeviceStatus) -> Observation:
+        receiver = status.receiver
+        if receiver is None:
+            return Observation(False, "no receiver status")
+        if receiver.muted is None:
+            return Observation(False, "mute state was not reported")
+        return Observation(receiver.muted is muted, f"mute is {'on' if receiver.muted else 'off'}")
 
     return check
 
@@ -223,7 +251,7 @@ class ControlService:
         device_id = _checked_id(device_id)
         self._transport.set_muted(device_id, muted)
         return self._verify(
-            Command.SET_MUTED, device_id, _muted_is(muted), "muted" if muted else "unmuted"
+            Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"
         )
 
     def _verify(
@@ -233,7 +261,12 @@ class ControlService:
         expected: ExpectedState,
         description: str,
     ) -> CommandResult:
-        """Read the TV status until `expected` holds or the time budget is spent."""
+        """Read the TV status until `expected` holds or the time budget is spent.
+
+        The command was already sent by the caller; this only decides CONFIRMED versus
+        UNCONFIRMED. On UNCONFIRMED, `detail` states plainly what the TV last reported -
+        never a guess at what the missing command might have done.
+        """
         timeout = self._confirm_timeout
         if timeout is None:
             return CommandResult(
@@ -243,6 +276,7 @@ class ControlService:
         deadline = self._clock() + timeout
         last_status: DeviceStatus | None = None
         last_error: ControlError | None = None
+        last_observation: Observation | None = None
         while True:
             try:
                 status = self._transport.get_status(device_id)
@@ -250,13 +284,17 @@ class ControlService:
                 last_error = error
             else:
                 last_status, last_error = status, None
-                if status.connection is ConnectionState.CONNECTED and expected(status):
-                    return CommandResult(
-                        command=command,
-                        device_id=device_id,
-                        confirmation=Confirmation.CONFIRMED,
-                        observed=status,
-                    )
+                if status.connection is not ConnectionState.CONNECTED:
+                    last_observation = Observation(False, f"connection is {status.connection}")
+                else:
+                    last_observation = expected(status)
+                    if last_observation.matched:
+                        return CommandResult(
+                            command=command,
+                            device_id=device_id,
+                            confirmation=Confirmation.CONFIRMED,
+                            observed=status,
+                        )
             remaining = deadline - self._clock()
             if remaining <= 0:
                 break
@@ -264,8 +302,10 @@ class ControlService:
 
         if last_error is not None:
             detail = f"command sent; could not read the TV status: {last_error.message}"
+        elif last_observation is not None:
+            detail = f"command sent; expected {description}, but {last_observation.description}"
         else:
-            detail = f"command sent; the TV did not show {description} within {timeout:g}s"
+            detail = f"command sent; the TV status could not be read within {timeout:g}s"
         return CommandResult(
             command=command,
             device_id=device_id,

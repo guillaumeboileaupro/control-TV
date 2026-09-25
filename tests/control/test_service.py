@@ -111,7 +111,7 @@ def test_a_command_the_tv_ignores_is_sent_but_unconfirmed(
     assert result.observed.media is not None
     assert result.observed.media.playback_state is PlaybackState.PLAYING
     assert result.detail is not None
-    assert "did not show playback paused within 1s" in result.detail
+    assert "expected playback paused, but playback is playing" in result.detail
 
 
 def test_confirmation_is_bounded_by_the_timeout(transport: FakeTransport, clock: FakeClock) -> None:
@@ -157,6 +157,30 @@ def test_a_device_that_is_not_connected_never_confirms(
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert result.observed is not None
     assert result.observed.connection is ConnectionState.DISCONNECTED
+    # Being disconnected is reported as exactly that, distinct from a contradicting state.
+    assert result.detail is not None
+    assert "connection is disconnected" in result.detail
+
+
+def test_stop_never_fabricates_an_idle_state_the_device_did_not_report(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """A receiver that merely stops reporting a media session is not proof of idle.
+
+    Some receivers drop the media session entirely on stop instead of reporting an
+    explicit idle state. The service must not treat that absence as confirmation.
+    """
+    transport.clears_media_on_stop = True
+    service = make_service(transport, clock)
+
+    result = service.stop(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert result.detail is not None
+    assert "expected playback stopped, but no active media session" in result.detail
+    assert "idle" not in result.detail
 
 
 # --- failures are errors, never results -----------------------------------------------------
@@ -263,6 +287,8 @@ def test_load_media_is_unconfirmed_while_the_tv_still_shows_other_content(
     assert result.observed is not None
     assert result.observed.media is not None
     assert result.observed.media.content_id == MOVIE_URL
+    assert result.detail is not None
+    assert f"loaded content is {MOVIE_URL!r}, not " in result.detail
 
 
 def test_seek_is_confirmed_within_tolerance(
