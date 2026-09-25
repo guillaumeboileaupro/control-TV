@@ -23,7 +23,7 @@ The UI and the MCP adapter are thin. Device discovery, validation and state belo
 
 ## Development
 
-Prerequisite: Python 3.11 or newer. The commands below use only the standard library to bootstrap and behave the same on Linux, Windows and macOS. Only Linux has been exercised so far.
+Prerequisite: Python 3.11 or newer. The commands below use only the standard library to initialize the environment and behave the same on Linux, Windows and macOS. Only Linux has been exercised so far.
 
 ```bash
 python3 scripts/dev.py setup        # create .venv and install the project with dev dependencies
@@ -55,6 +55,7 @@ python3 scripts/dev.py dist-clean [--dry-run] # clean, plus .venv and dist/
 src/control_tv/domain/     typed models, errors and command results (pure Python)
 src/control_tv/ports.py    CastTransport and TvControl interfaces
 src/control_tv/service.py  ControlService: validation and sent-versus-confirmed verification
+src/control_tv/adapters/    focused external-library adapters (PyChromecast)
 tests/                     deterministic unit tests (in-memory fake TV, fake clock)
 scripts/dev.py             development, cleanup and disk-usage commands
 assets/                    project assets
@@ -71,4 +72,4 @@ assets/                    project assets
 
 ## Status
 
-Phase 1 (shared control foundation) is in progress. The domain vocabulary and the control service exist and are tested against an in-memory fake TV. There is no real Cast transport yet (no `pychromecast` adapter), no UI, no MCP adapter and no packaging. Nothing has been validated on a real Chromecast or Google TV device.
+Phase 1 (shared control foundation) is in progress. The domain vocabulary and the control service exist and are tested against an in-memory fake TV. The PyChromecast transport now implements discovery, status and media/volume commands behind the shared interface. There is still no UI, no MCP adapter or packaging. Nothing has been validated on a real Chromecast or Google TV device.

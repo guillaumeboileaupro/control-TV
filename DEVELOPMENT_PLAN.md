@@ -35,36 +35,36 @@ Deliverables:
 - [x] define shared control/domain interfaces used by GUI and MCP;
 - [x] Python project/package structure and typed device/connection models;
 - [x] explicit errors and operation results;
-- [ ] integrate the selected Python Chromecast modules behind a focused adapter;
+- [x] integrate the selected Python Chromecast modules behind a focused adapter;
 - [ ] add native/Rust components only where a measured or platform requirement justifies them;
-- [ ] focused deterministic unit tests.
+- [x] focused deterministic unit tests.
 
 Exit criteria:
 - [x] control/domain behavior is testable independently of the UI;
-- [ ] GUI/MCP concerns are absent from low-level Cast integration;
-- [ ] tests cover meaningful deterministic behavior.
+- [x] GUI/MCP concerns are absent from low-level Cast integration;
+- [x] tests cover meaningful deterministic behavior.
 
 ## Phase 2 - Cast discovery and connection
 
 Deliverables:
-- [ ] LAN discovery using the selected Chromecast integration;
-- [ ] stable device selection separate from display names;
-- [ ] bounded discovery/connection timeouts;
+- [x] LAN discovery using the selected Chromecast integration;
+- [x] stable device selection separate from display names;
+- [x] bounded discovery/connection timeouts;
 - [ ] connection lifecycle and recovery from unavailable devices;
-- [ ] receiver/device status retrieval.
+- [x] receiver/device status retrieval.
 
 Exit criteria:
 - [ ] at least one real compatible device can be discovered and addressed when hardware validation is available;
-- [ ] failures are represented explicitly rather than as false success.
+- [x] failures are represented explicitly rather than as false success.
 
 ## Phase 3 - Media controls
 
 Deliverables:
-- [ ] play/load supported media;
-- [ ] pause/resume and stop;
-- [ ] seek where supported;
-- [ ] volume and mute;
-- [ ] receiver/media state synchronization;
+- [x] play/load supported media;
+- [x] pause/resume and stop;
+- [x] seek where supported;
+- [x] volume and mute;
+- [x] receiver/media state synchronization;
 - [ ] validation of URLs, content types, ranges and application identifiers.
 
 Exit criteria:
