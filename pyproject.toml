@@ -12,10 +12,11 @@ dependencies = [
     "PyChromecast>=14.0.10,<15",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "mypy>=1.10",
     "pytest>=8",
+    "pytest-cov>=7.1.0",
     "ruff>=0.5",
 ]
 

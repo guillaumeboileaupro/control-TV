@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID
 
+import pychromecast.response_handler
 import pytest
 from pychromecast import Chromecast, PyChromecastError, RequestTimeout
 from pychromecast.controllers.media import MediaStatus as PyMediaStatus
 
+import control_tv.adapters.pychromecast as pychromecast_adapter
 from control_tv.adapters import PyChromecastTransport
 from control_tv.domain import (
     CommandRejectedError,
@@ -23,6 +26,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
 )
+from fakes import FakeClock
 
 DEVICE_ID = DeviceId("12345678-1234-5678-1234-567812345678")
 NOW = datetime(2026, 9, 25, 13, 0, tzinfo=UTC)
@@ -37,12 +41,16 @@ class FakeBrowser:
 
 
 class FakeReceiverController:
-    def __init__(self) -> None:
+    def __init__(self, clock: FakeClock | None = None, consumes: float = 0.0) -> None:
         self.error: Exception | None = None
         self.updates = 0
+        self._clock = clock
+        self._consumes = consumes
 
     def update_status(self, *, callback_function: object) -> None:
         self.updates += 1
+        if self._clock is not None and self._consumes:
+            self._clock.sleep(self._consumes)
         if self.error is not None:
             raise self.error
         callback_function(True, {})  # type: ignore[operator]
@@ -92,7 +100,7 @@ class FakeMediaController:
 
 
 class FakeCast:
-    def __init__(self) -> None:
+    def __init__(self, *, clock: FakeClock | None = None, wait_consumes: float = 0.0) -> None:
         self.uuid = UUID(str(DEVICE_ID))
         self.cast_info = SimpleNamespace(
             uuid=self.uuid,
@@ -110,16 +118,20 @@ class FakeCast:
             is_stand_by=False,
         )
         self.media_controller = FakeMediaController()
-        self.receiver_controller = FakeReceiverController()
+        self.receiver_controller = FakeReceiverController(clock=clock)
         self.socket_client = SimpleNamespace(receiver_controller=self.receiver_controller)
         self.wait_error: Exception | None = None
         self.wait_timeouts: list[float | None] = []
         self.volume_calls: list[tuple[float, float]] = []
         self.mute_calls: list[tuple[bool, float]] = []
         self.disconnect_calls: list[float | None] = []
+        self._clock = clock
+        self._wait_consumes = wait_consumes
 
     def wait(self, timeout: float | None = None) -> None:
         self.wait_timeouts.append(timeout)
+        if self._clock is not None and self._wait_consumes:
+            self._clock.sleep(self._wait_consumes)
         if self.wait_error is not None:
             raise self.wait_error
 
@@ -181,7 +193,7 @@ def test_unknown_device_never_connects() -> None:
     transport = PyChromecastTransport()
 
     with pytest.raises(DeviceNotFoundError) as excinfo:
-        transport.get_status(DEVICE_ID)
+        transport.get_status(DEVICE_ID, timeout=5.0)
 
     assert excinfo.value.device_id == DEVICE_ID
 
@@ -198,7 +210,7 @@ def test_status_is_fresh_receiver_and_media_snapshot() -> None:
     media.supported_media_commands = 2
     transport, _ = make_transport(cast_device)
 
-    status = transport.get_status(DEVICE_ID)
+    status = transport.get_status(DEVICE_ID, timeout=5.0)
 
     assert status.observed_at == NOW
     assert status.receiver is not None
@@ -215,7 +227,140 @@ def test_idle_status_without_content_has_no_media_session() -> None:
     cast_device = FakeCast()
     transport, _ = make_transport(cast_device)
 
-    assert transport.get_status(DEVICE_ID).media is None
+    assert transport.get_status(DEVICE_ID, timeout=5.0).media is None
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, math.nan, math.inf])
+def test_get_status_rejects_a_non_positive_or_non_finite_timeout(timeout: float) -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(InvalidArgumentError, match="must be a finite number > 0"):
+        transport.get_status(DEVICE_ID, timeout=timeout)
+
+    assert cast_device.wait_timeouts == []
+    assert cast_device.receiver_controller.updates == 0
+
+
+def test_get_status_bounds_the_connection_wait_by_the_caller_budget() -> None:
+    """The caller's timeout wins even when it is tighter than the instance default."""
+    clock = FakeClock()
+    cast_device = FakeCast(clock=clock)
+    transport = PyChromecastTransport(
+        connection_timeout=3.0, request_timeout=4.0, clock=clock.monotonic
+    )
+    transport._casts[DEVICE_ID] = cast(Chromecast, cast_device)
+
+    transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert cast_device.wait_timeouts[-1] == 1.0
+
+
+def test_get_status_never_starts_a_read_once_the_budget_is_exhausted() -> None:
+    """A slow connect that eats the whole budget must not be followed by another read.
+
+    Never confirms/fabricates a status from a read that was never attempted: the
+    receiver-status round trip must not even start once nothing is left to spend on it.
+    """
+    clock = FakeClock()
+    cast_device = FakeCast(clock=clock, wait_consumes=1.0)
+    transport = PyChromecastTransport(
+        connection_timeout=3.0, request_timeout=4.0, clock=clock.monotonic
+    )
+    transport._casts[DEVICE_ID] = cast(Chromecast, cast_device)
+
+    with pytest.raises(OperationTimeoutError, match="status read budget exhausted"):
+        transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert cast_device.wait_timeouts == [1.0]
+    assert cast_device.receiver_controller.updates == 0
+
+
+def test_get_status_bounds_the_receiver_read_by_what_the_connect_left_behind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The receiver-status round trip gets only what remains after connecting, not the
+    adapter's full `request_timeout` default."""
+    recorded_timeouts: list[float] = []
+
+    class RecordingWaitResponse:
+        def __init__(self, timeout: float, description: str) -> None:
+            recorded_timeouts.append(timeout)
+            self._real = pychromecast.response_handler.WaitResponse(timeout, description)
+
+        @property
+        def callback(self) -> Callable[..., None]:
+            return self._real.callback
+
+        def wait_response(self) -> None:
+            self._real.wait_response()
+
+    monkeypatch.setattr(pychromecast_adapter, "WaitResponse", RecordingWaitResponse)
+    clock = FakeClock()
+    cast_device = FakeCast(clock=clock, wait_consumes=0.6)
+    transport = PyChromecastTransport(
+        connection_timeout=3.0, request_timeout=4.0, clock=clock.monotonic
+    )
+    transport._casts[DEVICE_ID] = cast(Chromecast, cast_device)
+
+    status = transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert status is not None
+    assert cast_device.wait_timeouts[-1] == 1.0
+    assert recorded_timeouts == [pytest.approx(0.4)]
+
+
+def test_get_status_recovers_a_stale_connection_within_its_own_budget() -> None:
+    """Same-UUID recovery (used by every other command) is also budget-bounded here."""
+    clock = FakeClock()
+    stale = FakeCast(clock=clock)
+    stale.wait_error = OSError("stale address")
+    recovered = FakeCast(clock=clock)
+    discover_calls: list[float] = []
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        discover_calls.append(timeout)
+        return [cast(Chromecast, recovered)], FakeBrowser()
+
+    transport = PyChromecastTransport(
+        connection_timeout=1.0,
+        request_timeout=1.0,
+        recovery_timeout=5.0,
+        discoverer=discoverer,
+        clock=clock.monotonic,
+    )
+    transport._casts[DEVICE_ID] = cast(Chromecast, stale)
+
+    status = transport.get_status(DEVICE_ID, timeout=3.0)
+
+    assert status is not None
+    # recovery_timeout=5.0 is capped down to whatever the 3.0s budget still has (the
+    # instant failed connect attempt spent no simulated time), never the instance's own
+    # larger default.
+    assert discover_calls == [pytest.approx(3.0)]
+    assert recovered.receiver_controller.updates == 1
+
+
+def test_get_status_stops_recovering_once_the_budget_is_gone() -> None:
+    clock = FakeClock()
+    stale = FakeCast(clock=clock, wait_consumes=1.0)
+    stale.wait_error = OSError("stale address")
+    transport = PyChromecastTransport(connection_timeout=1.0, clock=clock.monotonic)
+    transport._casts[DEVICE_ID] = cast(Chromecast, stale)
+
+    with pytest.raises(OperationTimeoutError, match="status read budget exhausted"):
+        transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert clock.now == pytest.approx(1.0)
+
+
+def test_get_status_translates_a_receiver_read_failure() -> None:
+    cast_device = FakeCast()
+    cast_device.receiver_controller.error = OSError("socket closed")
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(DeviceUnavailableError, match="socket closed"):
+        transport.get_status(DEVICE_ID, timeout=5.0)
 
 
 def test_all_commands_use_bounded_library_calls() -> None:

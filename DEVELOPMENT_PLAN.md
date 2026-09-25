@@ -37,12 +37,12 @@ Deliverables:
 - [x] explicit errors and operation results;
 - [x] integrate the selected Python Chromecast modules behind a focused adapter;
 - [ ] add native/Rust components only where a measured or platform requirement justifies them;
-- [x] focused deterministic unit tests.
+- [x] focused deterministic unit tests for domain and shared control behavior.
 
 Exit criteria:
 - [x] control/domain behavior is testable independently of the UI;
-- [x] GUI/MCP concerns are absent from low-level Cast integration;
-- [x] tests cover meaningful deterministic behavior.
+- [x] GUI/MCP concerns are absent from the domain and shared control layer;
+- [x] tests cover meaningful deterministic control behavior, including explicit confirmation and unconfirmed observations.
 
 ## Active review follow-up
 
@@ -50,6 +50,15 @@ Exit criteria:
 - [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
 - [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
 - [ ] **Physical validation still required:** exercise discovery, replacement cleanup, stale-connection recovery, command acknowledgement and observed state on a real Chromecast/Google TV.
+
+## Current implementation status - shared control service
+
+- [x] Reproducible Python 3.12 environment is pinned with uv, `.python-version`, and committed `uv.lock`; setup fails when the lockfile is stale or uv is unavailable.
+- [x] Shared control confirmation reports only device state actually observed; missing, contradictory, and disconnected states remain explicitly unconfirmed in deterministic tests.
+- [x] Real-hardware evidence is required before any hardware/platform checkbox can be completed.
+- [x] Coverage (95% minimum) and installed-dependency quality commands are implemented and validated; deterministic command tests cover orchestration and fail-fast behavior, and the defensive verification invariant is explicit.
+- [x] **P2 review follow-up:** `CastTransport.get_status` now takes an explicit `timeout`; `ControlService._verify` passes only the confirmation budget actually remaining before every read, and never treats a status that arrives after the budget expired as confirmation. The PyChromecast adapter's `get_status` (connection, bounded same-UUID recovery, and the receiver-status round trip) now honors that same per-call budget instead of its own fixed instance timeouts. Deterministic tests cover a blocked/hung read, the exact `timeout` handed to each poll, total elapsed time never exceeding the budget, a match confirmed just before the deadline, and a match arriving just after it (never confirmed).
+- [ ] Physical Chromecast/Google TV validation remains required; no hardware validation was performed in these commits.
 
 ## Phase 2 - Cast discovery and connection
 
@@ -142,18 +151,19 @@ Exit criteria:
 
 ### Continuous integration
 
-- [ ] create the primary GitHub Actions CI workflow;
-- [ ] run CI on pull requests targeting `main`;
-- [ ] run CI on pushes to `main`;
-- [ ] install the Python environment reproducibly from the selected dependency/lock mechanism;
-- [ ] verify dependency and lockfile consistency;
-- [ ] run `ruff check`;
-- [ ] run `ruff format --check`;
-- [ ] run `mypy --strict`;
-- [ ] run `pytest`;
-- [ ] run `python -m pip check`;
-- [ ] generate test coverage reporting and enforce the selected quality gate;
-- [ ] make required quality failures fail the CI job;
+- [x] create the primary GitHub Actions CI workflow (`.github/workflows/ci.yml`);
+- [x] run CI on pull requests targeting `main`;
+- [x] run CI on pushes to `main`;
+- [x] install the Python environment reproducibly with `uv sync --locked`;
+- [x] verify lockfile and dependency consistency with `--locked` and `uv pip check`;
+- [x] run `ruff check`;
+- [x] run `ruff format --check`;
+- [x] run `mypy --strict`;
+- [x] run `pytest`;
+- [x] generate terminal coverage reporting and enforce a 95% minimum;
+- [x] make required local quality failures fail the CI job;
+- [x] validate the workflow in a hosted GitHub Actions run (run `36131989754` on commit `f872e08`, after rebasing onto main and fixing the P2 timeout-contract review; all steps passed);
+- [x] replace the deprecated Node 20 `actions/checkout` runtime reported by the first hosted run with SHA-pinned v5.0.1 (Node 24);
 - [ ] require applicable CI checks before a pull request is considered merge-ready.
 
 ### Application build CI
@@ -235,3 +245,5 @@ At the end of each implementation iteration:
 ## Progress rule
 
 Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan continuously in the same iteration that changes project state, including newly discovered work, review findings and blockers. Do not defer plan synchronization until the end of an iteration.
+
+A deliverable or exit criterion whose wording refers to real hardware, a real device or a real platform is checked `[x]` only after that validation actually ran on that hardware/platform, with the evidence recorded in the handoff. Passing automated tests against a fake/simulated transport, fake TV, fake clock or emulator is real, valuable engineering progress, but it is never by itself sufficient to check such an item; simulated validation is never substituted for or presented as hardware validation. When a deliverable bundles implementation with hardware validation (for example "receiver/media state synchronization"), split it in this file into two lines - one for the implementation, checked once it is built and covered by deterministic tests, and one for real-device validation, checked only once that validation actually happened - rather than checking the combined line early.

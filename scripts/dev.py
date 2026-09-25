@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Cross-platform development commands for control-TV (standard library only).
+"""Cross-platform development commands for control-TV.
 
 Usage: python scripts/dev.py <command>
 
 Commands:
-  setup        create .venv and install the project with its dev dependencies
+  setup        create .venv from uv.lock (exact, reproducible versions)
+  lock         regenerate uv.lock from pyproject.toml after a dependency change
   lint         ruff check and ruff format --check
   typecheck    mypy (strict)
   test         pytest
-  check        lint, typecheck and test
+  coverage     pytest with coverage of src/control_tv, enforcing a minimum
+  depcheck     verify every installed package's declared requirements are met
+  check        lint, typecheck, test and depcheck (the CI quality gate)
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv and dist/)
   dist-clean   remove all reproducible project-owned generated output
+
+`setup` and `lock` shell out to `uv` (https://docs.astral.sh/uv/) so that every install
+is pinned to the committed lockfile; every other command only needs the resulting
+`.venv` and otherwise uses the standard library only.
 
 Cleanup only ever deletes paths from the fixed allowlist below, resolved inside the
 repository. Shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) are never touched.
@@ -29,7 +36,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MIN_PYTHON = (3, 11)
 
 # Directories scanned for Python bytecode caches. `.venv` is deliberately not listed.
 PYCACHE_SCAN_DIRS = ("src", "tests", "scripts")
@@ -38,6 +44,10 @@ EGG_INFO_SCAN_DIRS = (".", "src")
 
 CLEAN = "clean"
 DIST_CLEAN = "dist-clean"
+# Measured at 99% when this was introduced (one defensive, since-removed unreachable
+# line); leaves headroom for new code without weakening the gate. Raise deliberately,
+# never lower it to make a failing build pass.
+COVERAGE_MIN = 95
 
 
 @dataclass(frozen=True)
@@ -215,17 +225,31 @@ def _run(root: Path, args: Sequence[str]) -> int:
     return subprocess.call([str(python), *args], cwd=root)
 
 
-def cmd_setup(root: Path) -> int:
-    if sys.version_info < MIN_PYTHON:
-        need = ".".join(map(str, MIN_PYTHON))
-        running = sys.version.split()[0]
-        print(f"error: Python >= {need} is required (running {running})", file=sys.stderr)
+def uv_executable() -> str | None:
+    return shutil.which("uv")
+
+
+def _run_uv(root: Path, args: Sequence[str]) -> int:
+    uv = uv_executable()
+    if uv is None:
+        print(
+            "error: uv is required for this command "
+            "(see https://docs.astral.sh/uv/getting-started/installation/)",
+            file=sys.stderr,
+        )
         return 2
-    if not venv_python(root).exists():
-        code = subprocess.call([sys.executable, "-m", "venv", str(root / ".venv")], cwd=root)
-        if code != 0:
-            return code
-    return _run(root, ["-m", "pip", "install", "--editable", ".[dev]"])
+    print("+", "uv", " ".join(args))
+    return subprocess.call([uv, *args], cwd=root)
+
+
+def cmd_setup(root: Path) -> int:
+    """Create/update .venv to exactly match uv.lock. Fails if the lock is out of date."""
+    return _run_uv(root, ["sync", "--locked"])
+
+
+def cmd_lock(root: Path) -> int:
+    """Regenerate uv.lock from pyproject.toml. Run this after changing a dependency."""
+    return _run_uv(root, ["lock"])
 
 
 def cmd_lint(root: Path) -> int:
@@ -241,8 +265,27 @@ def cmd_test(root: Path) -> int:
     return _run(root, ["-m", "pytest"])
 
 
+def cmd_coverage(root: Path) -> int:
+    """Coverage of the shared control/domain package only, not of tests or scripts/dev.py."""
+    return _run(
+        root,
+        [
+            "-m",
+            "pytest",
+            "--cov=control_tv",
+            "--cov-report=term-missing",
+            f"--cov-fail-under={COVERAGE_MIN}",
+        ],
+    )
+
+
+def cmd_depcheck(root: Path) -> int:
+    """Every installed package's declared requirements are actually satisfied."""
+    return _run_uv(root, ["pip", "check"])
+
+
 def cmd_check(root: Path) -> int:
-    for step in (cmd_lint, cmd_typecheck, cmd_test):
+    for step in (cmd_lint, cmd_typecheck, cmd_test, cmd_depcheck):
         code = step(root)
         if code != 0:
             return code
@@ -252,7 +295,18 @@ def cmd_check(root: Path) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("setup", "lint", "typecheck", "test", "check", "disk-usage"):
+    names = (
+        "setup",
+        "lock",
+        "lint",
+        "typecheck",
+        "test",
+        "coverage",
+        "depcheck",
+        "check",
+        "disk-usage",
+    )
+    for name in names:
         sub.add_parser(name)
     for name in (CLEAN, DIST_CLEAN):
         cleaner = sub.add_parser(name)
@@ -267,9 +321,12 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         return cmd_clean(root, command, dry_run=args.dry_run)
     handlers = {
         "setup": cmd_setup,
+        "lock": cmd_lock,
         "lint": cmd_lint,
         "typecheck": cmd_typecheck,
         "test": cmd_test,
+        "coverage": cmd_coverage,
+        "depcheck": cmd_depcheck,
         "check": cmd_check,
         "disk-usage": cmd_disk_usage,
     }

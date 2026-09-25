@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -76,6 +77,7 @@ class PyChromecastTransport:
         recovery_timeout: float = 5.0,
         discoverer: Discoverer = _default_discoverer,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         for name, timeout in (
             ("connection_timeout", connection_timeout),
@@ -89,6 +91,7 @@ class PyChromecastTransport:
         self._recovery_timeout = recovery_timeout
         self._discoverer = discoverer
         self._now = now
+        self._clock = clock
         self._casts: dict[DeviceId, Chromecast] = {}
 
     def discover(self, *, timeout: float) -> list[Device]:
@@ -113,9 +116,22 @@ class PyChromecastTransport:
                 if callable(stop):
                     stop()
 
-    def get_status(self, device_id: DeviceId) -> DeviceStatus:
-        cast_device = self._ready(device_id)
-        self._receiver_status(cast_device, device_id)
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        """Read fresh status, never spending more than `timeout` seconds in total.
+
+        `timeout` is the caller's entire remaining budget (typically what is left of
+        `ControlService`'s `confirm_timeout`), not a per-request default: connecting (with
+        at most one bounded same-UUID recovery attempt) and the receiver-status round trip
+        together must fit within it, or this raises `OperationTimeoutError` /
+        `DeviceUnavailableError` rather than exceed it.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise InvalidArgumentError(
+                f"status read timeout must be a finite number > 0: {timeout}"
+            )
+        deadline = self._clock() + timeout
+        cast_device = self._ready_bounded(device_id, deadline)
+        self._receiver_status_bounded(cast_device, device_id, deadline)
         receiver = cast_device.status
         media = cast_device.media_controller.status
         return DeviceStatus(
@@ -227,7 +243,7 @@ class PyChromecastTransport:
     def _ready(self, device_id: DeviceId) -> Chromecast:
         cast_device = self._cast(device_id)
         try:
-            return self._wait_ready(cast_device, device_id)
+            return self._wait_ready(cast_device, device_id, timeout=self._connection_timeout)
         except (OperationTimeoutError, DeviceUnavailableError) as first_error:
             self._casts.pop(device_id, None)
             self._disconnect(cast_device)
@@ -244,11 +260,51 @@ class PyChromecastTransport:
                     f"device {device_id} was not found during bounded rediscovery",
                     device_id=device_id,
                 ) from first_error
-            return self._wait_ready(recovered, device_id)
+            return self._wait_ready(recovered, device_id, timeout=self._connection_timeout)
 
-    def _wait_ready(self, cast_device: Chromecast, device_id: DeviceId) -> Chromecast:
+    def _ready_bounded(self, device_id: DeviceId, deadline: float) -> Chromecast:
+        """Like `_ready`, but every step spends at most what remains until `deadline`."""
+        cast_device = self._cast(device_id)
+        connect_budget = self._budget(self._connection_timeout, deadline, device_id)
         try:
-            cast_device.wait(timeout=self._connection_timeout)
+            return self._wait_ready(cast_device, device_id, timeout=connect_budget)
+        except (OperationTimeoutError, DeviceUnavailableError) as first_error:
+            self._casts.pop(device_id, None)
+            self._disconnect(cast_device)
+            try:
+                self.discover(timeout=self._budget(self._recovery_timeout, deadline, device_id))
+            except DiscoveryError as discovery_error:
+                raise DeviceUnavailableError(
+                    f"device {device_id} could not be rediscovered: {discovery_error.message}",
+                    device_id=device_id,
+                ) from discovery_error
+            recovered = self._casts.get(device_id)
+            if recovered is None:
+                raise DeviceUnavailableError(
+                    f"device {device_id} was not found during bounded rediscovery",
+                    device_id=device_id,
+                ) from first_error
+            reconnect_budget = self._budget(self._connection_timeout, deadline, device_id)
+            return self._wait_ready(recovered, device_id, timeout=reconnect_budget)
+
+    def _budget(self, preferred: float, deadline: float, device_id: DeviceId) -> float:
+        """At most `preferred`, but never more than what is left until `deadline`.
+
+        Raises rather than hand a non-positive timeout downstream: a remaining budget of
+        zero (or less) means the confirmation window is already closed.
+        """
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise OperationTimeoutError(
+                f"status read budget exhausted for device {device_id}", device_id=device_id
+            )
+        return min(preferred, remaining)
+
+    def _wait_ready(
+        self, cast_device: Chromecast, device_id: DeviceId, *, timeout: float
+    ) -> Chromecast:
+        try:
+            cast_device.wait(timeout=timeout)
         except pychromecast.RequestTimeout as error:
             raise OperationTimeoutError(
                 f"timed out connecting to device {device_id}", device_id=device_id
@@ -263,8 +319,17 @@ class PyChromecastTransport:
         with suppress(PyChromecastError, OSError):
             cast_device.disconnect(timeout=self._connection_timeout)
 
-    def _receiver_status(self, cast_device: Chromecast, device_id: DeviceId) -> None:
-        response = WaitResponse(self._request_timeout, "receiver status")
+    def _receiver_status_bounded(
+        self, cast_device: Chromecast, device_id: DeviceId, deadline: float
+    ) -> None:
+        """Like `_receiver_status`, bounded by what remains of the caller's `timeout`."""
+        budget = self._budget(self._request_timeout, deadline, device_id)
+        self._receiver_status_with_timeout(cast_device, device_id, budget)
+
+    def _receiver_status_with_timeout(
+        self, cast_device: Chromecast, device_id: DeviceId, timeout: float
+    ) -> None:
+        response = WaitResponse(timeout, "receiver status")
         try:
             cast_device.socket_client.receiver_controller.update_status(
                 callback_function=response.callback

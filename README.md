@@ -23,23 +23,24 @@ The UI and the MCP adapter are thin. Device discovery, validation and state belo
 
 ## Development
 
-Prerequisite: Python 3.11 or newer. The commands below use only the standard library to initialize the environment and behave the same on Linux, Windows and macOS. Only Linux has been exercised so far.
+Prerequisite: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). `uv` resolves and pins every dependency (including its own managed Python) into `uv.lock`, so `setup` reproduces the exact same `.venv` on Linux, Windows and macOS. Only Linux has been exercised so far.
 
 ```bash
-python3 scripts/dev.py setup        # create .venv and install the project with dev dependencies
-python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest
+python3 scripts/dev.py setup        # create .venv from uv.lock (uv sync --locked)
+python3 scripts/dev.py lock         # regenerate uv.lock after changing a dependency
+python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest, dependency check
+python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
+python3 scripts/dev.py depcheck     # verify installed dependency consistency
 python3 scripts/dev.py lint         # lint and format check only
 python3 scripts/dev.py typecheck    # mypy only
 python3 scripts/dev.py test         # pytest only
 ```
 
-On Windows use `py -3.12 scripts/dev.py <command>` (or any Python 3.11+).
-
-`setup` creates `.venv` with the interpreter that runs it. All other quality commands run through `.venv`, so run `setup` first.
+`setup` fails loudly if `uv.lock` does not match `pyproject.toml`, instead of silently resolving new versions; run `lock` deliberately whenever a dependency changes, review the resulting `uv.lock` diff, then commit both files together. Every other command only needs the `.venv` that `setup` created, so run `setup` first.
 
 ### Generated output and disk usage
 
-Build output and caches are disposable and excluded from Git. Cleanup is limited to a fixed allowlist of project-owned paths; it never touches shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) or anything outside the repository.
+Build output and caches are disposable and excluded from Git; `uv.lock` and `.python-version` are the exception, since they are what makes `setup` reproducible and are committed like any other source file. Cleanup is limited to a fixed allowlist of project-owned paths; it never touches shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) or anything outside the repository.
 
 ```bash
 python3 scripts/dev.py disk-usage             # free disk and size of each generated path

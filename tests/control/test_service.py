@@ -46,8 +46,8 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def transport() -> FakeTransport:
-    return FakeTransport()
+def transport(clock: FakeClock) -> FakeTransport:
+    return FakeTransport(clock=clock)
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def test_a_command_the_tv_ignores_is_sent_but_unconfirmed(
     assert result.observed.media is not None
     assert result.observed.media.playback_state is PlaybackState.PLAYING
     assert result.detail is not None
-    assert "did not show playback paused within 1s" in result.detail
+    assert "expected playback paused, but playback is playing" in result.detail
 
 
 def test_confirmation_is_bounded_by_the_timeout(transport: FakeTransport, clock: FakeClock) -> None:
@@ -135,15 +135,121 @@ def test_verification_can_be_disabled(transport: FakeTransport, clock: FakeClock
     assert transport.sent() == ["pause"]
 
 
-def test_zero_timeout_reads_the_status_once(transport: FakeTransport, clock: FakeClock) -> None:
+def test_zero_timeout_reads_the_status_zero_times(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """A zero-second budget leaves nothing to spend on even one bounded read."""
     transport.ignore_commands = True
     service = make_service(transport, clock, confirm_timeout=0)
 
     result = service.pause(DEVICE_ID)
 
     assert result.confirmation is Confirmation.UNCONFIRMED
-    assert transport.status_reads() == 1
+    assert transport.status_reads() == 0
     assert clock.sleeps == []
+    assert result.detail is not None
+    assert "budget (0s) expired before a status could be read" in result.detail
+
+
+# --- P2 review: each status read must itself be bounded by the confirmation budget ---------
+#
+# `CastTransport.get_status` takes an explicit `timeout`; `ControlService._verify` must pass
+# only whatever remains of `confirm_timeout`, so that a slow or hung read can never itself
+# exceed the global budget, and evidence that only arrives after the budget expired is never
+# used to confirm anything.
+
+
+def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """A read that never usefully completes must not be retried past the global budget."""
+    transport.hang_status_reads = True
+    service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
+
+    result = service.pause(DEVICE_ID)
+
+    # The one read that was attempted consumed exactly the whole budget by itself (as a
+    # spec-compliant transport must: it never blocks longer than the `timeout` it was
+    # given), so nothing remains afterwards for a second attempt: the only recorded
+    # "sleep" is the read itself, the service's own scheduler never gets to run.
+    assert transport.status_reads() == 1
+    assert transport.calls == [("pause", (DEVICE_ID,)), ("get_status", (DEVICE_ID, 1.0))]
+    assert clock.now == pytest.approx(1.0)
+    assert clock.sleeps == [1.0]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
+    assert result.detail is not None
+    assert "could not read the TV status" in result.detail
+    assert "timed out reading status" in result.detail
+
+
+def test_each_poll_is_given_only_the_time_actually_remaining(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """The `timeout` handed to the transport shrinks as the budget is spent, poll by poll."""
+    transport.ignore_commands = True
+    service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
+
+    service.pause(DEVICE_ID)
+
+    status_read_timeouts = [args[1] for name, args in transport.calls if name == "get_status"]
+    assert status_read_timeouts == [pytest.approx(1.0), pytest.approx(0.6), pytest.approx(0.2)]
+
+
+def test_expiration_never_exceeds_the_global_budget_regardless_of_poll_interval(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """A hung read is always given the *whole* remaining budget, not a per-poll slice.
+
+    So a single hang exhausts it in one attempt: total elapsed time is exactly
+    confirm_timeout, never more, and `poll_interval` (here deliberately smaller than the
+    budget) never causes a second attempt to slip in past the deadline.
+    """
+    transport.hang_status_reads = True
+    service = make_service(transport, clock, confirm_timeout=2.5, poll_interval=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert clock.now == pytest.approx(2.5)
+    assert transport.status_reads() == 1
+    status_read_timeouts = [args[1] for name, args in transport.calls if name == "get_status"]
+    assert status_read_timeouts == [pytest.approx(2.5)]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+
+
+def test_a_match_confirmed_just_before_the_deadline_is_accepted(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """Evidence that arrives with time to spare, however little, still confirms."""
+    transport.status_read_delay = 0.99
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert clock.now == pytest.approx(0.99)
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+
+
+def test_a_match_arriving_after_the_deadline_is_never_confirmed(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """The device answering correctly is not enough on its own: it must answer in time.
+
+    A transport that (against its contract) takes longer than the `timeout` it was given
+    must still never let the service report a false CONFIRMED - this is the defense-in-depth
+    check, independent of whichever transport is behind `CastTransport`.
+    """
+    transport.status_read_delay = 1.01
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert clock.now == pytest.approx(1.01)
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None  # the status was read; it just came too late
+    assert result.detail is not None
+    assert "answered after the confirmation window expired" in result.detail
 
 
 def test_a_device_that_is_not_connected_never_confirms(
@@ -157,6 +263,30 @@ def test_a_device_that_is_not_connected_never_confirms(
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert result.observed is not None
     assert result.observed.connection is ConnectionState.DISCONNECTED
+    # Being disconnected is reported as exactly that, distinct from a contradicting state.
+    assert result.detail is not None
+    assert "connection is disconnected" in result.detail
+
+
+def test_stop_never_fabricates_an_idle_state_the_device_did_not_report(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    """A receiver that merely stops reporting a media session is not proof of idle.
+
+    Some receivers drop the media session entirely on stop instead of reporting an
+    explicit idle state. The service must not treat that absence as confirmation.
+    """
+    transport.clears_media_on_stop = True
+    service = make_service(transport, clock)
+
+    result = service.stop(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert result.detail is not None
+    assert "expected playback stopped, but no active media session" in result.detail
+    assert "idle" not in result.detail
 
 
 # --- failures are errors, never results -----------------------------------------------------
@@ -263,6 +393,8 @@ def test_load_media_is_unconfirmed_while_the_tv_still_shows_other_content(
     assert result.observed is not None
     assert result.observed.media is not None
     assert result.observed.media.content_id == MOVIE_URL
+    assert result.detail is not None
+    assert f"loaded content is {MOVIE_URL!r}, not " in result.detail
 
 
 def test_seek_is_confirmed_within_tolerance(
