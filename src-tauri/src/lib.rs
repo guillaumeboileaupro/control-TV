@@ -10,11 +10,21 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::Manager;
+
+/// Upper bound on `ping`: this call never has an operator-supplied timeout, so it gets
+/// a fixed, generous one - long enough for a healthy bridge under load, short enough
+/// that a genuinely stuck bridge is reported quickly.
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
+/// Safety margin added on top of a caller-supplied discovery timeout, so a slow-but-
+/// working discovery (bounded by `ControlService` itself) is never cut off by this
+/// outer guard first; only a bridge that is truly stuck exceeds it.
+const DISCOVERY_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
 
 /// The one process boundary to the shared Python control layer.
 ///
@@ -157,38 +167,78 @@ enum BridgeState {
     Unavailable(String),
 }
 
-fn with_bridge<T>(
-    state: &tauri::State<Mutex<BridgeState>>,
-    call: impl FnOnce(&PythonBridge) -> Result<T, String>,
-) -> Result<T, String> {
-    let guard = state
-        .lock()
-        .map_err(|_| "bridge state lock poisoned".to_string())?;
-    match &*guard {
-        BridgeState::Ready(bridge) => call(bridge),
-        BridgeState::Unavailable(reason) => {
-            Err(format!("Python control backend unavailable: {reason}"))
+/// `Arc` so a command can clone a handle to it and move that clone onto the blocking
+/// worker thread `call_bridge` spawns, independently of the `'_`-scoped `tauri::State`
+/// borrow (which cannot itself cross into a `'static` spawned task).
+type SharedBridgeState = Arc<Mutex<BridgeState>>;
+
+/// Run one bridge request off Tauri's async/main thread and bound how long a command
+/// will wait for it.
+///
+/// `PythonBridge::call` is a blocking, synchronous stdio round trip (P1 review on PR
+/// #4: a *synchronous* Tauri command runs `call` on Tauri's main thread, so an ordinary
+/// discovery - or a bridge that never replies - freezes the window). Moving the blocking
+/// call onto a dedicated blocking-pool thread via `spawn_blocking` keeps the async/main
+/// thread free regardless of how long the bridge takes; wrapping that in
+/// `tokio::time::timeout` additionally guarantees this function itself always resolves
+/// within `timeout`, so a stuck bridge is reported as an error instead of leaving the
+/// caller (and the UI) waiting forever. The dedicated worker thread can still be left
+/// blocked on `read_line` in that case - there is no way to cancel a blocking OS read
+/// without also killing the process, which this does not do, so it can reply to a
+/// *later* request after an earlier one timed out; this is a documented limitation, not
+/// a correctness bug (responses are still matched by id).
+async fn call_bridge(
+    state: SharedBridgeState,
+    method: &'static str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        let guard = state
+            .lock()
+            .map_err(|_| "bridge state lock poisoned".to_string())?;
+        match &*guard {
+            BridgeState::Ready(bridge) => bridge.call(method, params),
+            BridgeState::Unavailable(reason) => {
+                Err(format!("Python control backend unavailable: {reason}"))
+            }
         }
+    });
+
+    match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_error)) => Err(format!("bridge worker thread failed: {join_error}")),
+        Err(_timed_out) => Err(format!(
+            "the Python control bridge did not respond within {:.0}s",
+            timeout.as_secs_f64()
+        )),
     }
 }
 
 #[tauri::command]
-fn bridge_ping(state: tauri::State<Mutex<BridgeState>>) -> Result<Value, String> {
-    with_bridge(&state, |bridge| bridge.call("ping", json!({})))
+async fn bridge_ping(state: tauri::State<'_, SharedBridgeState>) -> Result<Value, String> {
+    call_bridge(state.inner().clone(), "ping", json!({}), PING_TIMEOUT).await
 }
 
-#[tauri::command]
-fn bridge_discover_devices(
-    state: tauri::State<Mutex<BridgeState>>,
-    timeout_seconds: Option<f64>,
-) -> Result<Value, String> {
+/// Pure request-building logic for `bridge_discover_devices`, factored out so it is
+/// testable without a running `tauri::App` to construct a `State` from.
+fn discovery_request(timeout_seconds: Option<f64>) -> (Value, Duration) {
     let mut params = serde_json::Map::new();
+    let mut timeout = PING_TIMEOUT + DISCOVERY_TIMEOUT_MARGIN;
     if let Some(timeout_seconds) = timeout_seconds {
         params.insert("timeoutSeconds".to_string(), json!(timeout_seconds));
+        timeout = Duration::from_secs_f64(timeout_seconds.max(0.0)) + DISCOVERY_TIMEOUT_MARGIN;
     }
-    with_bridge(&state, |bridge| {
-        bridge.call("discover_devices", Value::Object(params))
-    })
+    (Value::Object(params), timeout)
+}
+
+#[tauri::command]
+async fn bridge_discover_devices(
+    state: tauri::State<'_, SharedBridgeState>,
+    timeout_seconds: Option<f64>,
+) -> Result<Value, String> {
+    let (params, timeout) = discovery_request(timeout_seconds);
+    call_bridge(state.inner().clone(), "discover_devices", params, timeout).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -203,7 +253,7 @@ pub fn run() {
                     BridgeState::Unavailable(error)
                 }
             };
-            app.manage(Mutex::new(state));
+            app.manage(Arc::new(Mutex::new(state)) as SharedBridgeState);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -289,5 +339,159 @@ mod tests {
 
         assert_eq!(result["status"], "ready");
         assert!(result["controlTvVersion"].is_string());
+    }
+
+    // --- P1 review (PR #4): bridge calls must not run on the async/main thread ---------
+
+    /// Writes a fake "python" - a plain shell script - that `PythonBridge::spawn` can
+    /// launch in place of the real interpreter, so these tests control exactly how and
+    /// when (or whether) it responds, without a real Python process or network access.
+    /// A counter, not a timestamp: guarantees a unique filename per call within this test
+    /// binary regardless of the system clock's actual resolution.
+    static SCRIPT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Held while writing and spawning a fake script, to keep concurrent test threads
+    /// from forking+exec'ing at the exact same moment (observed, on this environment, to
+    /// intermittently trip a spurious "text file busy" even on distinct, never-reused
+    /// paths - not a production concern: `PythonBridge` itself is spawned exactly once,
+    /// from one thread, in `run()`'s `setup`). `unwrap_or_else` recovers from a poisoned
+    /// lock: one test's unrelated panic must not cascade into failing every other test
+    /// that merely spawns a script after it.
+    static PROCESS_SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Retries on "text file busy" (a fresh path, so this is the same environment race
+    /// `PROCESS_SPAWN_LOCK` targets, not a real conflict) rather than failing the test.
+    fn spawn_fake_bridge(body: &str) -> (PathBuf, PythonBridge) {
+        for attempt in 0.. {
+            let n = SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let path = std::env::temp_dir().join(format!(
+                "control-tv-fake-bridge-{}-{n}.sh",
+                std::process::id()
+            ));
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n"))
+                .expect("write fake bridge script");
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod fake bridge script");
+
+            match PythonBridge::spawn(&path) {
+                Ok(bridge) => return (path, bridge),
+                Err(error) if error.contains("Text file busy") && attempt < 5 => {
+                    let _ = std::fs::remove_file(&path);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("failed to spawn the fake bridge: {error}"),
+            }
+        }
+        unreachable!()
+    }
+
+    /// Deletes the backing script file on drop, once the caller no longer needs it.
+    ///
+    /// Unlike a compiled binary, a `#!/bin/sh` script is not mapped by the kernel at
+    /// `execve` time: the *interpreter* (`/bin/sh`) opens and reads the script file
+    /// itself, some unpredictable time after `Command::spawn` returns to us. Deleting
+    /// the file right after `spawn` (as an earlier version of this helper did) is a real,
+    /// reproducible race - `sh` can lose the open() to the unlink and fail with "No such
+    /// file". Keeping this guard alive for the whole test avoids it; only its `Drop`
+    /// deletes the file, well after the fake bridge has read and acted on it.
+    struct FakeScript(PathBuf);
+
+    impl Drop for FakeScript {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// `read request` first, exactly like the real bridge reads one line before acting on
+    /// it: without this, a script that responds/exits fast can close its stdin pipe
+    /// before our write reaches it, racing a "broken pipe" instead of exercising `body`.
+    fn ready_state(body: &str) -> (SharedBridgeState, FakeScript) {
+        let guard = PROCESS_SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (script, bridge) = spawn_fake_bridge(&format!("read request\n{body}"));
+        drop(guard);
+        (
+            Arc::new(Mutex::new(BridgeState::Ready(bridge))),
+            FakeScript(script),
+        )
+    }
+
+    #[test]
+    fn call_bridge_succeeds_through_the_async_path() {
+        let (state, _script) =
+            ready_state(r#"echo '{"id":1,"ok":true,"result":{"status":"ready"}}'"#);
+
+        let result = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "ping",
+            json!({}),
+            Duration::from_secs(2),
+        ));
+
+        assert_eq!(result.unwrap(), json!({"status": "ready"}));
+    }
+
+    #[test]
+    fn call_bridge_reports_a_process_that_exits_without_responding() {
+        // Exits immediately, writing nothing: `call` sees EOF on the first read.
+        let (state, _script) = ready_state("exit 0");
+
+        let error = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "ping",
+            json!({}),
+            Duration::from_secs(2),
+        ))
+        .unwrap_err();
+
+        assert!(error.contains("exited unexpectedly"), "{error}");
+    }
+
+    #[test]
+    fn call_bridge_times_out_instead_of_hanging_forever_on_a_stuck_bridge() {
+        // Never writes a response line: a real hung/deadlocked bridge, deterministically.
+        let (state, _script) = ready_state("sleep 30");
+
+        let started = std::time::Instant::now();
+        let error = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "ping",
+            json!({}),
+            Duration::from_millis(200),
+        ))
+        .unwrap_err();
+
+        // The call returns close to the 200ms bound, not after the script's 30s sleep.
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(error.contains("did not respond within"), "{error}");
+    }
+
+    #[test]
+    fn discovery_request_defaults_when_no_timeout_is_given() {
+        let (params, timeout) = discovery_request(None);
+
+        assert_eq!(params, json!({}));
+        assert_eq!(timeout, PING_TIMEOUT + DISCOVERY_TIMEOUT_MARGIN);
+    }
+
+    #[test]
+    fn discovery_request_forwards_and_bounds_a_caller_supplied_timeout() {
+        let (params, timeout) = discovery_request(Some(30.0));
+
+        assert_eq!(params, json!({"timeoutSeconds": 30.0}));
+        assert_eq!(timeout, Duration::from_secs(35));
+    }
+
+    #[test]
+    fn discovery_request_clamps_a_negative_timeout_to_zero() {
+        let (_, timeout) = discovery_request(Some(-10.0));
+
+        assert_eq!(timeout, DISCOVERY_TIMEOUT_MARGIN);
     }
 }
