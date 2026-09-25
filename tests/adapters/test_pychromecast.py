@@ -100,7 +100,13 @@ class FakeMediaController:
 
 
 class FakeCast:
-    def __init__(self, *, clock: FakeClock | None = None, wait_consumes: float = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        clock: FakeClock | None = None,
+        wait_consumes: float = 0.0,
+        disconnect_consumes: float = 0.0,
+    ) -> None:
         self.uuid = UUID(str(DEVICE_ID))
         self.cast_info = SimpleNamespace(
             uuid=self.uuid,
@@ -127,6 +133,7 @@ class FakeCast:
         self.disconnect_calls: list[float | None] = []
         self._clock = clock
         self._wait_consumes = wait_consumes
+        self._disconnect_consumes = disconnect_consumes
 
     def wait(self, timeout: float | None = None) -> None:
         self.wait_timeouts.append(timeout)
@@ -144,6 +151,13 @@ class FakeCast:
 
     def disconnect(self, timeout: float | None = None) -> None:
         self.disconnect_calls.append(timeout)
+        if self._clock is not None and self._disconnect_consumes:
+            consumed = (
+                self._disconnect_consumes
+                if timeout is None
+                else min(timeout, self._disconnect_consumes)
+            )
+            self._clock.sleep(consumed)
 
 
 def make_transport(
@@ -352,6 +366,7 @@ def test_get_status_stops_recovering_once_the_budget_is_gone() -> None:
         transport.get_status(DEVICE_ID, timeout=1.0)
 
     assert clock.now == pytest.approx(1.0)
+    assert stale.disconnect_calls == [0.0]
 
 
 def test_get_status_translates_a_receiver_read_failure() -> None:
@@ -378,8 +393,9 @@ def test_all_commands_use_bounded_library_calls() -> None:
 
     calls = cast_device.media_controller.calls
     assert [call[0] for call in calls] == ["load_media", "play", "pause", "stop", "seek"]
+    assert calls[0][1] == ("https://media.local/movie.mp4", "video/mp4")
     assert calls[0][2]["title"] is None
-    assert calls[1][2]["timeout"] == 4.0
+    assert [calls[index][2]["timeout"] for index in (1, 2, 3, 4)] == [4.0] * 4
     assert calls[4][1] == (25.0,)
     assert cast_device.volume_calls == [(0.7, 4.0)]
     assert cast_device.mute_calls == [(True, 4.0)]
@@ -573,3 +589,125 @@ def test_paused_media_keeps_last_reported_position() -> None:
     assert observed is not None
     assert observed.playback_state is PlaybackState.PAUSED
     assert observed.position_seconds == 12.0
+
+
+def test_discovery_uuid_selection_connects_and_reads_only_the_selected_status() -> None:
+    first = FakeCast()
+    first.uuid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    first.cast_info.uuid = first.uuid
+    second = FakeCast()
+    browser = FakeBrowser()
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        assert timeout == 1.5
+        return [cast(Chromecast, first), cast(Chromecast, second)], browser
+
+    transport = PyChromecastTransport(discoverer=discoverer, now=lambda: NOW)
+
+    devices = transport.discover(timeout=1.5)
+    selected = next(device for device in devices if device.id == DEVICE_ID)
+    status = transport.get_status(selected.id, timeout=2.0)
+
+    assert [device.id for device in devices] == [DeviceId(str(first.uuid)), DEVICE_ID]
+    assert status.device_id == DEVICE_ID
+    assert first.wait_timeouts == []
+    assert first.receiver_controller.updates == 0
+    assert len(second.wait_timeouts) == 1
+    assert second.wait_timeouts[0] is not None
+    assert 0 < second.wait_timeouts[0] <= 2.0
+    assert second.receiver_controller.updates == 1
+    assert browser.stopped is True
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, math.nan, math.inf])
+def test_discovery_rejects_invalid_timeout_before_calling_library(timeout: float) -> None:
+    calls: list[float] = []
+
+    def discoverer(value: float) -> tuple[list[Chromecast], object]:
+        calls.append(value)
+        return [], FakeBrowser()
+
+    transport = PyChromecastTransport(discoverer=discoverer)
+
+    with pytest.raises(InvalidArgumentError, match="discovery timeout"):
+        transport.discover(timeout=timeout)
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("position", [-1.0, math.nan, math.inf])
+def test_direct_transport_seek_rejects_invalid_position_before_connecting(position: float) -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+    cast_device.wait_timeouts.clear()
+
+    with pytest.raises(InvalidArgumentError, match="seek position"):
+        transport.seek(DEVICE_ID, position)
+
+    assert cast_device.wait_timeouts == []
+    assert cast_device.media_controller.calls == []
+
+
+@pytest.mark.parametrize("level", [-0.1, 1.1, math.nan, math.inf])
+def test_direct_transport_volume_rejects_invalid_level_before_connecting(level: float) -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+    cast_device.wait_timeouts.clear()
+
+    with pytest.raises(InvalidArgumentError, match="volume"):
+        transport.set_volume(DEVICE_ID, level)
+
+    assert cast_device.wait_timeouts == []
+    assert cast_device.volume_calls == []
+
+
+def test_direct_transport_mute_rejects_non_boolean_before_connecting() -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+    cast_device.wait_timeouts.clear()
+
+    with pytest.raises(InvalidArgumentError, match="boolean"):
+        transport.set_muted(DEVICE_ID, 1)  # type: ignore[arg-type]
+
+    assert cast_device.wait_timeouts == []
+    assert cast_device.mute_calls == []
+
+
+def test_status_recovery_bounds_stale_disconnect_by_remaining_budget() -> None:
+    clock = FakeClock()
+    stale = FakeCast(clock=clock, wait_consumes=0.4, disconnect_consumes=2.0)
+    stale.wait_error = OSError("stale address")
+    discover_calls: list[float] = []
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        discover_calls.append(timeout)
+        return [], FakeBrowser()
+
+    transport = PyChromecastTransport(
+        connection_timeout=3.0,
+        recovery_timeout=3.0,
+        discoverer=discoverer,
+        clock=clock.monotonic,
+    )
+    transport._casts[DEVICE_ID] = cast(Chromecast, stale)
+
+    with pytest.raises(OperationTimeoutError, match="status read budget exhausted"):
+        transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert clock.now == pytest.approx(1.0)
+    assert stale.disconnect_calls == [pytest.approx(0.6)]
+    assert discover_calls == []
+
+
+def test_get_status_never_returns_a_snapshot_from_an_overrunning_receiver_callback() -> None:
+    clock = FakeClock()
+    cast_device = FakeCast(clock=clock)
+    cast_device.receiver_controller._consumes = 1.01
+    transport = PyChromecastTransport(clock=clock.monotonic)
+    transport._casts[DEVICE_ID] = cast(Chromecast, cast_device)
+
+    with pytest.raises(OperationTimeoutError, match="status read budget exhausted"):
+        transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert clock.now == pytest.approx(1.01)
+    assert cast_device.receiver_controller.updates == 1

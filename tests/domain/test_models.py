@@ -167,3 +167,83 @@ def test_media_request_requires_url_and_content_type() -> None:
         MediaRequest(url=" ", content_type="video/mp4")
     with pytest.raises(InvalidArgumentError):
         MediaRequest(url="http://host/a.mp4", content_type="")
+
+
+@pytest.mark.parametrize(
+    ("url", "content_type"),
+    [
+        ("http://media.local/movie.mp4", "video/mp4"),
+        ("https://media.local:8443/live.m3u8?token=abc", "application/vnd.apple.mpegurl"),
+        ("https://media.local/audio", 'audio/aac; codecs="mp4a.40.2"'),
+    ],
+)
+def test_media_request_accepts_castable_network_targets(url: str, content_type: str) -> None:
+    request = MediaRequest(url=url, content_type=content_type, title="Living room media")
+
+    assert request.url == url
+    assert request.content_type == content_type
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        " ",
+        "movie.mp4",
+        "/movie.mp4",
+        "ftp://media.local/movie.mp4",
+        "https:///movie.mp4",
+        "https://media.local/movie file.mp4",
+        " https://media.local/movie.mp4",
+        "https://media.local:99999/movie.mp4",
+        "https://[broken/movie.mp4",
+    ],
+)
+def test_media_request_rejects_non_http_or_malformed_urls(url: str) -> None:
+    with pytest.raises(InvalidArgumentError, match="absolute HTTP"):
+        MediaRequest(url=url, content_type="video/mp4")
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "",
+        " ",
+        "video",
+        "/mp4",
+        "video/",
+        "video /mp4",
+        "video/mp4\ninvalid",
+        "video/mp4; charset",
+        "video/mp4; =utf-8",
+        "video/mp4; charset=",
+    ],
+)
+def test_media_request_rejects_invalid_content_types(content_type: str) -> None:
+    with pytest.raises(InvalidArgumentError, match="valid MIME"):
+        MediaRequest(url="https://media.local/movie.mp4", content_type=content_type)
+
+
+@pytest.mark.parametrize("title", ["", "  ", "Movie\nInjected", "Movie\0Injected"])
+def test_media_request_rejects_blank_or_controlled_titles(title: str) -> None:
+    with pytest.raises(InvalidArgumentError, match="media title"):
+        MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4", title=title)
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        pytest.param("video/mp4", id="simple"),
+        pytest.param('video/mp4; codecs="avc1.4d401f"', id="parameters"),
+        pytest.param('video/mp4 ; codecs="avc1.4d401f"', id="optional-space-before-semicolon"),
+    ],
+)
+def test_media_request_accepts_valid_mime_parameter_spacing(content_type: str) -> None:
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type=content_type)
+
+    assert request.content_type == content_type
+
+
+def test_media_request_still_rejects_a_truly_invalid_mime_value() -> None:
+    with pytest.raises(InvalidArgumentError, match="valid MIME"):
+        MediaRequest(url="https://media.local/movie.mp4", content_type="video / mp4 ; codecs")
