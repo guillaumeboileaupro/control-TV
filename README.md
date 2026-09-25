@@ -48,7 +48,21 @@ python3 scripts/dev.py clean [--dry-run]      # caches, bytecode, packaging meta
 python3 scripts/dev.py dist-clean [--dry-run] # clean, plus .venv and dist/
 ```
 
-`clean` keeps `.venv` and `dist/`. `dist-clean` removes everything reproducible, so `setup` must be run again afterwards. Run `disk-usage` before and after build-heavy work.
+`clean` keeps `.venv`, `ui/node_modules` and `dist/`. `dist-clean` removes everything reproducible, so `setup` (and `npm install` in `ui/`) must be run again afterwards. Run `disk-usage` before and after build-heavy work.
+
+### Tauri application shell
+
+Prerequisites: a Rust toolchain ([rustup](https://rustup.rs/)) and Node.js 20+, plus [Tauri 2's Linux dependencies](https://v2.tauri.app/start/prerequisites/) if building on Linux. Run `python3 scripts/dev.py setup` first: `cargo test` spawns the real Python bridge process to verify the Rust/Python boundary, not just that each side compiles.
+
+```bash
+npm install --prefix ui                       # install frontend dependencies (once)
+python3 scripts/dev.py rust-check             # cargo fmt --check, clippy -D warnings, cargo test
+python3 scripts/dev.py ui-check               # tsc --noEmit, prettier --check
+npx --prefix ui tauri dev                     # run the app (from the repository root)
+npx --prefix ui tauri build --debug --bundles deb   # package a real, installable .deb
+```
+
+Only Linux (Debian/Ubuntu) has been built, installed and launched so far. `resolve_python()` (`src-tauri/src/lib.rs`) is a development-only placeholder that finds this developer's own `.venv` next to the repository; packaging a real Python runtime for a distributed build is future work (see `DEVELOPMENT_PLAN.md`, Phase 7).
 
 ## Repository layout
 
@@ -56,8 +70,11 @@ python3 scripts/dev.py dist-clean [--dry-run] # clean, plus .venv and dist/
 src/control_tv/domain/     typed models, errors and command results (pure Python)
 src/control_tv/ports.py    CastTransport and TvControl interfaces
 src/control_tv/service.py  ControlService: validation and sent-versus-confirmed verification
-src/control_tv/adapters/    focused external-library adapters (PyChromecast)
+src/control_tv/adapters/   focused external-library adapters (PyChromecast)
+src/control_tv/bridge.py   stdio JSON bridge exposing ControlService to the Tauri shell
 tests/                     deterministic unit tests (in-memory fake TV, fake clock)
+src-tauri/                 Tauri 2 application shell (Rust); no Cast/control logic
+ui/                        frontend (vanilla TypeScript + Vite)
 scripts/dev.py             development, cleanup and disk-usage commands
 assets/                    project assets
 ```
@@ -73,4 +90,6 @@ assets/                    project assets
 
 ## Status
 
-The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Physical validation remains entirely open; follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming Chromecast or Google TV behavior. There is still no UI, MCP adapter or packaging.
+The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Physical validation remains entirely open; follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming Chromecast or Google TV behavior. There is still no MCP adapter or release packaging.
+
+Phase 4 (Tauri UI) has an initial application shell: a Tauri 2 Rust crate that spawns the shared control layer as a Python subprocess over a stdio JSON bridge, and a one-page frontend with device discovery. It has been built, installed as a real `.deb` and launched on Debian/Ubuntu (Ubuntu 22.04); Windows and Android are untouched. Device selection, receiver/media state, playback controls and volume/mute are not built yet. Nothing has been validated by sending a command to a real Chromecast or Google TV device - only discovery has been exercised on real hardware.

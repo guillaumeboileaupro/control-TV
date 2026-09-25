@@ -60,6 +60,18 @@ Exit criteria:
 - [x] **P2 review follow-up:** `CastTransport.get_status` now takes an explicit `timeout`; `ControlService._verify` passes only the confirmation budget actually remaining before every read, and never treats a status that arrives after the budget expired as confirmation. The PyChromecast adapter's `get_status` (connection, bounded same-UUID recovery, and the receiver-status round trip) now honors that same per-call budget instead of its own fixed instance timeouts. Deterministic tests cover a blocked/hung read, the exact `timeout` handed to each poll, total elapsed time never exceeding the budget, a match confirmed just before the deadline, and a match arriving just after it (never confirmed).
 - [ ] Physical Chromecast/Google TV validation remains required; no hardware validation was performed in these commits.
 
+## Current implementation status - Tauri application shell
+
+- [x] Tauri 2 shell scaffolded (`src-tauri/`, Rust) with a minimal frontend (`ui/`, vanilla TypeScript + Vite); no frontend framework or UI library is used yet, matching the size of a one-page skeleton.
+- [x] The shell owns no Cast/control logic: `src-tauri/src/lib.rs` only spawns `src/control_tv/bridge.py` as a long-lived child process and forwards line-delimited JSON requests/responses over its stdin/stdout, matched by request id. `ControlService` is not reimplemented in Rust or TypeScript.
+- [x] Only two methods are exposed so far (`ping`, `discover_devices`); every other `TvControl` capability is added to the bridge and to a Tauri command as its own view needs it, not in advance.
+- [x] A failed bridge spawn does not crash the application: the Tauri command returns an explicit "Python control backend unavailable" error instead, surfaced as plain text in the UI.
+- [x] Real, installed-package validation on this Debian/Ubuntu-family desktop (Ubuntu 22.04): `cargo tauri build --debug --bundles deb` produced a real `.deb`; it was installed with `dpkg -i`, launched from `/usr/bin/control-tv` (not the raw build output), showed "Control backend ready", and was cleanly uninstalled afterward (`dpkg -r`). `cargo tauri dev` was also run and screenshotted before the packaged validation.
+- [x] Real end-to-end proof the mechanism reaches the shared control layer: clicking "Discover devices" in the running application performed a real LAN discovery through `ControlService.discover_devices` and returned real Chromecast devices present on the operator's network (no device names/addresses are recorded in this public file; see the local handoff). No control command (play/pause/volume/etc.) was sent to any real device - only the passive, read-only discovery path exists in the UI so far.
+- [x] Rust unit tests cover response parsing/error-translation as pure functions, plus one test that spawns the real `python -m control_tv.bridge` process and pings it (`cargo test`, run as part of `scripts/dev.py rust-check`); it skips (not fails) when `.venv` does not exist yet, which the CI job avoids by running Python setup first.
+- [ ] Windows and Android are not built, installed or launched; nothing here validates them.
+- [ ] Packaging a real Python runtime for a distributed build (not this developer's own `.venv`) is not implemented; `resolve_python()` is explicitly a development-only placeholder (see its docstring) and is Phase 7 work.
+
 ## Phase 2 - Cast discovery and connection
 
 Deliverables:
@@ -70,7 +82,8 @@ Deliverables:
 - [x] receiver/device status retrieval.
 
 Exit criteria:
-- [ ] at least one real compatible device can be discovered and addressed when hardware validation is available;
+- [x] at least one real compatible device was discovered on a real local network (validated 2026-09-25 through the Tauri shell -> Python bridge -> `ControlService.discover_devices` path added in this iteration; device names/addresses are not recorded here, see the local handoff);
+- [ ] a real device's status can be read and a command sent to it and confirmed - only discovery has been validated on real hardware so far, not connection or control;
 - [x] failures are represented explicitly rather than as false success.
 
 ## Phase 3 - Media controls
@@ -109,13 +122,14 @@ Exit criteria:
 ## Phase 4 - Lightweight Tauri UI
 
 Deliverables:
-- [ ] device discovery/selection view;
+- [x] device discovery view (list only; discovered devices are displayed, not yet selectable);
+- [ ] device selection;
 - [ ] current receiver/media state;
 - [ ] playback controls;
 - [ ] volume/mute controls;
-- [ ] clear unavailable/error states;
+- [x] clear unavailable/error states for the control-backend boundary itself (bridge process unavailable, discovery failure are both surfaced in the UI as plain text; per-command error states do not exist yet because no commands are wired yet);
 - [ ] responsive desktop/Android layout;
-- [ ] choose JavaScript/TypeScript and any UI tooling from concrete implementation needs.
+- [x] choose JavaScript/TypeScript and any UI tooling from concrete implementation needs (vanilla TypeScript + Vite: no frontend framework is justified yet by a single-page skeleton).
 
 Exit criteria:
 - [ ] application controls a TV manually without ChatGPT or MCP;
@@ -187,13 +201,13 @@ Exit criteria:
 
 ### Application build CI
 
-- [ ] verify the Tauri 2 build;
-- [ ] verify the frontend build;
-- [ ] verify Python/Tauri integration;
-- [ ] add Linux build checks;
+- [x] verify the Tauri 2 build (hosted run `36135704584`, job "Tauri shell (Rust and frontend)", 3m37s, all steps passed, including a real `.deb` bundle);
+- [x] verify the frontend build (`tsc && vite build`, part of the same hosted run);
+- [x] verify Python/Tauri integration (`cargo test` in that job spawns the real `control_tv.bridge` process and pings it);
+- [x] add Linux build checks (the job above);
 - [ ] add Windows build checks;
 - [ ] add Android build checks;
-- [ ] keep CI build success distinct from real Chromecast/TV hardware validation.
+- [x] keep CI build success distinct from real Chromecast/TV hardware validation (this CI job never touches a Cast device; it built/packaged/pinged the bridge process only).
 
 ### Continuous delivery and packaging
 
