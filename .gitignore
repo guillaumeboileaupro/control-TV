@@ -1,0 +1,36 @@
+# Rust / Tauri build output
+/target/
+/src-tauri/target/
+
+# Android generated/build output
+/src-tauri/gen/android/.gradle/
+/src-tauri/gen/android/build/
+/src-tauri/gen/android/app/build/
+.gradle/
+
+# Distribution and temporary files
+/dist/
+/tmp/
+/temp/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Machine-local development metadata
+/[A]GENTS.md
+/[C]LAUDE.md
+/.[a]gents/
+/.[c]laude/
+/.[c]odex/
+/.ai-private/
