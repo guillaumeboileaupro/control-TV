@@ -11,6 +11,7 @@ import pychromecast.response_handler
 import pytest
 from pychromecast import Chromecast, PyChromecastError, RequestTimeout
 from pychromecast.controllers.media import MediaStatus as PyMediaStatus
+from pychromecast.error import RequestFailed
 
 import control_tv.adapters.pychromecast as pychromecast_adapter
 from control_tv.adapters import PyChromecastTransport
@@ -26,6 +27,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
 )
+from control_tv.service import ControlService
 from fakes import FakeClock
 
 DEVICE_ID = DeviceId("12345678-1234-5678-1234-567812345678")
@@ -74,6 +76,8 @@ class FakeMediaController:
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.error: Exception | None = None
         self.acknowledge_load = True
+        self.load_sent = True
+        self.load_response: dict[str, object] = {"type": "MEDIA_STATUS"}
 
     def _call(self, name: str, *args: object, **kwargs: object) -> None:
         self.calls.append((name, args, kwargs))
@@ -84,7 +88,7 @@ class FakeMediaController:
         self._call("load_media", url, content_type, **kwargs)
         if self.acknowledge_load:
             callback = kwargs["callback_function"]
-            callback(True, {})  # type: ignore[operator]
+            callback(self.load_sent, self.load_response)  # type: ignore[operator]
 
     def play(self, *, timeout: float) -> None:
         self._call("play", timeout=timeout)
@@ -711,3 +715,89 @@ def test_get_status_never_returns_a_snapshot_from_an_overrunning_receiver_callba
 
     assert clock.now == pytest.approx(1.01)
     assert cast_device.receiver_controller.updates == 1
+
+
+def test_load_failed_response_is_an_explicit_rejection_and_is_not_replayed() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.load_response = {
+        "type": "LOAD_FAILED",
+        "detailedErrorCode": 104,
+    }
+    transport, _ = make_transport(cast_device)
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4")
+
+    with pytest.raises(CommandRejectedError, match=r"LOAD_FAILED.*detailed error 104"):
+        transport.load_media(DEVICE_ID, request)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
+
+
+def test_request_not_sent_is_unavailable_not_receiver_rejection_and_is_not_replayed() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.error = RequestFailed("pause")
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(DeviceUnavailableError, match="unavailable"):
+        transport.pause(DEVICE_ID)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["pause"]
+
+
+def test_load_not_sent_is_unavailable_and_is_not_replayed() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.load_sent = False
+    transport, _ = make_transport(cast_device)
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4")
+
+    with pytest.raises(DeviceUnavailableError, match="unavailable"):
+        transport.load_media(DEVICE_ID, request)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
+
+
+def test_media_status_is_the_explicit_success_response_for_load() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.load_response = {"type": "MEDIA_STATUS", "status": []}
+    transport, _ = make_transport(cast_device)
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4")
+
+    transport.load_media(DEVICE_ID, request)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
+
+
+@pytest.mark.parametrize(
+    "response_type",
+    [
+        pytest.param("LOAD_FAILED", id="load-failed"),
+        pytest.param("LOAD_CANCELLED", id="load-cancelled"),
+        pytest.param("INVALID_REQUEST", id="invalid-request"),
+        pytest.param("GENERIC_ERROR", id="other-terminal-error"),
+    ],
+)
+def test_every_non_success_terminal_load_response_is_rejected_without_replay(
+    response_type: str,
+) -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.load_response = {"type": response_type}
+    transport, _ = make_transport(cast_device)
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4")
+
+    with pytest.raises(CommandRejectedError, match=response_type):
+        transport.load_media(DEVICE_ID, request)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
+
+
+def test_terminal_load_rejection_never_starts_service_confirmation() -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.load_response = {"type": "LOAD_CANCELLED"}
+    transport, _ = make_transport(cast_device)
+    service = ControlService(transport, confirm_timeout=1.0)
+    request = MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4")
+
+    with pytest.raises(CommandRejectedError, match="LOAD_CANCELLED"):
+        service.load_media(DEVICE_ID, request)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
+    assert cast_device.receiver_controller.updates == 0

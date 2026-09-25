@@ -17,11 +17,17 @@ from pychromecast.controllers.media import (
     MEDIA_PLAYER_STATE_PAUSED,
     MEDIA_PLAYER_STATE_PLAYING,
     MEDIA_PLAYER_STATE_UNKNOWN,
+    TYPE_MEDIA_STATUS,
 )
 from pychromecast.controllers.media import (
     MediaStatus as PyMediaStatus,
 )
-from pychromecast.error import ChromecastConnectionError, NotConnected, PyChromecastError
+from pychromecast.error import (
+    ChromecastConnectionError,
+    NotConnected,
+    PyChromecastError,
+    RequestFailed,
+)
 from pychromecast.response_handler import WaitResponse
 
 from control_tv.domain import (
@@ -167,6 +173,16 @@ class PyChromecastTransport:
             ),
         )
         self._command(device_id, "load media", response.wait_response)
+        response_data = response.response
+        response_type = response_data.get("type") if response_data is not None else None
+        if response_type != TYPE_MEDIA_STATUS:
+            detail = response_data.get("detailedErrorCode") if response_data is not None else None
+            suffix = "" if detail is None else f" (detailed error {detail})"
+            raise CommandRejectedError(
+                f"device {device_id} rejected load media with terminal response "
+                f"{response_type!r}{suffix}",
+                device_id=device_id,
+            )
 
     def play(self, device_id: DeviceId) -> None:
         cast_device = self._ready(device_id)
@@ -370,7 +386,7 @@ class PyChromecastTransport:
             raise OperationTimeoutError(
                 f"timed out sending {action} to device {device_id}", device_id=device_id
             ) from error
-        except (NotConnected, ChromecastConnectionError, OSError) as error:
+        except (RequestFailed, NotConnected, ChromecastConnectionError, OSError) as error:
             raise DeviceUnavailableError(
                 f"device {device_id} is unavailable: {error}", device_id=device_id
             ) from error
