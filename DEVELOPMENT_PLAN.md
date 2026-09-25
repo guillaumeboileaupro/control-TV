@@ -20,8 +20,9 @@ Build a lightweight standalone Chromecast / Google TV controller for Android, Wi
 Deliverables:
 - [x] repository hygiene and generated-file exclusions;
 - [x] documented architecture and development plan;
-- [ ] reproducible local development commands;
-- [ ] explicit `clean`, `dist-clean` and disk-usage inspection commands once build tooling exists;
+- [x] reproducible local development commands;
+- [x] explicit `clean`, `dist-clean` and disk-usage inspection commands for the current Python tooling;
+- [ ] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output once that tooling exists, validated against real generated output;
 - [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
 
 Exit criteria:

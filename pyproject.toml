@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "control-tv"
+version = "0.0.0"
+description = "Lightweight Chromecast / Google TV controller"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+control_tv = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+
+[tool.mypy]
+strict = true
+files = ["src", "tests", "scripts"]
+mypy_path = "src"
+
+[tool.ruff]
+# Python sources only: recent ruff releases also format Markdown and TOML by default.
+include = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

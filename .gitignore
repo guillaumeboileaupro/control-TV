@@ -8,6 +8,18 @@
 /src-tauri/gen/android/app/build/
 .gradle/
 
+# Python generated output
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
 # Distribution and temporary files
 /dist/
 /tmp/
