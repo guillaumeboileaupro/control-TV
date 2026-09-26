@@ -20,7 +20,9 @@ import pytest
 import control_tv
 from control_tv.bridge import dispatch, handle_line, run
 from control_tv.domain import (
+    CommandRejectedError,
     ConnectionState,
+    ControlError,
     DeviceId,
     DeviceStatus,
     DeviceUnavailableError,
@@ -30,7 +32,7 @@ from control_tv.domain import (
     ReceiverStatus,
 )
 from control_tv.service import ControlService
-from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeTransport
+from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeClock, FakeTransport
 
 
 @dataclass
@@ -396,3 +398,201 @@ def test_the_real_transport_reports_an_undiscovered_device_without_touching_the_
     assert response["id"] == 7
     assert response["ok"] is False
     assert response["error"]["code"] == "device_not_found"
+
+
+# --- playback commands: plain forwards to ControlService; sent is not confirmed ---------
+
+
+def playback_control(transport: FakeTransport, **overrides: float | None) -> ControlService:
+    """A service over a fake clock, so confirmation timing is exact and nothing sleeps."""
+    clock = FakeClock()
+    transport.clock = clock
+    return ControlService(
+        transport,
+        confirm_timeout=overrides.get("confirm_timeout", 1.0),
+        poll_interval=0.25,
+        clock=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+
+def command_request(method: str, **params: object) -> dict[str, object]:
+    return {"id": 1, "method": method, "params": {"deviceId": str(DEVICE_ID), **params}}
+
+
+@pytest.mark.parametrize(
+    ("method", "before", "after"),
+    [
+        ("play", PlaybackState.PAUSED, "playing"),
+        ("pause", PlaybackState.PLAYING, "paused"),
+        ("stop", PlaybackState.PLAYING, "idle"),
+    ],
+)
+def test_a_transport_command_is_forwarded_and_confirmed_by_an_observed_status(
+    method: str, before: PlaybackState, after: str
+) -> None:
+    transport = FakeTransport()
+    transport.tv.playback = before
+
+    response = dispatch(playback_control(transport), command_request(method))
+
+    assert response["ok"] is True
+    result = response["result"]["result"]
+    assert result["command"] == method
+    assert result["deviceId"] == str(DEVICE_ID)
+    assert result["confirmation"] == "confirmed"
+    assert result["detail"] is None
+    assert result["observed"]["media"]["playbackState"] == after
+    assert transport.sent() == [method]
+
+
+def test_seek_forwards_the_position_and_is_confirmed_by_the_observed_position() -> None:
+    transport = FakeTransport()
+
+    response = dispatch(playback_control(transport), command_request("seek", positionSeconds=42))
+
+    result = response["result"]["result"]
+    assert result["command"] == "seek"
+    assert result["confirmation"] == "confirmed"
+    assert result["observed"]["media"]["positionSeconds"] == 42.0
+    assert transport.calls[-2][0] == "seek"
+    assert transport.calls[-2][1] == (DEVICE_ID, 42.0)
+
+
+def test_a_command_the_tv_never_acts_on_is_sent_but_unconfirmed_and_never_resent() -> None:
+    transport = FakeTransport(ignore_commands=True)
+    transport.tv.playback = PlaybackState.PLAYING
+
+    response = dispatch(playback_control(transport), command_request("pause"))
+
+    assert response["ok"] is True
+    result = response["result"]["result"]
+    assert result["confirmation"] == "unconfirmed"
+    assert "expected playback paused" in result["detail"]
+    assert result["observed"]["media"]["playbackState"] == "playing"
+    assert transport.sent() == ["pause"]
+
+
+def test_a_command_with_verification_disabled_is_reported_as_not_checked() -> None:
+    transport = FakeTransport()
+
+    response = dispatch(playback_control(transport, confirm_timeout=None), command_request("pause"))
+
+    result = response["result"]["result"]
+    assert result["confirmation"] == "not_checked"
+    assert result["observed"] is None
+    assert transport.sent() == ["pause"]
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (DeviceUnavailableError("tv is asleep", device_id=str(DEVICE_ID)), "device_unavailable"),
+        (CommandRejectedError("nothing to pause", device_id=str(DEVICE_ID)), "command_rejected"),
+        (OperationTimeoutError("no answer in 10s", device_id=str(DEVICE_ID)), "timeout"),
+    ],
+)
+@pytest.mark.parametrize("method", ["play", "pause", "stop"])
+def test_a_command_that_could_not_be_sent_is_an_error_with_its_code_never_a_result(
+    method: str, error: ControlError, code: str
+) -> None:
+    transport = FakeTransport(fail_commands_with=error)
+
+    response = dispatch(playback_control(transport), command_request(method))
+
+    assert response["ok"] is False
+    assert "result" not in response
+    assert response["error"] == {"code": code, "message": error.message}
+    assert transport.sent() == []
+
+
+def test_seek_on_media_that_cannot_seek_is_refused_before_anything_is_sent() -> None:
+    transport = FakeTransport()
+    transport.tv.supports_seek = False
+
+    response = dispatch(playback_control(transport), command_request("seek", positionSeconds=30))
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "unsupported_operation"
+    assert transport.sent() == []
+
+
+@pytest.mark.parametrize("method", ["play", "pause", "stop", "seek"])
+def test_a_command_for_an_unknown_device_is_not_found_and_sends_nothing(method: str) -> None:
+    transport = FakeTransport()
+    request = {"id": 1, "method": method, "params": {"deviceId": "Living room"}}
+    if method == "seek":
+        request["params"]["positionSeconds"] = 5  # type: ignore[index]
+
+    response = dispatch(playback_control(transport), request)
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "device_not_found"
+    assert transport.sent() == []
+
+
+@pytest.mark.parametrize("device_id", [None, 42, ["uuid-1"], "", "   "])
+@pytest.mark.parametrize("method", ["play", "pause", "stop", "seek"])
+def test_a_command_needs_a_non_blank_string_device_id(method: str, device_id: object) -> None:
+    transport = FakeTransport()
+    params: dict[str, object] = {"positionSeconds": 5} if method == "seek" else {}
+    if device_id is not None:
+        params["deviceId"] = device_id
+
+    response = dispatch(playback_control(transport), {"id": 2, "method": method, "params": params})
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "position", [None, "30", True, False, [30], {"s": 30}, -1, -0.5, float("nan"), float("inf")]
+)
+def test_seek_rejects_a_missing_non_numeric_or_invalid_position_before_any_transport_call(
+    position: object,
+) -> None:
+    transport = FakeTransport()
+    params: dict[str, object] = {"deviceId": str(DEVICE_ID)}
+    if position is not None:
+        params["positionSeconds"] = position
+
+    response = dispatch(playback_control(transport), {"id": 3, "method": "seek", "params": params})
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+def test_the_real_transport_refuses_commands_for_an_undiscovered_device_without_the_network() -> (
+    None
+):
+    """Through the real `PyChromecastTransport` and real stdio: an id that was never
+    discovered fails before any network I/O, so this sends nothing to any device."""
+    process = subprocess.Popen(
+        [sys.executable, "-m", "control_tv.bridge"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        for request_id, method in enumerate(["play", "pause", "stop", "seek"], start=10):
+            params: dict[str, object] = {"deviceId": "never-discovered"}
+            if method == "seek":
+                params["positionSeconds"] = 5
+            process.stdin.write(
+                json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
+            )
+            process.stdin.flush()
+            response = json.loads(process.stdout.readline())
+            assert response["id"] == request_id
+            assert response["ok"] is False
+            assert response["error"]["code"] == "device_not_found"
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        process.wait(timeout=5)
