@@ -584,6 +584,18 @@ def test_seek_is_confirmed_within_tolerance(
     assert transport.calls[-2] == ("seek", (DEVICE_ID, 120.0))
 
 
+def test_seek_zero_budget_rejects_before_status_read_or_command(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    service = make_service(transport, clock, confirm_timeout=0)
+
+    with pytest.raises(OperationTimeoutError):
+        service.seek(DEVICE_ID, 120.0)
+
+    assert transport.calls == []
+    assert clock.now == pytest.approx(0.0)
+
+
 def test_seek_fast_snapshot_and_confirmation_share_one_budget(
     transport: FakeTransport, clock: FakeClock
 ) -> None:

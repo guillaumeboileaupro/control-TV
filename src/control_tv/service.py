@@ -29,6 +29,7 @@ from control_tv.domain import (
     DeviceStatus,
     InvalidArgumentError,
     MediaRequest,
+    OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
 )
@@ -276,7 +277,12 @@ class ControlService:
             )
         else:
             remaining = deadline - self._clock()
-            if remaining > 0:
+            if remaining <= 0:
+                raise OperationTimeoutError(
+                    "seek capability could not be checked within the confirmation budget",
+                    device_id=device_id,
+                )
+            else:
                 status = self._transport.get_status(
                     device_id, timeout=min(self._status_timeout, remaining)
                 )

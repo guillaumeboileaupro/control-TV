@@ -61,6 +61,7 @@ Exit criteria:
 - [x] Real-hardware evidence is required before any hardware/platform checkbox can be completed.
 - [x] Coverage (95% minimum) and installed-dependency quality commands are implemented and validated; deterministic command tests cover orchestration and fail-fast behavior, and the defensive verification invariant is explicit.
 - [x] **P2 review follow-up:** `CastTransport.get_status` now takes an explicit `timeout`; `ControlService._verify` passes only the confirmation budget actually remaining before every read, and never treats a status that arrives after the budget expired as confirmation. The PyChromecast adapter's `get_status` (connection, bounded same-UUID recovery, and the receiver-status round trip) now honors that same per-call budget instead of its own fixed instance timeouts. Deterministic tests cover a blocked/hung read, the exact `timeout` handed to each poll, total elapsed time never exceeding the budget, a match confirmed just before the deadline, and a match arriving just after it (never confirmed).
+- [x] **P2 review follow-up:** a zero confirmation budget rejects seek before any status read or command instead of bypassing the capability guard or creating an independent timeout;
 - [x] Read-only physical validation completed for discovery -> UUID selection -> connected receiver status, repeated discovery -> same UUID -> status, and repeated close; no media or receiver command was sent.
 
 ## Current implementation status - Tauri application shell
@@ -117,7 +118,8 @@ Current confirmation-synchronization iteration:
 - [x] **Implemented:** make the pre-command seek status read and post-command confirmation share one bounded confirmation deadline, and treat empty or whitespace-only seek media identities as absent evidence;
 - [x] deterministic timing and identity tests pass; removing the shared deadline makes all four focused double-budget mutation tests fail;
 - [x] **P2 review follow-up:** a status returned exactly at the deadline remains usable only to block an explicitly unsupported seek; its late media identity cannot confirm the command;
-- [x] complete local Ruff, format, strict mypy, 315-test suite, 97.55% coverage and dependency checks pass; hosted CI pending;
+- [x] **P2 review follow-up:** a zero confirmation budget rejects seek before any status read or command instead of bypassing the capability guard or creating an independent timeout;
+- [x] complete local Ruff, format, strict mypy, 316-test suite, 97.55% coverage and dependency checks pass; hosted CI pending;
 - [ ] distinguish replacement sessions that reuse the exact same `content_id`; this needs a stable media-session identifier in the shared status model and must be coordinated with the open Tauri bridge PR before changing that interface;
 - [ ] physical Chromecast/Google TV validation remains required; no fake or automated test completes it;
 
