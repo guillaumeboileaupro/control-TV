@@ -12,9 +12,13 @@ import type { AppState } from "./model.ts";
 import type { CommandRequest } from "./playback.ts";
 import { setVolumeDraft, startMute, startVolume } from "./sound.ts";
 
-// Long enough to outlast a held key's initial repeat pause and the last step of a drag, short
-// enough that a single tap or a release is followed by its command almost at once.
-export const VOLUME_SETTLE_MS = 400;
+// How long the control must stay still before its command is sent. A pointer release is a clear
+// end of a gesture, so a short wait is enough. A key press is not: the first press of a held key
+// is followed by a pause (commonly 500 to 660 ms) before it starts repeating, and the wait must
+// outlast that pause or the hold would be sent as two commands. Whatever is driving the control
+// is unknown until it declares itself, so the longer, safe wait is the default.
+export const VOLUME_SETTLE_POINTER_MS = 300;
+export const VOLUME_SETTLE_KEYBOARD_MS = 800;
 
 export interface Timers {
   set(callback: () => void, delayMs: number): number;
@@ -22,8 +26,9 @@ export interface Timers {
 }
 
 export interface Settler {
-  // (Re)starts the wait: `onSettled` runs once, `delayMs` after the last touch.
-  touch(): void;
+  // (Re)starts the wait: `onSettled` runs once, `delayMs` after the last touch (by default the
+  // delay the settler was created with).
+  touch(delayMs?: number): void;
   // Forgets a wait in progress: nothing runs until the next touch.
   cancel(): void;
 }
@@ -31,14 +36,14 @@ export interface Settler {
 export function createSettler(delayMs: number, timers: Timers, onSettled: () => void): Settler {
   let handle: number | null = null;
   return {
-    touch(): void {
+    touch(waitMs = delayMs): void {
       if (handle !== null) {
         timers.clear(handle);
       }
       handle = timers.set(() => {
         handle = null;
         onSettled();
-      }, delayMs);
+      }, waitMs);
     },
     cancel(): void {
       if (handle !== null) {
@@ -55,10 +60,13 @@ export interface SoundControllerDeps {
   // Performs the I/O for one command that the state has already marked as pending.
   run(request: CommandRequest): void;
   timers: Timers;
-  settleMs?: number;
 }
 
 export interface SoundController {
+  // What is driving the volume control: a pointer (mouse, touch, pen) or the keyboard. It only
+  // chooses how long to wait after the control stops moving; it never blocks a command.
+  volumePointerDown(): void;
+  volumeKeyDown(): void;
   // The volume control moved: update the draft, send nothing, and forget any wait in progress
   // (the control is still moving).
   volumeInput(percent: number): void;
@@ -76,15 +84,22 @@ export function createSoundController(deps: SoundControllerDeps): SoundControlle
       deps.run(next.request);
     }
   };
-  const settler = createSettler(deps.settleMs ?? VOLUME_SETTLE_MS, deps.timers, commit);
+  const settler = createSettler(VOLUME_SETTLE_KEYBOARD_MS, deps.timers, commit);
+  let driver: "pointer" | "keyboard" = "keyboard";
 
   return {
+    volumePointerDown(): void {
+      driver = "pointer";
+    },
+    volumeKeyDown(): void {
+      driver = "keyboard";
+    },
     volumeInput(percent: number): void {
       settler.cancel();
       deps.setState(setVolumeDraft(deps.getState(), percent));
     },
     volumeChange(): void {
-      settler.touch();
+      settler.touch(driver === "pointer" ? VOLUME_SETTLE_POINTER_MS : VOLUME_SETTLE_KEYBOARD_MS);
     },
     mute(): void {
       // No need to cancel a wait for a volume draft: pressing mute starts a command, which drops

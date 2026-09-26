@@ -735,6 +735,8 @@ function start(elements: Elements): void {
       clear: (handle) => window.clearTimeout(handle),
     },
   });
+  elements.volumeInput.addEventListener("pointerdown", () => sound.volumePointerDown());
+  elements.volumeInput.addEventListener("keydown", () => sound.volumeKeyDown());
   elements.volumeInput.addEventListener("input", () =>
     sound.volumeInput(Number(elements.volumeInput.value)),
   );

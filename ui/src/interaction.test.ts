@@ -10,7 +10,8 @@ import { commandResult, readyWith, statusOf } from "./fixtures.ts";
 import {
   createSettler,
   createSoundController,
-  VOLUME_SETTLE_MS,
+  VOLUME_SETTLE_KEYBOARD_MS,
+  VOLUME_SETTLE_POINTER_MS,
   type Timers,
 } from "./interaction.ts";
 import { finishDiscovery, refreshStatus, startDiscovery, type AppState } from "./model.ts";
@@ -21,6 +22,9 @@ import {
   type CommandRequest,
 } from "./playback.ts";
 import { describeSound } from "./sound.ts";
+
+// The wait used when nothing has said what drives the control: the keyboard's.
+const SETTLE = VOLUME_SETTLE_KEYBOARD_MS;
 
 class FakeTimers implements Timers {
   now = 0;
@@ -145,16 +149,17 @@ describe("the settle timer", () => {
 });
 
 describe("the volume slider", () => {
-  test("a drag of many events sends one command, with the last level, after it settles", () => {
+  test("a drag of many events sends one command, with the last level, shortly after release", () => {
     const h = harness();
 
+    h.controller.volumePointerDown();
     for (let percent = 46; percent <= 80; percent += 1) {
       h.controller.volumeInput(percent);
       h.timers.advance(10);
     }
     h.controller.volumeChange();
     assert.equal(h.sent.length, 0, "nothing is sent while the control moves or just after release");
-    h.timers.advance(VOLUME_SETTLE_MS - 1);
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS - 1);
     assert.equal(h.sent.length, 0);
     h.timers.advance(1);
 
@@ -175,19 +180,54 @@ describe("the volume slider", () => {
     assert.equal(describeSound(h.state).readout, "Set volume to 70%");
   });
 
-  test("a held key, which repeats input and change events, still sends one command", () => {
+  test("a held key, with its initial pause and then fast repeats, sends one command", () => {
     const h = harness();
 
-    for (let step = 1; step <= 40; step += 1) {
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(46);
+    h.controller.volumeChange();
+    h.timers.advance(660); // the pause before a held key starts repeating
+    assert.equal(h.sent.length, 0, "the first press is not sent before the repeats begin");
+    for (let step = 2; step <= 40; step += 1) {
+      h.controller.volumeKeyDown();
       h.controller.volumeInput(45 + step);
       h.controller.volumeChange();
       h.timers.advance(33);
     }
     assert.equal(h.sent.length, 0, "not while the key is still repeating");
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 1);
     assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 85 });
+  });
+
+  test("the keyboard wait outlasts a typical key-repeat pause, and a pointer's does not need to", () => {
+    assert.ok(VOLUME_SETTLE_KEYBOARD_MS > 660);
+    assert.ok(VOLUME_SETTLE_POINTER_MS < VOLUME_SETTLE_KEYBOARD_MS);
+  });
+
+  test("what drives the control chooses the wait, and the last driver wins", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(50);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+    assert.equal(h.sent.length, 0, "the keyboard drove it last, so the longer wait applies");
+    h.timers.advance(SETTLE - VOLUME_SETTLE_POINTER_MS);
+    assert.equal(h.sent.length, 1);
+  });
+
+  test("with no driver declared, the safe longer wait is used", () => {
+    const h = harness();
+
+    h.controller.volumeInput(50);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+    assert.equal(h.sent.length, 0);
+    h.timers.advance(SETTLE);
+    assert.equal(h.sent.length, 1);
   });
 
   test("a single key press sends one command", () => {
@@ -195,7 +235,7 @@ describe("the volume slider", () => {
 
     h.controller.volumeInput(46);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 1);
     assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 46 });
@@ -208,10 +248,10 @@ describe("the volume slider", () => {
     h.controller.volumeChange();
     h.timers.advance(300);
     h.controller.volumeInput(65);
-    h.timers.advance(VOLUME_SETTLE_MS + 100);
+    h.timers.advance(SETTLE + 100);
     assert.equal(h.sent.length, 0, "the control was moving again, so the wait was forgotten");
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 1);
     assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 65 });
@@ -223,7 +263,7 @@ describe("the volume slider", () => {
     h.controller.volumeInput(80);
     h.controller.volumeInput(45);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 0);
     assert.equal(h.state.command.kind, "idle");
@@ -233,7 +273,7 @@ describe("the volume slider", () => {
     const h = harness();
 
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 0);
   });
@@ -242,7 +282,7 @@ describe("the volume slider", () => {
     const h = harness();
     h.controller.volumeInput(60);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
     assert.equal(h.sent.length, 1);
 
     for (let percent = 61; percent <= 100; percent += 1) {
@@ -250,7 +290,7 @@ describe("the volume slider", () => {
       h.controller.volumeChange();
       h.timers.advance(50);
     }
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 1, "no second command while the first is in flight");
     assert.equal(h.state.volumeDraft, null);
@@ -260,12 +300,12 @@ describe("the volume slider", () => {
     const h = harness();
     h.controller.volumeInput(60);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
     h.answer("confirmed", statusOf({ receiver: { volumeLevel: 0.6 } }));
 
     h.controller.volumeInput(30);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 2);
     assert.deepEqual(h.sent[1]?.sound, { kind: "volume", percent: 30 });
@@ -285,7 +325,7 @@ describe("the volume slider", () => {
         h.timers.advance(20);
         assert.ok(h.timers.waiting <= 1, "at most one timer is ever waiting");
       }
-      h.timers.advance(VOLUME_SETTLE_MS);
+      h.timers.advance(SETTLE);
       h.answer("confirmed", statusOf({ receiver: { volumeLevel: level / 100 } }));
     }
 
@@ -303,7 +343,7 @@ describe("the volume slider", () => {
       h.controller.volumeChange();
       h.state = drop(h.state);
 
-      h.timers.advance(VOLUME_SETTLE_MS * 3);
+      h.timers.advance(SETTLE * 3);
 
       assert.equal(h.sent.length, 0);
     }
@@ -315,7 +355,7 @@ describe("the volume slider", () => {
     h.controller.volumeChange();
     h.state = finishDiscovery({ ...h.state, discovery: { kind: "running" } }, []);
 
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 0);
   });
@@ -325,7 +365,7 @@ describe("the volume slider", () => {
 
     h.controller.volumeInput(60);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 0);
     assert.equal(h.state.volumeDraft, null);
@@ -337,7 +377,7 @@ describe("the volume slider", () => {
 
     h.controller.volumeInput(60);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 0);
   });
@@ -346,7 +386,7 @@ describe("the volume slider", () => {
     const h = harness();
     h.controller.volumeInput(60);
     h.controller.volumeChange();
-    h.timers.advance(VOLUME_SETTLE_MS);
+    h.timers.advance(SETTLE);
     h.answer("unconfirmed");
 
     h.timers.advance(60_000);
@@ -412,7 +452,7 @@ describe("the mute button", () => {
     h.controller.volumeChange();
 
     h.controller.mute();
-    h.timers.advance(VOLUME_SETTLE_MS * 3);
+    h.timers.advance(SETTLE * 3);
 
     assert.equal(h.sent.length, 1);
     assert.equal(h.sent[0]?.command, "set_muted");
