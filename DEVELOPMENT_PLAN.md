@@ -119,7 +119,7 @@ Current confirmation-synchronization iteration:
 - [x] deterministic timing and identity tests pass; removing the shared deadline makes all four focused double-budget mutation tests fail;
 - [x] **P2 review follow-up:** a status returned exactly at the deadline remains usable only to block an explicitly unsupported seek; its late media identity cannot confirm the command;
 - [x] **P2 review follow-up:** a zero confirmation budget rejects seek before any status read or command instead of bypassing the capability guard or creating an independent timeout;
-- [x] complete local Ruff, format, strict mypy, 316-test suite, 97.55% coverage and dependency checks pass; hosted CI pending;
+- [x] complete local Ruff, format, strict mypy, 316-test suite, 97.55% coverage and dependency checks pass; hosted CI is required on the final PR HEAD;
 - [ ] distinguish replacement sessions that reuse the exact same `content_id`; this needs a stable media-session identifier in the shared status model and must be coordinated with the open Tauri bridge PR before changing that interface;
 - [ ] physical Chromecast/Google TV validation remains required; no fake or automated test completes it;
 
