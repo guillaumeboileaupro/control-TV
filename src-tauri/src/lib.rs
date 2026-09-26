@@ -31,6 +31,13 @@ const DISCOVERY_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
 /// gets its turn, so a request must never wait behind another: the UI keeps at most one
 /// request in flight (it offers no selection, refresh or discovery while one is running).
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+/// Outer bound on one playback command. The control layer runs a command inside its own
+/// windows - an identity snapshot and the confirmation share one 5s window, and delivering
+/// the command may first wait for a connection with one bounded recovery, about 35s in the
+/// worst case - so this is deliberately generous: only a genuinely stuck bridge exceeds it.
+/// The UI keeps one request in flight and never resends on a timeout (delivery is then
+/// ambiguous), so a long bound only ever delays reporting a stuck bridge.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -312,6 +319,71 @@ async fn bridge_get_status(
     read_status(state.inner().clone(), &device_id).await
 }
 
+/// The request for a seek: the stable device id and the requested position in seconds. Whether
+/// the position is valid, or the media can be seeked at all, is decided by the control layer.
+fn seek_request(device_id: &str, position_seconds: f64) -> Value {
+    json!({ "deviceId": device_id, "positionSeconds": position_seconds })
+}
+
+/// Forwards `play`, `pause` or `stop` for one device. A plain forward: no retry (a timeout
+/// leaves delivery ambiguous, so resending is the operator's decision) and no state of its
+/// own. The answer is data: `ok` means the command was sent, `confirmation` says whether the
+/// TV then showed the result.
+async fn send_transport(
+    state: SharedBridgeState,
+    method: &'static str,
+    device_id: &str,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(state, method, status_request(device_id), COMMAND_TIMEOUT).await
+}
+
+async fn send_seek(
+    state: SharedBridgeState,
+    device_id: &str,
+    position_seconds: f64,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state,
+        "seek",
+        seek_request(device_id, position_seconds),
+        COMMAND_TIMEOUT,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_play(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_transport(state.inner().clone(), "play", &device_id).await
+}
+
+#[tauri::command]
+async fn bridge_pause(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_transport(state.inner().clone(), "pause", &device_id).await
+}
+
+#[tauri::command]
+async fn bridge_stop(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_transport(state.inner().clone(), "stop", &device_id).await
+}
+
+#[tauri::command]
+async fn bridge_seek(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    position_seconds: f64,
+) -> Result<Value, BridgeFailure> {
+    send_seek(state.inner().clone(), &device_id, position_seconds).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -330,7 +402,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bridge_ping,
             bridge_discover_devices,
-            bridge_get_status
+            bridge_get_status,
+            bridge_play,
+            bridge_pause,
+            bridge_stop,
+            bridge_seek
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -645,6 +721,128 @@ mod tests {
             error,
             BridgeFailure::new("device_unavailable", "tv is asleep")
         );
+    }
+
+    // --- playback commands: plain forwards, sent is not confirmed ------------------------
+
+    #[test]
+    fn a_seek_request_carries_the_device_id_and_a_numeric_position() {
+        assert_eq!(
+            seek_request("uuid-1", 42.5),
+            json!({"deviceId": "uuid-1", "positionSeconds": 42.5})
+        );
+    }
+
+    #[test]
+    fn the_command_timeout_leaves_room_for_the_control_layers_worst_case() {
+        // Snapshot and confirmation share 5s; delivery may wait for a connection with one
+        // bounded recovery (about 35s). A tighter bound would report a working command as stuck.
+        assert!(COMMAND_TIMEOUT >= Duration::from_secs(45));
+        assert!(COMMAND_TIMEOUT > STATUS_TIMEOUT);
+    }
+
+    #[test]
+    fn each_transport_command_sends_its_own_method_with_only_the_stable_device_id() {
+        for method in ["play", "pause", "stop"] {
+            // Echoes the request line it received back inside the result.
+            let (state, _script) =
+                ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+
+            let result =
+                tauri::async_runtime::block_on(send_transport(state, method, "uuid-1")).unwrap();
+
+            assert_eq!(result["received"]["method"], method);
+            assert_eq!(result["received"]["params"], json!({"deviceId": "uuid-1"}));
+        }
+    }
+
+    #[test]
+    fn seek_sends_the_position_as_a_number_next_to_the_device_id() {
+        let (state, _script) =
+            ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+
+        let result = tauri::async_runtime::block_on(send_seek(state, "uuid-1", 30.5)).unwrap();
+
+        assert_eq!(result["received"]["method"], "seek");
+        assert_eq!(
+            result["received"]["params"],
+            json!({"deviceId": "uuid-1", "positionSeconds": 30.5})
+        );
+    }
+
+    #[test]
+    fn a_sent_but_unconfirmed_command_is_relayed_as_data_not_turned_into_an_error() {
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","deviceId":"uuid-1","confirmation":"unconfirmed","detail":"command sent; expected playback paused, but playback is playing","observed":null}}}'"#,
+        );
+
+        let result =
+            tauri::async_runtime::block_on(send_transport(state, "pause", "uuid-1")).unwrap();
+
+        assert_eq!(result["result"]["confirmation"], "unconfirmed");
+        assert_eq!(result["result"]["command"], "pause");
+    }
+
+    #[test]
+    fn a_command_error_code_is_relayed_untouched() {
+        for code in [
+            "command_rejected",
+            "unsupported_operation",
+            "device_unavailable",
+            "timeout",
+        ] {
+            let body = format!(
+                r#"echo '{{"id":1,"ok":false,"error":{{"code":"{code}","message":"m"}}}}'"#
+            );
+            let (state, _script) = ready_state(&body);
+
+            let error = tauri::async_runtime::block_on(send_transport(state, "play", "uuid-1"))
+                .unwrap_err();
+
+            assert_eq!(error, BridgeFailure::new(code, "m"));
+        }
+    }
+
+    #[test]
+    fn commands_report_an_unavailable_backend_with_its_own_code() {
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeState::Unavailable(
+            "failed to spawn the Python control bridge".to_string(),
+        )));
+
+        let error = tauri::async_runtime::block_on(send_seek(state, "uuid-1", 5.0)).unwrap_err();
+
+        assert_eq!(error.code, CODE_BACKEND_UNAVAILABLE);
+    }
+
+    /// The P1 review on PR #4 again, for commands: a bridge call that takes a while must not
+    /// run on the async thread. On a single-threaded runtime an inline blocking read would
+    /// starve every other task; here a spawned task must get to run while the command waits.
+    #[test]
+    fn a_slow_command_does_not_block_the_async_thread() {
+        let (state, _script) = ready_state(
+            r#"sleep 1
+echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"confirmed"}}}'"#,
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ticked = Arc::new(Mutex::new(None::<std::time::Instant>));
+        let ticker = Arc::clone(&ticked);
+        runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            *ticker.lock().unwrap() = Some(std::time::Instant::now());
+        });
+
+        let result = runtime.block_on(send_transport(state, "pause", "uuid-1"));
+        let finished = std::time::Instant::now();
+
+        assert_eq!(result.unwrap()["result"]["confirmation"], "confirmed");
+        let tick = ticked
+            .lock()
+            .unwrap()
+            .expect("the async thread was blocked");
+        assert!(tick < finished, "the other task only ran after the command");
     }
 
     #[test]

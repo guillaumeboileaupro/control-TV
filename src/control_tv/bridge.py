@@ -15,12 +15,27 @@ Response: {"id": <same as request, or null if the request itself could not be re
 
 `id` is opaque to this module: it is only ever echoed back, never interpreted.
 
-Methods (every one is read-only with respect to the TV):
+Read-only methods:
 - `ping`             -> {"status", "controlTvVersion"}
 - `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`
 - `get_status`       -> {"status": {...}}; required param `deviceId` (the stable id from
                         discovery, never a display name). Fields the TV did not report are
                         `null`, never a default: `null` means unknown, not "off" or "zero".
+
+Playback commands, each a plain forward to the same-named `ControlService` method (no Cast
+logic, no retry, no replay), all taking the stable `deviceId`:
+- `play`, `pause`, `stop`
+- `seek`             -> also requires `positionSeconds` (a number, not a boolean)
+They answer {"result": {"command", "deviceId", "confirmation", "detail", "observed"}}.
+`ok: true` on a command means the command was SENT - nothing more. Whether the TV then
+showed the requested state is `result.confirmation`: `confirmed` (a status observed on the
+TV shows it), `unconfirmed` (sent, but the TV did not show it in time; `detail` says what it
+did report) or `not_checked` (sent, verification disabled). `unconfirmed` and `not_checked`
+are not success: a caller must not present them as such. `observed` is the last status read
+from the TV, in the same shape as `get_status`, or `null` if none could be read. A command
+that could not be sent is an error response instead (`device_unavailable`,
+`command_rejected` for a delivered command the receiver refused, `unsupported_operation`,
+`timeout`, ...); a `timeout` on delivery is ambiguous, so a caller must not resend on its own.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -37,6 +52,7 @@ from typing import Any, TextIO
 
 import control_tv
 from control_tv.domain import (
+    CommandResult,
     ControlError,
     Device,
     DeviceId,
@@ -91,6 +107,23 @@ def _status_to_json(status: DeviceStatus) -> dict[str, Any]:
     }
 
 
+def _command_result_to_json(result: CommandResult) -> dict[str, Any]:
+    return {
+        "command": result.command.value,
+        "deviceId": str(result.device_id),
+        "confirmation": result.confirmation.value,
+        "detail": result.detail,
+        "observed": None if result.observed is None else _status_to_json(result.observed),
+    }
+
+
+def _device_id_param(params: dict[str, Any]) -> DeviceId:
+    device_id = params.get("deviceId")
+    if not isinstance(device_id, str):
+        raise InvalidArgumentError(f"deviceId must be a string: {device_id!r}")
+    return DeviceId(device_id)
+
+
 def _handle_ping(control: ControlService, params: dict[str, Any]) -> Any:
     del control, params
     return {"status": "ready", "controlTvVersion": control_tv.__version__}
@@ -105,16 +138,38 @@ def _handle_discover_devices(control: ControlService, params: dict[str, Any]) ->
 
 
 def _handle_get_status(control: ControlService, params: dict[str, Any]) -> Any:
-    device_id = params.get("deviceId")
-    if not isinstance(device_id, str):
-        raise InvalidArgumentError(f"deviceId must be a string: {device_id!r}")
-    return {"status": _status_to_json(control.get_status(DeviceId(device_id)))}
+    return {"status": _status_to_json(control.get_status(_device_id_param(params)))}
+
+
+def _handle_play(control: ControlService, params: dict[str, Any]) -> Any:
+    return {"result": _command_result_to_json(control.play(_device_id_param(params)))}
+
+
+def _handle_pause(control: ControlService, params: dict[str, Any]) -> Any:
+    return {"result": _command_result_to_json(control.pause(_device_id_param(params)))}
+
+
+def _handle_stop(control: ControlService, params: dict[str, Any]) -> Any:
+    return {"result": _command_result_to_json(control.stop(_device_id_param(params)))}
+
+
+def _handle_seek(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    position = params.get("positionSeconds")
+    # A JSON boolean is an int in Python; it is never a position.
+    if isinstance(position, bool) or not isinstance(position, int | float):
+        raise InvalidArgumentError(f"positionSeconds must be a number: {position!r}")
+    return {"result": _command_result_to_json(control.seek(device_id, float(position)))}
 
 
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
     "get_status": _handle_get_status,
+    "play": _handle_play,
+    "pause": _handle_pause,
+    "stop": _handle_stop,
+    "seek": _handle_seek,
 }
 
 

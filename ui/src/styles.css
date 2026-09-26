@@ -535,3 +535,88 @@ button {
 .problem-title .icon {
   margin-top: 1px;
 }
+
+/* Playback controls: one dominant toggle, a quieter Stop, a slider only when seeking is
+   possible. Everything is at least 44px so it works with a mouse, a keyboard and a finger. */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.seek {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.seek-input {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.seek-input:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
+.seek-label {
+  min-height: 1.45em;
+  margin: -8px 0 0;
+  color: var(--muted);
+}
+
+/* Kept in the layout (not hidden) so composing a seek never moves the controls below. */
+.seek-label.is-empty {
+  visibility: hidden;
+}
+
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-transport {
+  min-width: 9rem;
+  min-height: 56px;
+  font-size: 1.067rem;
+}
+
+.controls .note {
+  margin: 0;
+}
+
+.feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.feedback .icon {
+  margin-top: 1px;
+}
+
+.feedback-warning {
+  color: var(--text);
+}
+
+.feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 4px;
+}
+
+.command-feedback:not(:empty) {
+  margin-top: 12px;
+}

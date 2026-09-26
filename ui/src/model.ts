@@ -1,3 +1,5 @@
+import type { CommandView } from "./playback.ts";
+
 // Application state and presentation logic for the manual UI, as plain functions.
 //
 // Nothing here touches the DOM, Tauri or the network: `main.ts` performs the I/O and
@@ -70,6 +72,13 @@ export interface AppState {
   // stable identifier every status read is made with; `friendlyName` is display-only.
   selected: Device | null;
   status: StatusView;
+  // The last playback command (see playback.ts): in flight, refused, or sent and whether the
+  // TV then showed the result. Its answer never edits `status`; only a status the TV
+  // reported (the one the answer carries) replaces it.
+  command: CommandView;
+  // A position the operator is moving the seek control to and has not sent yet. It is a
+  // request being composed, never a position the TV reported.
+  seekDraft: number | null;
   notice: string | null;
   nextRequestId: number;
 }
@@ -126,6 +135,8 @@ export function initialState(): AppState {
     discovery: { kind: "idle" },
     selected: null,
     status: { kind: "none" },
+    command: { kind: "idle" },
+    seekDraft: null,
     notice: null,
     nextRequestId: 1,
   };
@@ -134,10 +145,14 @@ export function initialState(): AppState {
 // The backend is single-flight (one request at a time) and every request's timeout starts
 // before it gets its turn, so anything queued behind a slow request eats into its own time
 // budget - and rapid clicks would queue without bound. The UI therefore keeps at most one
-// request in flight: while a discovery or a status read runs, it offers none of discovery,
-// device selection or refresh.
-function idle(state: AppState): boolean {
-  return state.discovery.kind !== "running" && state.status.kind !== "loading";
+// request in flight: while a discovery, a status read or a playback command runs, it offers
+// none of discovery, device selection, refresh or another command.
+export function idle(state: AppState): boolean {
+  return (
+    state.discovery.kind !== "running" &&
+    state.status.kind !== "loading" &&
+    state.command.kind !== "pending"
+  );
 }
 
 export function canDiscover(state: AppState): boolean {
@@ -153,7 +168,14 @@ export function canRefresh(state: AppState): boolean {
 }
 
 export function startDiscovery(state: AppState): AppState {
-  return { ...state, devices: [], discovery: { kind: "running" }, notice: null };
+  return {
+    ...state,
+    devices: [],
+    discovery: { kind: "running" },
+    command: { kind: "idle" },
+    seekDraft: null,
+    notice: null,
+  };
 }
 
 // The selection survives a new discovery only if the backend reports that same stable id
@@ -173,6 +195,8 @@ export function finishDiscovery(state: AppState, devices: Device[]): AppState {
     ...next,
     selected: null,
     status: { kind: "none" },
+    command: { kind: "idle" },
+    seekDraft: null,
     notice: "The selected device was not found by the latest discovery. Select a device again.",
   };
 }
@@ -191,6 +215,8 @@ function beginStatusRead(
       ...state,
       selected,
       status: { kind: "loading", requestId },
+      command: { kind: "idle" },
+      seekDraft: null,
       notice: null,
       nextRequestId: requestId + 1,
     },
@@ -416,7 +442,7 @@ function connectionLabel(connection: string): string {
   return connection === "disconnected" ? "Not connected" : capitalize(connection);
 }
 
-function playbackKind(state: string): PlaybackKind {
+export function playbackKind(state: string): PlaybackKind {
   return state === "playing" || state === "paused" || state === "buffering" || state === "idle"
     ? state
     : "unknown";
