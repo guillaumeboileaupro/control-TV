@@ -32,6 +32,37 @@ Application / Tauri boundary
 
 GUI and MCP must use the same authoritative control/domain behavior. Do not create two divergent control engines. Technology boundaries must remain explicit and testable.
 
+## Current implementation
+
+What exists in the code today (the MCP adapter, the tray and Android do not exist yet):
+
+```text
+ui/ (vanilla TypeScript + Vite)
+   |  Tauri command (invoke)
+   v
+src-tauri/ (Rust): async commands, blocking call on a worker thread, bounded by a timeout, no retry
+   |  line-delimited JSON over stdin/stdout of a long-lived child process
+   v
+control_tv.bridge (Python): validates parameters, forwards to the same-named method
+   |
+   v
+ControlService (TvControl): input validation, sent-versus-confirmed verification
+   |
+   v
+CastTransport -> PyChromecastTransport (the only module that imports pychromecast)
+```
+
+- **Bridge protocol:** one JSON request per line (`id`, `method`, `params`), one response per line (`ok` with `result`, or `error` with `code` and `message`). Exposed methods: `ping`, `discover_devices`, `get_status`, `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`. A device is always addressed by its stable id, never by its display name. An unexpected exception becomes an `internal_error` response instead of stopping the process. The module docstring of `src/control_tv/bridge.py` is the reference.
+- **Sent versus confirmed:** `ok: true` on a command means only that it was sent. `confirmation` is `confirmed` (a status read from the TV shows the requested state), `unconfirmed` (sent, but not shown in time; `detail` says what the TV reported) or `not_checked` (verification disabled). Play, pause, stop and seek confirmation is bound to the media observed before the command; all reads share one confirmation deadline. A command that could not be sent is an error, and a delivery timeout is ambiguous. Nothing is ever resent automatically by the service, the bridge, Rust or the UI.
+- **Unknown is not zero:** a field the TV did not report is `null`, never a default value, and the UI shows it as not reported.
+- **Python runtime:** during development the Rust shell starts the repository `.venv` (`resolve_python()` in `src-tauri/src/lib.rs`). A distributable runtime for packages is not designed yet (`DEVELOPMENT_PLAN.md`, Phase 7).
+
+## Planned native integrations
+
+- **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
+- **Android and its home-screen widget (Phase 7b):** requires an owner architecture decision first on how the Python runtime and the shared control core run on Android, or how Android otherwise reuses that core, so that one authoritative control engine remains.
+- **MCP adapter (Phase 6):** calls `TvControl` directly; UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
+
 ## Chromecast capabilities
 
 Develop incrementally around LAN discovery, device identity, connection/status/recovery, media load/play, pause/resume, stop, seek where supported, volume/mute and receiver/media state. A command successfully sent is not proof that the requested TV state was reached; APIs, tests and real-device validation must preserve sent-versus-confirmed state.
