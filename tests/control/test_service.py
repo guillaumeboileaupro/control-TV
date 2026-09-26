@@ -633,7 +633,22 @@ def test_seek_snapshot_that_exhausts_the_budget_starts_no_confirmation_read(
     assert clock.now == pytest.approx(1.0)
 
 
-def test_seek_blocked_snapshot_is_bounded_and_prevents_unsupported_blind_delivery(
+def test_seek_snapshot_at_deadline_still_blocks_explicitly_unsupported_seek(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.tv.supports_seek = False
+    transport.status_read_delays = [1.0]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    with pytest.raises(UnsupportedOperationError):
+        service.seek(DEVICE_ID, 120.0)
+
+    assert transport.calls == [("get_status", (DEVICE_ID, 1.0))]
+    assert transport.sent() == []
+    assert clock.now == pytest.approx(1.0)
+
+
+def test_seek_blocked_snapshot_is_bounded_and_sends_no_command(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
     transport.hang_status_reads = True
