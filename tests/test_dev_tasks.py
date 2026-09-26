@@ -444,7 +444,7 @@ def test_ui_check_requires_node_modules(
     assert "ui/node_modules is missing" in capsys.readouterr().err
 
 
-def test_ui_check_runs_typecheck_and_format_check(
+def test_ui_check_runs_typecheck_format_check_and_tests(
     repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     (repo / "ui" / "node_modules").mkdir(parents=True)
@@ -453,4 +453,4 @@ def test_ui_check_runs_typecheck_and_format_check(
 
     assert dev.main(["ui-check"], root=repo) == 0
 
-    assert log.read_text().splitlines() == ["run typecheck", "run format:check"]
+    assert log.read_text().splitlines() == ["run typecheck", "run format:check", "run test"]

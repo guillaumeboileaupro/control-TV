@@ -11,6 +11,7 @@
   --color-muted: #94a3b8;
   --color-accent: #2fd4ef;
   --color-error: #f87171;
+  --color-warn: #fbbf24;
 }
 
 * {
@@ -80,8 +81,18 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   filter: brightness(1.05);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
 }
 
 .message {
@@ -99,7 +110,74 @@ button:hover {
 }
 
 .device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.04);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.7rem;
+  color: var(--color-text);
+  font-weight: 400;
+  text-align: left;
+}
+
+.device[aria-current="true"] {
+  border-color: var(--color-accent);
+  background: rgba(47, 212, 239, 0.12);
+}
+
+.badge {
+  flex: none;
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  background: var(--color-accent);
+  color: #06202a;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.device-id {
+  margin: 0 0 0.5rem;
+  color: var(--color-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.status-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+}
+
+.status-list dt {
+  color: var(--color-muted);
+}
+
+.status-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.failure-title {
+  margin: 0;
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.failure-detail {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0.75rem 0 0;
+  color: var(--color-muted);
+}
+
+.note-warn {
+  color: var(--color-warn);
 }

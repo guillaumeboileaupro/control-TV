@@ -10,13 +10,11 @@
 
   <body>
     <!--
-      Application shell skeleton. Real views (device discovery/selection, receiver and
-      media state, playback controls, volume/mute, error/unavailable states) are built
-      as this section grows; see src/main.ts for the same structure on the TypeScript
-      side. Nothing here talks to Chromecast directly - every action goes through the
-      Tauri commands defined in src-tauri/src/lib.rs, which forward to the shared
-      Python control layer (src/control_tv/bridge.py). No control logic is duplicated
-      here.
+      Application shell. Nothing here talks to Chromecast directly - every action goes
+      through the Tauri commands defined in src-tauri/src/lib.rs, which forward to the
+      shared Python control layer (src/control_tv/bridge.py). Views are drawn by
+      src/main.ts from the state rules in src/model.ts. After discovery this UI only reads
+      device status; playback and volume/mute controls are later slices.
     -->
     <main class="app">
       <header class="app-header">
@@ -24,21 +22,28 @@
         <p id="backend-status" class="status" role="status">Checking control backend…</p>
       </header>
 
-      <!-- Device discovery / selection (Phase 4 next step) -->
       <section class="panel" aria-labelledby="devices-heading">
         <div class="panel-header">
           <h2 id="devices-heading">Devices</h2>
           <button id="discover-button" type="button">Discover devices</button>
         </div>
-        <p id="devices-message" class="message"></p>
+        <p id="devices-message" class="message" aria-live="polite"></p>
         <ul id="devices-list" class="devices"></ul>
       </section>
 
-      <!-- Placeholders for the next slices: receiver/media state, playback controls,
-           volume/mute. Left empty and unstyled on purpose - no UI is built for them
-           until the corresponding bridge methods and Tauri commands exist. -->
+      <section class="panel" aria-labelledby="selected-heading">
+        <div class="panel-header">
+          <h2 id="selected-heading">Selected device</h2>
+          <button id="refresh-button" type="button" disabled>Refresh status</button>
+        </div>
+        <p id="selected-summary" class="message"></p>
+        <div id="status-body" aria-live="polite"></div>
+      </section>
+
+      <!-- Placeholder for the next slice: playback controls and volume/mute controls.
+           Left unbuilt on purpose - no control command is exposed to the UI yet. -->
       <section class="panel panel-placeholder" aria-hidden="true">
-        <p>Receiver/media state, playback controls, and volume/mute follow here.</p>
+        <p>Playback controls and volume/mute controls follow here.</p>
       </section>
     </main>
   </body>

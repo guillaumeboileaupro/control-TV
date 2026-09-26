@@ -13,7 +13,7 @@ Commands:
   depcheck     verify every installed package's declared requirements are met
   check        lint, typecheck, test and depcheck (the Python quality gate)
   rust-check   cargo fmt --check, clippy -D warnings and cargo test (src-tauri/)
-  ui-check     tsc --noEmit and prettier --check (ui/, after `npm install` there)
+  ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -327,7 +327,7 @@ def cmd_rust_check(root: Path) -> int:
 
 
 def cmd_ui_check(root: Path) -> int:
-    """TypeScript typecheck and Prettier format check for the frontend."""
+    """TypeScript typecheck, Prettier format check and model tests for the frontend."""
     if shutil.which("npm") is None:
         return _missing_tool("npm", "https://nodejs.org/")
     cwd = root / "ui"
@@ -337,7 +337,7 @@ def cmd_ui_check(root: Path) -> int:
             file=sys.stderr,
         )
         return 2
-    for script in ("typecheck", "format:check"):
+    for script in ("typecheck", "format:check", "test"):
         code = _run_in(cwd, root, ["npm", "run", script])
         if code != 0:
             return code
