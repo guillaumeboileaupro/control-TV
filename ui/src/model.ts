@@ -2,7 +2,7 @@
 //
 // Nothing here touches the DOM, Tauri or the network: `main.ts` performs the I/O and
 // feeds the results in, so every rule below (selection by stable id, stale-response
-// handling, what "incomplete" means, how a failure is worded) is testable on its own with
+// handling, how a partial status and a failure are worded) is testable on its own with
 // `npm test`. Nothing here contains Cast/control logic either: the shared Python control
 // layer decides what a device's status is; this module only decides how to show it.
 
@@ -238,83 +238,155 @@ export type FailureKind =
 
 export interface FailureDescription {
   kind: FailureKind;
+  // Plain language for the person using the remote; never internal component names.
   title: string;
-  detail: string;
+  hint: string;
+  // What the recovery button should do: read the status again, or find devices again.
+  recovery: "retry" | "discover";
+  // Raw code and message, for a collapsed diagnostic disclosure only.
+  technical: string;
 }
 
-// `action` completes "Could not ..." for a failure that is not classified more precisely.
+// `action` completes "Couldn't ..." for a failure that is not classified more precisely.
 export function describeFailure(
   failure: BridgeFailure,
-  action = "read the device status",
+  action = "read this device's status",
 ): FailureDescription {
+  const technical = `${failure.code}: ${failure.message}`;
   switch (failure.code) {
     case "backend_unavailable":
     case "bridge_transport":
       return {
         kind: "backend_unavailable",
-        title: "Control backend unavailable",
-        detail: failure.message,
+        title: "The app's background service isn't available",
+        hint: "Restart control-TV. If this keeps happening, the details can help diagnose it.",
+        recovery: "retry",
+        technical,
       };
     case "bridge_timeout":
       return {
         kind: "backend_timeout",
-        title: "Control backend not responding",
-        detail: failure.message,
+        title: "The app's background service isn't responding",
+        hint: "Wait a moment, then try again.",
+        recovery: "retry",
+        technical,
       };
     case "device_unavailable":
       return {
         kind: "device_unavailable",
-        title: "Device unavailable",
-        detail: failure.message,
+        title: "Can't reach this device",
+        hint: "Make sure it is on and connected to the same network, then try again.",
+        recovery: "retry",
+        technical,
       };
     case "device_not_found":
       return {
         kind: "device_unknown",
-        title: "Device not known to the backend",
-        detail: `${failure.message}. Run “Discover devices” again, then select the device.`,
+        title: "This device needs to be found again",
+        hint: "Find devices again, then select it.",
+        recovery: "discover",
+        technical,
+      };
+    case "discovery_failed":
+      return {
+        kind: "error",
+        title: "Couldn't find devices",
+        hint: "Check your network connection, then try again.",
+        recovery: "retry",
+        technical,
       };
     case "timeout":
       return {
         kind: "device_timeout",
-        title: "The device did not answer in time",
-        detail: failure.message,
+        title: "This device didn't answer in time",
+        hint: "It may be asleep or busy. Try again.",
+        recovery: "retry",
+        technical,
       };
     default:
       return {
         kind: "error",
-        title: `Could not ${action}`,
-        detail: `${failure.message} (${failure.code})`,
+        title: `Couldn't ${action}`,
+        hint: "Try again.",
+        recovery: "retry",
+        technical,
       };
   }
 }
 
-export interface StatusRow {
-  label: string;
-  value: string;
+const KIND_LABELS: Record<string, string> = {
+  cast: "Cast device",
+  group: "Group",
+  audio: "Speaker",
+};
+
+export interface DeviceDescription {
+  name: string;
+  // The kind of device; the network address is added only when two devices share a name,
+  // because then it is the one thing that tells them apart.
+  subtitle: string;
 }
+
+export function describeDevice(device: Device, all: Device[]): DeviceDescription {
+  const kind = KIND_LABELS[device.kind] ?? "Device";
+  const shared = all.some(
+    (other) => other.id !== device.id && other.friendlyName === device.friendlyName,
+  );
+  return {
+    name: device.friendlyName,
+    subtitle: shared ? `${kind} · ${device.host}:${device.port}` : kind,
+  };
+}
+
+export type PlaybackKind = "playing" | "paused" | "buffering" | "idle" | "unknown";
 
 export interface StatusDescription {
-  rows: StatusRow[];
-  notes: string[];
-  incomplete: boolean;
+  connected: boolean;
+  connectionLabel: string;
+  observedAt: string;
+  // What is on the device: the media's title, else its identity, else "Nothing playing".
+  headline: string;
+  hasMedia: boolean;
+  playback: { kind: PlaybackKind; label: string } | null;
+  // `fraction` is null when the duration is unknown, so no progress bar is drawn.
+  position: { text: string; fraction: number | null } | null;
+  volumeText: string;
+  muted: boolean | null;
+  mutedText: string;
+  // Volume and mute as the single fact a person reads them as: "Volume 45% · Not muted".
+  soundText: string;
+  // Only what the device reported; null means "say nothing", never a placeholder.
+  application: string | null;
+  standby: boolean;
+  // Set only when there is no receiver/media state to show (the device is not connected).
+  note: string | null;
 }
 
-const NOT_REPORTED = "Not reported";
+const PLAYBACK_LABELS: Record<PlaybackKind, string> = {
+  playing: "Playing",
+  paused: "Paused",
+  buffering: "Buffering",
+  idle: "Idle",
+  unknown: "State unknown",
+};
 
 function capitalize(value: string): string {
   return value.length === 0 ? value : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function yesNo(value: boolean | null): string {
-  if (value === null) {
-    return NOT_REPORTED;
-  }
-  return value ? "Yes" : "No";
+function connectionLabel(connection: string): string {
+  return connection === "disconnected" ? "Not connected" : capitalize(connection);
+}
+
+function playbackKind(state: string): PlaybackKind {
+  return state === "playing" || state === "paused" || state === "buffering" || state === "idle"
+    ? state
+    : "unknown";
 }
 
 export function formatClock(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds) || seconds < 0) {
-    return NOT_REPORTED;
+    return "";
   }
   const whole = Math.floor(seconds);
   const hours = Math.floor(whole / 3600);
@@ -323,21 +395,17 @@ export function formatClock(seconds: number | null): string {
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}` : `${minutes}:${secs}`;
 }
 
-function formatPosition(media: MediaStatus): string {
-  if (media.positionSeconds === null) {
-    return NOT_REPORTED;
-  }
+function describePosition(media: MediaStatus): { text: string; fraction: number | null } {
   const position = formatClock(media.positionSeconds);
-  return media.durationSeconds === null
-    ? position
-    : `${position} / ${formatClock(media.durationSeconds)}`;
-}
-
-function formatVolume(receiver: ReceiverStatus | null): string {
-  if (receiver === null || receiver.volumeLevel === null) {
-    return NOT_REPORTED;
+  if (position === "") {
+    return { text: "Position not reported", fraction: null };
   }
-  return `${Math.round(receiver.volumeLevel * 100)}%`;
+  const duration = formatClock(media.durationSeconds);
+  const fraction =
+    media.positionSeconds !== null && media.durationSeconds !== null && media.durationSeconds > 0
+      ? Math.min(1, Math.max(0, media.positionSeconds / media.durationSeconds))
+      : null;
+  return { text: duration === "" ? position : `${position} / ${duration}`, fraction };
 }
 
 function defaultFormatTime(iso: string): string {
@@ -345,57 +413,59 @@ function defaultFormatTime(iso: string): string {
   return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleTimeString();
 }
 
-// What the status says, worded for display. A field the device did not report is shown
-// as "Not reported" and the status is flagged incomplete; a missing media session is a
-// state of its own (nothing loaded), not an incompleteness.
+// What the status says, worded for display. A field the device did not report is worded as
+// not reported, never shown as zero or off, so a partial status explains itself field by
+// field; a missing media session is a state of its own ("Nothing playing").
 export function describeStatus(
   status: DeviceStatus,
   formatTime: (iso: string) => string = defaultFormatTime,
 ): StatusDescription {
-  const rows: StatusRow[] = [
-    { label: "Connection", value: capitalize(status.connection) },
-    { label: "Observed at", value: formatTime(status.observedAt) },
-  ];
-  const notes: string[] = [];
+  const connected = status.connection === "connected";
+  const common = {
+    connected,
+    connectionLabel: connectionLabel(status.connection),
+    observedAt: formatTime(status.observedAt),
+  };
 
-  if (status.connection !== "connected") {
-    notes.push("Receiver and media state are only available on a connected device.");
-    return { rows, notes, incomplete: false };
+  if (!connected) {
+    return {
+      ...common,
+      headline: "",
+      hasMedia: false,
+      playback: null,
+      position: null,
+      volumeText: "",
+      muted: null,
+      mutedText: "",
+      soundText: "",
+      application: null,
+      standby: false,
+      note: "This device isn't connected, so its current state can't be read.",
+    };
   }
 
   const receiver = status.receiver;
-  rows.push({
-    label: "Application",
-    value: receiver?.appName ?? receiver?.appId ?? NOT_REPORTED,
-  });
-  if (receiver !== null && receiver.standby !== null) {
-    rows.push({ label: "Standby", value: yesNo(receiver.standby) });
-  }
-  rows.push({ label: "Volume", value: formatVolume(receiver) });
-  rows.push({ label: "Muted", value: yesNo(receiver?.muted ?? null) });
-
-  let incomplete = receiver === null || receiver.volumeLevel === null || receiver.muted === null;
-
   const media = status.media;
-  if (media === null) {
-    notes.push("No active media session reported.");
-  } else {
-    rows.push({ label: "Playback", value: capitalize(media.playbackState) });
-    if (media.title !== null) {
-      rows.push({ label: "Title", value: media.title });
-    }
-    rows.push({ label: "Content", value: media.contentId ?? NOT_REPORTED });
-    if (media.contentType !== null) {
-      rows.push({ label: "Content type", value: media.contentType });
-    }
-    rows.push({ label: "Position", value: formatPosition(media) });
-    incomplete = incomplete || media.playbackState === "unknown" || media.positionSeconds === null;
-  }
+  const volumeLevel = receiver?.volumeLevel ?? null;
+  const muted = receiver?.muted ?? null;
+  const kind = media === null ? null : playbackKind(media.playbackState);
+  const volumeText =
+    volumeLevel === null ? "Volume not reported" : `Volume ${Math.round(volumeLevel * 100)}%`;
+  const mutedText = muted === null ? "Mute state not reported" : muted ? "Muted" : "Not muted";
 
-  if (incomplete) {
-    notes.push(
-      "Status incomplete: the device did not report every field. Missing values are shown as “Not reported”, never as zero or off.",
-    );
-  }
-  return { rows, notes, incomplete };
+  return {
+    ...common,
+    headline:
+      media === null ? "Nothing playing" : (media.title ?? media.contentId ?? "Unidentified media"),
+    hasMedia: media !== null,
+    playback: kind === null ? null : { kind, label: PLAYBACK_LABELS[kind] },
+    position: media === null ? null : describePosition(media),
+    volumeText,
+    muted,
+    mutedText,
+    soundText: `${volumeText} · ${mutedText}`,
+    application: receiver?.appName ?? receiver?.appId ?? null,
+    standby: receiver?.standby === true,
+    note: null,
+  };
 }

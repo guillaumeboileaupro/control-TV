@@ -9,6 +9,7 @@ import {
   canDiscover,
   canRefresh,
   canSelect,
+  describeDevice,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -285,6 +286,37 @@ describe("discovery", () => {
   });
 });
 
+describe("device wording", () => {
+  test("a device is described by its kind, without a network address", () => {
+    const tv = device("a", "Living room");
+    const speaker = { ...device("b", "Kitchen"), kind: "audio" };
+
+    assert.deepEqual(describeDevice(tv, [tv, speaker]), {
+      name: "Living room",
+      subtitle: "Cast device",
+    });
+    assert.equal(describeDevice(speaker, [tv, speaker]).subtitle, "Speaker");
+    assert.equal(describeDevice({ ...tv, kind: "group" }, [tv]).subtitle, "Group");
+    assert.equal(describeDevice({ ...tv, kind: "weird" }, [tv]).subtitle, "Device");
+  });
+
+  test("the address is shown only when two devices share a name", () => {
+    const first = device("a", "Living room");
+    const second = { ...device("b", "Living room"), host: "192.0.2.11" };
+    const other = device("c", "Kitchen");
+
+    assert.equal(
+      describeDevice(first, [first, second, other]).subtitle,
+      "Cast device · 192.0.2.10:8009",
+    );
+    assert.equal(
+      describeDevice(second, [first, second, other]).subtitle,
+      "Cast device · 192.0.2.11:8009",
+    );
+    assert.equal(describeDevice(other, [first, second, other]).subtitle, "Cast device");
+  });
+});
+
 describe("failure wording", () => {
   test("unwraps the structured failure the shell sends", () => {
     assert.deepEqual(toBridgeFailure({ code: "timeout", message: "slow" }), {
@@ -302,64 +334,115 @@ describe("failure wording", () => {
     assert.equal(toBridgeFailure(null).code, "unexpected");
   });
 
-  const cases: [string, string][] = [
-    ["backend_unavailable", "backend_unavailable"],
-    ["bridge_transport", "backend_unavailable"],
-    ["bridge_timeout", "backend_timeout"],
-    ["device_unavailable", "device_unavailable"],
-    ["device_not_found", "device_unknown"],
-    ["timeout", "device_timeout"],
-    ["internal_error", "error"],
-    ["invalid_argument", "error"],
+  const cases: [string, string, "retry" | "discover"][] = [
+    ["backend_unavailable", "backend_unavailable", "retry"],
+    ["bridge_transport", "backend_unavailable", "retry"],
+    ["bridge_timeout", "backend_timeout", "retry"],
+    ["device_unavailable", "device_unavailable", "retry"],
+    ["device_not_found", "device_unknown", "discover"],
+    ["timeout", "device_timeout", "retry"],
+    ["internal_error", "error", "retry"],
+    ["invalid_argument", "error", "retry"],
   ];
-  for (const [code, kind] of cases) {
-    test(`classifies ${code} as ${kind}`, () => {
-      assert.equal(describeFailure({ code, message: "m" }).kind, kind);
+  for (const [code, kind, recovery] of cases) {
+    test(`classifies ${code} as ${kind} and recovers by ${recovery}`, () => {
+      const description = describeFailure({ code, message: "m" });
+
+      assert.equal(description.kind, kind);
+      assert.equal(description.recovery, recovery);
     });
   }
 
-  test("an unknown device tells the operator how to recover", () => {
+  test("an unknown device is recovered by finding devices again", () => {
     const description = describeFailure({ code: "device_not_found", message: "not discovered" });
 
-    assert.match(description.detail, /Discover devices/);
+    assert.match(description.hint, /Find devices again/);
+  });
+
+  test("a failed discovery points at the network", () => {
+    const description = describeFailure({ code: "discovery_failed", message: "no route" });
+
+    assert.equal(description.title, "Couldn't find devices");
+    assert.match(description.hint, /network/);
+    assert.equal(description.recovery, "retry");
   });
 
   test("an unclassified error names the action that failed", () => {
     const failure = { code: "internal_error", message: "boom" };
 
-    assert.equal(describeFailure(failure).title, "Could not read the device status");
-    assert.equal(describeFailure(failure, "discover devices").title, "Could not discover devices");
+    assert.equal(describeFailure(failure).title, "Couldn't read this device's status");
+    assert.equal(describeFailure(failure, "find devices").title, "Couldn't find devices");
   });
 
-  test("an unclassified error still shows its code", () => {
-    assert.match(describeFailure({ code: "weird", message: "m" }).detail, /\(weird\)/);
+  test("keeps the raw code and message for the diagnostic view only", () => {
+    const description = describeFailure({ code: "weird", message: "m" });
+
+    assert.equal(description.technical, "weird: m");
+    assert.doesNotMatch(`${description.title} ${description.hint}`, /weird/);
+  });
+
+  test("the everyday wording never names an internal component", () => {
+    const internal = /python|bridge|tauri|cast ?transport|control ?service|mcp|rust/i;
+    const codes = [
+      "backend_unavailable",
+      "bridge_transport",
+      "bridge_timeout",
+      "device_unavailable",
+      "device_not_found",
+      "timeout",
+      "internal_error",
+    ];
+
+    for (const code of codes) {
+      const description = describeFailure({ code, message: "Python control bridge failed" });
+
+      assert.doesNotMatch(`${description.title} ${description.hint}`, internal, code);
+    }
   });
 });
 
 describe("status wording", () => {
-  const rowsOf = (status: DeviceStatus) =>
-    Object.fromEntries(describeStatus(status, at).rows.map((row) => [row.label, row.value]));
-
-  test("a complete status shows receiver and media state", () => {
+  test("a complete status leads with what is playing", () => {
     const description = describeStatus(FULL_STATUS, at);
 
-    assert.equal(description.incomplete, false);
-    assert.deepEqual(description.notes, []);
-    assert.deepEqual(rowsOf(FULL_STATUS), {
-      Connection: "Connected",
-      "Observed at": "at 2026-09-26T10:00:00+00:00",
-      Application: "Default Media Receiver",
-      Volume: "50%",
-      Muted: "No",
-      Playback: "Playing",
-      Title: "Movie",
-      Content: "http://media.example/movie.mp4",
-      "Content type": "video/mp4",
-      Position: "1:05 / 2:02:05",
-    });
+    assert.equal(description.connected, true);
+    assert.equal(description.connectionLabel, "Connected");
+    assert.equal(description.observedAt, "at 2026-09-26T10:00:00+00:00");
+    assert.equal(description.headline, "Movie");
+    assert.equal(description.hasMedia, true);
+    assert.deepEqual(description.playback, { kind: "playing", label: "Playing" });
+    assert.equal(description.position?.text, "1:05 / 2:02:05");
+    assert.equal(description.volumeText, "Volume 50%");
+    assert.equal(description.mutedText, "Not muted");
+    assert.equal(description.soundText, "Volume 50% · Not muted");
+    assert.equal(description.application, "Default Media Receiver");
+    assert.equal(description.standby, false);
+    assert.equal(description.note, null);
   });
 
-  test("a partial status marks unreported fields instead of inventing values", () => {
+  test("progress is a fraction of the duration, clamped, and absent without a duration", () => {
+    const media = FULL_STATUS.media!;
+    const fractionOf = (positionSeconds: number | null, durationSeconds: number | null) =>
+      describeStatus({ ...FULL_STATUS, media: { ...media, positionSeconds, durationSeconds } }, at)
+        .position?.fraction;
+
+    assert.equal(fractionOf(50, 200), 0.25);
+    assert.equal(fractionOf(500, 200), 1);
+    assert.equal(fractionOf(50, null), null);
+    assert.equal(fractionOf(50, 0), null);
+  });
+
+  test("a title is preferred, then the content identity, then an honest fallback", () => {
+    const media = FULL_STATUS.media!;
+    const headlineOf = (title: string | null, contentId: string | null) =>
+      describeStatus({ ...FULL_STATUS, media: { ...media, title, contentId } }, at).headline;
+
+    assert.equal(headlineOf("Movie", "http://x/y.mp4"), "Movie");
+    assert.equal(headlineOf(null, "http://x/y.mp4"), "http://x/y.mp4");
+    assert.equal(headlineOf(null, null), "Unidentified media");
+  });
+
+  test("a partial status says what was not reported instead of inventing values", () => {
     const partial: DeviceStatus = {
       ...FULL_STATUS,
       receiver: { appId: null, appName: null, volumeLevel: null, muted: null, standby: null },
@@ -375,61 +458,64 @@ describe("status wording", () => {
     };
 
     const description = describeStatus(partial, at);
-    const rows = rowsOf(partial);
 
-    assert.equal(description.incomplete, true);
-    assert.equal(rows["Application"], "Not reported");
-    assert.equal(rows["Volume"], "Not reported");
-    assert.equal(rows["Muted"], "Not reported");
-    assert.equal(rows["Playback"], "Unknown");
-    assert.equal(rows["Content"], "Not reported");
-    assert.equal(rows["Position"], "Not reported");
-    assert.match(description.notes.join(" "), /Status incomplete/);
+    assert.equal(description.application, null);
+    assert.equal(description.volumeText, "Volume not reported");
+    assert.equal(description.muted, null);
+    assert.equal(description.mutedText, "Mute state not reported");
+    assert.equal(description.soundText, "Volume not reported · Mute state not reported");
+    assert.deepEqual(description.playback, { kind: "unknown", label: "State unknown" });
+    assert.equal(description.position?.text, "Position not reported");
+    assert.equal(description.position?.fraction, null);
+    assert.equal(description.note, null);
   });
 
-  test("a connected device without a receiver block is incomplete", () => {
+  test("a connected device without a receiver block says so field by field", () => {
     const description = describeStatus({ ...FULL_STATUS, receiver: null, media: null }, at);
 
-    assert.equal(description.incomplete, true);
+    assert.equal(description.volumeText, "Volume not reported");
+    assert.equal(description.mutedText, "Mute state not reported");
+    assert.equal(description.application, null);
   });
 
-  test("no media session is its own state, not an incompleteness", () => {
+  test("no media session is its own state: nothing playing, volume still shown", () => {
     const description = describeStatus({ ...FULL_STATUS, media: null }, at);
 
-    assert.equal(description.incomplete, false);
-    assert.deepEqual(description.notes, ["No active media session reported."]);
-    assert.equal(
-      description.rows.some((row) => row.label === "Playback"),
-      false,
-    );
+    assert.equal(description.headline, "Nothing playing");
+    assert.equal(description.volumeText, "Volume 50%");
+    assert.equal(description.hasMedia, false);
+    assert.equal(description.playback, null);
+    assert.equal(description.position, null);
+    assert.equal(description.note, null);
   });
 
-  test("a device that is not connected shows no receiver or media rows", () => {
+  test("a device that is not connected offers no receiver or media state", () => {
     const description = describeStatus(
       { ...FULL_STATUS, connection: "disconnected", receiver: null, media: null },
       at,
     );
 
-    assert.deepEqual(
-      description.rows.map((row) => row.label),
-      ["Connection", "Observed at"],
-    );
-    assert.equal(description.incomplete, false);
-    assert.match(description.notes[0] ?? "", /only available on a connected device/);
+    assert.equal(description.connected, false);
+    assert.equal(description.connectionLabel, "Not connected");
+    assert.equal(description.headline, "");
+    assert.equal(description.playback, null);
+    assert.match(description.note ?? "", /isn't connected/);
   });
 
-  test("standby is shown only when the device reported it", () => {
+  test("standby is only called out when the device reported it", () => {
     const reported = { ...FULL_STATUS, receiver: { ...FULL_STATUS.receiver!, standby: true } };
+    const notStandby = { ...FULL_STATUS, receiver: { ...FULL_STATUS.receiver!, standby: false } };
 
-    assert.equal(rowsOf(reported)["Standby"], "Yes");
-    assert.equal("Standby" in rowsOf(FULL_STATUS), false);
+    assert.equal(describeStatus(reported, at).standby, true);
+    assert.equal(describeStatus(notStandby, at).standby, false);
+    assert.equal(describeStatus(FULL_STATUS, at).standby, false);
   });
 
   test("muted true and false are distinct from not reported", () => {
     const muted = { ...FULL_STATUS, receiver: { ...FULL_STATUS.receiver!, muted: true } };
 
-    assert.equal(rowsOf(muted)["Muted"], "Yes");
-    assert.equal(rowsOf(FULL_STATUS)["Muted"], "No");
+    assert.equal(describeStatus(muted, at).mutedText, "Muted");
+    assert.equal(describeStatus(FULL_STATUS, at).mutedText, "Not muted");
   });
 
   test("a receiver app id is shown when there is no app name", () => {
@@ -438,15 +524,27 @@ describe("status wording", () => {
       receiver: { ...FULL_STATUS.receiver!, appName: null, appId: "CC1AD845" },
     };
 
-    assert.equal(rowsOf(idOnly)["Application"], "CC1AD845");
+    assert.equal(describeStatus(idOnly, at).application, "CC1AD845");
   });
 
-  test("formats clock values", () => {
+  test("maps every playback state the device can report", () => {
+    const media = FULL_STATUS.media!;
+    const kindOf = (playbackState: string) =>
+      describeStatus({ ...FULL_STATUS, media: { ...media, playbackState } }, at).playback?.kind;
+
+    assert.equal(kindOf("playing"), "playing");
+    assert.equal(kindOf("paused"), "paused");
+    assert.equal(kindOf("buffering"), "buffering");
+    assert.equal(kindOf("idle"), "idle");
+    assert.equal(kindOf("something-new"), "unknown");
+  });
+
+  test("formats clock values, and nothing for a missing or invalid one", () => {
     assert.equal(formatClock(0), "0:00");
     assert.equal(formatClock(59.9), "0:59");
     assert.equal(formatClock(3600), "1:00:00");
-    assert.equal(formatClock(null), "Not reported");
-    assert.equal(formatClock(-1), "Not reported");
-    assert.equal(formatClock(Number.POSITIVE_INFINITY), "Not reported");
+    assert.equal(formatClock(null), "");
+    assert.equal(formatClock(-1), "");
+    assert.equal(formatClock(Number.POSITIVE_INFINITY), "");
   });
 });

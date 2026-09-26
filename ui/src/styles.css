@@ -1,188 +1,515 @@
+/* One light surface, thin separators instead of cards, one radius, no shadows and no
+   decorative gradients (the logo keeps its own). Colors carry meaning only: accent = action
+   or selection, red = a problem. State is never shown by color alone: it also has an icon
+   or a word. */
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family:
     system-ui,
     -apple-system,
     "Segoe UI",
     sans-serif;
-  --color-bg: #0f172a;
-  --color-surface: #1e293b;
-  --color-text: #e2e8f0;
-  --color-muted: #94a3b8;
-  --color-accent: #2fd4ef;
-  --color-error: #f87171;
-  --color-warn: #fbbf24;
+  font-size: 15px;
+  line-height: 1.45;
+
+  --bg: #ffffff;
+  --text: #1d2733;
+  --muted: #5a6672;
+  --line: #dfe4ea;
+  --accent: #1760ff;
+  --accent-hover: #0f4fd6;
+  --accent-tint: #eef3ff;
+  --error: #b42318;
+  --hover: #f3f5f8;
+  --radius: 8px;
+  --gap: 16px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--bg);
+  color: var(--text);
 }
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Layout: a single column that is the same model on a desktop window and a phone. */
 
 .app {
   max-width: 640px;
   margin: 0 auto;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  padding: 0 var(--gap) 32px;
 }
 
-.app-header h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
-}
-
-.status {
-  margin: 0;
-  color: var(--color-muted);
-}
-
-.status-error {
-  color: var(--color-error);
-}
-
-.panel {
-  background: var(--color-surface);
-  border-radius: 0.5rem;
-  padding: 1rem;
-}
-
-.panel-header {
+.appbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  gap: 10px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--line);
 }
 
-.panel-header h2 {
+.logo {
+  display: block;
+  height: 27px;
+  width: auto;
+}
+
+.wordmark {
   margin: 0;
-  font-size: 1.1rem;
-}
-
-.panel-placeholder {
-  opacity: 0.5;
-  font-style: italic;
-}
-
-button {
-  border: none;
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.9rem;
-  background: var(--color-accent);
-  color: #06202a;
+  font-size: 1rem;
   font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: var(--gap);
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--gap);
+  padding: 10px 12px;
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+/* Buttons */
+
+.btn,
+.btn-icon,
+.device,
+.picker-summary {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
-  filter: brightness(1.05);
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-weight: 600;
 }
 
-button:disabled {
-  opacity: 0.5;
+.btn:hover {
+  background: var(--hover);
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn-icon:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Busy controls stay focusable (aria-disabled, not disabled) so keyboard focus is never
+   dropped; the app ignores their activation. */
+[aria-disabled="true"] {
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
-button:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
+.btn[aria-disabled="true"]:hover {
+  background: var(--bg);
+}
+
+.btn-primary[aria-disabled="true"]:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.btn-icon[aria-disabled="true"]:hover,
+.device[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--muted);
+}
+
+.is-loading .icon {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-loading .icon {
+    animation: none;
+  }
+
+  .chevron {
+    transition: none;
+  }
+}
+
+/* Device picker: the selected device is the row you see; the list is the disclosure. */
+
+.picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.picker-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  list-style: none;
+}
+
+.picker-summary::-webkit-details-marker {
+  display: none;
+}
+
+.picker-summary:hover {
+  background: var(--hover);
+}
+
+.picker[open] > .picker-summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.summary-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.summary-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-sub,
+.meta,
+.device-sub {
+  color: var(--muted);
+  font-size: 0.867rem;
+}
+
+.chevron {
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+
+.picker[open] .chevron {
+  transform: rotate(180deg);
+}
+
+.picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.picker-body > .btn {
+  align-self: flex-start;
 }
 
 .message {
-  min-height: 1.2em;
-  color: var(--color-muted);
+  margin: 0;
+  color: var(--muted);
+}
+
+.message:empty {
+  display: none;
+}
+
+.message .problem-title {
+  color: var(--text);
 }
 
 .devices {
-  list-style: none;
-  margin: 0;
+  margin: 0 -12px -12px;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.devices:empty {
+  display: none;
+}
+
+.devices li + li {
+  border-top: 1px solid var(--line);
 }
 
 .device {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  gap: 12px;
   width: 100%;
-  min-height: 2.75rem;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text);
-  font-weight: 400;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   text-align: left;
 }
 
-.device[aria-disabled="true"] {
-  opacity: 0.6;
-  cursor: not-allowed;
+.device:hover {
+  background: var(--hover);
 }
 
 .device[aria-current="true"] {
-  border-color: var(--color-accent);
-  background: rgba(47, 212, 239, 0.12);
+  background: var(--accent-tint);
 }
 
-.badge {
-  flex: none;
-  border-radius: 0.25rem;
-  padding: 0.1rem 0.45rem;
-  background: var(--color-accent);
-  color: #06202a;
-  font-size: 0.75rem;
+.device[aria-current="true"] .device-name {
   font-weight: 600;
 }
 
-.device-id {
-  margin: 0 0 0.5rem;
-  color: var(--color-muted);
-  font-family: ui-monospace, monospace;
-  font-size: 0.8rem;
+.device-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.device-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device .check {
+  color: var(--accent);
+}
+
+/* Current device state: media first, secondary facts after, no containers. */
+
+.context {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context[hidden] {
+  display: none;
+}
+
+.context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.context-head .meta {
+  margin: 0;
+}
+
+.headline {
+  margin: 0;
+  font-size: 1.333rem;
+  font-weight: 600;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
-.status-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.3rem 1rem;
-  margin: 0;
+.headline.is-empty {
+  color: var(--muted);
+  font-weight: 500;
 }
 
-.status-list dt {
-  color: var(--color-muted);
+.playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+  color: var(--muted);
 }
 
-.status-list dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.failure-title {
-  margin: 0;
-  color: var(--color-error);
+.playback-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
   font-weight: 600;
 }
 
-.failure-detail {
-  margin: 0.25rem 0 0;
-  overflow-wrap: anywhere;
+.progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--line);
+  appearance: none;
+  overflow: hidden;
+}
+
+.progress::-webkit-progress-bar {
+  background: var(--line);
+}
+
+.progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.progress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  margin: 24px 0 0;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  list-style: none;
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .note {
-  margin: 0.75rem 0 0;
-  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: var(--muted);
 }
 
-.note-warn {
-  color: var(--color-warn);
+.problem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.problem-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--error);
+  font-weight: 600;
+}
+
+.problem-hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.diagnostic {
+  color: var(--muted);
+  font-size: 0.867rem;
+}
+
+.diagnostic summary {
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.diagnostic pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+}
+
+/* Narrow screens: same order, tighter type; the picker already collapses to one row. */
+
+@media (max-width: 480px) {
+  :root {
+    --gap: 12px;
+  }
+
+  .headline {
+    font-size: 1.2rem;
+  }
+
+  .facts {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
