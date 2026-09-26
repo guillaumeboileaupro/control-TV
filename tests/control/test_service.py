@@ -17,6 +17,7 @@ from control_tv.domain import (
     ErrorCode,
     InvalidArgumentError,
     MediaRequest,
+    OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
 )
@@ -583,6 +584,87 @@ def test_seek_is_confirmed_within_tolerance(
     assert transport.calls[-2] == ("seek", (DEVICE_ID, 120.0))
 
 
+def test_seek_fast_snapshot_and_confirmation_share_one_budget(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_read_delays = [0.1, 0.1]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert clock.now == pytest.approx(0.2)
+    assert [args[1] for name, args in transport.calls if name == "get_status"] == [
+        pytest.approx(1.0),
+        pytest.approx(0.9),
+    ]
+
+
+def test_seek_slow_snapshot_leaves_only_the_remaining_confirmation_budget(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_read_delays = [0.75, 0.1]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert clock.now == pytest.approx(0.85)
+    assert [args[1] for name, args in transport.calls if name == "get_status"] == [
+        pytest.approx(1.0),
+        pytest.approx(0.25),
+    ]
+
+
+def test_seek_snapshot_that_exhausts_the_budget_starts_no_confirmation_read(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_read_delays = [1.0]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert transport.calls == [
+        ("get_status", (DEVICE_ID, 1.0)),
+        ("seek", (DEVICE_ID, 120.0)),
+    ]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
+    assert clock.now == pytest.approx(1.0)
+
+
+def test_seek_blocked_snapshot_is_bounded_and_prevents_unsupported_blind_delivery(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.hang_status_reads = True
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    with pytest.raises(OperationTimeoutError):
+        service.seek(DEVICE_ID, 120.0)
+
+    assert transport.calls == [("get_status", (DEVICE_ID, 1.0))]
+    assert transport.sent() == []
+    assert clock.now == pytest.approx(1.0)
+
+
+def test_seek_late_snapshot_cannot_confirm_or_start_another_read(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    # Defense in depth against a transport that violates the timeout it received.
+    transport.status_read_delays = [1.01]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.seek(DEVICE_ID, 120.0)
+
+    assert transport.calls == [
+        ("get_status", (DEVICE_ID, 1.0)),
+        ("seek", (DEVICE_ID, 120.0)),
+    ]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
+    assert clock.now == pytest.approx(1.01)
+
+
 def test_seek_is_unconfirmed_when_the_position_does_not_move(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
@@ -618,10 +700,11 @@ def test_seek_is_not_confirmed_by_matching_position_on_replaced_media(
     assert clock.now == pytest.approx(1.0)
 
 
-def test_seek_without_precommand_media_identity_remains_unconfirmed(
-    transport: FakeTransport, clock: FakeClock
+@pytest.mark.parametrize("content_id", [None, "", " ", "\t\n"])
+def test_seek_without_usable_precommand_media_identity_remains_unconfirmed(
+    transport: FakeTransport, clock: FakeClock, content_id: str | None
 ) -> None:
-    transport.tv.content_id = None
+    transport.tv.content_id = content_id
     service = make_service(transport, clock)
 
     result = service.seek(DEVICE_ID, 120.0)

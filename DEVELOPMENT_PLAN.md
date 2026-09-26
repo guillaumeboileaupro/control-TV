@@ -114,6 +114,9 @@ Current confirmation-synchronization iteration:
 - [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
 - [x] deterministic targeted tests cover matching media, replaced media, missing media identity, contradictory positions and the unchanged global confirmation deadline;
 - [x] complete local lint, format, strict typing, test, 98.01% coverage and dependency gates pass; hosted CI remains a separate PR requirement;
+- [x] **Implemented:** make the pre-command seek status read and post-command confirmation share one bounded confirmation deadline, and treat empty or whitespace-only seek media identities as absent evidence;
+- [x] deterministic timing and identity tests pass; removing the shared deadline makes all four focused double-budget mutation tests fail;
+- [x] complete local Ruff, format, strict mypy, 314-test suite, 97.69% coverage and dependency checks pass; hosted CI pending;
 - [ ] distinguish replacement sessions that reuse the exact same `content_id`; this needs a stable media-session identifier in the shared status model and must be coordinated with the open Tauri bridge PR before changing that interface;
 - [ ] physical Chromecast/Google TV validation remains required; no fake or automated test completes it;
 

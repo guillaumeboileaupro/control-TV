@@ -266,8 +266,19 @@ class ControlService:
             f"seek position must be a finite number >= 0: {position_seconds}",
             device_id,
         )
-        media = self._transport.get_status(device_id, timeout=self._status_timeout).media
-        expected_content_id = media.content_id if media is not None else None
+        deadline = self._confirmation_deadline()
+        media = None
+        if deadline is None:
+            media = self._transport.get_status(device_id, timeout=self._status_timeout).media
+        else:
+            remaining = deadline - self._clock()
+            if remaining > 0:
+                status = self._transport.get_status(
+                    device_id, timeout=min(self._status_timeout, remaining)
+                )
+                if self._clock() < deadline:
+                    media = status.media
+        expected_content_id = _usable_content_id(media.content_id if media is not None else None)
         if media is not None and media.supports_seek is False:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
@@ -278,6 +289,7 @@ class ControlService:
             device_id,
             _position_near(position_seconds, self._seek_tolerance, expected_content_id),
             f"position near {position_seconds:g}s",
+            deadline=deadline,
         )
 
     def set_volume(self, device_id: DeviceId, level: float) -> CommandResult:
