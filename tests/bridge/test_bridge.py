@@ -14,6 +14,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from io import StringIO
+from typing import Any
 
 import pytest
 
@@ -584,6 +585,320 @@ def test_the_real_transport_refuses_commands_for_an_undiscovered_device_without_
             params: dict[str, object] = {"deviceId": "never-discovered"}
             if method == "seek":
                 params["positionSeconds"] = 5
+            process.stdin.write(
+                json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
+            )
+            process.stdin.flush()
+            response = json.loads(process.stdout.readline())
+            assert response["id"] == request_id
+            assert response["ok"] is False
+            assert response["error"]["code"] == "device_not_found"
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        process.wait(timeout=5)
+
+
+# --- volume and mute: plain forwards to ControlService; sent is not confirmed -----------
+
+
+def sound_result(response: dict[str, Any]) -> dict[str, Any]:
+    assert response["ok"] is True
+    result: dict[str, Any] = response["result"]["result"]
+    return result
+
+
+@pytest.mark.parametrize("level", [0.8, 0.0, 1.0, 0, 1])
+def test_set_volume_forwards_the_level_and_is_confirmed_by_the_observed_volume(
+    level: float,
+) -> None:
+    transport = FakeTransport()
+
+    response = dispatch(playback_control(transport), command_request("set_volume", level=level))
+
+    result = sound_result(response)
+    assert result["command"] == "set_volume"
+    assert result["deviceId"] == str(DEVICE_ID)
+    assert result["confirmation"] == "confirmed"
+    assert result["detail"] is None
+    assert result["observed"]["receiver"]["volumeLevel"] == float(level)
+    assert transport.sent() == ["set_volume"]
+    assert transport.calls[0] == ("set_volume", (DEVICE_ID, float(level)))
+
+
+def test_a_whole_number_level_is_sent_to_the_control_layer_as_a_float() -> None:
+    transport = FakeTransport()
+
+    dispatch(playback_control(transport), command_request("set_volume", level=1))
+
+    assert isinstance(transport.calls[0][1][1], float)
+
+
+@pytest.mark.parametrize("muted", [True, False])
+def test_set_muted_forwards_the_state_and_is_confirmed_by_the_observed_mute(muted: bool) -> None:
+    transport = FakeTransport()
+    transport.tv.muted = not muted
+
+    response = dispatch(playback_control(transport), command_request("set_muted", muted=muted))
+
+    result = sound_result(response)
+    assert result["command"] == "set_muted"
+    assert result["confirmation"] == "confirmed"
+    assert result["observed"]["receiver"]["muted"] is muted
+    assert transport.calls[0] == ("set_muted", (DEVICE_ID, muted))
+    assert [name for name, _ in transport.calls].count("set_muted") == 1
+
+
+def test_a_volume_the_tv_confirms_late_is_still_one_command() -> None:
+    transport = FakeTransport(effect_delay_polls=2)
+
+    response = dispatch(playback_control(transport), command_request("set_volume", level=0.8))
+
+    assert sound_result(response)["confirmation"] == "confirmed"
+    assert transport.sent().count("set_volume") == 1
+
+
+def test_a_volume_the_tv_never_shows_is_sent_but_unconfirmed_and_never_resent() -> None:
+    transport = FakeTransport(ignore_commands=True)
+
+    response = dispatch(playback_control(transport), command_request("set_volume", level=0.8))
+
+    result = sound_result(response)
+    assert result["confirmation"] == "unconfirmed"
+    assert "expected volume near 0.8" in result["detail"]
+    assert result["observed"]["receiver"]["volumeLevel"] == 0.5
+    assert transport.sent().count("set_volume") == 1
+    assert transport.attempted() == ["set_volume"]
+
+
+def test_a_volume_the_tv_reports_differently_is_unconfirmed_and_carries_what_it_reports() -> None:
+    """A receiver that rounds to its own steps: the answer is what the TV really shows."""
+    transport = FakeTransport()
+    transport.status_effects = [lambda: setattr(transport.tv, "volume", 0.47)] * 12
+
+    response = dispatch(playback_control(transport), command_request("set_volume", level=0.5))
+
+    result = sound_result(response)
+    assert result["confirmation"] == "unconfirmed"
+    assert result["observed"]["receiver"]["volumeLevel"] == 0.47
+    assert transport.sent().count("set_volume") == 1
+
+
+def test_a_mute_the_tv_never_shows_is_sent_but_unconfirmed_and_never_resent() -> None:
+    transport = FakeTransport(ignore_commands=True)
+
+    response = dispatch(playback_control(transport), command_request("set_muted", muted=True))
+
+    result = sound_result(response)
+    assert result["confirmation"] == "unconfirmed"
+    assert "expected mute on" in result["detail"]
+    assert result["observed"]["receiver"]["muted"] is False
+    assert transport.sent().count("set_muted") == 1
+    assert transport.attempted() == ["set_muted"]
+
+
+def test_an_unreported_volume_and_mute_state_cannot_confirm_a_command() -> None:
+    transport = ScriptedStatusTransport(
+        scripted=DeviceStatus(
+            device_id=DEVICE_ID,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+            receiver=ReceiverStatus(volume_level=None, muted=None),
+            media=None,
+        )
+    )
+    control = playback_control(transport)
+
+    volume = sound_result(dispatch(control, command_request("set_volume", level=0.5)))
+    mute = sound_result(dispatch(control, command_request("set_muted", muted=True)))
+
+    assert volume["confirmation"] == "unconfirmed"
+    assert "volume level was not reported" in volume["detail"]
+    assert volume["observed"]["receiver"]["volumeLevel"] is None
+    assert mute["confirmation"] == "unconfirmed"
+    assert "mute state was not reported" in mute["detail"]
+    assert mute["observed"]["receiver"]["muted"] is None
+
+
+def test_volume_and_mute_with_verification_disabled_are_reported_as_not_checked() -> None:
+    transport = FakeTransport()
+    control = playback_control(transport, confirm_timeout=None)
+
+    volume = sound_result(dispatch(control, command_request("set_volume", level=0.3)))
+    mute = sound_result(dispatch(control, command_request("set_muted", muted=True)))
+
+    for result in (volume, mute):
+        assert result["confirmation"] == "not_checked"
+        assert result["observed"] is None
+    assert transport.sent() == ["set_volume", "set_muted"]
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (DeviceUnavailableError("tv is asleep", device_id=str(DEVICE_ID)), "device_unavailable"),
+        (CommandRejectedError("volume is fixed", device_id=str(DEVICE_ID)), "command_rejected"),
+        (OperationTimeoutError("no answer in 10s", device_id=str(DEVICE_ID)), "timeout"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [("set_volume", {"level": 0.5}), ("set_muted", {"muted": True})],
+)
+def test_a_sound_command_that_could_not_be_sent_is_an_error_with_its_code_never_a_result(
+    method: str, params: dict[str, object], error: ControlError, code: str
+) -> None:
+    transport = FakeTransport(fail_commands_with=error)
+
+    response = dispatch(playback_control(transport), command_request(method, **params))
+
+    assert response["ok"] is False
+    assert "result" not in response
+    assert response["error"] == {"code": code, "message": error.message}
+    assert transport.sent() == []
+    assert transport.attempted() == [method]
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [("set_volume", {"level": 0.5}), ("set_muted", {"muted": True})],
+)
+def test_a_sound_command_for_an_unknown_device_is_not_found_and_sends_nothing(
+    method: str, params: dict[str, object]
+) -> None:
+    transport = FakeTransport()
+    request = {"id": 1, "method": method, "params": {"deviceId": "Living room", **params}}
+
+    response = dispatch(playback_control(transport), request)
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "device_not_found"
+    assert transport.sent() == []
+
+
+@pytest.mark.parametrize("device_id", [None, 42, ["uuid-1"], "", "   "])
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [("set_volume", {"level": 0.5}), ("set_muted", {"muted": True})],
+)
+def test_a_sound_command_needs_a_non_blank_string_device_id(
+    method: str, params: dict[str, object], device_id: object
+) -> None:
+    transport = FakeTransport()
+    request_params: dict[str, object] = dict(params)
+    if device_id is not None:
+        request_params["deviceId"] = device_id
+
+    response = dispatch(
+        playback_control(transport), {"id": 2, "method": method, "params": request_params}
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "level",
+    [
+        None,
+        "0.5",
+        True,
+        False,
+        [0.5],
+        {"level": 0.5},
+        -0.1,
+        1.01,
+        2,
+        -1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        pytest.param(10**400, id="integer-too-large-for-a-float"),
+    ],
+)
+def test_set_volume_rejects_a_missing_non_numeric_or_out_of_range_level_before_any_call(
+    level: object,
+) -> None:
+    transport = FakeTransport()
+    params: dict[str, object] = {"deviceId": str(DEVICE_ID)}
+    if level is not None:
+        params["level"] = level
+
+    response = dispatch(
+        playback_control(transport), {"id": 3, "method": "set_volume", "params": params}
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize("muted", [None, "true", "false", 0, 1, 1.0, [True], {"muted": True}])
+def test_set_muted_rejects_anything_that_is_not_a_boolean_before_any_call(muted: object) -> None:
+    transport = FakeTransport()
+    params: dict[str, object] = {"deviceId": str(DEVICE_ID)}
+    if muted is not None:
+        params["muted"] = muted
+
+    response = dispatch(
+        playback_control(transport), {"id": 3, "method": "set_muted", "params": params}
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_a_non_finite_level_written_as_json_is_rejected(literal: str) -> None:
+    transport = FakeTransport()
+    line = (
+        '{"id": 4, "method": "set_volume", "params": '
+        f'{{"deviceId": "{DEVICE_ID}", "level": {literal}}}}}'
+    )
+
+    response = handle_line(playback_control(transport), line)
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+def test_sound_commands_never_touch_playback_or_each_other() -> None:
+    transport = FakeTransport()
+    control = playback_control(transport)
+
+    dispatch(control, command_request("set_volume", level=0.2))
+    dispatch(control, command_request("set_muted", muted=True))
+
+    assert transport.sent().count("set_volume") == 1
+    assert transport.sent().count("set_muted") == 1
+    assert not {"play", "pause", "stop", "seek"} & set(transport.sent())
+    assert transport.tv.volume == 0.2
+    assert transport.tv.muted is True
+
+
+def test_the_real_transport_refuses_sound_commands_for_an_undiscovered_device_offline() -> None:
+    """Through the real `PyChromecastTransport` and real stdio: an id that was never
+    discovered fails before any network I/O, so this sends nothing to any device."""
+    process = subprocess.Popen(
+        [sys.executable, "-m", "control_tv.bridge"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        requests = [
+            ("set_volume", {"deviceId": "never-discovered", "level": 0.4}),
+            ("set_muted", {"deviceId": "never-discovered", "muted": True}),
+            ("set_muted", {"deviceId": "never-discovered", "muted": False}),
+        ]
+        for request_id, (method, params) in enumerate(requests, start=20):
             process.stdin.write(
                 json.dumps({"id": request_id, "method": method, "params": params}) + "\n"
             )

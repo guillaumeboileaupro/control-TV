@@ -552,7 +552,8 @@ button {
   gap: 2px;
 }
 
-.seek-input {
+/* One look for every slider: a 44px-high hit area, the accent for the thumb and the filled part. */
+.range {
   width: 100%;
   height: 44px;
   margin: 0;
@@ -560,7 +561,7 @@ button {
   cursor: pointer;
 }
 
-.seek-input:disabled {
+.range:disabled {
   cursor: progress;
   opacity: 0.55;
 }
@@ -617,6 +618,68 @@ button {
   margin-top: 4px;
 }
 
-.command-feedback:not(:empty) {
+/* Only what is drawn takes space: an announce-only line (screen readers) must not push the
+   content below it down when a command starts or finishes. */
+.command-feedback > .feedback,
+.command-feedback > .problem {
   margin-top: 12px;
+}
+
+/* Sound: a mute button and a volume slider on one line, the level (or what is being set) under
+   them. The line is kept in the layout so composing a level never moves what is below. */
+
+.sound {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 20px;
+}
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-mute {
+  flex: none;
+  width: 44px;
+  padding: 0;
+}
+
+/* Muted is shown by the crossed speaker and by the tint, never by colour alone. */
+.btn-mute.is-muted {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.btn-mute.is-muted:hover {
+  background: var(--accent-tint);
+}
+
+.btn-mute[aria-disabled="true"].is-muted:hover {
+  background: var(--accent-tint);
+}
+
+.volume-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.sound-readout {
+  min-height: 1.45em;
+  margin: 0;
+  color: var(--muted);
+  /* The limit hint may need two lines on a phone; keep them even rather than leaving one word. */
+  text-wrap: balance;
+}
+
+.sound-readout.is-empty {
+  visibility: hidden;
+}
+
+.sound .note {
+  margin: 4px 0 0;
 }

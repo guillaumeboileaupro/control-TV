@@ -24,7 +24,9 @@ import {
   type StatusOutcome,
   type StatusRequest,
 } from "./model.ts";
+import { createFocusReturn, createSoundController } from "./interaction.ts";
 import {
+  commandArguments,
   describeCommandFeedback,
   describeControls,
   finishCommand,
@@ -35,13 +37,14 @@ import {
   type CommandRequest,
   type CommandResult,
 } from "./playback.ts";
+import { describeSound } from "./sound.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
 // through the shared control layer. This file performs the I/O and draws the DOM; the
 // rules (selection by stable id, one request in flight, which controls the observed state
 // offers, wording) live in model.ts and playback.ts. It must never grow its own
-// device/control logic. It sends a playback command only when the operator uses a control the
-// observed state offers, never resends one, and never shows a state the TV did not report.
+// device/control logic. It sends a command only when the operator uses a control the observed
+// state offers, never resends one, and never shows a state the TV did not report.
 // Internal component names never appear in the normal view; raw error text lives only in a
 // collapsed diagnostic disclosure.
 
@@ -89,6 +92,11 @@ interface Elements {
   stopLabel: HTMLElement;
   controlsNote: HTMLElement;
   seekNote: HTMLElement;
+  sound: HTMLElement;
+  muteButton: HTMLButtonElement;
+  volumeInput: HTMLInputElement;
+  soundReadout: HTMLElement;
+  soundNote: HTMLElement;
   commandFeedback: HTMLElement;
 }
 
@@ -197,9 +205,23 @@ function start(elements: Elements): void {
   let contextKey = "";
   let feedbackKey = "";
   let seekTimer: number | undefined;
-  // The seek slider is disabled while a command runs, which drops keyboard focus; remember
-  // that it had it so focus can be given back once it is enabled again.
-  let seekWantsFocus = false;
+  // A range control disabled by its command loses keyboard focus. Return it after the answer
+  // only while the user has not intentionally focused another control in the meantime.
+  const seekFocus = createFocusReturn(() => elements.seekInput.focus());
+  const volumeFocus = createFocusReturn(() => elements.volumeInput.focus());
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    // Losing focus to the document because a range was disabled is not a new user intention.
+    // Any real element other than that range is.
+    if (target !== document.body && target !== document.documentElement) {
+      if (target !== elements.seekInput) {
+        seekFocus.cancel();
+      }
+      if (target !== elements.volumeInput) {
+        volumeFocus.cancel();
+      }
+    }
+  });
 
   function renderNotice(): void {
     elements.serviceNotice.replaceChildren();
@@ -305,7 +327,9 @@ function start(elements: Elements): void {
     return parts;
   }
 
-  function renderFacts(description: ReturnType<typeof describeStatus>): HTMLElement {
+  // Quiet facts under the controls. Volume and mute are not among them: the sound control shows
+  // them, and saying the same thing twice would only add noise. Nothing to say draws nothing.
+  function renderFacts(description: ReturnType<typeof describeStatus>): HTMLElement | null {
     const facts = document.createElement("ul");
     facts.className = "facts";
     const add = (iconName: string, label: string): void => {
@@ -314,14 +338,13 @@ function start(elements: Elements): void {
       item.append(icon(iconName), label);
       facts.append(item);
     };
-    add(description.muted === true ? "volume-off" : "volume", description.soundText);
     if (description.standby) {
       add("idle", "In standby");
     }
     if (description.application !== null) {
       add("app", description.application);
     }
-    return facts;
+    return facts.childElementCount === 0 ? null : facts;
   }
 
   function renderContext(): void {
@@ -368,7 +391,10 @@ function start(elements: Elements): void {
             contextNow.append(
               ...renderPlayback(description, describeControls(state).seek === null),
             );
-            contextFacts.append(renderFacts(description));
+            const facts = renderFacts(description);
+            if (facts !== null) {
+              contextFacts.append(facts);
+            }
           }
           if (description.note !== null) {
             const line = text("p", "note", "");
@@ -421,12 +447,11 @@ function start(elements: Elements): void {
       el.seekInput.value = String(seek.value);
       el.seekInput.setAttribute("aria-valuetext", `${seek.valueText} of ${seek.maxText}`);
       if (controls.busy && active === el.seekInput) {
-        seekWantsFocus = true;
+        seekFocus.remember();
       }
       el.seekInput.disabled = controls.busy;
-      if (!controls.busy && seekWantsFocus) {
-        seekWantsFocus = false;
-        el.seekInput.focus();
+      if (!controls.busy) {
+        seekFocus.restore();
       }
       // A draft is a request being composed, worded as such; the position the TV reported
       // stays in the state row above.
@@ -447,6 +472,62 @@ function start(elements: Elements): void {
 
     renderFeedback();
     if (controlsHadFocus && el.controls.hidden) {
+      (el.refreshButton.hidden ? el.pickerSummary : el.refreshButton).focus();
+    }
+  }
+
+  // Updates the static sound controls in place from what the observed state offers. The slider
+  // shows the level being sent or composed, else the TV's; the mute button offers the opposite
+  // of the mute state the TV reported and never remembers a state of its own.
+  function renderSound(): void {
+    const el = elements;
+    const sound = describeSound(state);
+    const active = document.activeElement;
+    const soundHadFocus = active !== null && el.sound.contains(active);
+
+    el.sound.hidden = !sound.visible;
+
+    const mute = sound.mute;
+    el.muteButton.hidden = mute === null;
+    if (mute !== null) {
+      const muting = sound.pendingCommand === "set_muted";
+      el.muteButton.setAttribute("aria-label", mute.action);
+      el.muteButton.title = mute.action;
+      setIcon(el.muteButton, muting ? "buffering" : mute.muted ? "volume-off" : "volume");
+      setBusy(el.muteButton, sound.busy);
+      el.muteButton.classList.toggle("is-muted", mute.muted);
+      el.muteButton.classList.toggle("is-loading", muting);
+      el.muteButton.setAttribute("aria-busy", String(muting));
+    }
+
+    const volume = sound.volume;
+    el.volumeInput.hidden = volume === null;
+    if (volume !== null) {
+      el.volumeInput.value = String(volume.value);
+      el.volumeInput.setAttribute("aria-valuetext", `${volume.value} percent`);
+      // The slider is disabled while a request runs, which drops keyboard focus; give it back
+      // once it is enabled again.
+      if (sound.busy && active === el.volumeInput) {
+        volumeFocus.remember();
+      }
+      el.volumeInput.disabled = sound.busy;
+      if (!sound.busy) {
+        volumeFocus.restore();
+      }
+    }
+
+    el.soundReadout.textContent = sound.readout;
+    // With a slider the line is kept (blank) so composing a level never moves what is below;
+    // without one there is nothing to protect and a blank line would only be a gap.
+    el.soundReadout.hidden = volume === null && sound.readout === "";
+    el.soundReadout.classList.toggle("is-empty", sound.readout === "");
+    el.soundNote.hidden = sound.note === null;
+    el.soundNote.replaceChildren();
+    if (sound.note !== null) {
+      el.soundNote.append(icon("info"), sound.note);
+    }
+
+    if (soundHadFocus && el.sound.hidden) {
       (el.refreshButton.hidden ? el.pickerSummary : el.refreshButton).focus();
     }
   }
@@ -513,6 +594,7 @@ function start(elements: Elements): void {
     renderDevices();
     renderContext();
     renderControls();
+    renderSound();
     // One recovery action at a time: a failed status read, or a command outcome that offers
     // its own labelled button, makes the refresh icon a repeat of it, so it steps aside and
     // hands over keyboard focus if it had it.
@@ -582,11 +664,10 @@ function start(elements: Elements): void {
   async function runCommand(request: CommandRequest): Promise<void> {
     let outcome: CommandOutcome;
     try {
-      const args: Record<string, unknown> = { deviceId: request.deviceId };
-      if (request.command === "seek") {
-        args["positionSeconds"] = request.positionSeconds;
-      }
-      const answer = await invoke<CommandAnswer>(`bridge_${request.command}`, args);
+      const answer = await invoke<CommandAnswer>(
+        `bridge_${request.command}`,
+        commandArguments(request),
+      );
       outcome = { ok: true, result: answer.result };
     } catch (error) {
       outcome = { ok: false, failure: toBridgeFailure(error) };
@@ -653,6 +734,29 @@ function start(elements: Elements): void {
     window.clearTimeout(seekTimer);
     seekTimer = window.setTimeout(commitSeek, SEEK_COMMIT_DELAY_MS);
   });
+  // Moving the volume control only composes a level; one command is sent once it has settled.
+  const sound = createSoundController({
+    getState: () => state,
+    setState: update,
+    run: (request) => {
+      void runCommand(request);
+    },
+    timers: {
+      set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clear: (handle) => window.clearTimeout(handle),
+    },
+  });
+  elements.volumeInput.addEventListener("pointerdown", () => sound.volumePointerDown());
+  // The release is heard on the window: it may happen away from the control after a drag.
+  window.addEventListener("pointerup", () => sound.volumePointerUp());
+  window.addEventListener("pointercancel", () => sound.volumePointerUp());
+  elements.volumeInput.addEventListener("keyup", () => sound.volumeKeyUp());
+  elements.volumeInput.addEventListener("keydown", () => sound.volumeKeyDown());
+  elements.volumeInput.addEventListener("input", () =>
+    sound.volumeInput(Number(elements.volumeInput.value)),
+  );
+  elements.volumeInput.addEventListener("change", () => sound.volumeChange());
+  elements.muteButton.addEventListener("click", () => sound.mute());
   elements.picker.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && elements.picker.open) {
       elements.picker.open = false;
@@ -688,6 +792,11 @@ window.addEventListener("DOMContentLoaded", () => {
     stopLabel: byId("stop-label"),
     controlsNote: byId("controls-note"),
     seekNote: byId("seek-note"),
+    sound: byId("sound"),
+    muteButton: byId<HTMLButtonElement>("mute-button"),
+    volumeInput: byId<HTMLInputElement>("volume-input"),
+    soundReadout: byId("sound-readout"),
+    soundNote: byId("sound-note"),
     commandFeedback: byId("command-feedback"),
   });
 });

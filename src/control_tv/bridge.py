@@ -22,10 +22,13 @@ Read-only methods:
                         discovery, never a display name). Fields the TV did not report are
                         `null`, never a default: `null` means unknown, not "off" or "zero".
 
-Playback commands, each a plain forward to the same-named `ControlService` method (no Cast
+Commands, each a plain forward to the same-named `ControlService` method (no Cast
 logic, no retry, no replay), all taking the stable `deviceId`:
 - `play`, `pause`, `stop`
 - `seek`             -> also requires `positionSeconds` (a number, not a boolean)
+- `set_volume`       -> also requires `level`, a number from 0.0 to 1.0 (not a boolean)
+- `set_muted`        -> also requires `muted`, a JSON boolean: it is an absolute state, so
+                        "mute" is `true` and "unmute" is `false`; there is no toggle
 They answer {"result": {"command", "deviceId", "confirmation", "detail", "observed"}}.
 `ok: true` on a command means the command was SENT - nothing more. Whether the TV then
 showed the requested state is `result.confirmation`: `confirmed` (a status observed on the
@@ -162,6 +165,28 @@ def _handle_seek(control: ControlService, params: dict[str, Any]) -> Any:
     return {"result": _command_result_to_json(control.seek(device_id, float(position)))}
 
 
+def _handle_set_volume(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    level = params.get("level")
+    # A JSON boolean is an int in Python; it is never a volume level.
+    if isinstance(level, bool) or not isinstance(level, int | float):
+        raise InvalidArgumentError(f"level must be a number: {level!r}")
+    try:
+        number = float(level)
+    except OverflowError:
+        raise InvalidArgumentError("level is too large to be a volume level") from None
+    return {"result": _command_result_to_json(control.set_volume(device_id, number))}
+
+
+def _handle_set_muted(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    muted = params.get("muted")
+    # Strictly a boolean: 0, 1 and "true" are not accepted as a mute state.
+    if not isinstance(muted, bool):
+        raise InvalidArgumentError(f"muted must be a boolean: {muted!r}")
+    return {"result": _command_result_to_json(control.set_muted(device_id, muted))}
+
+
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
@@ -170,6 +195,8 @@ _HANDLERS: dict[str, Handler] = {
     "pause": _handle_pause,
     "stop": _handle_stop,
     "seek": _handle_seek,
+    "set_volume": _handle_set_volume,
+    "set_muted": _handle_set_muted,
 }
 
 
