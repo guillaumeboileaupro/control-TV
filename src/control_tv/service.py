@@ -29,6 +29,7 @@ from control_tv.domain import (
     DeviceStatus,
     InvalidArgumentError,
     MediaRequest,
+    OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
 )
@@ -266,8 +267,30 @@ class ControlService:
             f"seek position must be a finite number >= 0: {position_seconds}",
             device_id,
         )
-        media = self._transport.get_status(device_id, timeout=self._status_timeout).media
-        expected_content_id = media.content_id if media is not None else None
+        deadline = self._confirmation_deadline()
+        media = None
+        expected_content_id = None
+        if deadline is None:
+            media = self._transport.get_status(device_id, timeout=self._status_timeout).media
+            expected_content_id = _usable_content_id(
+                media.content_id if media is not None else None
+            )
+        else:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                raise OperationTimeoutError(
+                    "seek capability could not be checked within the confirmation budget",
+                    device_id=device_id,
+                )
+            else:
+                status = self._transport.get_status(
+                    device_id, timeout=min(self._status_timeout, remaining)
+                )
+                media = status.media
+                if self._clock() < deadline:
+                    expected_content_id = _usable_content_id(
+                        media.content_id if media is not None else None
+                    )
         if media is not None and media.supports_seek is False:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
@@ -278,6 +301,7 @@ class ControlService:
             device_id,
             _position_near(position_seconds, self._seek_tolerance, expected_content_id),
             f"position near {position_seconds:g}s",
+            deadline=deadline,
         )
 
     def set_volume(self, device_id: DeviceId, level: float) -> CommandResult:
