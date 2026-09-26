@@ -5,6 +5,7 @@ import {
   canRefresh,
   canSelect,
   describeDevice,
+  describeDevicesMessage,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -163,18 +164,13 @@ function start(elements: Elements): void {
     devicesList.replaceChildren();
     devicesMessage.replaceChildren();
 
-    if (state.discovery.kind === "failed") {
-      devicesMessage.append(problem(state.discovery.failure, "find devices", null));
+    const message = describeDevicesMessage(state);
+    if (message.failure !== null) {
+      devicesMessage.append(problem(message.failure, "find devices", null));
       return;
     }
-    if (state.discovery.kind === "idle") {
-      devicesMessage.textContent = "Find your TV or Chromecast on this network.";
-      return;
-    }
-    if (state.discovery.kind === "done" && state.devices.length === 0) {
-      devicesMessage.textContent =
-        "No devices found. Make sure your TV or Chromecast is on and on the same network.";
-      return;
+    for (const line of message.lines) {
+      devicesMessage.append(text("p", line.announceOnly ? "sr-only" : "message-line", line.text));
     }
 
     const busy = !canSelect(state);

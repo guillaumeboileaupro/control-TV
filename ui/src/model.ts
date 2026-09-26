@@ -82,6 +82,44 @@ export interface StatusRequest {
 export type StatusOutcome =
   { ok: true; status: DeviceStatus } | { ok: false; failure: BridgeFailure };
 
+export interface DevicesMessageLine {
+  text: string;
+  // Read out by assistive technology but not drawn: the list appearing is the visual cue.
+  announceOnly: boolean;
+}
+
+export interface DevicesMessage {
+  lines: DevicesMessageLine[];
+  failure: BridgeFailure | null;
+}
+
+// What the device picker says about the last discovery: a prompt before the first search, a
+// failure, why the selection was dropped, that nothing was found, or how many devices were.
+export function describeDevicesMessage(state: AppState): DevicesMessage {
+  if (state.discovery.kind === "failed") {
+    return { lines: [], failure: state.discovery.failure };
+  }
+  const lines: DevicesMessageLine[] = [];
+  if (state.discovery.kind === "idle") {
+    lines.push({ text: "Find your TV or Chromecast on this network.", announceOnly: false });
+  }
+  if (state.discovery.kind === "done") {
+    if (state.notice !== null) {
+      lines.push({ text: state.notice, announceOnly: false });
+    }
+    const count = state.devices.length;
+    lines.push(
+      count === 0
+        ? {
+            text: "No devices found. Make sure your TV or Chromecast is on and on the same network.",
+            announceOnly: false,
+          }
+        : { text: `${count} ${count === 1 ? "device" : "devices"} found.`, announceOnly: true },
+    );
+  }
+  return { lines, failure: null };
+}
+
 export function initialState(): AppState {
   return {
     devices: [],

@@ -294,6 +294,22 @@ button {
   display: none;
 }
 
+.message p {
+  margin: 0;
+}
+
+/* Text for assistive technology only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .message .problem-title {
   color: var(--text);
 }
