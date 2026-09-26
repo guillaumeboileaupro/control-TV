@@ -5,6 +5,7 @@ import {
   canRefresh,
   canSelect,
   describeDevice,
+  describeDevicesMessage,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -136,6 +137,14 @@ function problem(
 function start(elements: Elements): void {
   let state = initialState();
   let serviceFailure: BridgeFailure | null = null;
+  // The device message and the status area are live regions: rebuilding one whose content
+  // did not change would make assistive technology read it out again, so each is redrawn only
+  // when what it says has changed. The message and the list have separate keys: the list also
+  // changes with whether selection is allowed, which flips around every status read while the
+  // message (for example the announced device count) does not.
+  let messageKey = "";
+  let listKey = "";
+  let contextKey = "";
 
   function renderNotice(): void {
     elements.serviceNotice.replaceChildren();
@@ -160,24 +169,28 @@ function start(elements: Elements): void {
 
   function renderDevices(): void {
     const { devicesList, devicesMessage } = elements;
-    devicesList.replaceChildren();
-    devicesMessage.replaceChildren();
 
-    if (state.discovery.kind === "failed") {
-      devicesMessage.append(problem(state.discovery.failure, "find devices", null));
-      return;
-    }
-    if (state.discovery.kind === "idle") {
-      devicesMessage.textContent = "Find your TV or Chromecast on this network.";
-      return;
-    }
-    if (state.discovery.kind === "done" && state.devices.length === 0) {
-      devicesMessage.textContent =
-        "No devices found. Make sure your TV or Chromecast is on and on the same network.";
-      return;
+    const message = describeDevicesMessage(state);
+    const nextMessageKey = JSON.stringify(message);
+    if (nextMessageKey !== messageKey) {
+      messageKey = nextMessageKey;
+      devicesMessage.replaceChildren();
+      if (message.failure !== null) {
+        devicesMessage.append(problem(message.failure, "find devices", null));
+      }
+      for (const line of message.lines) {
+        devicesMessage.append(text("p", line.announceOnly ? "sr-only" : "message-line", line.text));
+      }
     }
 
     const busy = !canSelect(state);
+    const nextListKey = JSON.stringify([state.devices, state.selected?.id ?? null, busy]);
+    if (nextListKey === listKey) {
+      return;
+    }
+    listKey = nextListKey;
+    devicesList.replaceChildren();
+
     for (const device of state.devices) {
       const isSelected = state.selected?.id === device.id;
       const item = document.createElement("li");
@@ -255,51 +268,64 @@ function start(elements: Elements): void {
 
   function renderContext(): void {
     const { context, contextBody, observed, refreshButton } = elements;
-    const refreshHadFocus = document.activeElement === refreshButton;
+    const active = document.activeElement;
+    const refreshHadFocus = active === refreshButton;
+    const bodyHadFocus = active !== null && contextBody.contains(active);
     context.hidden = state.selected === null;
-    contextBody.replaceChildren();
-    observed.textContent = "";
     setBusy(refreshButton, !canRefresh(state));
-    refreshButton.classList.toggle("is-loading", state.status.kind === "loading");
+    const loading = state.status.kind === "loading";
+    refreshButton.classList.toggle("is-loading", loading);
+    refreshButton.setAttribute("aria-busy", String(loading));
     // A failure carries its own labelled recovery button; the icon would only repeat it.
     refreshButton.hidden = state.status.kind === "failed";
 
-    switch (state.status.kind) {
-      case "none":
-        break;
-      case "loading":
-        contextBody.append(text("p", "message", "Reading status…"));
-        break;
-      case "failed": {
-        const failure = state.status.failure;
-        const recovery = describeFailure(failure).recovery === "discover" ? "discover" : "retry";
-        contextBody.append(
-          problem(
-            failure,
-            "read this device's status",
-            recovery === "discover"
-              ? { label: "Find devices", run: () => void discover() }
-              : { label: "Try again", run: onRefresh },
-          ),
-        );
-        break;
-      }
-      case "ready": {
-        const description = describeStatus(state.status.status);
-        observed.textContent = `Updated ${description.observedAt}`;
-        if (description.connected) {
-          contextBody.append(...renderPlayback(description), renderFacts(description));
+    const key = JSON.stringify([state.selected?.id ?? null, state.status]);
+    if (key !== contextKey) {
+      contextKey = key;
+      contextBody.replaceChildren();
+      observed.textContent = "";
+      switch (state.status.kind) {
+        case "none":
+          break;
+        case "loading":
+          contextBody.append(text("p", "message", "Reading status…"));
+          break;
+        case "failed": {
+          const failure = state.status.failure;
+          const recovery = describeFailure(failure).recovery === "discover" ? "discover" : "retry";
+          contextBody.append(
+            problem(
+              failure,
+              "read this device's status",
+              recovery === "discover"
+                ? { label: "Find devices", run: () => void discover() }
+                : { label: "Try again", run: onRefresh },
+            ),
+          );
+          break;
         }
-        if (description.note !== null) {
-          const line = text("p", "note", "");
-          line.append(icon("info"), description.note);
-          contextBody.append(line);
+        case "ready": {
+          const description = describeStatus(state.status.status);
+          observed.textContent = `Updated ${description.observedAt}`;
+          if (description.connected) {
+            contextBody.append(...renderPlayback(description), renderFacts(description));
+          }
+          if (description.note !== null) {
+            const line = text("p", "note", "");
+            line.append(icon("info"), description.note);
+            contextBody.append(line);
+          }
+          break;
         }
-        break;
       }
     }
+    // Keep keyboard focus in the status area when the control that had it is replaced: a
+    // recovery button hands it to the refresh button while a read runs, and back again if
+    // the read fails once more.
     if (refreshHadFocus && refreshButton.hidden) {
       contextBody.querySelector<HTMLElement>(".problem .btn")?.focus();
+    } else if (bodyHadFocus && active !== null && !contextBody.contains(active)) {
+      refreshButton.focus();
     }
   }
 
@@ -389,6 +415,12 @@ function start(elements: Elements): void {
     void discover();
   });
   elements.refreshButton.addEventListener("click", onRefresh);
+  elements.picker.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.picker.open) {
+      elements.picker.open = false;
+      elements.pickerSummary.focus();
+    }
+  });
 
   render();
   void checkBackend();

@@ -10,6 +10,7 @@ import {
   canRefresh,
   canSelect,
   describeDevice,
+  describeDevicesMessage,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -314,6 +315,65 @@ describe("device wording", () => {
       "Cast device · 192.0.2.11:8009",
     );
     assert.equal(describeDevice(other, [first, second, other]).subtitle, "Cast device");
+  });
+});
+
+describe("device picker message", () => {
+  const texts = (state: AppState) =>
+    describeDevicesMessage(state).lines.map((line) => [line.text, line.announceOnly]);
+
+  test("prompts before the first search", () => {
+    assert.deepEqual(texts(initialState()), [
+      ["Find your TV or Chromecast on this network.", false],
+    ]);
+  });
+
+  test("says nothing while a search is running", () => {
+    assert.deepEqual(describeDevicesMessage(startDiscovery(initialState())), {
+      lines: [],
+      failure: null,
+    });
+  });
+
+  test("announces, without drawing, how many devices were found", () => {
+    assert.deepEqual(texts(discovered(device("a"))), [["1 device found.", true]]);
+    assert.deepEqual(texts(discovered(device("a"), device("b"))), [["2 devices found.", true]]);
+  });
+
+  test("tells the operator when nothing was found", () => {
+    const [[message, announceOnly]] = texts(discovered());
+
+    assert.match(String(message), /No devices found/);
+    assert.equal(announceOnly, false);
+  });
+
+  test("explains a dropped selection before anything else", () => {
+    const selected = selectDevice(discovered(device("a")), "a").state;
+    const settled = finishStatusRead(selected, 1, { ok: true, status: FULL_STATUS });
+
+    const next = finishDiscovery(startDiscovery(settled), [device("b")]);
+
+    const lines = describeDevicesMessage(next).lines;
+    assert.match(lines[0]?.text ?? "", /not found by the latest discovery/);
+    assert.equal(lines[0]?.announceOnly, false);
+    assert.equal(lines[1]?.text, "1 device found.");
+  });
+
+  test("a kept selection carries no notice", () => {
+    const selected = selectDevice(discovered(device("a")), "a").state;
+    const settled = finishStatusRead(selected, 1, { ok: true, status: FULL_STATUS });
+
+    const next = finishDiscovery(startDiscovery(settled), [device("a")]);
+
+    assert.deepEqual(texts(next), [["1 device found.", true]]);
+  });
+
+  test("reports a failed discovery as a failure, not as text", () => {
+    const failure = { code: "discovery_failed", message: "no route" };
+
+    const message = describeDevicesMessage(failDiscovery(startDiscovery(initialState()), failure));
+
+    assert.deepEqual(message, { lines: [], failure });
   });
 });
 
