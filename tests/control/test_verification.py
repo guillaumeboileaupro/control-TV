@@ -54,8 +54,11 @@ def test_playback_in_reports_no_media_session_honestly_never_as_idle() -> None:
     assert observation.description == "no active media session"
 
 
-def test_playback_in_requires_a_previously_observed_media_identity() -> None:
-    observation = _playback_in(None, PlaybackState.PLAYING)(
+@pytest.mark.parametrize("content_id", [None, "", " ", " \t\n"])
+def test_playback_in_requires_a_usable_previously_observed_media_identity(
+    content_id: str | None,
+) -> None:
+    observation = _playback_in(content_id, PlaybackState.PLAYING)(
         status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING))
     )
 

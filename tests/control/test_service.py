@@ -96,6 +96,79 @@ def test_confirmation_waits_for_a_slow_tv(transport: FakeTransport, clock: FakeC
     assert clock.sleeps == [0.25, 0.25]
 
 
+def test_fast_identity_snapshot_and_confirmation_share_one_budget(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_read_delays = [0.1, 0.1]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert clock.now == pytest.approx(0.2)
+    assert [args[1] for name, args in transport.calls if name == "get_status"] == [
+        pytest.approx(1.0),
+        pytest.approx(0.9),
+    ]
+
+
+def test_slow_identity_snapshot_leaves_only_its_remaining_budget_for_confirmation(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.status_read_delays = [0.75, 0.1]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert clock.now == pytest.approx(0.85)
+    assert [args[1] for name, args in transport.calls if name == "get_status"] == [
+        pytest.approx(1.0),
+        pytest.approx(0.25),
+    ]
+
+
+def test_blocked_identity_snapshot_exhausts_the_single_budget_before_confirmation(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    transport.hang_status_reads = True
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert transport.calls == [
+        ("get_status", (DEVICE_ID, 1.0)),
+        ("pause", (DEVICE_ID,)),
+    ]
+    assert transport.sent() == ["pause"]
+    assert transport.status_reads() == 1
+    assert clock.now == pytest.approx(1.0)
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
+    assert result.detail is not None
+    assert "confirmation budget (1s) expired" in result.detail
+
+
+def test_late_identity_snapshot_cannot_confirm_or_start_another_read(
+    transport: FakeTransport, clock: FakeClock
+) -> None:
+    # Defense in depth against a transport that violates the timeout it received.
+    transport.status_read_delays = [1.01]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = service.pause(DEVICE_ID)
+
+    assert transport.calls == [
+        ("get_status", (DEVICE_ID, 1.0)),
+        ("pause", (DEVICE_ID,)),
+    ]
+    assert transport.sent() == ["pause"]
+    assert transport.status_reads() == 1
+    assert clock.now == pytest.approx(1.01)
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
+
+
 def test_a_command_the_tv_ignores_is_sent_but_unconfirmed(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
@@ -352,6 +425,46 @@ def test_playback_command_without_precommand_identity_is_sent_but_unconfirmed(
     assert result.observed is not None
     assert result.detail is not None
     assert "media identity was not reported before the command" in result.detail
+
+
+@pytest.mark.parametrize("content_id", [None, "", " ", " \t\n"])
+def test_blank_precommand_media_identity_cannot_confirm_playback(
+    transport: FakeTransport, clock: FakeClock, content_id: str | None
+) -> None:
+    transport.tv.content_id = content_id
+    service = make_service(transport, clock)
+
+    result = service.pause(DEVICE_ID)
+
+    assert transport.sent() == ["pause"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.detail is not None
+    assert "media identity was not reported before the command" in result.detail
+    assert clock.now == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("replacement", ["", " ", " \t\n"])
+def test_media_identity_becoming_blank_during_confirmation_is_not_accepted(
+    transport: FakeTransport, clock: FakeClock, replacement: str
+) -> None:
+    def replace_media_identity() -> None:
+        transport.tv.content_id = replacement
+        transport.tv.playback = PlaybackState.PAUSED
+
+    transport.ignore_commands = True
+    transport.status_effects = [lambda: None, replace_media_identity]
+    service = make_service(transport, clock)
+
+    result = service.pause(DEVICE_ID)
+
+    assert transport.sent() == ["pause"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.content_id == replacement
+    assert result.detail is not None
+    assert f"loaded content changed to {replacement!r} from {MOVIE_URL!r}" in result.detail
 
 
 # --- per-command expectations ---------------------------------------------------------------

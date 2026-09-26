@@ -22,7 +22,7 @@ Deliverables:
 - [x] documented architecture and development plan;
 - [x] reproducible local development commands;
 - [x] explicit `clean`, `dist-clean` and disk-usage inspection commands for the current Python tooling;
-- [ ] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output once that tooling exists, validated against real generated output;
+- [x] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output; PR #4 added the allowlisted paths/tests and validated cleanup against real generated Tauri/Rust/frontend artifacts;
 - [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
 
 Exit criteria:
@@ -82,6 +82,10 @@ Current playback-confirmation audit:
 - [x] deterministic negative coverage verifies all three transitions, unavailable pre-command identity and the global deadline; removing the identity guard makes all four focused mutation tests fail;
 - [x] complete local Ruff, format, strict mypy, 252-test suite, 98.07% coverage and dependency checks pass;
 - [ ] physical Chromecast/Google TV validation remains required; automated fakes are not hardware evidence;
+- [x] **P2 implemented and targeted-test validated:** share one confirmation deadline across the pre-command media snapshot and post-command verification, with every read limited to the remaining budget;
+- [x] **P2 implemented and targeted-test validated:** treat `None`, empty and whitespace-only `content_id` values as absent evidence without rewriting usable identifiers;
+- [x] deterministic timing/identity coverage passes; removing deadline reuse makes all four focused double-budget mutation tests fail;
+- [x] final local Ruff, format, strict mypy, 266-test suite, 98.12% coverage and dependency checks pass;
 
 Current confirmation-synchronization iteration:
 - [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
