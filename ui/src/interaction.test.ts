@@ -8,6 +8,7 @@ import { describe, test } from "node:test";
 
 import { commandResult, readyWith, statusOf } from "./fixtures.ts";
 import {
+  createFocusReturn,
   createSettler,
   createSoundController,
   VOLUME_SETTLE_KEYBOARD_MS,
@@ -68,6 +69,74 @@ class FakeTimers implements Timers {
     return this.tasks.size;
   }
 }
+
+describe("focus return after a range command", () => {
+  test("returns focus when disabling the focused slider was the only reason it left", () => {
+    let focused = 0;
+    const intent = createFocusReturn(() => {
+      focused += 1;
+    });
+
+    intent.remember();
+    intent.restore();
+    intent.restore();
+
+    assert.equal(focused, 1, "one completed command returns focus once");
+  });
+
+  test("does not steal focus back after the user moves to another control", () => {
+    let focused = 0;
+    const intent = createFocusReturn(() => {
+      focused += 1;
+    });
+
+    intent.remember();
+    intent.cancel();
+    intent.restore();
+
+    assert.equal(focused, 0);
+  });
+
+  test("uses the same intent rule for every command outcome", () => {
+    for (const outcome of ["confirmed", "unconfirmed", "failed"] as const) {
+      let kept = 0;
+      const keep = createFocusReturn(() => {
+        kept += 1;
+      });
+      keep.remember();
+      keep.restore();
+      assert.equal(kept, 1, `${outcome}: unchanged focus intent is preserved`);
+
+      let moved = 0;
+      const doNotSteal = createFocusReturn(() => {
+        moved += 1;
+      });
+      doNotSteal.remember();
+      doNotSteal.cancel();
+      doNotSteal.restore();
+      assert.equal(moved, 0, `${outcome}: deliberate focus move wins`);
+    }
+  });
+
+  test("two independent sliders do not share focus intent", () => {
+    let seekFocused = 0;
+    let volumeFocused = 0;
+    const seek = createFocusReturn(() => {
+      seekFocused += 1;
+    });
+    const volume = createFocusReturn(() => {
+      volumeFocused += 1;
+    });
+
+    seek.remember();
+    volume.cancel();
+    seek.restore();
+    volume.restore();
+
+    assert.equal(seekFocused, 1);
+    assert.equal(volumeFocused, 0);
+  });
+});
 
 function harness(initial: AppState = readyWith(statusOf())) {
   let state = initial;

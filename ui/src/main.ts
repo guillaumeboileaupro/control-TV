@@ -24,7 +24,7 @@ import {
   type StatusOutcome,
   type StatusRequest,
 } from "./model.ts";
-import { createSoundController } from "./interaction.ts";
+import { createFocusReturn, createSoundController } from "./interaction.ts";
 import {
   commandArguments,
   describeCommandFeedback,
@@ -205,10 +205,23 @@ function start(elements: Elements): void {
   let contextKey = "";
   let feedbackKey = "";
   let seekTimer: number | undefined;
-  // The seek slider is disabled while a command runs, which drops keyboard focus; remember
-  // that it had it so focus can be given back once it is enabled again.
-  let seekWantsFocus = false;
-  let volumeWantsFocus = false;
+  // A range control disabled by its command loses keyboard focus. Return it after the answer
+  // only while the user has not intentionally focused another control in the meantime.
+  const seekFocus = createFocusReturn(() => elements.seekInput.focus());
+  const volumeFocus = createFocusReturn(() => elements.volumeInput.focus());
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    // Losing focus to the document because a range was disabled is not a new user intention.
+    // Any real element other than that range is.
+    if (target !== document.body && target !== document.documentElement) {
+      if (target !== elements.seekInput) {
+        seekFocus.cancel();
+      }
+      if (target !== elements.volumeInput) {
+        volumeFocus.cancel();
+      }
+    }
+  });
 
   function renderNotice(): void {
     elements.serviceNotice.replaceChildren();
@@ -434,12 +447,11 @@ function start(elements: Elements): void {
       el.seekInput.value = String(seek.value);
       el.seekInput.setAttribute("aria-valuetext", `${seek.valueText} of ${seek.maxText}`);
       if (controls.busy && active === el.seekInput) {
-        seekWantsFocus = true;
+        seekFocus.remember();
       }
       el.seekInput.disabled = controls.busy;
-      if (!controls.busy && seekWantsFocus) {
-        seekWantsFocus = false;
-        el.seekInput.focus();
+      if (!controls.busy) {
+        seekFocus.restore();
       }
       // A draft is a request being composed, worded as such; the position the TV reported
       // stays in the state row above.
@@ -496,12 +508,11 @@ function start(elements: Elements): void {
       // The slider is disabled while a request runs, which drops keyboard focus; give it back
       // once it is enabled again.
       if (sound.busy && active === el.volumeInput) {
-        volumeWantsFocus = true;
+        volumeFocus.remember();
       }
       el.volumeInput.disabled = sound.busy;
-      if (!sound.busy && volumeWantsFocus) {
-        volumeWantsFocus = false;
-        el.volumeInput.focus();
+      if (!sound.busy) {
+        volumeFocus.restore();
       }
     }
 

@@ -33,6 +33,35 @@ export interface Settler {
   cancel(): void;
 }
 
+// A disabled range control loses focus while its command is in flight. Remember that loss so
+// keyboard use can continue when the control is enabled again, but let any later, deliberate
+// focus move cancel the return. The DOM wiring reports that move; keeping the state here makes
+// the intent and every command outcome deterministic under test.
+export interface FocusReturn {
+  remember(): void;
+  cancel(): void;
+  restore(): void;
+}
+
+export function createFocusReturn(focus: () => void): FocusReturn {
+  let wanted = false;
+  return {
+    remember(): void {
+      wanted = true;
+    },
+    cancel(): void {
+      wanted = false;
+    },
+    restore(): void {
+      if (!wanted) {
+        return;
+      }
+      wanted = false;
+      focus();
+    },
+  };
+}
+
 export function createSettler(delayMs: number, timers: Timers, onSettled: () => void): Settler {
   let handle: number | null = null;
   return {
