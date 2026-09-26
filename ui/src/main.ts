@@ -137,10 +137,13 @@ function problem(
 function start(elements: Elements): void {
   let state = initialState();
   let serviceFailure: BridgeFailure | null = null;
-  // The device list and the status area are live regions: rebuilding one whose content did
-  // not change would make assistive technology read it out again, so each is redrawn only
-  // when what it shows has changed.
-  let devicesKey = "";
+  // The device message and the status area are live regions: rebuilding one whose content
+  // did not change would make assistive technology read it out again, so each is redrawn only
+  // when what it says has changed. The message and the list have separate keys: the list also
+  // changes with whether selection is allowed, which flips around every status read while the
+  // message (for example the announced device count) does not.
+  let messageKey = "";
+  let listKey = "";
   let contextKey = "";
 
   function renderNotice(): void {
@@ -166,23 +169,27 @@ function start(elements: Elements): void {
 
   function renderDevices(): void {
     const { devicesList, devicesMessage } = elements;
-    const message = describeDevicesMessage(state);
-    const busy = !canSelect(state);
-    const key = JSON.stringify([message, state.devices, state.selected?.id ?? null, busy]);
-    if (key === devicesKey) {
-      return;
-    }
-    devicesKey = key;
-    devicesList.replaceChildren();
-    devicesMessage.replaceChildren();
 
-    if (message.failure !== null) {
-      devicesMessage.append(problem(message.failure, "find devices", null));
+    const message = describeDevicesMessage(state);
+    const nextMessageKey = JSON.stringify(message);
+    if (nextMessageKey !== messageKey) {
+      messageKey = nextMessageKey;
+      devicesMessage.replaceChildren();
+      if (message.failure !== null) {
+        devicesMessage.append(problem(message.failure, "find devices", null));
+      }
+      for (const line of message.lines) {
+        devicesMessage.append(text("p", line.announceOnly ? "sr-only" : "message-line", line.text));
+      }
+    }
+
+    const busy = !canSelect(state);
+    const nextListKey = JSON.stringify([state.devices, state.selected?.id ?? null, busy]);
+    if (nextListKey === listKey) {
       return;
     }
-    for (const line of message.lines) {
-      devicesMessage.append(text("p", line.announceOnly ? "sr-only" : "message-line", line.text));
-    }
+    listKey = nextListKey;
+    devicesList.replaceChildren();
 
     for (const device of state.devices) {
       const isSelected = state.selected?.id === device.id;
