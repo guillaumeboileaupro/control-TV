@@ -296,6 +296,26 @@ describe("sending transport commands", () => {
     assert.equal(describeControls(state).pendingCommand, "pause");
   });
 
+  test("controls look busy, not enabled, while a discovery runs, and nothing is sent", () => {
+    const searching = startDiscovery(playing());
+
+    const controls = describeControls(searching);
+
+    assert.equal(controls.visible, true);
+    assert.equal(controls.busy, true);
+    assert.equal(controls.pendingCommand, null);
+    assert.equal(startTransport(searching, "pause").request, null);
+    assert.equal(startTransport(searching, "stop").request, null);
+    assert.equal(setSeekDraft(searching, 30).seekDraft, null);
+  });
+
+  test("controls are offered again once the discovery keeps the selection", () => {
+    const found = finishDiscovery(startDiscovery(playing()), [DEVICE]);
+
+    assert.equal(describeControls(found).busy, false);
+    assert.notEqual(startTransport(found, "pause").request, null);
+  });
+
   test("rapid repeated clicks start exactly one command", () => {
     let state = playing();
     let started = 0;

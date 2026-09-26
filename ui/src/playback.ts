@@ -87,7 +87,8 @@ export interface ControlsDescription {
   seekNote: string | null;
   // Why no transport control is offered although there is media (idle or unknown state).
   unavailable: string | null;
-  // A command is in flight: nothing else may be sent.
+  // A request is in flight (a command or a discovery): nothing may be sent, so the controls
+  // look unavailable. `pendingCommand` says which command it is, if any.
   busy: boolean;
   pendingCommand: CommandName | null;
 }
@@ -133,7 +134,9 @@ export function describeControls(state: AppState): ControlsDescription {
   if (status.connection !== "connected" || media === null) {
     return HIDDEN;
   }
-  const busy = state.command.kind === "pending";
+  // Busy is any request in flight, not only a command: while a discovery runs the controls stay
+  // on screen but every interaction is refused, so they must look unavailable, not enabled.
+  const busy = !idle(state);
   const pendingCommand = state.command.kind === "pending" ? state.command.command : null;
   const kind = playbackKind(media.playbackState);
 
