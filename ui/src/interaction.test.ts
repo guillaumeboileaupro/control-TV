@@ -14,7 +14,13 @@ import {
   VOLUME_SETTLE_POINTER_MS,
   type Timers,
 } from "./interaction.ts";
-import { finishDiscovery, refreshStatus, startDiscovery, type AppState } from "./model.ts";
+import {
+  finishDiscovery,
+  finishStatusRead,
+  refreshStatus,
+  startDiscovery,
+  type AppState,
+} from "./model.ts";
 import {
   commandArguments,
   finishCommand,
@@ -153,7 +159,7 @@ describe("the volume slider", () => {
     const h = harness();
 
     h.controller.volumePointerDown();
-    for (let percent = 46; percent <= 80; percent += 1) {
+    for (let percent = 46; percent <= 55; percent += 1) {
       h.controller.volumeInput(percent);
       h.timers.advance(10);
     }
@@ -164,33 +170,33 @@ describe("the volume slider", () => {
     h.timers.advance(1);
 
     assert.equal(h.sent.length, 1);
-    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 80 });
-    assert.deepEqual(commandArguments(h.sent[0]!), { deviceId: "a", level: 0.8 });
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+    assert.deepEqual(commandArguments(h.sent[0]!), { deviceId: "a", level: 0.55 });
     assert.equal(h.state.command.kind, "pending");
   });
 
   test("moving the control only composes a draft: the reported level is untouched until the TV says", () => {
     const h = harness();
 
-    h.controller.volumeInput(70);
+    h.controller.volumeInput(50);
 
     assert.equal(h.sent.length, 0);
     assert.equal(describeSound(h.state).volume?.observed, 45);
-    assert.equal(describeSound(h.state).volume?.value, 70);
-    assert.equal(describeSound(h.state).readout, "Set volume to 70%");
+    assert.equal(describeSound(h.state).volume?.value, 50);
+    assert.equal(describeSound(h.state).readout, "Set volume to 50%");
   });
 
   test("a held key, with its initial pause and then fast repeats, sends one command", () => {
     const h = harness();
 
     h.controller.volumeKeyDown();
-    h.controller.volumeInput(46);
+    h.controller.volumeInput(44);
     h.controller.volumeChange();
     h.timers.advance(660); // the pause before a held key starts repeating
     assert.equal(h.sent.length, 0, "the first press is not sent before the repeats begin");
     for (let step = 2; step <= 40; step += 1) {
       h.controller.volumeKeyDown();
-      h.controller.volumeInput(45 + step);
+      h.controller.volumeInput(45 - step);
       h.controller.volumeChange();
       h.timers.advance(33);
     }
@@ -198,7 +204,7 @@ describe("the volume slider", () => {
     h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 1);
-    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 85 });
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 5 });
   });
 
   test("the keyboard wait outlasts a typical key-repeat pause, and a pointer's does not need to", () => {
@@ -244,17 +250,17 @@ describe("the volume slider", () => {
   test("moving again before it settles postpones the command instead of sending twice", () => {
     const h = harness();
 
-    h.controller.volumeInput(60);
+    h.controller.volumeInput(50);
     h.controller.volumeChange();
     h.timers.advance(300);
-    h.controller.volumeInput(65);
+    h.controller.volumeInput(55);
     h.timers.advance(SETTLE + 100);
     assert.equal(h.sent.length, 0, "the control was moving again, so the wait was forgotten");
     h.controller.volumeChange();
     h.timers.advance(SETTLE);
 
     assert.equal(h.sent.length, 1);
-    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 65 });
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
   });
 
   test("moving away and back to the level the TV reports sends nothing", () => {
@@ -461,13 +467,13 @@ describe("the mute button", () => {
 
   test("a press refused because something runs leaves the volume being composed alone", () => {
     const h = harness();
-    h.controller.volumeInput(70);
+    h.controller.volumeInput(55);
     h.controller.volumeChange();
     h.state = { ...h.state, discovery: { kind: "running" } };
     h.controller.mute();
 
     assert.equal(h.sent.length, 0);
-    assert.equal(h.state.volumeDraft, 70);
+    assert.equal(h.state.volumeDraft, 55);
   });
 
   test("a mute and a playback command never run together", () => {
@@ -513,5 +519,266 @@ describe("the arguments a command travels with", () => {
       deviceId: "a",
       muted: null,
     });
+  });
+});
+
+describe("the raise limit through the slider", () => {
+  test("a click toward 100% sends one command at the reported level plus ten points", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+    assert.deepEqual(commandArguments(h.sent[0]!), { deviceId: "a", level: 0.55 });
+  });
+
+  test("a long drag up to the far end still sends one command, at the limit", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    for (let percent = 46; percent <= 100; percent += 1) {
+      h.controller.volumeInput(percent);
+      h.timers.advance(10);
+      assert.ok(h.timers.waiting <= 1);
+    }
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+  });
+
+  test("the thumb stays at the limit while the pointer asks for more", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeInput(90);
+
+    assert.equal(describeSound(h.state).volume?.value, 55);
+    assert.equal(h.sent.length, 0);
+  });
+
+  test("the limit never catches up on its own: no command is sent for the part that was refused", () => {
+    const h = harness();
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+    h.answer("confirmed", statusOf({ receiver: { volumeLevel: 0.55 } }));
+
+    h.timers.advance(60_000);
+
+    assert.equal(h.sent.length, 1);
+    assert.equal(describeSound(h.state).volume?.observed, 55);
+    assert.equal(h.state.volumeDraft, null);
+  });
+
+  test("after the TV reports the new level, a second gesture raises ten more", () => {
+    const h = harness();
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+    h.answer("confirmed", statusOf({ receiver: { volumeLevel: 0.55 } }));
+
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.equal(h.sent.length, 2);
+    assert.deepEqual(h.sent[1]?.sound, { kind: "volume", percent: 65 });
+  });
+
+  test("a second gesture before the TV has reported anything new cannot be composed", () => {
+    const h = harness();
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS * 3);
+
+    assert.equal(h.sent.length, 1);
+  });
+
+  test("lowering to 0% is one gesture and one command", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    for (let percent = 44; percent >= 0; percent -= 1) {
+      h.controller.volumeInput(percent);
+    }
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 0 });
+    assert.deepEqual(commandArguments(h.sent[0]!), { deviceId: "a", level: 0 });
+  });
+
+  test("End on the keyboard goes ten points up, then Home goes to 0%", () => {
+    const h = harness();
+
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(100); // End
+    h.controller.volumeChange();
+    h.timers.advance(SETTLE);
+    h.answer("confirmed", statusOf({ receiver: { volumeLevel: 0.55 } }));
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(0); // Home
+    h.controller.volumeChange();
+    h.timers.advance(SETTLE);
+
+    assert.equal(h.sent.length, 2);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+    assert.deepEqual(h.sent[1]?.sound, { kind: "volume", percent: 0 });
+  });
+
+  test("keeping the raise key held never gets past the limit in one gesture", () => {
+    const h = harness();
+
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(46);
+    h.controller.volumeChange();
+    h.timers.advance(660);
+    for (let step = 2; step <= 60; step += 1) {
+      h.controller.volumeKeyDown();
+      h.controller.volumeInput(45 + step);
+      h.controller.volumeChange();
+      h.timers.advance(33);
+    }
+    h.timers.advance(SETTLE);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+  });
+
+  test("the limit is measured from the level the TV last reported, also after it changed on its own", () => {
+    const h = harness();
+    const refresh = refreshStatus(h.state);
+    assert.ok(refresh.request);
+    h.state = finishStatusRead(refresh.state, refresh.request.requestId, {
+      ok: true,
+      status: statusOf({ receiver: { volumeLevel: 0.2 } }),
+    });
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100);
+    h.controller.volumeChange();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 30 });
+  });
+});
+
+describe("the end of a gesture, whether or not the browser reports a change", () => {
+  test("a pointer release alone sends the raise, at the limit, once it has settled", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(100); // pulled back to the limit: no change event follows
+    h.controller.volumePointerUp();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS - 1);
+    assert.equal(h.sent.length, 0);
+    h.timers.advance(1);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+  });
+
+  test("a key release alone sends the raise, at the limit, once it has settled", () => {
+    const h = harness();
+
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(100); // End
+    h.controller.volumeKeyUp();
+    h.timers.advance(SETTLE - 1);
+    assert.equal(h.sent.length, 0);
+    h.timers.advance(1);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+  });
+
+  test("a held raise key with no change events sends one command, after it is let go", () => {
+    const h = harness();
+
+    h.controller.volumeKeyDown();
+    h.controller.volumeInput(46);
+    h.timers.advance(660);
+    for (let step = 2; step <= 60; step += 1) {
+      h.controller.volumeKeyDown();
+      h.controller.volumeInput(45 + step);
+      h.timers.advance(33);
+    }
+    assert.equal(h.sent.length, 0, "nothing while the key is held");
+    h.controller.volumeKeyUp();
+    h.timers.advance(SETTLE);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 55 });
+  });
+
+  test("a pointer that pauses mid-drag sends nothing until it is released", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(50);
+    h.timers.advance(5_000);
+    assert.equal(h.sent.length, 0);
+    h.controller.volumeInput(52);
+    h.controller.volumePointerUp();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+
+    assert.equal(h.sent.length, 1);
+    assert.deepEqual(h.sent[0]?.sound, { kind: "volume", percent: 52 });
+  });
+
+  test("a release and a change event for the same gesture still send one command", () => {
+    const h = harness();
+
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(50);
+    h.controller.volumeChange();
+    h.controller.volumePointerUp();
+    h.controller.volumeKeyUp();
+    h.timers.advance(SETTLE * 3);
+
+    assert.equal(h.sent.length, 1);
+  });
+
+  test("a release with no press on the control, or with nothing composed, sends nothing", () => {
+    const h = harness();
+
+    h.controller.volumePointerUp();
+    assert.equal(h.timers.waiting, 0);
+    h.controller.volumePointerDown();
+    h.controller.volumePointerUp();
+    h.controller.volumeKeyUp();
+    h.timers.advance(SETTLE * 3);
+
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.state.command.kind, "idle");
+  });
+
+  test("a second release of the same press does nothing", () => {
+    const h = harness();
+    h.controller.volumePointerDown();
+    h.controller.volumeInput(50);
+    h.controller.volumePointerUp();
+    h.timers.advance(VOLUME_SETTLE_POINTER_MS);
+    h.answer("confirmed", statusOf({ receiver: { volumeLevel: 0.5 } }));
+
+    h.controller.volumePointerUp();
+    h.timers.advance(SETTLE * 3);
+
+    assert.equal(h.sent.length, 1);
   });
 });

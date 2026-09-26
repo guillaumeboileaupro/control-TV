@@ -13,9 +13,21 @@ import { begin, type CommandName, type CommandRequest } from "./playback.ts";
 
 export const MAX_PERCENT = 100;
 
+// The most one gesture may raise the volume above the level the TV last reported. It protects
+// against an accidental click on the track jumping the TV straight to 100%. Lowering is never
+// limited, and once the TV reports the new level it becomes the reference of the next gesture.
+export const MAX_RAISE_POINTS = 10;
+
 // A whole percent within [0, 100]; the control moves in one-percent steps.
 export function clampPercent(value: number): number {
   return Math.min(Math.max(Math.round(value), 0), MAX_PERCENT);
+}
+
+// The level a gesture may reach: a whole percent within [0, 100], and never more than
+// `MAX_RAISE_POINTS` above `reported`, the level the TV last reported (not a draft, not a request
+// that is still in flight).
+export function limitRaise(percent: number, reported: number): number {
+  return Math.min(clampPercent(percent), Math.min(reported + MAX_RAISE_POINTS, MAX_PERCENT));
 }
 
 // `observed`: the level the TV reported. `draft`: a level being composed, not sent. `sending`: a
@@ -88,8 +100,8 @@ export function describeSound(state: AppState): SoundDescription {
     const observed = percentOf(level);
     if (pendingSound?.kind === "volume") {
       volume = { value: pendingSound.percent, observed, phase: "sending" };
-    } else if (state.volumeDraft !== null && clampPercent(state.volumeDraft) !== observed) {
-      volume = { value: clampPercent(state.volumeDraft), observed, phase: "draft" };
+    } else if (state.volumeDraft !== null && limitRaise(state.volumeDraft, observed) !== observed) {
+      volume = { value: limitRaise(state.volumeDraft, observed), observed, phase: "draft" };
     } else {
       volume = { value: observed, observed, phase: "observed" };
     }
@@ -105,7 +117,11 @@ export function describeSound(state: AppState): SoundDescription {
   } else if (volume.phase === "sending") {
     readout = `Setting volume to ${volume.value}%…`;
   } else if (volume.phase === "draft") {
-    readout = `Set volume to ${volume.value}%`;
+    // At the limit the thumb has stopped short of where the pointer or key asked for: say why.
+    readout =
+      volume.value - volume.observed === MAX_RAISE_POINTS
+        ? `Set volume to ${volume.value}% - raising is limited to ${MAX_RAISE_POINTS}% at a time`
+        : `Set volume to ${volume.value}%`;
   } else {
     readout = muted === true ? `Volume ${volume.observed}% · Muted` : `Volume ${volume.observed}%`;
   }
@@ -131,7 +147,8 @@ export function describeSound(state: AppState): SoundDescription {
 }
 
 // Composes a volume: moves the draft, sends nothing. Ignored unless the TV reported a volume and
-// nothing is in flight. A level equal to the one the TV reports is no draft at all.
+// nothing is in flight. A raise stops at `MAX_RAISE_POINTS` above the level the TV reported; a
+// lowering is not limited. A level equal to the one the TV reports is no draft at all.
 export function setVolumeDraft(state: AppState, percent: number | null): AppState {
   if (percent === null) {
     return state.volumeDraft === null ? state : { ...state, volumeDraft: null };
@@ -140,7 +157,8 @@ export function setVolumeDraft(state: AppState, percent: number | null): AppStat
   if (volume === null || !idle(state) || !Number.isFinite(percent)) {
     return state;
   }
-  const next = clampPercent(percent) === volume.observed ? null : clampPercent(percent);
+  const limited = limitRaise(percent, volume.observed);
+  const next = limited === volume.observed ? null : limited;
   return state.volumeDraft === next ? state : { ...state, volumeDraft: next };
 }
 
@@ -155,7 +173,9 @@ export function startVolume(state: AppState): {
   if (draft === null || volume === null || !idle(state)) {
     return { state, request: null };
   }
-  const target = clampPercent(draft);
+  // The limit is applied again here so that no command ever asks for more than the reported level
+  // plus `MAX_RAISE_POINTS`, whatever way the draft came to be.
+  const target = limitRaise(draft, volume.observed);
   if (target === volume.observed) {
     return { state: { ...state, volumeDraft: null }, request: null };
   }

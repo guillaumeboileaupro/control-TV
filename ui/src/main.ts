@@ -736,6 +736,10 @@ function start(elements: Elements): void {
     },
   });
   elements.volumeInput.addEventListener("pointerdown", () => sound.volumePointerDown());
+  // The release is heard on the window: it may happen away from the control after a drag.
+  window.addEventListener("pointerup", () => sound.volumePointerUp());
+  window.addEventListener("pointercancel", () => sound.volumePointerUp());
+  elements.volumeInput.addEventListener("keyup", () => sound.volumeKeyUp());
   elements.volumeInput.addEventListener("keydown", () => sound.volumeKeyDown());
   elements.volumeInput.addEventListener("input", () =>
     sound.volumeInput(Number(elements.volumeInput.value)),

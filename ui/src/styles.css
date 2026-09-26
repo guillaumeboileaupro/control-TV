@@ -672,6 +672,8 @@ button {
   min-height: 1.45em;
   margin: 0;
   color: var(--muted);
+  /* The limit hint may need two lines on a phone; keep them even rather than leaving one word. */
+  text-wrap: balance;
 }
 
 .sound-readout.is-empty {

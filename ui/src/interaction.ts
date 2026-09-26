@@ -67,6 +67,12 @@ export interface SoundController {
   // chooses how long to wait after the control stops moving; it never blocks a command.
   volumePointerDown(): void;
   volumeKeyDown(): void;
+  // A gesture ended: the pointer was released (anywhere, once a press began on the control) or a
+  // key was let go. The control's own "change" event is not enough to know that: when the remote
+  // pulls the control back to a limit, some engines no longer report the release as a change, and
+  // a raise beyond the limit would never be sent.
+  volumePointerUp(): void;
+  volumeKeyUp(): void;
   // The volume control moved: update the draft, send nothing, and forget any wait in progress
   // (the control is still moving).
   volumeInput(percent: number): void;
@@ -86,13 +92,25 @@ export function createSoundController(deps: SoundControllerDeps): SoundControlle
   };
   const settler = createSettler(VOLUME_SETTLE_KEYBOARD_MS, deps.timers, commit);
   let driver: "pointer" | "keyboard" = "keyboard";
+  let pointerActive = false;
 
   return {
     volumePointerDown(): void {
       driver = "pointer";
+      pointerActive = true;
     },
     volumeKeyDown(): void {
       driver = "keyboard";
+    },
+    volumePointerUp(): void {
+      if (!pointerActive) {
+        return;
+      }
+      pointerActive = false;
+      settler.touch(VOLUME_SETTLE_POINTER_MS);
+    },
+    volumeKeyUp(): void {
+      settler.touch(VOLUME_SETTLE_KEYBOARD_MS);
     },
     volumeInput(percent: number): void {
       settler.cancel();

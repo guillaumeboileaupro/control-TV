@@ -156,17 +156,17 @@ describe("what the observed state offers", () => {
 
 describe("the volume draft", () => {
   test("moving the control composes a draft and sends nothing", () => {
-    const next = setVolumeDraft(at45(), 60);
+    const next = setVolumeDraft(at45(), 55);
 
-    assert.equal(next.volumeDraft, 60);
+    assert.equal(next.volumeDraft, 55);
     assert.equal(next.command.kind, "idle");
     const sound = describeSound(next);
-    assert.deepEqual(sound.volume, { value: 60, observed: 45, phase: "draft" });
-    assert.equal(sound.readout, "Set volume to 60%");
+    assert.deepEqual(sound.volume, { value: 55, observed: 45, phase: "draft" });
+    assert.equal(sound.readout, "Set volume to 55% - raising is limited to 10% at a time");
   });
 
   test("a draft never changes the level the TV reported", () => {
-    const next = setVolumeDraft(at45(), 90);
+    const next = setVolumeDraft(at45(), 55);
 
     assert.equal(next.status.kind, "ready");
     assert.equal(describeSound(next).volume?.observed, 45);
@@ -177,10 +177,12 @@ describe("the volume draft", () => {
   });
 
   test("a draft is a whole percent within 0 to 100", () => {
-    assert.equal(setVolumeDraft(at45(), 150).volumeDraft, 100);
+    const at95 = readyWith(statusOf({ receiver: { volumeLevel: 0.95 } }));
+
+    assert.equal(setVolumeDraft(at95, 150).volumeDraft, 100);
     assert.equal(setVolumeDraft(at45(), -5).volumeDraft, 0);
-    assert.equal(setVolumeDraft(at45(), 60.4).volumeDraft, 60);
-    assert.equal(setVolumeDraft(at45(), 60.6).volumeDraft, 61);
+    assert.equal(setVolumeDraft(at45(), 50.4).volumeDraft, 50);
+    assert.equal(setVolumeDraft(at45(), 50.6).volumeDraft, 51);
     assert.equal(clampPercent(Number.MAX_VALUE), 100);
   });
 
@@ -193,15 +195,15 @@ describe("the volume draft", () => {
 
   test("the level the TV already reports is no draft, even after moving away and back", () => {
     assert.equal(setVolumeDraft(at45(), 45).volumeDraft, null);
-    assert.equal(setVolumeDraft(setVolumeDraft(at45(), 70), 45).volumeDraft, null);
+    assert.equal(setVolumeDraft(setVolumeDraft(at45(), 55), 45).volumeDraft, null);
     assert.equal(
-      describeSound(setVolumeDraft(setVolumeDraft(at45(), 70), 45)).volume?.phase,
+      describeSound(setVolumeDraft(setVolumeDraft(at45(), 55), 45)).volume?.phase,
       "observed",
     );
   });
 
   test("a draft can be cancelled", () => {
-    assert.equal(setVolumeDraft(setVolumeDraft(at45(), 60), null).volumeDraft, null);
+    assert.equal(setVolumeDraft(setVolumeDraft(at45(), 55), null).volumeDraft, null);
     const idleState = at45();
     assert.equal(setVolumeDraft(idleState, null), idleState);
   });
@@ -213,7 +215,7 @@ describe("the volume draft", () => {
   });
 
   test("nothing is composed while any request is in flight", () => {
-    const { state: sending } = pendingVolume(60);
+    const { state: sending } = pendingVolume(55);
     const { state: pausing } = startTransport(at45(), "pause") as { state: AppState };
     const discovering = startDiscovery(at45());
     const reading = refreshStatus(at45()).state;
@@ -226,37 +228,39 @@ describe("the volume draft", () => {
 
 describe("sending a volume", () => {
   test("sends exactly the draft, once, and marks it as sending, not as done", () => {
-    const { state, request } = startVolume(setVolumeDraft(at45(), 60));
+    const { state, request } = startVolume(setVolumeDraft(at45(), 55));
 
     assert.deepEqual(
       request && { command: request.command, deviceId: request.deviceId, sound: request.sound },
-      { command: "set_volume", deviceId: "a", sound: { kind: "volume", percent: 60 } },
+      { command: "set_volume", deviceId: "a", sound: { kind: "volume", percent: 55 } },
     );
     assert.deepEqual(state.command, {
       kind: "pending",
       requestId: request?.requestId,
       command: "set_volume",
       targetSeconds: null,
-      sound: { kind: "volume", percent: 60 },
+      sound: { kind: "volume", percent: 55 },
     });
     assert.equal(state.volumeDraft, null);
     const sound = describeSound(state);
-    assert.deepEqual(sound.volume, { value: 60, observed: 45, phase: "sending" });
-    assert.equal(sound.readout, "Setting volume to 60%…");
+    assert.deepEqual(sound.volume, { value: 55, observed: 45, phase: "sending" });
+    assert.equal(sound.readout, "Setting volume to 55%…");
     assert.equal(sound.busy, true);
     assert.equal(sound.pendingCommand, "set_volume");
   });
 
   test("the request carries the level as a fraction the control layer takes", () => {
+    const at90 = readyWith(statusOf({ receiver: { volumeLevel: 0.9 } }));
     const cases: [number, number][] = [
       [0, 0],
       [7, 0.07],
       [29, 0.29],
       [60, 0.6],
+      [95, 0.95],
       [100, 1],
     ];
     for (const [percent, level] of cases) {
-      const { request } = startVolume(setVolumeDraft(at45(), percent));
+      const { request } = startVolume(setVolumeDraft(at90, percent));
       assert.ok(request);
       assert.deepEqual(commandArguments(request), { deviceId: "a", level });
     }
@@ -271,17 +275,17 @@ describe("sending a volume", () => {
   });
 
   test("nothing is sent while another request is in flight, and the draft is kept", () => {
-    const drafted = setVolumeDraft(at45(), 60);
+    const drafted = setVolumeDraft(at45(), 55);
     const discovering: AppState = { ...drafted, discovery: { kind: "running" } };
 
     const next = startVolume(discovering);
 
     assert.equal(next.request, null);
-    assert.equal(next.state.volumeDraft, 60);
+    assert.equal(next.state.volumeDraft, 55);
   });
 
   test("a second send while one is in flight sends nothing", () => {
-    const { state } = pendingVolume(60);
+    const { state } = pendingVolume(55);
 
     assert.equal(startVolume({ ...state, volumeDraft: 70 }).request, null);
     assert.equal(startMute(state).request, null);
@@ -289,7 +293,7 @@ describe("sending a volume", () => {
   });
 
   test("any command that starts drops a volume being composed", () => {
-    const drafted = setVolumeDraft(at45(), 60);
+    const drafted = setVolumeDraft(at45(), 55);
 
     const pause = startTransport(drafted, "pause");
     const mute = startMute(drafted);
@@ -299,8 +303,8 @@ describe("sending a volume", () => {
   });
 
   test("a volume command drops a seek being composed, and neither draft outlives a new selection", () => {
-    const both = setSeekDraft(setVolumeDraft(at45(), 60), 300);
-    assert.equal(both.volumeDraft, 60);
+    const both = setSeekDraft(setVolumeDraft(at45(), 55), 300);
+    assert.equal(both.volumeDraft, 55);
     assert.equal(both.seekDraft, 300);
 
     assert.equal(startVolume(both).state.seekDraft, null);
@@ -311,14 +315,14 @@ describe("sending a volume", () => {
   });
 
   test("a new discovery and a refresh drop the draft", () => {
-    const drafted = setVolumeDraft(at45(), 60);
+    const drafted = setVolumeDraft(at45(), 55);
 
     assert.equal(startDiscovery(drafted).volumeDraft, null);
     assert.equal(refreshStatus(drafted).state.volumeDraft, null);
   });
 
   test("a selection dropped by a discovery drops the draft too", () => {
-    const drafted = setVolumeDraft(at45(), 60);
+    const drafted = setVolumeDraft(at45(), 55);
 
     const next = finishDiscovery({ ...drafted, discovery: { kind: "running" } }, []);
 
@@ -384,8 +388,8 @@ describe("mute", () => {
 
 describe("what a command's answer changes", () => {
   test("a confirmed volume is shown as the level the TV reported", () => {
-    const { state, requestId } = pendingVolume(60);
-    const observed = statusOf({ receiver: { volumeLevel: 0.6 } });
+    const { state, requestId } = pendingVolume(55);
+    const observed = statusOf({ receiver: { volumeLevel: 0.55 } });
 
     const next = finishCommand(state, requestId, {
       ok: true,
@@ -393,10 +397,10 @@ describe("what a command's answer changes", () => {
     });
 
     assert.equal(next.command.kind, "confirmed");
-    assert.deepEqual(describeSound(next).volume, { value: 60, observed: 60, phase: "observed" });
+    assert.deepEqual(describeSound(next).volume, { value: 55, observed: 55, phase: "observed" });
     assert.equal(describeSound(next).busy, false);
     assert.deepEqual(describeCommandFeedback(next).lines, [
-      { text: "Volume 60%.", announceOnly: true, tone: "info" },
+      { text: "Volume 55%.", announceOnly: true, tone: "info" },
     ]);
   });
 
@@ -428,7 +432,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("a volume the TV did not show is sent but not confirmed, and the slider returns to what it reports", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const next = finishCommand(state, requestId, {
       ok: true,
@@ -436,18 +440,18 @@ describe("what a command's answer changes", () => {
         "set_volume",
         "unconfirmed",
         statusOf(),
-        "command sent; expected volume near 0.6, but volume is 0.45",
+        "command sent; expected volume near 0.55, but volume is 0.45",
       ),
     });
 
     assert.equal(next.command.kind, "sent");
     assert.deepEqual(describeSound(next).volume, { value: 45, observed: 45, phase: "observed" });
     const feedback = describeCommandFeedback(next);
-    assert.equal(feedback.lines[0]?.text, "Volume sent, but the TV reports 45%, not 60%.");
+    assert.equal(feedback.lines[0]?.text, "Volume sent, but the TV reports 45%, not 55%.");
     assert.equal(feedback.lines[0]?.tone, "warning");
     assert.equal(feedback.lines[0]?.announceOnly, false);
     assert.equal(feedback.checkState, true);
-    assert.equal(feedback.detail, "command sent; expected volume near 0.6, but volume is 0.45");
+    assert.equal(feedback.detail, "command sent; expected volume near 0.55, but volume is 0.45");
   });
 
   test("a receiver that settles on a level of its own is told as such, not as unchanged", () => {
@@ -470,7 +474,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("a volume whose answer carried no reading keeps the last status and says it is not shown yet", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const next = finishCommand(state, requestId, {
       ok: true,
@@ -485,7 +489,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("a volume that was not checked is not worded as done", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const next = finishCommand(state, requestId, {
       ok: true,
@@ -533,7 +537,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("a command that was not sent leaves the reported state alone and returns the controls", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const next = finishCommand(state, requestId, {
       ok: false,
@@ -598,7 +602,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("an answer for another command or device is not trusted", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const wrongCommand = finishCommand(state, requestId, {
       ok: true,
@@ -617,14 +621,14 @@ describe("what a command's answer changes", () => {
   });
 
   test("a late or unknown answer is ignored", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
 
     const ignored = finishCommand(state, requestId + 5, {
       ok: true,
       result: commandResult(
         "set_volume",
         "confirmed",
-        statusOf({ receiver: { volumeLevel: 0.6 } }),
+        statusOf({ receiver: { volumeLevel: 0.55 } }),
       ),
     });
 
@@ -632,7 +636,7 @@ describe("what a command's answer changes", () => {
   });
 
   test("checking the state again resynchronises the level and the mute state with the TV", () => {
-    const { state, requestId } = pendingVolume(60);
+    const { state, requestId } = pendingVolume(55);
     const sent = finishCommand(state, requestId, {
       ok: true,
       result: commandResult("set_volume", "unconfirmed", statusOf()),
@@ -642,14 +646,14 @@ describe("what a command's answer changes", () => {
     assert.ok(refresh.request);
     const settled = finishStatusRead(refresh.state, refresh.request.requestId, {
       ok: true,
-      status: statusOf({ receiver: { volumeLevel: 0.6, muted: true } }),
+      status: statusOf({ receiver: { volumeLevel: 0.55, muted: true } }),
     });
 
     assert.equal(settled.command.kind, "idle");
     assert.equal(settled.volumeDraft, null);
-    assert.deepEqual(describeSound(settled).volume, { value: 60, observed: 60, phase: "observed" });
+    assert.deepEqual(describeSound(settled).volume, { value: 55, observed: 55, phase: "observed" });
     assert.deepEqual(describeSound(settled).mute, { muted: true, action: "Unmute" });
-    assert.equal(describeSound(settled).readout, "Volume 60% · Muted");
+    assert.equal(describeSound(settled).readout, "Volume 55% · Muted");
   });
 
   test("the TV changing on its own is what is shown after the next read, never a remembered value", () => {
@@ -670,7 +674,7 @@ describe("what a command's answer changes", () => {
 describe("busy: what looks unavailable", () => {
   test("controls look unavailable, not enabled, while a discovery or a command runs", () => {
     const discovering: AppState = { ...at45(), discovery: { kind: "running" } };
-    const commanding = pendingVolume(60).state;
+    const commanding = pendingVolume(55).state;
 
     assert.equal(describeSound(at45()).busy, false);
     for (const state of [discovering, commanding]) {
@@ -700,12 +704,12 @@ describe("busy: what looks unavailable", () => {
 
 describe("feedback while a sound command runs", () => {
   test("progress is announced to assistive technology, and drawn by the readout instead", () => {
-    const volume = describeCommandFeedback(pendingVolume(60).state);
+    const volume = describeCommandFeedback(pendingVolume(55).state);
     const mute = describeCommandFeedback(pendingMute().state);
     const unmute = describeCommandFeedback(pendingMute(muted()).state);
 
     assert.deepEqual(volume.lines, [
-      { text: "Setting volume to 60%…", announceOnly: true, tone: "info" },
+      { text: "Setting volume to 55%…", announceOnly: true, tone: "info" },
     ]);
     assert.deepEqual(mute.lines, [{ text: "Muting…", announceOnly: true, tone: "info" }]);
     assert.deepEqual(unmute.lines, [{ text: "Unmuting…", announceOnly: true, tone: "info" }]);
@@ -748,5 +752,188 @@ describe("feedback while a sound command runs", () => {
     for (const sound of shown) {
       assert.doesNotMatch(`${sound.readout} ${sound.note ?? ""}`, internal);
     }
+  });
+});
+
+// A TV that last reported `percent` (whole percent).
+const atLevel = (percent: number, muted = false) =>
+  readyWith(statusOf({ receiver: { volumeLevel: percent / 100, muted } }));
+
+describe("the raise limit", () => {
+  const HINT = (percent: number) =>
+    `Set volume to ${percent}% - raising is limited to 10% at a time`;
+
+  test("a raise below the limit is left as asked", () => {
+    assert.equal(setVolumeDraft(at45(), 46).volumeDraft, 46);
+    assert.equal(setVolumeDraft(at45(), 50).volumeDraft, 50);
+    assert.equal(setVolumeDraft(at45(), 54).volumeDraft, 54);
+  });
+
+  test("a raise of exactly the limit is left as asked", () => {
+    assert.equal(setVolumeDraft(at45(), 55).volumeDraft, 55);
+  });
+
+  test("a raise above the limit stops at the reported level plus ten points", () => {
+    for (const asked of [56, 60, 99, 100, 150, 1000, Number.MAX_VALUE]) {
+      const next = setVolumeDraft(at45(), asked);
+      assert.equal(next.volumeDraft, 55, String(asked));
+      assert.deepEqual(describeSound(next).volume, { value: 55, observed: 45, phase: "draft" });
+    }
+  });
+
+  test("the limit follows the level the TV reported", () => {
+    assert.equal(setVolumeDraft(atLevel(0), 100).volumeDraft, 10);
+    assert.equal(setVolumeDraft(atLevel(30), 100).volumeDraft, 40);
+    assert.equal(setVolumeDraft(atLevel(80), 100).volumeDraft, 90);
+  });
+
+  test("the reference is the reported level, never the draft: asking again does not climb", () => {
+    const first = setVolumeDraft(at45(), 100);
+    const again = setVolumeDraft(first, 100);
+    const higher = setVolumeDraft(setVolumeDraft(at45(), 55), 70);
+
+    assert.equal(first.volumeDraft, 55);
+    assert.equal(again.volumeDraft, 55);
+    assert.equal(higher.volumeDraft, 55);
+  });
+
+  test("lowering is never limited, down to 0% in one gesture", () => {
+    for (const asked of [44, 30, 10, 1, 0, -20]) {
+      assert.equal(setVolumeDraft(at45(), asked).volumeDraft, Math.max(asked, 0), String(asked));
+    }
+    assert.equal(setVolumeDraft(atLevel(100), 0).volumeDraft, 0);
+    const { request } = startVolume(setVolumeDraft(atLevel(100), 0));
+    assert.deepEqual(request?.sound, { kind: "volume", percent: 0 });
+    assert.deepEqual(commandArguments(request!), { deviceId: "a", level: 0 });
+  });
+
+  test("near 100% the limit never goes past 100", () => {
+    assert.equal(setVolumeDraft(atLevel(95), 100).volumeDraft, 100);
+    assert.equal(setVolumeDraft(atLevel(90), 100).volumeDraft, 100);
+    assert.equal(setVolumeDraft(atLevel(92), 150).volumeDraft, 100);
+    assert.equal(setVolumeDraft(atLevel(99), 100).volumeDraft, 100);
+  });
+
+  test("at 100% there is nothing to raise: no draft, nothing to send", () => {
+    const state = atLevel(100);
+    const next = setVolumeDraft(state, 100);
+
+    assert.equal(next.volumeDraft, null);
+    assert.equal(startVolume(next).request, null);
+    assert.equal(describeSound(next).readout, "Volume 100%");
+  });
+
+  test("a click toward 100% sends the reported level plus ten points, once", () => {
+    const { state, request } = startVolume(setVolumeDraft(at45(), 100));
+
+    assert.deepEqual(request?.sound, { kind: "volume", percent: 55 });
+    assert.deepEqual(commandArguments(request!), { deviceId: "a", level: 0.55 });
+    assert.deepEqual(describeSound(state).volume, { value: 55, observed: 45, phase: "sending" });
+  });
+
+  test("End goes to the reported level plus ten points and Home goes to 0%", () => {
+    const end = startVolume(setVolumeDraft(at45(), 100)).request;
+    const home = startVolume(setVolumeDraft(at45(), 0)).request;
+    const endNear100 = startVolume(setVolumeDraft(atLevel(95), 100)).request;
+
+    assert.deepEqual(end?.sound, { kind: "volume", percent: 55 });
+    assert.deepEqual(home?.sound, { kind: "volume", percent: 0 });
+    assert.deepEqual(endNear100?.sound, { kind: "volume", percent: 100 });
+  });
+
+  test("once the TV reports the new level, the next gesture may raise ten more", () => {
+    const { state, requestId } = pendingVolume(55);
+    const confirmed = finishCommand(state, requestId, {
+      ok: true,
+      result: commandResult(
+        "set_volume",
+        "confirmed",
+        statusOf({ receiver: { volumeLevel: 0.55 } }),
+      ),
+    });
+
+    const next = startVolume(setVolumeDraft(confirmed, 100));
+
+    assert.deepEqual(next.request?.sound, { kind: "volume", percent: 65 });
+  });
+
+  test("a command in flight is never the reference: nothing can be composed while it runs", () => {
+    const { state } = pendingVolume(55);
+
+    assert.equal(setVolumeDraft(state, 100).volumeDraft, null);
+    assert.equal(describeSound(state).volume?.observed, 45);
+  });
+
+  test("a volume the TV did not show leaves the reference at the level it reported", () => {
+    const { state, requestId } = pendingVolume(55);
+    const notShown = finishCommand(state, requestId, {
+      ok: true,
+      result: commandResult("set_volume", "unconfirmed", statusOf()),
+    });
+    const settledLower = finishCommand(pendingVolume(55).state, requestId, {
+      ok: true,
+      result: commandResult(
+        "set_volume",
+        "unconfirmed",
+        statusOf({ receiver: { volumeLevel: 0.5 } }),
+      ),
+    });
+    const noReading = finishCommand(pendingVolume(55).state, requestId, {
+      ok: true,
+      result: commandResult("set_volume", "unconfirmed", null),
+    });
+
+    assert.equal(setVolumeDraft(notShown, 100).volumeDraft, 55);
+    assert.equal(setVolumeDraft(settledLower, 100).volumeDraft, 60);
+    assert.equal(setVolumeDraft(noReading, 100).volumeDraft, 55);
+  });
+
+  test("a new reading from the TV replaces the reference", () => {
+    const refresh = refreshStatus(at45());
+    assert.ok(refresh.request);
+    const settled = finishStatusRead(refresh.state, refresh.request.requestId, {
+      ok: true,
+      status: statusOf({ receiver: { volumeLevel: 0.3 } }),
+    });
+
+    assert.equal(setVolumeDraft(settled, 100).volumeDraft, 40);
+  });
+
+  test("the hint appears only at the limit, with the percentage of the value shown", () => {
+    assert.equal(describeSound(setVolumeDraft(at45(), 100)).readout, HINT(55));
+    assert.equal(describeSound(setVolumeDraft(at45(), 55)).readout, HINT(55));
+    assert.equal(describeSound(setVolumeDraft(atLevel(30), 100)).readout, HINT(40));
+    assert.equal(describeSound(setVolumeDraft(atLevel(90), 100)).readout, HINT(100));
+    assert.equal(
+      describeSound(setVolumeDraft(at45(), 100)).readout,
+      "Set volume to 55% - raising is limited to 10% at a time",
+    );
+  });
+
+  test("no hint below the limit, when lowering, or at rest", () => {
+    assert.equal(describeSound(setVolumeDraft(at45(), 50)).readout, "Set volume to 50%");
+    assert.equal(describeSound(setVolumeDraft(at45(), 54)).readout, "Set volume to 54%");
+    assert.equal(describeSound(setVolumeDraft(at45(), 10)).readout, "Set volume to 10%");
+    assert.equal(describeSound(setVolumeDraft(at45(), 0)).readout, "Set volume to 0%");
+    assert.equal(describeSound(setVolumeDraft(atLevel(95), 100)).readout, "Set volume to 100%");
+    assert.equal(describeSound(at45()).readout, "Volume 45%");
+    assert.doesNotMatch(describeSound(pendingVolume(55).state).readout, /limited/);
+  });
+
+  test("whatever the way a draft came to be, no command asks for more than the limit", () => {
+    const forced: AppState = { ...at45(), volumeDraft: 100 };
+
+    assert.equal(describeSound(forced).volume?.value, 55);
+    assert.deepEqual(startVolume(forced).request?.sound, { kind: "volume", percent: 55 });
+    const lowering: AppState = { ...at45(), volumeDraft: 5 };
+    assert.deepEqual(startVolume(lowering).request?.sound, { kind: "volume", percent: 5 });
+  });
+
+  test("the mute button and the reported level are not affected by the limit", () => {
+    const muted = atLevel(45, true);
+
+    assert.deepEqual(describeSound(muted).mute, { muted: true, action: "Unmute" });
+    assert.equal(setVolumeDraft(muted, 100).volumeDraft, 55);
+    assert.deepEqual(startMute(muted).request?.sound, { kind: "mute", muted: false });
   });
 });
