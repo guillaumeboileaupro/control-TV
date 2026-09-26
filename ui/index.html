@@ -45,6 +45,9 @@
         <symbol id="i-buffering" viewBox="0 0 24 24">
           <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5" />
         </symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24">
+          <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+        </symbol>
         <symbol id="i-idle" viewBox="0 0 24 24">
           <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
         </symbol>
@@ -111,7 +114,44 @@
               <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
             </button>
           </div>
-          <div id="context-body" aria-live="polite"></div>
+          <div id="context-now" aria-live="polite"></div>
+
+          <!-- Playback controls: static elements updated in place, so keyboard focus is never
+               lost when the state changes. Shown only for media the TV reports on a
+               connected device; what each offers comes from the observed state. -->
+          <div id="controls" class="controls" hidden>
+            <div id="seek" class="seek" hidden>
+              <input
+                id="seek-input"
+                class="seek-input"
+                type="range"
+                min="0"
+                max="0"
+                step="1"
+                value="0"
+                aria-label="Seek position"
+              />
+              <p id="seek-label" class="seek-label" hidden></p>
+            </div>
+            <div class="transport">
+              <button id="primary-button" class="btn btn-primary btn-transport" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#i-pause" /></svg>
+                <span id="primary-label">Pause</span>
+              </button>
+              <button id="stop-button" class="btn" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
+                <span id="stop-label">Stop</span>
+              </button>
+            </div>
+            <p id="controls-note" class="note" hidden></p>
+            <p id="seek-note" class="note" hidden></p>
+          </div>
+
+          <!-- Outside the controls on purpose: a command's outcome must stay visible even when
+               its result removes the controls (a stopped TV has no media left to control). -->
+          <div id="command-feedback" class="command-feedback" aria-live="polite"></div>
+
+          <div id="context-facts"></div>
         </section>
       </main>
     </div>
