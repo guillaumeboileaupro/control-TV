@@ -327,15 +327,12 @@ function start(elements: Elements): void {
   function renderContext(): void {
     const { context, contextNow, contextFacts, observed, refreshButton } = elements;
     const active = document.activeElement;
-    const refreshHadFocus = active === refreshButton;
     const bodyHadFocus = active !== null && contextNow.contains(active);
     context.hidden = state.selected === null;
     setBusy(refreshButton, !canRefresh(state));
     const loading = state.status.kind === "loading";
     refreshButton.classList.toggle("is-loading", loading);
     refreshButton.setAttribute("aria-busy", String(loading));
-    // A failure carries its own labelled recovery button; the icon would only repeat it.
-    refreshButton.hidden = state.status.kind === "failed";
 
     const key = JSON.stringify([state.selected?.id ?? null, state.status]);
     if (key !== contextKey) {
@@ -383,11 +380,8 @@ function start(elements: Elements): void {
       }
     }
     // Keep keyboard focus in the status area when the control that had it is replaced: a
-    // recovery button hands it to the refresh button while a read runs, and back again if
-    // the read fails once more.
-    if (refreshHadFocus && refreshButton.hidden) {
-      contextNow.querySelector<HTMLElement>(".problem .btn")?.focus();
-    } else if (bodyHadFocus && active !== null && !contextNow.contains(active)) {
+    // recovery button hands it to the refresh button while a read runs.
+    if (bodyHadFocus && active !== null && !contextNow.contains(active)) {
       refreshButton.focus();
     }
   }
@@ -436,7 +430,7 @@ function start(elements: Elements): void {
       }
       // A draft is a request being composed, worded as such; the position the TV reported
       // stays in the state row above.
-      el.seekLabel.hidden = !seek.drafting;
+      el.seekLabel.classList.toggle("is-empty", !seek.drafting);
       el.seekLabel.textContent = seek.drafting ? `Go to ${seek.valueText}` : "";
     }
 
@@ -507,17 +501,31 @@ function start(elements: Elements): void {
     }
     // The message that had focus (a recovery button) is gone: keep focus on the controls.
     if (hadFocus && !commandFeedback.contains(document.activeElement)) {
-      (elements.refreshButton.hidden ? elements.primaryButton : elements.refreshButton).focus();
+      elements.refreshButton.focus();
     }
   }
 
   function render(): void {
     // The list is rebuilt on every state change; put keyboard focus back on the same device.
     const focusedDeviceId = document.activeElement?.getAttribute("data-device-id") ?? null;
+    const refreshHadFocus = document.activeElement === elements.refreshButton;
     renderSummary();
     renderDevices();
     renderContext();
     renderControls();
+    // One recovery action at a time: a failed status read, or a command outcome that offers
+    // its own labelled button, makes the refresh icon a repeat of it, so it steps aside and
+    // hands over keyboard focus if it had it.
+    elements.refreshButton.hidden =
+      state.status.kind === "failed" ||
+      state.command.kind === "sent" ||
+      state.command.kind === "failed";
+    if (refreshHadFocus && elements.refreshButton.hidden) {
+      (
+        elements.contextNow.querySelector<HTMLElement>(".problem .btn") ??
+        elements.commandFeedback.querySelector<HTMLElement>("button")
+      )?.focus();
+    }
     const searching = state.discovery.kind === "running";
     elements.discoverLabel.textContent = searching ? "Searching…" : "Find devices";
     elements.discoverButton
