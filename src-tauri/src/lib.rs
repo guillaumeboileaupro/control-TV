@@ -384,6 +384,66 @@ async fn bridge_seek(
     send_seek(state.inner().clone(), &device_id, position_seconds).await
 }
 
+/// The request for a volume change: the stable device id and the requested level from 0.0 to
+/// 1.0. Whether the level is valid is decided by the control layer, never here.
+fn volume_request(device_id: &str, level: f64) -> Value {
+    json!({ "deviceId": device_id, "level": level })
+}
+
+/// The request for a mute change. `muted` is the state to reach (`true` mutes, `false` unmutes),
+/// never a toggle: the same request sent twice ends in the same state.
+fn muted_request(device_id: &str, muted: bool) -> Value {
+    json!({ "deviceId": device_id, "muted": muted })
+}
+
+/// Forwards a volume change. A plain forward like the playback commands: no retry, no state of
+/// its own, and the answer is data (`ok` means sent, `confirmation` says whether the TV showed it).
+async fn send_set_volume(
+    state: SharedBridgeState,
+    device_id: &str,
+    level: f64,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state,
+        "set_volume",
+        volume_request(device_id, level),
+        COMMAND_TIMEOUT,
+    )
+    .await
+}
+
+async fn send_set_muted(
+    state: SharedBridgeState,
+    device_id: &str,
+    muted: bool,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state,
+        "set_muted",
+        muted_request(device_id, muted),
+        COMMAND_TIMEOUT,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_set_volume(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    level: f64,
+) -> Result<Value, BridgeFailure> {
+    send_set_volume(state.inner().clone(), &device_id, level).await
+}
+
+#[tauri::command]
+async fn bridge_set_muted(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    muted: bool,
+) -> Result<Value, BridgeFailure> {
+    send_set_muted(state.inner().clone(), &device_id, muted).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -406,7 +466,9 @@ pub fn run() {
             bridge_play,
             bridge_pause,
             bridge_stop,
-            bridge_seek
+            bridge_seek,
+            bridge_set_volume,
+            bridge_set_muted
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -843,6 +905,209 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
             .unwrap()
             .expect("the async thread was blocked");
         assert!(tick < finished, "the other task only ran after the command");
+    }
+
+    // --- volume and mute: plain forwards, sent is not confirmed --------------------------
+
+    #[test]
+    fn a_volume_request_carries_the_device_id_and_a_numeric_level() {
+        assert_eq!(
+            volume_request("uuid-1", 0.45),
+            json!({"deviceId": "uuid-1", "level": 0.45})
+        );
+        assert!(volume_request("uuid-1", 0.0)["level"].is_number());
+    }
+
+    #[test]
+    fn a_mute_request_carries_a_json_boolean_never_a_toggle_or_a_string() {
+        for muted in [true, false] {
+            let request = muted_request("uuid-1", muted);
+
+            assert_eq!(request, json!({"deviceId": "uuid-1", "muted": muted}));
+            assert!(request["muted"].is_boolean());
+        }
+    }
+
+    #[test]
+    fn a_level_that_is_not_a_finite_number_reaches_the_bridge_as_null_so_it_is_refused() {
+        // serde_json writes NaN and infinity as null; the control layer then refuses the request.
+        assert!(volume_request("uuid-1", f64::NAN)["level"].is_null());
+        assert!(volume_request("uuid-1", f64::INFINITY)["level"].is_null());
+    }
+
+    #[test]
+    fn set_volume_sends_its_own_method_with_the_level_as_a_number_next_to_the_device_id() {
+        let (state, _script) =
+            ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+
+        let result =
+            tauri::async_runtime::block_on(send_set_volume(state, "uuid-1", 0.35)).unwrap();
+
+        assert_eq!(result["received"]["method"], "set_volume");
+        assert_eq!(
+            result["received"]["params"],
+            json!({"deviceId": "uuid-1", "level": 0.35})
+        );
+    }
+
+    #[test]
+    fn set_muted_sends_its_own_method_with_the_state_as_a_boolean() {
+        for muted in [true, false] {
+            let (state, _script) =
+                ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+
+            let result =
+                tauri::async_runtime::block_on(send_set_muted(state, "uuid-1", muted)).unwrap();
+
+            assert_eq!(result["received"]["method"], "set_muted");
+            assert_eq!(
+                result["received"]["params"],
+                json!({"deviceId": "uuid-1", "muted": muted})
+            );
+        }
+    }
+
+    #[test]
+    fn a_volume_or_mute_that_is_sent_but_unconfirmed_is_relayed_as_data_not_an_error() {
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","deviceId":"uuid-1","confirmation":"unconfirmed","detail":"command sent; expected volume near 0.5, but volume is 0.47","observed":null}}}'"#,
+        );
+
+        let result = tauri::async_runtime::block_on(send_set_volume(state, "uuid-1", 0.5)).unwrap();
+
+        assert_eq!(result["result"]["confirmation"], "unconfirmed");
+        assert_eq!(result["result"]["command"], "set_volume");
+
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":true,"result":{"result":{"command":"set_muted","deviceId":"uuid-1","confirmation":"not_checked","detail":null,"observed":null}}}'"#,
+        );
+
+        let result = tauri::async_runtime::block_on(send_set_muted(state, "uuid-1", true)).unwrap();
+
+        assert_eq!(result["result"]["confirmation"], "not_checked");
+    }
+
+    #[test]
+    fn a_sound_command_error_code_is_relayed_untouched() {
+        for code in [
+            "command_rejected",
+            "invalid_argument",
+            "device_unavailable",
+            "device_not_found",
+            "timeout",
+        ] {
+            let body = format!(
+                r#"echo '{{"id":1,"ok":false,"error":{{"code":"{code}","message":"m"}}}}'"#
+            );
+            let (state, _script) = ready_state(&body);
+            let volume =
+                tauri::async_runtime::block_on(send_set_volume(state, "uuid-1", 0.5)).unwrap_err();
+            let (state, _script) = ready_state(&body);
+            let mute =
+                tauri::async_runtime::block_on(send_set_muted(state, "uuid-1", true)).unwrap_err();
+
+            assert_eq!(volume, BridgeFailure::new(code, "m"));
+            assert_eq!(mute, BridgeFailure::new(code, "m"));
+        }
+    }
+
+    #[test]
+    fn sound_commands_report_an_unavailable_backend_with_its_own_code() {
+        let unavailable = || -> SharedBridgeState {
+            Arc::new(Mutex::new(BridgeState::Unavailable(
+                "failed to spawn the Python control bridge".to_string(),
+            )))
+        };
+
+        let volume = tauri::async_runtime::block_on(send_set_volume(unavailable(), "uuid-1", 0.5))
+            .unwrap_err();
+        let mute = tauri::async_runtime::block_on(send_set_muted(unavailable(), "uuid-1", false))
+            .unwrap_err();
+
+        assert_eq!(volume.code, CODE_BACKEND_UNAVAILABLE);
+        assert_eq!(mute.code, CODE_BACKEND_UNAVAILABLE);
+    }
+
+    #[test]
+    fn a_stuck_bridge_times_out_a_sound_command_instead_of_hanging() {
+        let (state, _script) = ready_state("sleep 30");
+
+        let started = std::time::Instant::now();
+        let error = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "set_volume",
+            volume_request("uuid-1", 0.5),
+            Duration::from_millis(200),
+        ))
+        .unwrap_err();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(error.code, CODE_BRIDGE_TIMEOUT);
+    }
+
+    /// The P1 review on PR #4 once more, for sound commands: a slow bridge call runs on a
+    /// worker thread, so a task spawned on a single-threaded runtime still gets to run.
+    #[test]
+    fn a_slow_volume_change_does_not_block_the_async_thread() {
+        let (state, _script) = ready_state(
+            r#"sleep 1
+echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation":"confirmed"}}}'"#,
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ticked = Arc::new(Mutex::new(None::<std::time::Instant>));
+        let ticker = Arc::clone(&ticked);
+        runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            *ticker.lock().unwrap() = Some(std::time::Instant::now());
+        });
+
+        let result = runtime.block_on(send_set_volume(state, "uuid-1", 0.5));
+        let finished = std::time::Instant::now();
+
+        assert_eq!(result.unwrap()["result"]["confirmation"], "confirmed");
+        let tick = ticked
+            .lock()
+            .unwrap()
+            .expect("the async thread was blocked");
+        assert!(tick < finished, "the other task only ran after the command");
+    }
+
+    /// The real bridge, real `ControlService`, real `PyChromecastTransport`: an id that was
+    /// never discovered is refused before any network I/O. Reaching `device_not_found` (and
+    /// not `invalid_argument`) proves the method names and the `level`/`muted` parameter
+    /// names this shell sends are the ones the bridge accepts, without a Chromecast.
+    #[test]
+    fn the_real_bridge_refuses_volume_and_mute_for_an_undiscovered_device_with_its_code() {
+        let python = resolve_python();
+        if !python.exists() {
+            eprintln!(
+                "skipping: {} not found - run `python3 scripts/dev.py setup`",
+                python.display()
+            );
+            return;
+        }
+
+        let bridge = PythonBridge::spawn(&python).expect("failed to spawn the bridge process");
+        let volume = bridge
+            .call("set_volume", volume_request("never-discovered", 0.4))
+            .unwrap_err();
+        let mute = bridge
+            .call("set_muted", muted_request("never-discovered", true))
+            .unwrap_err();
+        let unmute = bridge
+            .call("set_muted", muted_request("never-discovered", false))
+            .unwrap_err();
+
+        assert_eq!(volume.code, "device_not_found");
+        assert_eq!(mute.code, "device_not_found");
+        assert_eq!(unmute.code, "device_not_found");
     }
 
     #[test]
