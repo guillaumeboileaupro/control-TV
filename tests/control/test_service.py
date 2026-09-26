@@ -502,6 +502,7 @@ def test_each_playback_delivery_error_propagates_without_result_or_confirmation(
         run_playback_command(service, command)
 
     assert transport.status_reads() == 1
+    assert transport.attempted() == [command.value]
     assert transport.sent() == []
 
 
