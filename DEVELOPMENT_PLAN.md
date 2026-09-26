@@ -2,401 +2,646 @@
 
 ## Goal
 
-Build a lightweight standalone Chromecast / Google TV controller for Android, Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
+Build a lightweight standalone Chromecast / Google TV controller for Android, Windows and Debian/Ubuntu. Manual control must work independently of ChatGPT or MCP. A future MCP adapter exposes the same authoritative control capabilities to an external assistant.
 
-Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule" at the end): **automation-validated** means deterministic tests, CI, or the real application driven against a fake TV / fake transport; **real-hardware validated** means the behavior was observed on a real Chromecast/Google TV or on the real target platform, with the evidence recorded. A checked implementation line never implies the matching hardware line.
+Python and the Python Chromecast ecosystem remain part of the implementation, with `pychromecast` behind a focused transport adapter. Tauri 2 provides the cross-platform application shell and packaging layer. Rust/native components are added only where the shell or a platform integration requires them.
+
+This plan is the project source of truth for completed work, validation boundaries, known limitations and the remaining roadmap. It reconstructs the useful history accumulated across the feature branches and the successive `DEVELOPMENT_PLAN.md` commits while preserving the current audited state.
+
+## Progress rule
+
+Two kinds of evidence are kept separate everywhere in this plan:
+
+- **automation-validated** means deterministic tests, CI, mutation checks where used, or the real application driven against a fake TV / fake transport;
+- **real-hardware validated** means the behavior was actually observed on a real Chromecast/Google TV or on the stated target platform, with the evidence recorded.
+
+Rules:
+
+- [x] `[x]` is the historical checkbox convention for completed items; do not mechanically rewrite it as `[X]`.
+- [x] A checked implementation line never implies that the matching physical-device validation is complete.
+- [x] A command being sent is distinct from the resulting state being confirmed.
+- [x] `UNCONFIRMED` is never presented as confirmed success.
+- [x] Ambiguous delivery or confirmation never causes an automatic command replay.
+- [x] UI state follows observations reported by the TV; the UI does not invent receiver state.
+- [x] Private device names, UUIDs, IP/MAC addresses and media titles stay out of committed public documentation.
 
 ## Architecture constraints
 
 - [x] Python and the Python Chromecast ecosystem are part of the architecture, including `pychromecast` for applicable Cast capabilities.
 - [x] Tauri 2 is the cross-platform application shell and packaging layer.
-- [x] JavaScript or TypeScript may be used for the UI according to implementation needs.
-- [x] GUI and MCP share the same authoritative control/domain behavior.
+- [x] The current desktop UI is vanilla TypeScript + Vite.
+- [x] GUI and future MCP integration share the same authoritative control/domain behavior.
+- [x] Cast business logic is not duplicated in Rust or TypeScript.
 - [x] Media/service resolution remains separated from low-level Cast transport where practical.
 - [x] Manual application control operates independently of ChatGPT/MCP.
 - [x] Build output, platform intermediates and temporary files are controlled and disposable.
 - [x] Project cleanup is limited to verified project-owned generated output; shared/global caches remain separate.
+- [ ] Add native/Rust components only where a measured or platform requirement justifies them.
+
+## Current baseline
+
+The latest merged desktop/control slice is PR #14, followed by the documentation reconciliation in PR #15.
+
+- [x] Python suite: 453 tests passing at 97.66% coverage on the final PR #14 validation.
+- [x] Python quality gates include Ruff, formatting, `mypy --strict` and `uv pip check`.
+- [x] Rust suite: 39 tests passing on the final PR #14 validation.
+- [x] Frontend suite: 242 tests passing after the volume/seek focus-return correction.
+- [x] Hosted CI covers Python quality/test/coverage and the Tauri/Rust/frontend gates.
+- [x] PR #12 backend audit is merged.
+- [x] PR #13 playback UI is merged.
+- [x] PR #14 volume/mute UI, +10 raise protection and focus correction are merged.
+- [x] PR #15 documentation reconciliation is merged.
+
+Historical test counts below are retained when they are evidence for a particular development slice. They are not the current global totals.
+
+---
 
 ## Phase 0 - Repository and development discipline
 
 Deliverables:
+
 - [x] repository hygiene and generated-file exclusions;
 - [x] documented architecture and development plan;
 - [x] reproducible local development commands;
-- [x] explicit `clean`, `dist-clean` and disk-usage inspection commands for the current Python tooling;
-- [x] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output; PR #4 added the allowlisted paths/tests and validated cleanup against real generated Tauri/Rust/frontend artifacts;
-- [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
+- [x] explicit `clean`, `dist-clean` and disk-usage inspection commands;
+- [x] cleanup coverage extended to verified Tauri, Rust, frontend and Android output paths;
+- [x] small, reviewable iterations and Conventional Commit / pull-request workflow;
+- [x] reproducible Python 3.12 environment pinned with `uv`, `.python-version` and committed `uv.lock`;
+- [x] setup fails when the lockfile is stale or required tooling is unavailable.
+
+Community standards:
+
+- [x] GNU GPL v3 license;
+- [x] `SECURITY.md`;
+- [x] `CONTRIBUTING.md`;
+- [x] bug-report issue template;
+- [x] feature-request issue template;
+- [x] pull-request template;
+- [ ] Code of Conduct intentionally deferred until it is useful for the project/community.
 
 Exit criteria:
+
 - [x] project-owned versus shared caches are clearly distinguished;
 - [x] architecture is documented consistently across project context files;
+- [x] quality commands are reproducible;
+- [x] documentation distinguishes automation evidence from physical evidence.
+
+---
 
 ## Phase 1 - Shared control foundation
 
 Deliverables:
-- [x] define shared control/domain interfaces used by GUI and MCP;
+
+- [x] shared control/domain interfaces usable independently of the GUI;
 - [x] Python project/package structure and typed device/connection models;
+- [x] typed receiver/media status;
 - [x] explicit errors and operation results;
-- [x] integrate the selected Python Chromecast modules behind a focused adapter;
-- [ ] add native/Rust components only where a measured or platform requirement justifies them;
-- [x] focused deterministic unit tests for domain and shared control behavior.
+- [x] selected Python Chromecast modules isolated behind a focused adapter;
+- [x] deterministic unit tests for domain and shared control behavior;
+- [x] explicit confirmation and unconfirmed observations;
+- [x] GUI/MCP concerns absent from the domain/shared control layer.
 
-Exit criteria:
-- [x] control/domain behavior is testable independently of the UI;
-- [x] GUI/MCP concerns are absent from the domain and shared control layer;
-- [x] tests cover meaningful deterministic control behavior, including explicit confirmation and unconfirmed observations.
+Confirmation contract:
 
-## Active review follow-up
+- [x] missing, contradictory and disconnected observations remain explicitly unconfirmed;
+- [x] `CastTransport.get_status` accepts an explicit timeout;
+- [x] `ControlService._verify` passes only the confirmation budget actually remaining before each read;
+- [x] status arriving after the deadline cannot confirm a command;
+- [x] PyChromecast connection, bounded recovery and status round-trip honor the caller's remaining deadline;
+- [x] zero confirmation budget cannot create an independent confirmation window;
+- [x] deterministic tests cover blocked reads, exact timeout propagation and deadline boundaries.
 
-- [x] **Review fixes automation-validated:** superseded-instance cleanup uses the remaining status deadline and an empty-snapshot browser is stopped immediately; both targeted mutations fail, 291 tests pass with 97.76% coverage.
-- [x] **Implemented:** keep the PyChromecast discovery/zeroconf context alive for the lifetime of the cached Chromecast instances; repeated discovery atomically replaces the owned snapshot and cleanup tolerates a connection thread that has not started.
-- [x] **Automation and read-only hardware validated:** 289 tests and all Python quality gates pass; on real hardware, two bounded discoveries found the same UUID, each subsequent status read succeeded, and repeated close completed cleanly; this was revalidated after the review fixes.
-- [x] **Implemented and automation-validated:** disconnect each superseded PyChromecast instance before replacing the same UUID; repeated discovery and idempotent `close()` are covered by deterministic tests.
-- [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
-- [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
-- [ ] **Physical validation still required:** exercise stale-connection recovery, command acknowledgement and observed state after a command on a real Chromecast/Google TV (discovery, repeated discovery with replacement and repeated `close()` were validated read-only, see the entry above and Phase 2).
+Known service-input hardening still open:
 
-## Current implementation status - shared control service
+- [ ] reject boolean `timeoutSeconds` in discovery at the service/bridge boundary;
+- [ ] reject huge discovery timeout numbers as `invalid_argument` rather than `internal_error`;
+- [ ] reject huge seek values as `invalid_argument` rather than `internal_error`;
+- [ ] make `ControlService.set_muted` itself enforce a boolean;
+- [ ] make `ControlService.set_volume` itself reject Python booleans as levels;
+- [ ] keep these guarantees at the authoritative service boundary so future MCP/native clients cannot bypass them.
 
-- [x] Reproducible Python 3.12 environment is pinned with uv, `.python-version`, and committed `uv.lock`; setup fails when the lockfile is stale or uv is unavailable.
-- [x] Shared control confirmation reports only device state actually observed; missing, contradictory, and disconnected states remain explicitly unconfirmed in deterministic tests.
-- [x] Real-hardware evidence is required before any hardware/platform checkbox can be completed.
-- [x] Coverage (95% minimum) and installed-dependency quality commands are implemented and validated; deterministic command tests cover orchestration and fail-fast behavior, and the defensive verification invariant is explicit.
-- [x] **P2 review follow-up:** `CastTransport.get_status` now takes an explicit `timeout`; `ControlService._verify` passes only the confirmation budget actually remaining before every read, and never treats a status that arrives after the budget expired as confirmation. The PyChromecast adapter's `get_status` (connection, bounded same-UUID recovery, and the receiver-status round trip) now honors that same per-call budget instead of its own fixed instance timeouts. Deterministic tests cover a blocked/hung read, the exact `timeout` handed to each poll, total elapsed time never exceeding the budget, a match confirmed just before the deadline, and a match arriving just after it (never confirmed).
-- [x] **P2 review follow-up:** a zero confirmation budget rejects seek before any status read or command instead of bypassing the capability guard or creating an independent timeout;
-- [x] Read-only physical validation completed for discovery -> UUID selection -> connected receiver status, repeated discovery -> same UUID -> status, and repeated close; no media or receiver command was sent.
+---
 
-## Current implementation status - Tauri application shell
+## Phase 2 - Chromecast discovery, lifecycle and read-only status
 
-- [x] Tauri 2 shell scaffolded (`src-tauri/`, Rust) with a minimal frontend (`ui/`, vanilla TypeScript + Vite); no frontend framework or UI library is used yet, matching the size of a one-page skeleton.
-- [x] The shell owns no Cast/control logic: `src-tauri/src/lib.rs` only spawns `src/control_tv/bridge.py` as a long-lived child process and forwards line-delimited JSON requests/responses over its stdin/stdout, matched by request id. `ControlService` is not reimplemented in Rust or TypeScript.
-- [x] Nine bridge methods are exposed so far: three read-only (`ping`, `discover_devices`, `get_status`) and six commands (`play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`), each a plain forward to the same-named `ControlService` method; every other `TvControl` capability is added to the bridge and to a Tauri command as its own view needs it, not in advance.
-- [x] A failed bridge spawn does not crash the application: the Tauri command returns an explicit "Python control backend unavailable" error instead, surfaced as plain text in the UI.
-- [x] Real, installed-package validation on this Debian/Ubuntu-family desktop (Ubuntu 22.04): a Tauri CLI debug build with the `deb` bundle (today `npx --prefix ui tauri build --debug --bundles deb` from the repository root) produced a real `.deb`; it was installed with `dpkg -i`, launched from `/usr/bin/control-tv` (not the raw build output), showed "Control backend ready", and was cleanly uninstalled afterward (`dpkg -r`). The Tauri dev mode was also run and screenshotted before the packaged validation. This `.deb` still depends on this developer's repository `.venv` (see `resolve_python()` below), so it is not a distributable package.
-- [x] Real end-to-end proof the mechanism reaches the shared control layer: clicking "Discover devices" in the running application performed a real LAN discovery through `ControlService.discover_devices` and returned real Chromecast devices present on the operator's network (no device names/addresses are recorded in this public file; see the local handoff). No real-hardware result for a control command (play/pause/stop/seek/volume/mute) is recorded; the UI's command controls have only been exercised against a fake TV (see the playback-controls and volume entries below).
-- [x] Rust unit tests cover response parsing/error-translation as pure functions, plus one test that spawns the real `python -m control_tv.bridge` process and pings it (`cargo test`, run as part of `scripts/dev.py rust-check`); it skips (not fails) when `.venv` does not exist yet, which the CI job avoids by running Python setup first.
-- [x] **P1 review follow-up (PR #4):** `bridge_ping`/`bridge_discover_devices` are async Tauri commands; the blocking bridge call runs on a dedicated worker thread (`tauri::async_runtime::spawn_blocking`), never on the async/main thread, and is wrapped in a bounded `tokio::time::timeout` so a slow or fully stuck bridge process reports an error instead of hanging the command forever (the underlying worker thread can still remain blocked - a documented limitation, not a correctness issue, since responses stay matched by id). Deterministic Rust tests cover a successful async call, a process that exits without responding, and a process that never responds at all (times out at the configured bound, not after). Re-verified manually in the Tauri dev mode: the window kept repainting ("Discovering…") while a real discovery call was in flight.
-- [x] **Device selection and read-only status view (implemented and automation-validated):** a discovered device is selected by its stable id (never its display name; two devices may share a name); the selection lives in UI state only, so the bridge stays stateless. `get_status` (bridge) -> `bridge_get_status` (Tauri) -> `ControlService.get_status`, with no Cast logic added in Rust or TypeScript. Failures now reach the UI as `{code, message}` (control-layer codes plus `backend_unavailable`, `bridge_timeout`, `bridge_transport`) so an unavailable device, a timeout, an unknown device and an unavailable backend are told apart; an unexpected Python exception becomes an `internal_error` response instead of killing the bridge. The UI shows no-selection, searching, empty, loading, failure, disconnected, partial (each unreported field worded as not reported, never zero/off) and nothing-playing states, in plain language with raw error text only in a collapsed "Details" disclosure (no internal component names in the normal view); at most one bridge request is in flight from the UI (no selection, refresh or discovery is offered while a read or discovery runs, because the bridge is single-flight and each request's timeout starts before its turn), and a late answer never overwrites the current read. Tests: Python bridge, Rust (`cargo test`) and 58 TypeScript model tests (`npm test` in `ui/`, run by `dev.py ui-check`).
-- [x] The visual design follows the local UI skills (`ui-desktop-minimal`, `ui-ux-accessibility`, `ui-responsive-app`, `ui-design-review`, `ui-component-design`; installed outside this repository) and remains open to owner direction: a light, single-surface remote rather than a dashboard, the validated `assets/logo.svg` reused unchanged (served through Vite's `publicDir`), one consistent inline SVG icon set, no decorative gradients, shadows or extra cards, the selected device as one row that expands into the device list, and what is playing as the main context. Playback controls are drawn only for media the TV reports on a connected device, and only what the observed state offers.
-- [x] UI consolidation review (`ui-design-review`, 20 states at 900px and 320px on a fake backend, plus the real window): the structure needed no rethink; localized defects were fixed - a dropped selection was silent (the notice was never drawn), loading looked like disabled and was unreadable, live regions re-announced an unchanged status after every discovery, Escape did not close the device list, focus was lost after Try again, the Details target was under 44px, and a 480px breakpoint was replaced by fluid CSS. Measured: no horizontal overflow at 320, 390, 481, 768 and 1280px across ten content-stress states; every colour pair meets WCAG AA (body 15:1, muted 5.9:1, accent 5.06:1, error 6.6:1). Keyboard paths were exercised on the real window and in a browser; nothing was run with a screen reader, so accessibility is not claimed as complete.
-- [x] Real desktop run (Ubuntu 22.04, Tauri dev mode): real discovery, selection by click, change of selection and a second discovery that kept the selection were observed. No control command was sent.
-- [x] The adapter defect found while validating PR #8 (discovery stopped PyChromecast's zeroconf before the cached devices connected, so every real status read timed out) was fixed by PR #9. The merged application was then revalidated end to end on real hardware (Ubuntu 22.04, Tauri dev mode, read-only) on 2026-09-26: UI -> Tauri -> bridge -> `ControlService` -> PyChromecast for discovery, selection by stable id, status, refresh, a rediscovery that kept the selection and the status, and a change of selection to a second device; the window stayed responsive (it was resized while a discovery was running). No control command was sent.
-- [x] **Playback controls (play, pause, stop, seek) implemented and automation-validated, no real device involved:** the bridge forwards `play`/`pause`/`stop`/`seek` (`deviceId`, plus a numeric `positionSeconds` for seek) to the existing `ControlService` methods and serializes the `CommandResult`; `ok: true` on a command means it was *sent*, and `confirmation` (`confirmed` / `unconfirmed` / `not_checked`) says whether the TV then showed the result, so unconfirmed is never reported as success. Four async Tauri commands (`bridge_play`/`_pause`/`_stop`/`_seek`) reuse `call_bridge` (worker thread plus a 60s bound covering the control layer's own windows), never retry, and relay control-layer error codes untouched; a single-threaded-runtime test proves a slow command does not block the async thread (it fails when the bridge call is run inline, recreating the PR #4 P1). The UI offers one play/pause toggle that always offers the opposite of the observed state (pause while playing or buffering, play while paused), a quieter Stop, and a seek slider only when the TV reports seekable media with a known length and position; a seek being composed is shown as a draft ("Go to 4:09") and a single seek is sent after the control settles, never a burst; the position shown changes only through a status the TV reported. A command in flight blocks every other request (a rapid triple click sends one command). A sent-but-unconfirmed command keeps the last status the TV reported, is worded as not confirmed, and offers Check state instead of resending; a timeout says the command may or may not have arrived. Tests: 51 new bridge tests (367 Python tests, 97.61% coverage), 28 Rust tests (20 before), 115 TypeScript tests (58 before) including mutation checks of the no-double-command, unconfirmed-is-not-success and no-simulated-position rules.
-- [x] **Playback controls exercised in the real application against a fake TV:** the real Tauri shell, Rust commands, bridge and `ControlService` were run with only the Cast transport replaced by a scratch double (a fleet of 15 scriptable fake TVs, kept outside the repository, run on a private X display so it could not touch the desktop). Observed: confirmed pause/play/seek, a pending state that fades the other controls, a TV that ignores commands (unconfirmed after the 5s window, exactly one command delivered, Check state), a TV that acts after the window (unconfirmed, then Paused after Check state), refused, unreachable and send-timeout failures with their plain wording, live media (no seek), unknown length, capability not reported, buffering, idle and nothing-playing states, and Stop on a TV that drops its media session (see the Stop entry below). The states were also checked at 480px in the real window and at 320, 390, 481, 768 and 1280px in a browser harness (no horizontal overflow in 50 width and state combinations).
-- [ ] **Stop on a real receiver is expected to be sent-but-unconfirmed (audit answered, effect unobserved):** the Cast backend audit (PR #12, since merged) confirmed the service never treats an absent media session as proof of a stop ("stop does not invent IDLE"), and changed nothing. A real receiver drops its media session when stopped, so the application will likely word a successful Stop as not yet confirmed. Whether that wording is acceptable is judged on real hardware, only after an explicit go-ahead; no backend or UI change was made for it here.
-- [x] **Volume and mute implemented and automation-validated, no real device involved:** the bridge forwards `set_volume` (`level`, a number from 0 to 1, never a boolean) and `set_muted` (`muted`, a JSON boolean: an absolute state, so mute is `true` and unmute is `false`, never a toggle) to the existing `ControlService` methods, with the same sent-versus-confirmed answer as the playback commands; a refused value (a boolean level, `0`/`1`/`"true"` as a mute state, NaN, out of range) fails as `invalid_argument` before any transport call. Two async Tauri commands (`bridge_set_volume`, `bridge_set_muted`) reuse `call_bridge` (worker thread, 60s bound, no retry, error codes relayed untouched), and a real-bridge test proves the parameter names match. The UI shows a mute button and a volume slider under the playback controls for any connected device, playing or not. The slider works on a local draft and sends one command once it has settled (300 ms after a pointer release, 800 ms after a key press, so a held key's repeat pause does not split it into two), never one per pixel or key repeat; at most one command is ever in flight, so a second gesture cannot queue behind the first; a level equal to the one the TV reports is not sent. The level shown is the one the TV reported, except while a level is being composed ("Set volume to 60%") or is on its way ("Setting volume to 60%…"), and mute asks for the opposite of the state the TV reported without keeping a state of its own. A volume the TV did not show is worded as not confirmed and says what the TV reports instead ("Volume sent, but the TV reports 47%, not 50%"), offers Check state and is never resent; a volume or mute state the TV did not report offers no control and says so, never zero or unmuted. Tests: 59 new bridge tests (453 Python tests, 97.66% coverage), 39 Rust tests (28 before), 203 TypeScript tests at that point (115 before; 238 with the raise limit below, 242 with the focus-return fix) including mutation checks of the no-double-command, one-command-per-gesture, opposite-of-observed, unknown-is-not-zero and unconfirmed-is-not-success rules.
-- [x] **Volume and mute exercised in the real application against a fake TV:** the real Tauri shell, Rust commands, bridge and `ControlService` were run with only the Cast transport replaced by a scratch double (a fleet of 15 scriptable fake TVs, kept outside the repository, on a private X display). Observed: a 34-move mouse drag and eight quick key presses each sent exactly one command, a held key sent one, a triple click on mute sent one, extra clicks and drags during a slow command sent nothing, a TV that ignores commands stayed at one command 9s later (unconfirmed, the level it reports, Check state), a stepped-volume TV settled on 47% for a 49% request (worded as not confirmed), a TV that acts after the window showed the new level after Check state, and refused, unreachable and send-timeout failures were worded in plain language; muted, no-media, volume-not-reported, mute-not-reported and nothing-reported TVs were checked, and so were the keyboard order and focus, the 480px window, and 320, 390, 481, 768 and 1280px in a browser harness (no horizontal overflow in 50 width and state combinations).
-- [x] **Volume and mute display validated read-only on a real device (2026-09-26, no command sent):** the application discovered one real device, selected it by its stable id and read its status: it reported volume 100% and not muted with nothing playing, the sound row drew "Volume 100%" with the slider at its end, and no playback controls were drawn (nothing to control). Nothing was pressed after the selection. Whether that device's volume is adjustable (a receiver can report a fixed volume of 100%) is not known: `ReceiverStatus` does not carry PyChromecast's `volume_control_type`, so this is recorded as a question for the physical validation, not as a finding.
-- [x] **Volume raise limit (volume-slam protection) implemented and automation-validated, owner decision:** one gesture can raise the volume by at most 10 points above the level the TV last reported; lowering is never limited (0% is one gesture); the reference is only the reported level (never a draft or a command in flight), so once the TV reports the new level it becomes the reference of the next gesture. Home goes to 0%, End to the reference + 10 (never above 100%); at the limit the line under the slider reads "Set volume to 55% - raising is limited to 10% at a time". The limit is applied to the draft, to what the slider shows and again when the command is built (`ui/src/sound.ts`); there is no dialog, override, extra timer, automatic retry or invented value, and one gesture still sends at most one command. A gesture also ends on the pointer or key release, not only on `change`, because WebKit stops reporting `change` once the value is clamped (found in the real window). UI protection only: `ControlService`, the bridge and Rust are unchanged, so a future MCP client is not covered by it. Tests: 238 TypeScript tests at that point (35 for the limit and its release triggers, with 15 mutation checks; 242 now); exercised in the real application against fake TVs only.
-- [ ] **Volume and mute are not validated on a real Chromecast:** no real-hardware result for a volume or mute command is recorded. This waits for the physical validation of the playback commands, its review and an explicit go-ahead. Things to watch there are listed under "Known open items" below (volume tolerance, volume control type, service-level boolean check).
-- [ ] **Not validated on a real Chromecast:** no real-hardware result for a play, pause, stop or seek command is recorded. The backend audit (PR #12) is merged; the physical validation is run separately and is checked here only once its evidence is recorded. Read-only discovery and status remain the only recorded hardware validation.
-- [ ] Windows and Android are not built, installed or launched; nothing here validates them.
-- [ ] Packaging a real Python runtime for a distributed build (not this developer's own `.venv`) is not implemented; `resolve_python()` is explicitly a development-only placeholder (see its docstring) and is Phase 7 work.
+Discovery and lifecycle:
 
-## Known open items (audit of 2026-09-26)
+- [x] LAN discovery through PyChromecast;
+- [x] stable device identity uses UUID/stable id rather than display name;
+- [x] duplicate display names remain distinguishable;
+- [x] bounded discovery timeout;
+- [x] receiver/device status retrieval;
+- [x] discovery/zeroconf context remains alive for cached Chromecast instances;
+- [x] repeated discovery atomically replaces the owned snapshot;
+- [x] superseded instances are disconnected before replacement;
+- [x] empty discovery snapshots are stopped immediately;
+- [x] cleanup tolerates connection threads that have not started;
+- [x] repeated `close()` is safe;
+- [x] superseded-instance cleanup uses the remaining status deadline;
+- [x] one bounded same-UUID rediscovery is permitted before command delivery when a cached connection is stale;
+- [x] recovery never replays a command after invocation begins;
+- [x] `adjusted_current_time` is exposed for actively playing media while paused media preserves the last reported position.
 
-Verified in the code on 2026-09-26. Unchecked items are intentionally not fixed yet and each needs its own slice; a checked item was fixed afterwards and says where. None of them is a hardware finding.
+Historical validation:
 
-- [ ] **Distributable Python runtime:** `resolve_python()` (`src-tauri/src/lib.rs`) resolves the repository `.venv` from a compile-time path, so a built package only runs on the machine that built it (Phase 7).
-- [ ] **Tauri content security policy:** `tauri.conf.json` sets `"csp": null` (with `withGlobalTauri: true`); define a restrictive CSP before a release.
-- [ ] **Bridge overflow handling:** a JSON integer too large for a float in `seek.positionSeconds` or `discover_devices.timeoutSeconds` returns `internal_error` instead of `invalid_argument` (nothing is sent; `set_volume` already handles it).
-- [ ] **Boolean inputs:** `discover_devices` accepts a JSON boolean as `timeoutSeconds`; `ControlService.set_muted` does not check that `muted` is a boolean and `ControlService.set_volume` accepts `True`/`False` as a level (the bridge and the PyChromecast adapter refuse them, but a future MCP caller would reach the service directly).
-- [ ] **Volume control type:** `ReceiverStatus` does not carry PyChromecast's `volume_control_type` (`attenuation`, `fixed`, `master`), so a fixed-volume receiver is offered a slider; a coordinated domain/adapter/bridge/UI change.
-- [ ] **Volume confirmation tolerance:** `volume_tolerance` is 0.01, so a receiver that settles on its own volume steps answers `unconfirmed` although it acted; decide after the real-hardware volume validation.
-- [x] **Slider focus return (PR #14 review P2, fixed in `1bed6a9`, automation-validated):** after a command, focus went back to the seek or volume slider even when the user had deliberately moved focus elsewhere during the command; focus is now returned only if no other control was focused meanwhile (`createFocusReturn` in `ui/src/interaction.ts`, 4 new tests, 242 TypeScript tests). Not re-checked in the real window here.
-- [ ] **Assistive-technology slider change:** a value change made with neither pointer nor key events and clamped by the raise limit stays an unsent draft until the next release or refresh (safe, nothing is sent); not tested with a screen reader.
-- [ ] **Load media in the application:** `ControlService.load_media` exists and is tested, but it is not exposed through the bridge, Tauri or the UI, so the application only controls media that is already playing; decide whether the first desktop release needs it (Phase 5 covers content resolution).
-- [ ] **Status refresh:** the status is read on selection and on demand only; there is no periodic refresh, so the shown position and state can be stale (also needed by the tray, Phase 4b).
-- [ ] **Version and license metadata:** `pyproject.toml` is at 0.0.0 while `src-tauri/Cargo.toml`, `tauri.conf.json` and `ui/package.json` are at 0.1.0; none declares the project license (GPL-3.0, `LICENSE`).
-- [ ] **Stop wording on real hardware:** see the Stop entry above; a product decision after the real-hardware result.
+- [x] 289-test/read-only hardware slice validated repeated discovery, same UUID, status reads and repeated close;
+- [x] review fixes raised the corresponding Python slice to 291 tests with 97.76% coverage and caught the targeted mutations;
+- [x] adapter defect found during PR #8 hardware validation was fixed by PR #9: discovery no longer destroys the zeroconf context required by cached devices.
 
-## Phase 2 - Cast discovery and connection
+Real-hardware read-only validation:
 
-Deliverables:
-- [x] LAN discovery using the selected Chromecast integration;
-- [x] stable device selection separate from display names;
-- [x] bounded discovery/connection timeouts;
-- [x] connection lifecycle and bounded recovery from stale device addresses;
-- [x] receiver/device status retrieval.
+- [x] compatible device discovered on the LAN;
+- [x] device selected by stable id;
+- [x] connected receiver status read;
+- [x] repeated discovery found the same UUID and status remained readable;
+- [x] repeated close completed cleanly;
+- [x] real desktop UI -> Tauri -> bridge -> `ControlService` -> PyChromecast path validated read-only;
+- [x] changing selection to another real device validated read-only;
+- [x] window remained responsive during real discovery/status work.
 
-Exit criteria:
-- [x] at least one real compatible device was discovered on a real local network (validated 2026-09-25 through the Tauri shell -> Python bridge -> `ControlService.discover_devices` path added in this iteration; device names/addresses are not recorded here, see the local handoff);
-- [x] a real device status can be read after discovery and again after repeated discovery (validated read-only on 2026-09-26);
-- [ ] a real command can be sent and confirmed; no control command was sent during the read-only lifecycle validation;
-- [x] failures are represented explicitly rather than as false success.
+Still required on real hardware:
 
-## Phase 3 - Media controls
+- [ ] exercise stale-connection recovery while executing a real command;
+- [ ] validate command acknowledgement semantics;
+- [ ] validate the resulting state after real commands.
 
-Current playback-confirmation audit:
-- [x] audit load, play, pause, stop, volume and mute confirmation against missing, contradictory, disconnected and late observations;
-- [x] load remains bound to the requested URL, while volume and mute require an observed receiver value matching the request within the existing global deadline;
-- [x] **Implemented and targeted-test validated:** prevent play, pause and stop from being confirmed by the expected playback state on different or unidentified media;
-- [x] deterministic negative coverage verifies all three transitions, unavailable pre-command identity and the global deadline; removing the identity guard makes all four focused mutation tests fail;
-- [x] complete local Ruff, format, strict mypy, 252-test suite, 98.07% coverage and dependency checks pass;
-- [ ] physical Chromecast/Google TV validation remains required; automated fakes are not hardware evidence;
-- [x] **P2 implemented and targeted-test validated:** share one confirmation deadline across the pre-command media snapshot and post-command verification, with every read limited to the remaining budget;
-- [x] **P2 implemented and targeted-test validated:** treat `None`, empty and whitespace-only `content_id` values as absent evidence without rewriting usable identifiers;
-- [x] deterministic timing/identity coverage passes; removing deadline reuse makes all four focused double-budget mutation tests fail;
-- [x] final local Ruff, format, strict mypy, 266-test suite, 98.12% coverage and dependency checks pass;
+---
 
-Current play/pause/stop command audit:
-- [x] **P2 review follow-up:** failed transport calls are counted separately from delivered commands, proving exactly one attempted play/pause/stop call and zero delivered calls without conflating SENT with attempted;
-- [x] **Audit complete:** verify each command independently across delivery timeout, unavailable/rejected delivery, single-send/no-replay behavior, post-send disappearance, contradictory post-command state, late evidence and the shared confirmation budget;
-- [x] deterministic matrix validates all three commands; removing shared deadline reuse makes the three focused late-snapshot mutation tests fail;
-- [x] complete local Ruff, format, strict mypy, 343-test suite, 97.55% coverage and dependency checks pass; hosted CI is required on the final PR HEAD;
-- [ ] physical Chromecast/Google TV validation remains required; this audit sends no command to real hardware;
+## Phase 3 - Command semantics and playback hardening
 
-Current confirmation-synchronization iteration:
-- [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
-- [x] deterministic targeted tests cover matching media, replaced media, missing media identity, contradictory positions and the unchanged global confirmation deadline;
-- [x] complete local lint, format, strict typing, test, 98.01% coverage and dependency gates pass; hosted CI remains a separate PR requirement;
-- [x] **Implemented:** make the pre-command seek status read and post-command confirmation share one bounded confirmation deadline, and treat empty or whitespace-only seek media identities as absent evidence;
-- [x] deterministic timing and identity tests pass; removing the shared deadline makes all four focused double-budget mutation tests fail;
-- [x] **P2 review follow-up:** a status returned exactly at the deadline remains usable only to block an explicitly unsupported seek; its late media identity cannot confirm the command;
-- [x] **P2 review follow-up:** a zero confirmation budget rejects seek before any status read or command instead of bypassing the capability guard or creating an independent timeout;
-- [x] complete local Ruff, format, strict mypy, 316-test suite, 97.55% coverage and dependency checks pass; hosted CI is required on the final PR HEAD;
-- [ ] distinguish replacement sessions that reuse the exact same `content_id`; this needs a stable media-session identifier in the shared status model and must be coordinated with the open Tauri bridge PR before changing that interface;
-- [ ] physical Chromecast/Google TV validation remains required; no fake or automated test completes it;
+General command contract:
 
-Current command-result hardening iteration:
-- [x] **P2 review follow-up implemented and automation-validated:** `MEDIA_STATUS` is the only successful terminal LOAD response; every other terminal response is rejected before confirmation;
-- [x] **Implemented and automation-validated:** commands not sent (`RequestFailed` -> unavailable) are distinct from receiver-declared media rejection (`LOAD_FAILED` -> rejected), and neither command is replayed;
-- [x] deterministic coverage proves unavailable, ambiguous and explicitly rejected delivery never produces a `CommandResult` or invented confirmation;
+- [x] command delivery is distinct from state confirmation;
+- [x] explicit `confirmed`, `unconfirmed` and `not_checked` confirmation states;
+- [x] exactly one command attempt after invocation begins;
+- [x] no automatic replay after ambiguous delivery;
+- [x] receiver-declared rejection remains distinct from transport unavailability;
+- [x] failed transport calls remain distinct from delivered-but-unconfirmed commands.
 
-Current hardening iteration:
-- [x] **Review follow-up implemented and automation-validated:** valid optional whitespace before MIME parameter delimiters is accepted without weakening malformed MIME rejection;
-- [x] **Implemented and automation-validated:** stale-instance cleanup inside `get_status` is capped by the remaining caller deadline; exhausted budgets signal non-blocking shutdown and never start rediscovery;
-- [x] **Implemented and automation-validated:** media URLs/content types/titles and direct transport discovery, seek, volume and mute inputs are rejected before any Cast call when invalid;
-- [x] **Automation-validated:** deterministic discovery -> UUID selection -> connection -> status coverage selects and reads only the requested UUID;
-- [ ] **Physical validation required:** execute and record `docs/CAST_HARDWARE_VALIDATION.md` on a real Chromecast/Google TV;
+Load media:
 
-Deliverables:
-- [x] play/load supported media (in `ControlService` and the transport; `load_media` is not yet exposed in the application, see "Known open items");
-- [x] pause/resume and stop;
-- [x] seek where supported;
-- [x] volume and mute;
-- [x] receiver/media state synchronization;
-- [ ] validation of URLs, content types, ranges and application identifiers.
+- [x] `ControlService.load_media` implemented;
+- [x] transport load support implemented;
+- [x] LOAD confirmation is bound to the requested media identity/URL;
+- [x] `MEDIA_STATUS` is the successful terminal LOAD response;
+- [x] `LOAD_FAILED` is treated as receiver rejection;
+- [x] invalid URLs/content types/titles are rejected before the Cast call;
+- [ ] expose `load_media` through the Python bridge;
+- [ ] expose `load_media` through Tauri;
+- [ ] expose `load_media` in the UI;
+- [ ] decide whether loading media is required for the first desktop release.
 
-Exit criteria:
-- [x] supported operations have explicit results/errors, automation-validated across sent/confirmed/unavailable/timeout/rejected outcomes;
-- [ ] real-device validation distinguishes a sent command from a confirmed resulting state.
+Play / pause / stop:
 
-## Phase 4 - Lightweight Tauri UI
+- [x] play implemented;
+- [x] pause implemented;
+- [x] stop implemented;
+- [x] confirmation cannot be satisfied by a different media item;
+- [x] missing/empty/whitespace media identity is not usable confirmation evidence;
+- [x] pre-command identity snapshot and post-command verification share one confirmation deadline;
+- [x] delivery timeout, unavailable/rejected delivery, contradictory state, late evidence and post-send media disappearance are covered deterministically.
 
-Deliverables:
-- [x] device discovery view (discovered devices are listed and selectable);
-- [x] device selection by stable id (UI state; kept across a rediscovery that reports the same id, dropped with a notice otherwise);
-- [x] current receiver/media state view for the selected device (read-only; implemented and automation-validated);
-- [x] receiver/media state validated on a real device through the UI (read-only, 2026-09-26, after PR #9): the connected state, volume, mute state and "nothing playing" were read and refreshed for two devices; playing media, playback position and a paused/buffering state were not observed on real hardware because nothing was playing;
-- [x] playback controls (play/pause toggle, stop, seek) implemented, automation-validated and exercised in the real application against a fake TV;
-- [ ] playback controls validated on a real Chromecast (the backend audit, PR #12, is merged; no real-hardware result is recorded yet);
-- [x] volume/mute controls implemented, automation-validated and exercised in the real application against a fake TV, including the 10-point raise limit per gesture;
-- [ ] volume/mute validated on a real Chromecast (waits for the playback-command physical validation and an explicit go-ahead; no real-hardware result is recorded);
-- [x] clear unavailable/error states for the control-backend boundary itself (bridge process unavailable, discovery failure are both surfaced in the UI as plain text; status-read failures - device unavailable, timeout, unknown device, backend unavailable or not responding - are told apart by error code; playback-command outcomes - not confirmed, refused, unreachable, timed out (delivery ambiguous), backend unavailable - are worded in plain language and never shown as success);
-- [ ] responsive desktop/Android layout (fluid single-column layout with 44px touch targets and controls up to 56px; no horizontal overflow from 320px to 1280px across the status states and the playback-control states in a browser harness with a fake backend, and observed in the real window between 480px and 900px; nothing was run on Android or with a touch screen);
-- [x] choose JavaScript/TypeScript and any UI tooling from concrete implementation needs (vanilla TypeScript + Vite: no frontend framework is justified yet by a single-page skeleton).
+Seek:
 
-Exit criteria:
-- [ ] application controls a TV manually without ChatGPT or MCP (needs a recorded real-hardware command result);
-- [x] frontend presentation remains separated from Cast transport/control logic (verified in the code on 2026-09-26: TypeScript and Rust hold no Cast logic; every command goes through the bridge to `ControlService`, and only the adapter imports PyChromecast).
+- [x] seek implemented where the receiver reports support;
+- [x] seek confirmation is bound to the pre-command `content_id`;
+- [x] different or unidentified media cannot satisfy position confirmation;
+- [x] pre-command status and post-command confirmation share one deadline;
+- [x] zero confirmation budget rejects before command delivery;
+- [x] late identity cannot confirm a command;
+- [x] capability guard is preserved at the deadline;
+- [ ] distinguish replacement media sessions that reuse exactly the same `content_id`, potentially by carrying a stable media-session identifier.
 
-## Phase 4b - Desktop native integration
+Playback contract test branches:
 
-A system tray / status indicator gives quick access to the essential controls without the main window. Decided during the UI review of 2026-09-26; not started. The tray is a second view over the same chain as the window (Tauri -> Python bridge -> `ControlService`), never a second control engine.
+- [x] dedicated playback-command-contract work covered success and failure paths;
+- [x] failed playback attempts are tracked explicitly rather than disappearing from the command contract;
+- [x] command hardening preserves the no-replay invariant.
 
-Deliverables:
-- [ ] native system tray / status indicator for the desktop application, using the validated control-TV icon (`assets/logo.svg` and the existing `src-tauri/icons/`);
-- [ ] GNOME/Linux support, including the status-indicator (AppIndicator) behavior of a stock GNOME desktop, with the limits of the desktop environment documented;
-- [ ] "Open control-TV" reopens and focuses the main window;
-- [ ] "Quit" really stops the application and its Python bridge;
-- [ ] explicit, documented behavior for closing the main window versus quitting the application (closing the window keeps the tray running, or quits, by an explicit decision);
-- [ ] quick controls for the selected device: play/pause, stop, mute/unmute;
-- [ ] volume control only if the platform tray integration allows an appropriate UX (otherwise "Open control-TV" is the path to volume);
-- [ ] no Cast business logic in the Rust/Tauri tray code: every action goes through the existing bridge commands and `ControlService`;
-- [ ] tray labels and states follow the same evidence as the window: a command is shown as confirmed only when `confirmation` is `confirmed`; `unconfirmed`, `not_checked`, errors and unreported fields are never shown as success or as a default value; one command at a time, no automatic retry;
-- [ ] the selected device and state shared between the window and the tray have one owner, so both views stay consistent;
-- [ ] a structure that lets an equivalent Windows notification-area integration be added later without duplicating logic.
+Stop-specific open question:
 
-Exit criteria:
-- [ ] tray behavior automation-validated against a fake transport (actions, confirmation states, window close versus quit);
-- [ ] tray installed and exercised on a real GNOME/Linux desktop, recorded separately from automated validation;
-- [ ] tray commands validated on a real Chromecast only after the matching window commands are validated on hardware.
+- [x] PR #12 audited the backend and confirmed that stop does not invent `IDLE` when the media session disappears;
+- [ ] validate Stop on a real receiver and decide whether the resulting sent-but-unconfirmed wording is acceptable when the receiver drops the media session.
 
-## Phase 5 - Media and service resolution
+---
 
-Deliverables:
-- [ ] resolver boundary separate from Cast transport;
-- [ ] explicit support for selected content/service sources;
-- [ ] metadata and playable-target validation;
-- [ ] clear unsupported-content behavior.
+## Phase 4 - Tauri desktop application
 
-Exit criteria:
-- [ ] natural content targets convert into explicit Cast actions through the shared control layer;
-- [ ] service-specific resolution remains decoupled from low-level Cast transport.
+### 4a - Application shell and bridge
+
+- [x] Tauri 2 shell scaffolded in `src-tauri/`;
+- [x] minimal vanilla TypeScript + Vite frontend in `ui/`;
+- [x] shell owns no Cast business logic;
+- [x] Rust spawns `src/control_tv/bridge.py` as a long-lived child process;
+- [x] bridge uses line-delimited JSON over stdin/stdout with request ids;
+- [x] `ControlService` is not reimplemented in Rust or TypeScript;
+- [x] bridge exposes `ping`, `discover_devices`, `get_status`, `play`, `pause`, `stop`, `seek`, `set_volume` and `set_muted`;
+- [x] failed bridge spawn returns an explicit backend-unavailable error instead of crashing the application;
+- [x] blocking bridge calls run through a worker thread rather than the async/main thread;
+- [x] Tauri command timeout bounds a slow or stuck bridge request;
+- [x] deterministic Rust tests cover success, child exit and no-response timeout;
+- [x] real dev-mode window remained responsive during real discovery.
+
+Current bridge limitation:
+
+- [ ] replace the current one-request-at-a-time stdio behavior if future concurrency requirements justify it;
+- [ ] decide whether a timed-out underlying worker/bridge operation needs cancellable process-level handling rather than merely bounded UI waiting.
+
+### 4b - Device selection and status UI
+
+- [x] discovered device selected by stable id, never display name;
+- [x] selection remains UI state and the bridge stays stateless;
+- [x] `get_status` path is bridge -> Tauri -> `ControlService` without duplicated Cast logic;
+- [x] structured failures distinguish control errors, backend unavailable, bridge timeout and bridge transport failure;
+- [x] unexpected Python exceptions become `internal_error` responses rather than killing the bridge;
+- [x] UI covers no-selection, searching, empty, loading, failure, disconnected, partial and nothing-playing states;
+- [x] unreported values are shown as not reported, never invented as zero/off;
+- [x] raw internal details are kept behind the Details disclosure;
+- [x] UI permits at most one bridge request in flight;
+- [x] late answers cannot overwrite the current read;
+- [x] initial model slice had 58 TypeScript tests;
+- [x] real desktop read-only run validated discovery, selection, selection change and rediscovery retaining selection.
+
+Status-refresh work still open:
+
+- [ ] add an appropriate status refresh strategy so external TV/remote changes appear without requiring manual refresh;
+- [ ] preserve request ordering and stale-response protection when refresh becomes automatic.
+
+### 4c - UI design and accessibility baseline
+
+- [x] light single-surface remote design rather than a dashboard;
+- [x] existing `assets/logo.svg` reused unchanged;
+- [x] consistent inline SVG icon set;
+- [x] selected device presented as one row expanding into the device list;
+- [x] playback controls appear only when the TV reports applicable media/capabilities;
+- [x] UI design review covered real and fake states;
+- [x] dropped-selection notice, loading readability, repeated live-region announcements, Escape behavior, retry focus, Details target size and fluid breakpoint issues were corrected;
+- [x] no horizontal overflow measured at 320, 390, 481, 768 and 1280 px across stress states;
+- [x] measured colour pairs meet WCAG AA for the reviewed palette;
+- [x] keyboard paths exercised in the real window/browser;
+- [ ] perform dedicated screen-reader validation before claiming accessibility completion.
+
+### 4d - Playback controls UI
+
+- [x] play/pause toggle reflects the opposite of observed state;
+- [x] Stop control implemented;
+- [x] seek slider appears only for seekable media with known duration and position;
+- [x] seek composition is a local draft;
+- [x] one seek is sent after the control settles, never a command burst;
+- [x] displayed playback position changes only through TV-reported status;
+- [x] command in flight blocks competing requests;
+- [x] rapid triple click sends one command;
+- [x] sent-but-unconfirmed command keeps the last reported state and offers Check state rather than resending;
+- [x] timeout wording preserves ambiguity about whether the command arrived;
+- [x] playback slice validated 367 Python tests at 97.61%, 28 Rust tests and 115 TypeScript tests at that point;
+- [x] real Tauri application exercised against 15 scriptable fake TVs outside the repository;
+- [x] fake-TV validation covered confirmed pause/play/seek, pending, ignored, late-action, refused, unreachable, send-timeout, live media, unknown length, missing capability, buffering, idle, nothing-playing and Stop dropping its media session;
+- [x] no horizontal overflow across the tested playback states and widths.
+
+### 4e - Volume and mute
+
+- [x] bridge forwards absolute `set_volume` and `set_muted` commands;
+- [x] volume bridge input is a number from 0 to 1, not a boolean;
+- [x] mute bridge input is a JSON boolean and represents an absolute state, not a toggle at the service boundary;
+- [x] same sent-versus-confirmed contract as playback controls;
+- [x] mute button and volume slider shown for a connected TV whether or not media is playing;
+- [x] slider edits a local draft while the user is interacting;
+- [x] one command is sent after the gesture settles;
+- [x] at most one request is in flight;
+- [x] shown volume remains the TV-reported value;
+- [x] unconfirmed volume reports what the TV actually reports and is never resent automatically;
+- [x] rapid mute clicks collapse to one command;
+- [x] fake-TV real-application validation covered drag, quick key presses, held key, repeated mute click and ignored commands without command storms;
+- [x] real read-only status displayed a real receiver's reported volume and mute state without sending a command;
+- [ ] physically validate volume and mute commands on a real adjustable receiver.
+
+Volume-slam protection:
+
+- [x] one gesture may raise volume by at most 10 percentage points above the last TV-reported level;
+- [x] lowering is unrestricted, including directly to 0%;
+- [x] the TV-reported value before the gesture is the reference;
+- [x] after confirmation/new status, the new reported level becomes the next reference;
+- [x] Home goes to 0%;
+- [x] End goes to reference +10, never above 100%;
+- [x] cap is applied to draft behavior and again when building the command;
+- [x] pointer/key release ends a gesture even when WebKit suppresses `change` because the value was clamped;
+- [x] no confirmation dialog, override gesture, extra timer or special mode;
+- [x] limit hint is shown while the draft is capped;
+- [x] fake-TV real-app validation covered repeated +10 steps, lowering to zero, 93 -> 100 and no command when already at 100;
+- [x] phone-width review found no horizontal overflow; hint may occupy a second line while capped.
+
+Volume/mute known issues:
+
+- [ ] expose PyChromecast `volume_control_type` in `ReceiverStatus` so fixed-volume receivers do not look adjustable;
+- [ ] evaluate the current 0.01 volume confirmation tolerance on stepped-volume hardware;
+- [ ] decide how quantized receiver levels should be confirmed without inventing success;
+- [ ] service-level `set_muted` boolean validation remains to be hardened as noted in Phase 1;
+- [ ] assistive-technology value changes that produce neither key nor pointer release can leave a capped draft unsent until a later release/refresh; no command is sent unexpectedly;
+- [ ] the +10 protection currently belongs to the UI and does not automatically protect future MCP/native clients.
+
+### 4f - Focus behavior after commands
+
+- [x] PR #14 review found that volume could pull focus back after the user deliberately moved elsewhere while waiting for the network;
+- [x] shared focus-intent mechanism fixes the issue for volume and seek;
+- [x] focus is restored only when its loss came from temporary disabling of the slider;
+- [x] deliberate focus movement to another control is preserved;
+- [x] tests cover success, `UNCONFIRMED`, failure and independence of volume/seek behavior;
+- [x] final frontend suite after this correction is 242 tests.
+
+### 4g - Desktop native integration / tray
+
+This is the next desktop-native feature slice after the current controller behavior is stable.
+
+- [ ] add a native system-tray/status icon for control-TV;
+- [ ] reuse the control-TV icon appropriately for the tray;
+- [ ] provide `Open control-TV`;
+- [ ] provide `Quit`;
+- [ ] decide and document the distinction between closing the main window and quitting the application;
+- [ ] provide play/pause from the tray when meaningful;
+- [ ] provide Stop from the tray when meaningful;
+- [ ] provide mute/unmute from the tray;
+- [ ] evaluate whether volume control belongs directly in the tray UX;
+- [ ] reflect selected-device/current status without inventing state;
+- [ ] preserve confirmed/unconfirmed semantics;
+- [ ] do not duplicate Cast business logic in Rust;
+- [ ] validate tray lifecycle and controls on the real GNOME desktop;
+- [ ] validate any tray-issued Cast commands separately on real hardware;
+- [ ] keep the native integration architecture reusable for Windows where practical.
+
+Exit criteria for Phase 4:
+
+- [x] frontend remains separated from Cast/control business logic;
+- [x] playback, seek, volume and mute are automation-validated through the real app against fake TVs;
+- [ ] required real-hardware command behavior is validated and recorded;
+- [ ] tray/native desktop integration is complete if it is included in the first desktop release scope.
+
+---
+
+## Phase 5 - Real-hardware command validation
+
+Hardware validation is deliberately separate from automated completion.
+
+Read-only evidence already established:
+
+- [x] discovery;
+- [x] stable-id selection;
+- [x] receiver status;
+- [x] rediscovery preserving the same device identity;
+- [x] selection change;
+- [x] real reported volume/mute display;
+- [x] desktop responsiveness during read-only network operations.
+
+Playback command session already attempted:
+
+- [x] exactly one real Pause command was sent during the controlled hardware session;
+- [x] the physical media playback was observed to pause;
+- [x] the application result for that Pause was `UNCONFIRMED`;
+- [x] only a later read-only Check state was performed; no replay was sent;
+- [x] hours later the media session had disappeared and the receiver was idle, which is too late to attribute to Pause;
+- [ ] therefore Pause is **not** considered contractually hardware-validated yet.
+
+Still required in a fresh controlled seekable-media session:
+
+- [ ] reproduce Pause and record both physical effect and application confirmation result;
+- [ ] validate Play;
+- [ ] validate Seek;
+- [ ] validate Stop last, because it may destroy the media session;
+- [ ] judge Stop wording when the session disappears;
+- [ ] validate volume increase/decrease on an actually adjustable receiver;
+- [ ] validate mute and unmute;
+- [ ] evaluate stepped-volume behavior and the 0.01 tolerance;
+- [ ] evaluate stale-connection recovery during a real command;
+- [ ] record evidence without committing private network/device/media identifiers.
+
+No unchecked hardware item may be promoted to complete from fake-TV evidence alone.
+
+---
 
 ## Phase 6 - MCP adapter
 
-Deliverables:
-- [ ] small typed MCP tool surface over shared control/domain capabilities;
-- [ ] discovery/status and media-control operations;
-- [ ] actionable tool errors;
-- [ ] local/security boundary documented;
-- [ ] standalone application remains independent of an embedded AI API client.
-
-Exit criteria:
-- [ ] MCP and GUI invoke the same authoritative behavior;
-- [ ] tool/schema tests are separated from real-device validation;
-- [ ] MCP lifecycle/state interactions are explicit and testable.
-
-## Phase 7 - Cross-platform packaging
-
-Targets:
-- [ ] Android `.apk`;
-- [ ] Windows `.exe` / appropriate installer artifact;
-- [ ] Debian/Ubuntu `.deb`.
+The MCP layer is a future client of the shared control service, not a second implementation.
 
 Deliverables:
-- [ ] target-specific Tauri configuration;
-- [ ] package the required Python runtime/components appropriately for each target;
-- [ ] icons/metadata/version consistency;
-- [ ] reproducible release commands;
-- [ ] CI builds where useful;
-- [ ] documented signing/sideloading status.
+
+- [ ] define MCP tool schemas for discovery, status and supported commands;
+- [ ] map MCP inputs to the same authoritative `ControlService` validation;
+- [ ] expose stable device identifiers safely;
+- [ ] expose sent/confirmed/unconfirmed results without flattening ambiguity;
+- [ ] never auto-replay an ambiguous command;
+- [ ] keep MCP optional so manual application control works independently;
+- [ ] decide whether `load_media` is part of the MCP surface;
+- [ ] decide whether the UI-only +10 volume protection needs an equivalent MCP policy;
+- [ ] deterministic MCP tests with fake transport;
+- [ ] real-hardware validation for MCP-issued commands only after the desktop/control contract is accepted.
 
 Exit criteria:
-- [ ] package build and installation/launch validation are tracked separately;
-- [ ] each claimed platform is installed and launched on that platform before validation is recorded.
+
+- [ ] GUI and MCP demonstrably share the same authoritative control behavior;
+- [ ] no Cast business logic is duplicated in the MCP adapter;
+- [ ] MCP errors and confirmation semantics remain explicit.
+
+---
+
+## Phase 7 - Desktop packaging and distribution
+
+### Linux / Debian-Ubuntu
+
+Already demonstrated:
+
+- [x] Tauri debug `.deb` built with `npx --prefix ui tauri build --debug --bundles deb`;
+- [x] package installed with `dpkg -i`;
+- [x] installed `/usr/bin/control-tv` launched successfully;
+- [x] package cleanly uninstalled after validation.
+
+Current blocker:
+
+- [ ] the current `.deb` resolves Python through the developer repository `.venv`, so it is not distributable;
+- [ ] design and implement a self-contained Python runtime/backend packaging strategy;
+- [ ] verify packaged PyChromecast and dependencies without a development checkout;
+- [ ] validate install, launch, discovery/control and uninstall on a clean Debian/Ubuntu target;
+- [ ] ensure cleanup tooling never removes user/global caches outside project-owned output.
+
+### Windows
+
+- [ ] define Windows packaging target and installer strategy;
+- [ ] integrate the self-contained Python/backend runtime strategy;
+- [ ] validate Tauri application startup and bridge lifecycle on Windows;
+- [ ] validate Chromecast discovery/status on Windows;
+- [ ] validate control commands on Windows with the same confirmation contract;
+- [ ] reuse native/tray architecture where practical;
+- [ ] produce installable release artifact.
+
+### Tauri hardening
+
+- [ ] replace the current permissive/unfinished CSP configuration with an explicit production Content Security Policy;
+- [ ] review production capabilities/permissions before release;
+- [ ] verify no development-only paths or assumptions remain in release bundles.
+
+---
 
 ## Phase 7b - Android application and home-screen widget
 
-Runs after the Android application/APK target of Phase 7. Not started.
+Android is not just a packaging checkbox because the current authoritative controller depends on Python/PyChromecast.
 
-Blocking prerequisite:
-- [ ] **Architecture decision (owner) before any Android work:** how the Python runtime and the shared control core (`ControlService`, the PyChromecast adapter) run on Android, or how Android reuses that core otherwise (for example an embedded Python runtime or another documented option); the decision must keep one authoritative control engine for the window, the tray, MCP and Android, and is recorded in `ARCHITECTURE.md` before implementation.
+Architecture decision first:
+
+- [ ] decide how the authoritative Python/PyChromecast control core is delivered or reused on Android;
+- [ ] compare embedding Python, introducing a local service/runtime, or another architecture that preserves one authoritative behavior;
+- [ ] document the chosen boundary before implementing the Android client;
+- [ ] do not silently rewrite Cast behavior in a second independent implementation.
 
 Android application:
-- [ ] the Android application reuses the shared control core as decided above, with no duplicated Cast logic;
-- [ ] discovery, selection, status and commands validated on a real Android device against a real Chromecast/Google TV, recorded separately from emulator or automated results.
 
-Home-screen widget (decided 2026-09-26):
-- [ ] an Android home-screen widget focused on quick controls, not a miniature copy of the application;
-- [ ] shows the selected device and the useful current playback state;
-- [ ] quick controls where supported: play/pause, stop, mute/unmute, volume;
-- [ ] displayed state comes only from the state the device actually reported; after an unconfirmed command the widget never shows an invented confirmed playback, mute or volume state;
-- [ ] reuses the shared control-TV domain and application logic rather than duplicating Cast logic in the widget;
-- [ ] explicit behavior when no device is selected, when the device is unavailable and when the status cannot be obtained;
-- [ ] widget behavior validated on real Android hardware.
+- [ ] create Android application shell;
+- [ ] reuse shared device/status/command semantics;
+- [ ] discovery and stable-id device selection;
+- [ ] status view;
+- [ ] play/pause;
+- [ ] stop;
+- [ ] seek where appropriate;
+- [ ] mute/unmute;
+- [ ] volume;
+- [ ] correct behavior when no device is selected;
+- [ ] correct behavior when the selected device becomes unavailable;
+- [ ] preserve sent/confirmed/unconfirmed semantics;
+- [ ] produce installable APK;
+- [ ] validate on a real Android device;
+- [ ] validate real Chromecast interaction separately.
 
-## Phase 8 - CI/CD
+Home-screen widget:
 
-### Continuous integration
+- [ ] add an Android home-screen widget after the Android control architecture is settled;
+- [ ] show selected device/current state without inventing values;
+- [ ] play/pause action;
+- [ ] Stop action if appropriate for the widget size/UX;
+- [ ] mute/unmute action;
+- [ ] volume control if Android widget interaction constraints make it usable;
+- [ ] useful no-device/unavailable states;
+- [ ] widget actions use the same authoritative command semantics as the app;
+- [ ] validate widget lifecycle, refresh and actions on a real Android device.
 
-- [x] create the primary GitHub Actions CI workflow (`.github/workflows/ci.yml`);
-- [x] run CI on pull requests targeting `main`;
-- [x] run CI on pushes to `main`;
-- [x] install the Python environment reproducibly with `uv sync --locked`;
-- [x] verify lockfile and dependency consistency with `--locked` and `uv pip check`;
-- [x] run `ruff check`;
-- [x] run `ruff format --check`;
-- [x] run `mypy --strict`;
-- [x] run `pytest`;
-- [x] generate terminal coverage reporting and enforce a 95% minimum;
-- [x] make required local quality failures fail the CI job;
-- [x] validate the workflow in a hosted GitHub Actions run (run `36131989754` on commit `f872e08`, after rebasing onto main and fixing the P2 timeout-contract review; all steps passed);
-- [x] replace the deprecated Node 20 `actions/checkout` runtime reported by the first hosted run with SHA-pinned v5.0.1 (Node 24);
-- [ ] require applicable CI checks before a pull request is considered merge-ready (on 2026-09-26 `main` has no branch protection rule or ruleset).
+---
 
-### Application build CI
+## Phase 8 - CI/CD, security and release engineering
 
-- [x] verify the Tauri 2 build (hosted run `36135704584`, job "Tauri shell (Rust and frontend)", 3m37s, all steps passed, including a real `.deb` bundle);
-- [x] verify the frontend build (`tsc && vite build`, part of the same hosted run);
-- [x] verify Python/Tauri integration (`cargo test` in that job spawns the real `control_tv.bridge` process and pings it);
-- [x] add Linux build checks (the job above);
-- [ ] add Windows build checks;
-- [ ] add Android build checks;
-- [x] keep CI build success distinct from real Chromecast/TV hardware validation (this CI job never touches a Cast device; it built/packaged/pinged the bridge process only).
+CI/CD:
 
-### Continuous delivery and packaging
+- [x] Python lint/type/test/coverage gates in hosted CI;
+- [x] Rust/frontend/Tauri shell gates in hosted CI;
+- [x] PR workflow exercises the current quality gates;
+- [ ] add platform build matrix as Linux/Windows/Android release targets become real;
+- [ ] add packaging smoke tests where practical;
+- [ ] add release artifact generation/signing strategy.
 
-- [ ] build the Debian/Ubuntu package;
-- [ ] build the Windows installer/application artifact;
-- [ ] build the Android APK;
-- [ ] retain controlled build artifacts from release workflows;
-- [ ] apply consistent artifact versioning;
-- [ ] generate checksums for release artifacts;
-- [ ] generate or prepare release notes.
+Security:
 
-### Releases
+- [x] `SECURITY.md` exists;
+- [x] public documentation avoids committing private receiver/network identifiers;
+- [ ] enable GitHub Private Vulnerability Reporting;
+- [ ] verify the private reporting path works after enabling it;
+- [ ] update `SECURITY.md` when the first stable release defines supported versions;
+- [ ] define the policy for older supported/unsupported versions;
+- [ ] review the security policy whenever the support cycle changes;
+- [ ] review Tauri CSP/capabilities for production;
+- [ ] review dependency and supply-chain update process before stable release.
 
-- [ ] define the project versioning strategy;
-- [ ] trigger release builds from the selected tag/release mechanism;
-- [ ] publish verified artifacts to GitHub Releases;
-- [ ] verify release artifacts before publication;
-- [ ] document and implement signing where required;
-- [ ] never mark a package/platform as validated without the corresponding real installation/launch test.
+Versioning and metadata:
 
-### Security policy and vulnerability reporting
+- [ ] establish one authoritative application version across Python/Tauri/frontend/package metadata;
+- [ ] remove inconsistent placeholder versions before release;
+- [ ] ensure package metadata consistently declares GPL-3.0 licensing;
+- [ ] define release/tag/version bump procedure;
+- [ ] create release notes/changelog strategy.
 
-`SECURITY.md` (added 2026-09-26) supports only the latest `main` during development and asks reporters to use GitHub private vulnerability reporting.
-
-- [ ] enable GitHub Private Vulnerability Reporting for the repository (repository setting, owner action; it was disabled when checked on 2026-09-26);
-- [ ] verify that private reporting actually works (the "Report a vulnerability" entry is visible to a non-maintainer and a report reaches the maintainers privately), and record how it was verified;
-- [ ] at the first stable release, update `SECURITY.md`: replace the development-only support matrix with the release versions actually supported;
-- [ ] at the first stable release, define the security support policy for older releases;
-- [ ] at the first stable release, check that the private reporting procedure described in `SECURITY.md` is still current;
-- [ ] review `SECURITY.md` for every major release and whenever the supported release lifecycle changes.
-
-### CI/CD maintenance
-
-- [ ] configure automated dependency update monitoring where appropriate;
-- [ ] run CI against dependency update pull requests;
-- [ ] add relevant security checks;
-- [ ] define artifact retention policy;
-- [ ] keep local build cleanup requirements independent from CI runner cleanup.
-
-Exit criteria:
-- [ ] pull requests cannot be considered merge-ready until required CI checks pass;
-- [ ] release artifacts are produced reproducibly by automation;
-- [ ] CI/build validation, package validation and physical-device validation remain explicitly distinct.
+---
 
 ## Phase 9 - Release readiness
 
-Verify:
-- [ ] manual control without AI/MCP;
-- [ ] discovery/reconnection and error recovery;
-- [ ] Cast operations on real hardware;
-- [ ] MCP adapter independently;
-- [ ] Android, Windows and Debian/Ubuntu packages;
-- [ ] required CI checks are green for the release commit;
-- [ ] repository contains no credentials or generated build/temp output;
-- [ ] `SECURITY.md` matches the released versions and private vulnerability reporting has been verified to work;
-- [ ] build disk usage remains understood and controlled.
+Functional gates:
 
-## Mandatory build/temp cleanup
+- [ ] required desktop commands validated on real hardware;
+- [ ] Stop semantics accepted after physical validation;
+- [ ] volume-control capability and stepped-volume behavior resolved;
+- [ ] required status-refresh behavior implemented;
+- [ ] `load_media` release scope decided;
+- [ ] tray release scope decided and, if included, validated;
+- [ ] no known service-input overflow/type-validation issue remains at a public API boundary.
 
-At every build/test/package iteration:
-- [ ] inspect free disk and relevant project-generated footprint before build-heavy work;
-- [ ] identify generated project-owned output after the cycle, including failed/interrupted cycles;
-- [ ] clean obsolete Tauri/Rust, Android, Python/package, test, log, staging, scratch and extracted temporary output;
-- [ ] retain release artifacts only in a controlled distribution location;
-- [ ] measure remaining project-generated footprint;
-- [ ] record retained generated artifacts and why they remain;
-- [ ] treat cleanup failure as an incomplete iteration and record exact path/size/reason.
+Distribution gates:
 
-Recursive cleanup targets are verified as project-owned before deletion. Shared/global Cargo, Gradle, Android SDK/NDK, Python environments/caches and unrelated system/user directories are outside normal project cleanup.
+- [ ] Linux package works without the developer checkout or `.venv`;
+- [ ] Windows package/install path validated;
+- [ ] Android architecture settled before Android release work;
+- [ ] APK validated on real Android hardware when Android enters release scope.
 
-## Iteration protocol
+Quality/security gates:
 
-At the end of each implementation iteration:
-- [ ] keep one coherent objective;
-- [ ] run and record relevant checks and unvalidated areas;
-- [ ] complete mandatory cleanup and disk measurement;
-- [ ] create a pull request using the owner's Conventional Commit/PR workflow;
-- [ ] record objective, branch/PR, files/interfaces changed, architecture decisions, dependencies, exact tests, real hardware/platform validation, generated artifacts, cleanup, intentionally retained artifacts, remaining footprint, limitations, assumptions and exact next work.
+- [ ] all required CI jobs green on the release commit;
+- [ ] production CSP/capabilities reviewed;
+- [ ] Private Vulnerability Reporting enabled and tested;
+- [ ] `SECURITY.md` reflects supported release versions;
+- [ ] version and license metadata consistent;
+- [ ] no private validation data in committed artifacts;
+- [ ] documentation and hardware checklist match the released behavior.
 
-## Progress rule
+---
 
-Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan continuously in the same iteration that changes project state, including newly discovered work, review findings and blockers. Do not defer plan synchronization until the end of an iteration.
+## Known open technical items
 
-A deliverable or exit criterion whose wording refers to real hardware, a real device or a real platform is checked `[x]` only after that validation actually ran on that hardware/platform, with the evidence recorded in the handoff. Passing automated tests against a fake/simulated transport, fake TV, fake clock or emulator is real, valuable engineering progress, but it is never by itself sufficient to check such an item; simulated validation is never substituted for or presented as hardware validation. When a deliverable bundles implementation with hardware validation (for example "receiver/media state synchronization"), split it in this file into two lines - one for the implementation, checked once it is built and covered by deterministic tests, and one for real-device validation, checked only once that validation actually happened - rather than checking the combined line early.
+Unchecked items below are intentionally unresolved unless another phase explicitly closes them.
+
+- [ ] distributable/self-contained Python runtime for packaged desktop applications;
+- [ ] production Tauri CSP/capability hardening;
+- [ ] huge discovery timeout -> `invalid_argument` rather than `internal_error`;
+- [ ] huge seek value -> `invalid_argument` rather than `internal_error`;
+- [ ] strict service-level boolean validation for mute and boolean rejection for volume;
+- [ ] expose receiver `volume_control_type`;
+- [ ] validate/adjust volume confirmation tolerance for stepped receivers;
+- [ ] assistive-technology slider edge case when no pointer/key release event is produced;
+- [x] volume/seek deliberate-focus-return bug fixed in PR #14;
+- [ ] `load_media` not exposed through bridge/Tauri/UI;
+- [ ] automatic/appropriate status refresh;
+- [ ] stable media-session identity if same-`content_id` replacement proves relevant;
+- [ ] Stop wording after real-hardware validation;
+- [ ] unified version metadata;
+- [ ] consistent GPL-3.0 package metadata;
+- [ ] Linux package independence from developer `.venv`;
+- [ ] Windows distribution;
+- [ ] Android Python/control architecture;
+- [ ] GNOME/native tray;
+- [ ] MCP adapter;
+- [ ] Private Vulnerability Reporting.
+
+---
+
+## Immediate execution order
+
+The order below reflects the current project state rather than the historical phase numbering alone.
+
+1. [ ] Finish controlled real-hardware playback validation with a fresh seekable media session: Pause, Play, Seek, Stop last.
+2. [ ] Validate real volume/mute behavior on an adjustable receiver and resolve capability/tolerance findings.
+3. [ ] Harden the remaining authoritative service input-validation issues discovered by the audits.
+4. [ ] Decide and implement status refresh behavior.
+5. [ ] Decide first-desktop-release scope for `load_media` and tray integration.
+6. [ ] Implement and validate GNOME/native tray if included in scope.
+7. [ ] Make the Linux package self-contained and distributable.
+8. [ ] Harden production Tauri CSP/capabilities, versioning, license metadata and security reporting.
+9. [ ] Add Windows packaging/validation.
+10. [ ] Implement MCP as a thin client of the shared control service.
+11. [ ] Make the Android runtime/control architecture decision before Android application work.
+12. [ ] Implement Android application and then the home-screen widget.
+
+## Historical evidence that must not be lost
+
+The following project-history facts remain useful even as implementation totals evolve:
+
+- PR #8 exposed a real discovery/lifecycle defect that PR #9 fixed; the merged read-only application path was revalidated on hardware afterward.
+- The shared-service hardening introduced explicit confirmation deadlines and prevented late observations from becoming false confirmation.
+- Playback command-contract branches established the one-command/no-replay behavior and explicit failed-attempt handling.
+- PR #12 deliberately changed no backend behavior after auditing Stop semantics; physical Stop wording remains a product-validation question.
+- PR #13 introduced the playback UI and its fake-TV real-application validation.
+- PR #14 introduced volume/mute, the +10 raise limit, fake-TV anti-storm validation and the shared focus-intent correction for volume and seek.
+- A later controlled real-hardware session sent one Pause command: playback physically paused, but the application returned `UNCONFIRMED`. This is evidence of an effect, not completion of the confirmation contract.
+- No real Play, Seek, Stop, volume or mute command has yet been accepted as physically validated in this plan.
+
+Keep future updates equally explicit about what was implemented, what was automation-validated and what was actually observed on target hardware.
