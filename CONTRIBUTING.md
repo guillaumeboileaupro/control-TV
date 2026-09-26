@@ -34,7 +34,16 @@ Use the repository's existing development tools and lockfiles.
 
 Do not commit generated dependencies, build outputs, caches, virtual environments, local screenshots, or temporary files.
 
-The repository provides `scripts/dev.py` for common development and validation tasks.
+The repository provides `scripts/dev.py` for common development and validation tasks. Prerequisites and the full command list are in `README.md` (Development).
+
+Before running any check:
+
+```bash
+python3 scripts/dev.py setup     # Python environment from uv.lock (requires uv)
+npm install --prefix ui          # frontend and Tauri CLI dependencies (for ui-check, rust-check and the app)
+```
+
+Run the application from the repository root with `npx --prefix ui tauri dev`. Builds leave large output in `src-tauri/target`; check it with `python3 scripts/dev.py disk-usage` and remove it with `python3 scripts/dev.py clean`.
 
 ## Quality Requirements
 
@@ -43,7 +52,8 @@ Before submitting a pull request, run the checks relevant to your changes.
 For the Python codebase:
 
 ```bash
-python scripts/dev.py check
+python3 scripts/dev.py check
+python3 scripts/dev.py coverage
 ```
 
 Python changes are expected to pass:
@@ -58,7 +68,7 @@ Python changes are expected to pass:
 For Rust/Tauri changes:
 
 ```bash
-python scripts/dev.py rust-check
+python3 scripts/dev.py rust-check
 ```
 
 Rust changes must pass formatting, Clippy with warnings treated as errors, and the Rust test suite.
@@ -66,7 +76,7 @@ Rust changes must pass formatting, Clippy with warnings treated as errors, and t
 For frontend changes:
 
 ```bash
-python scripts/dev.py ui-check
+python3 scripts/dev.py ui-check
 ```
 
 TypeScript and UI changes must pass the configured type checking, formatting, and frontend tests.
@@ -90,6 +100,8 @@ Some features require validation against real Google Cast hardware.
 Physical validation must be reported explicitly as either performed or not performed.
 
 Never send commands to a real device merely to satisfy an automated test.
+
+Follow `docs/CAST_HARDWARE_VALIDATION.md` and keep any device-identifying record local.
 
 When performing hardware validation:
 

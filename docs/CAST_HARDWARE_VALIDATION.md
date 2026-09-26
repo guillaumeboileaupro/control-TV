@@ -1,22 +1,30 @@
 # Chromecast physical validation checklist
 
-This checklist is intentionally open until it is executed against a real Chromecast or Google TV. Automated tests and fake transports do not satisfy any item below.
+This checklist stays open until each item is executed against a real Chromecast or Google TV. Automated tests, fake transports, fake TVs and emulators do not satisfy any item below; they are recorded as automated validation, never here.
 
 Record before testing:
 
-- date, tester, control-TV commit, operating system and network;
-- device UUID, model, firmware and friendly name;
+- date, tester, control-TV commit and operating system;
+- the general device type (Chromecast, Google TV, Android TV with Google Cast, other) and, if useful, model and firmware;
 - media URL/content type used, excluding credentials or private tokens;
 - configured discovery, connection, request, recovery and confirmation timeouts.
 
+**Privacy:** device UUIDs, friendly names, IP addresses, network names and screenshots showing them are recorded only in a private local note (for example a git-ignored handoff), never in this file, `DEVELOPMENT_PLAN.md`, a commit, an issue or a pull request. Public records name the device type only.
+
+## Recorded results
+
+- 2026-09-26, read-only, recorded in PR #9: discovery with a 5 s bound (it returned after about 5 s), selection by UUID, receiver status read, a second discovery returning the same UUID, a second status read, and `close()` called twice without error. No command was sent.
+- 2026-09-26, read-only, through the desktop application (PRs #10, #13 and #14): discovery, selection by stable id, status read and refresh, rediscovery keeping the selection, change of selection, and the volume/mute display. No command was sent.
+- No command result (load, play, pause, stop, seek, volume, mute) is recorded yet.
+
 ## Discovery, identity and status
 
-- [ ] Start from a closed transport and discover the physical device within the configured timeout.
-- [ ] Record the discovered UUID and select the device by UUID, not friendly name.
+- [x] Start from a closed transport and discover the physical device within the configured timeout (PR #9: about 5 s for a 5 s bound).
+- [x] Record the discovered UUID privately and select the device by UUID, not friendly name (PR #9; the UUID is kept out of public records).
 - [ ] Rename the device, rediscover it and verify that the UUID remains the selection key.
 - [ ] Read receiver and media status and compare every reported field with the device UI; record fields the receiver does not report as unknown, never inferred.
-- [ ] Repeat discovery and verify that superseded connections/socket workers terminate.
-- [ ] Call `close()` twice and verify no active project-owned Cast connection or worker remains.
+- [ ] Repeat discovery and verify that superseded connections/socket workers terminate (repeated discovery with a successful status read after it is recorded in PR #9; worker termination itself was not checked on hardware).
+- [ ] Call `close()` twice and verify no active project-owned Cast connection or worker remains (two calls completed without error in PR #9; the absence of remaining connections or workers was not checked).
 
 ## Deadline and recovery behavior
 

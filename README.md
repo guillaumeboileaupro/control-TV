@@ -16,8 +16,10 @@ Lightweight cross-platform application for controlling Chromecast / Google TV de
 ```text
 Manual UI  -> Tauri boundary -+
                               +-> shared control/domain layer -> Chromecast / Google TV
-MCP client -> MCP adapter ----+
+MCP client -> MCP adapter ----+   (MCP adapter: planned, not implemented)
 ```
+
+Today the manual UI is a vanilla TypeScript page in a Tauri 2 window. Its Rust side only forwards requests, on a worker thread with a time bound, to a long-lived Python process (`python -m control_tv.bridge`) that speaks line-delimited JSON over stdin/stdout and calls `ControlService`, which drives the TV through `PyChromecastTransport`. No Cast logic lives in Rust or TypeScript.
 
 The UI and the MCP adapter are thin. Device discovery, validation and state belong to the shared control layer, which reaches the TV through a focused Python Chromecast adapter. A command that was sent is not proof that the TV reached the requested state, so sent and confirmed state are kept distinct. See [ARCHITECTURE.md](ARCHITECTURE.md) for the decisions and [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
 
@@ -59,8 +61,11 @@ npm install --prefix ui                       # install frontend dependencies (o
 python3 scripts/dev.py rust-check             # cargo fmt --check, clippy -D warnings, cargo test
 python3 scripts/dev.py ui-check               # tsc --noEmit, prettier --check, UI model tests (node --test)
 npx --prefix ui tauri dev                     # run the app (from the repository root)
+npx --prefix ui tauri build --debug --no-bundle     # debug binary only: src-tauri/target/debug/control-tv
 npx --prefix ui tauri build --debug --bundles deb   # package a real, installable .deb
 ```
+
+The Tauri CLI comes from `ui/node_modules` (`npx --prefix ui tauri ...`); the separate `cargo tauri` subcommand is not required. `tauri dev` starts the Vite dev server on port 1420 (`src-tauri/tauri.conf.json`), so only one dev instance can run at a time on a machine. A build leaves several GiB in `src-tauri/target`: run `python3 scripts/dev.py disk-usage` and `clean` afterwards.
 
 Only Linux (Debian/Ubuntu) has been built, installed and launched so far. `resolve_python()` (`src-tauri/src/lib.rs`) is a development-only placeholder that finds this developer's own `.venv` next to the repository; packaging a real Python runtime for a distributed build is future work (see `DEVELOPMENT_PLAN.md`, Phase 7).
 
@@ -90,6 +95,10 @@ assets/                    project assets
 
 ## Status
 
-The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Read-only physical validation of discovery, UUID selection and status is done (see `DEVELOPMENT_PLAN.md`); command delivery and confirmation remain unvalidated on hardware, so follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming any Chromecast or Google TV command behavior. There is still no MCP adapter or release packaging.
+The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Read-only physical validation of discovery, UUID selection and status is done (see `DEVELOPMENT_PLAN.md`); command delivery and confirmation remain unvalidated on hardware, so follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming any Chromecast or Google TV command behavior. There is still no MCP adapter, no media-loading action in the application (it controls media already playing), no system tray, no Android or Windows build, and no release packaging.
 
-Phase 4 (Tauri UI) has an initial application shell: a Tauri 2 Rust crate that spawns the shared control layer as a Python subprocess over a stdio JSON bridge, and a one-page frontend with device discovery, selection by stable device id and a read-only view of the selected device's receiver/media status. It has been built, installed as a real `.deb` and launched on Debian/Ubuntu (Ubuntu 22.04); Windows and Android are untouched. Play, pause, stop, seek, volume and mute controls are built and have only been exercised against a fake TV, never a real device. On real hardware the application discovers devices, selects one by its stable id and reads and refreshes its status, including after a rediscovery; nothing has been validated by sending a command to a real Chromecast or Google TV device.
+Phase 4 (Tauri UI) has an initial application shell: a Tauri 2 Rust crate that spawns the shared control layer as a Python subprocess over a stdio JSON bridge, and a one-page frontend with device discovery, selection by stable device id and a read-only view of the selected device's receiver/media status. It has been built, installed as a real `.deb` and launched on Debian/Ubuntu (Ubuntu 22.04); Windows and Android are untouched. Play, pause, stop, seek, volume and mute controls are built (one volume gesture can raise the level by at most 10 points; lowering is not limited) and are validated only by automated tests and runs of the real application against a fake TV; no real-hardware result for any command is recorded. On real hardware the application discovers devices, selects one by its stable id and reads and refreshes its status, including after a rediscovery; nothing has been validated by sending a command to a real Chromecast or Google TV device. Open items and planned work (tray, Android and its home-screen widget, MCP, packaging) are tracked in `DEVELOPMENT_PLAN.md`.
+
+## Contributing, security and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never in a public issue. control-TV is distributed under the GNU General Public License version 3 ([LICENSE](LICENSE)).
