@@ -137,6 +137,11 @@ function problem(
 function start(elements: Elements): void {
   let state = initialState();
   let serviceFailure: BridgeFailure | null = null;
+  // The device list and the status area are live regions: rebuilding one whose content did
+  // not change would make assistive technology read it out again, so each is redrawn only
+  // when what it shows has changed.
+  let devicesKey = "";
+  let contextKey = "";
 
   function renderNotice(): void {
     elements.serviceNotice.replaceChildren();
@@ -161,10 +166,16 @@ function start(elements: Elements): void {
 
   function renderDevices(): void {
     const { devicesList, devicesMessage } = elements;
+    const message = describeDevicesMessage(state);
+    const busy = !canSelect(state);
+    const key = JSON.stringify([message, state.devices, state.selected?.id ?? null, busy]);
+    if (key === devicesKey) {
+      return;
+    }
+    devicesKey = key;
     devicesList.replaceChildren();
     devicesMessage.replaceChildren();
 
-    const message = describeDevicesMessage(state);
     if (message.failure !== null) {
       devicesMessage.append(problem(message.failure, "find devices", null));
       return;
@@ -173,7 +184,6 @@ function start(elements: Elements): void {
       devicesMessage.append(text("p", line.announceOnly ? "sr-only" : "message-line", line.text));
     }
 
-    const busy = !canSelect(state);
     for (const device of state.devices) {
       const isSelected = state.selected?.id === device.id;
       const item = document.createElement("li");
@@ -253,45 +263,51 @@ function start(elements: Elements): void {
     const { context, contextBody, observed, refreshButton } = elements;
     const refreshHadFocus = document.activeElement === refreshButton;
     context.hidden = state.selected === null;
-    contextBody.replaceChildren();
-    observed.textContent = "";
     setBusy(refreshButton, !canRefresh(state));
-    refreshButton.classList.toggle("is-loading", state.status.kind === "loading");
+    const loading = state.status.kind === "loading";
+    refreshButton.classList.toggle("is-loading", loading);
+    refreshButton.setAttribute("aria-busy", String(loading));
     // A failure carries its own labelled recovery button; the icon would only repeat it.
     refreshButton.hidden = state.status.kind === "failed";
 
-    switch (state.status.kind) {
-      case "none":
-        break;
-      case "loading":
-        contextBody.append(text("p", "message", "Reading status…"));
-        break;
-      case "failed": {
-        const failure = state.status.failure;
-        const recovery = describeFailure(failure).recovery === "discover" ? "discover" : "retry";
-        contextBody.append(
-          problem(
-            failure,
-            "read this device's status",
-            recovery === "discover"
-              ? { label: "Find devices", run: () => void discover() }
-              : { label: "Try again", run: onRefresh },
-          ),
-        );
-        break;
-      }
-      case "ready": {
-        const description = describeStatus(state.status.status);
-        observed.textContent = `Updated ${description.observedAt}`;
-        if (description.connected) {
-          contextBody.append(...renderPlayback(description), renderFacts(description));
+    const key = JSON.stringify([state.selected?.id ?? null, state.status]);
+    if (key !== contextKey) {
+      contextKey = key;
+      contextBody.replaceChildren();
+      observed.textContent = "";
+      switch (state.status.kind) {
+        case "none":
+          break;
+        case "loading":
+          contextBody.append(text("p", "message", "Reading status…"));
+          break;
+        case "failed": {
+          const failure = state.status.failure;
+          const recovery = describeFailure(failure).recovery === "discover" ? "discover" : "retry";
+          contextBody.append(
+            problem(
+              failure,
+              "read this device's status",
+              recovery === "discover"
+                ? { label: "Find devices", run: () => void discover() }
+                : { label: "Try again", run: onRefresh },
+            ),
+          );
+          break;
         }
-        if (description.note !== null) {
-          const line = text("p", "note", "");
-          line.append(icon("info"), description.note);
-          contextBody.append(line);
+        case "ready": {
+          const description = describeStatus(state.status.status);
+          observed.textContent = `Updated ${description.observedAt}`;
+          if (description.connected) {
+            contextBody.append(...renderPlayback(description), renderFacts(description));
+          }
+          if (description.note !== null) {
+            const line = text("p", "note", "");
+            line.append(icon("info"), description.note);
+            contextBody.append(line);
+          }
+          break;
         }
-        break;
       }
     }
     if (refreshHadFocus && refreshButton.hidden) {
@@ -385,6 +401,12 @@ function start(elements: Elements): void {
     void discover();
   });
   elements.refreshButton.addEventListener("click", onRefresh);
+  elements.picker.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.picker.open) {
+      elements.picker.open = false;
+      elements.pickerSummary.focus();
+    }
+  });
 
   render();
   void checkBackend();

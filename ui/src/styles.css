@@ -200,6 +200,17 @@ button {
   animation: spin 0.9s linear infinite;
 }
 
+/* Loading is not disabled: it keeps full contrast (its label or spinner is the message),
+   whereas a control that is unavailable because another request runs is faded. */
+.is-loading[aria-disabled="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
+.btn-icon.is-loading {
+  color: var(--accent);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -502,7 +513,7 @@ button {
 }
 
 .diagnostic summary {
-  padding: 10px 0;
+  padding: 13px 0;
   cursor: pointer;
 }
 
