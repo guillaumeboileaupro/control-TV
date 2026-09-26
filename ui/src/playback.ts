@@ -1,4 +1,4 @@
-// Playback control logic for the remote, as plain functions (no DOM, no Tauri, no I/O).
+// Playback and sound control logic for the remote, as plain functions (no DOM, no Tauri, no I/O).
 //
 // The TV's observed state is the source of truth. Nothing here decides what the TV is doing:
 // it only decides which controls that observed state offers, how a command's progress and
@@ -17,7 +17,13 @@ import {
 } from "./model.ts";
 
 export type TransportCommand = "play" | "pause" | "stop";
-export type CommandName = TransportCommand | "seek";
+// Volume and mute are absolute requests: a level to reach, a mute state to reach. The names are
+// the control layer's own, so an answer can be matched to the command that was sent.
+export type SoundCommand = "set_volume" | "set_muted";
+export type CommandName = TransportCommand | "seek" | SoundCommand;
+
+// What a sound command asks the TV for. It is a request, never something the TV reported.
+export type SoundTarget = { kind: "volume"; percent: number } | { kind: "mute"; muted: boolean };
 
 // What the control layer answers once a command was sent. `confirmed` means a status observed
 // on the TV shows the result; `unconfirmed` means it did not in time (`detail` says what the TV
@@ -34,7 +40,13 @@ export interface CommandResult {
 
 export type CommandView =
   | { kind: "idle" }
-  | { kind: "pending"; requestId: number; command: CommandName; targetSeconds: number | null }
+  | {
+      kind: "pending";
+      requestId: number;
+      command: CommandName;
+      targetSeconds: number | null;
+      sound: SoundTarget | null;
+    }
   // The TV showed the result. `positionSeconds` is the position it reported (a seek's outcome).
   | { kind: "confirmed"; command: CommandName; positionSeconds: number | null }
   // Sent, but the TV did not show the result in time (or nothing checked): not a success.
@@ -44,6 +56,9 @@ export type CommandView =
       confirmation: "unconfirmed" | "not_checked";
       detail: string | null;
       targetSeconds: number | null;
+      sound: SoundTarget | null;
+      // The volume the answer itself reported, in whole percent, when it carried an observation.
+      reportedPercent: number | null;
     }
   // Not sent, or refused: an error with the control layer's code.
   | { kind: "failed"; command: CommandName; failure: BridgeFailure };
@@ -53,6 +68,28 @@ export interface CommandRequest {
   command: CommandName;
   deviceId: string;
   positionSeconds: number | null;
+  sound: SoundTarget | null;
+}
+
+// The arguments the application command takes, as the Tauri boundary expects them. Only the
+// values the operator asked for travel: a volume as a level from 0 to 1 (the slider works in
+// whole percent), a mute as the state to reach.
+export function commandArguments(request: CommandRequest): Record<string, unknown> {
+  const args: Record<string, unknown> = { deviceId: request.deviceId };
+  switch (request.command) {
+    case "seek":
+      args["positionSeconds"] = request.positionSeconds;
+      break;
+    case "set_volume":
+      args["level"] = request.sound?.kind === "volume" ? request.sound.percent / 100 : null;
+      break;
+    case "set_muted":
+      args["muted"] = request.sound?.kind === "mute" ? request.sound.muted : null;
+      break;
+    default:
+      break;
+  }
+  return args;
 }
 
 export type CommandOutcome =
@@ -186,10 +223,13 @@ export function clampSeek(seconds: number, max: number): number {
 
 // --- sending a command ---------------------------------------------------------------------
 
-function begin(
+// Starts a command: it becomes the one request in flight, and any position or volume still being
+// composed is dropped (it was never sent, so nothing pretends it was).
+export function begin(
   state: AppState,
   command: CommandName,
   positionSeconds: number | null,
+  sound: SoundTarget | null = null,
 ): { state: AppState; request: CommandRequest } | null {
   if (state.selected === null) {
     return null;
@@ -198,11 +238,18 @@ function begin(
   return {
     state: {
       ...state,
-      command: { kind: "pending", requestId, command, targetSeconds: positionSeconds },
+      command: {
+        kind: "pending",
+        requestId,
+        command,
+        targetSeconds: positionSeconds,
+        sound,
+      },
       seekDraft: null,
+      volumeDraft: null,
       nextRequestId: requestId + 1,
     },
-    request: { requestId, command, deviceId: state.selected.id, positionSeconds },
+    request: { requestId, command, deviceId: state.selected.id, positionSeconds, sound },
   };
 }
 
@@ -312,8 +359,15 @@ export function finishCommand(
       confirmation: result.confirmation,
       detail: result.detail,
       targetSeconds: view.targetSeconds,
+      sound: view.sound,
+      reportedPercent: reportedPercent(result.observed),
     },
   };
+}
+
+function reportedPercent(status: DeviceStatus | null): number | null {
+  const level = status?.receiver?.volumeLevel ?? null;
+  return level === null ? null : Math.round(level * 100);
 }
 
 // --- wording -------------------------------------------------------------------------------
@@ -329,6 +383,63 @@ const CONFIRMED_TEXT: Record<TransportCommand, string> = {
   pause: "Paused.",
   stop: "Stopped.",
 };
+
+// What a command in flight is worded as. Only a seek has no other place on screen that shows
+// what was requested; a transport button and the sound readout already say it.
+function pendingText(
+  command: CommandName,
+  sound: SoundTarget | null,
+  seconds: number | null,
+): string {
+  switch (command) {
+    case "seek":
+      return `Seeking to ${seekText(seconds)}…`;
+    case "set_volume":
+      return sound?.kind === "volume" ? `Setting volume to ${sound.percent}%…` : "Setting volume…";
+    case "set_muted":
+      return sound?.kind === "mute" && !sound.muted ? "Unmuting…" : "Muting…";
+    default:
+      return PENDING_TEXT[command];
+  }
+}
+
+// What a confirmed command is worded as: the position or level is the one the TV reported.
+function confirmedText(
+  state: AppState,
+  view: { command: CommandName; positionSeconds: number | null },
+): string {
+  const receiver = state.status.kind === "ready" ? state.status.status.receiver : null;
+  switch (view.command) {
+    case "seek":
+      return `Position ${seekText(view.positionSeconds)}.`;
+    case "set_volume": {
+      const percent = reportedPercent(state.status.kind === "ready" ? state.status.status : null);
+      return percent === null ? "Volume changed." : `Volume ${percent}%.`;
+    }
+    case "set_muted":
+      return receiver?.muted === true
+        ? "Muted."
+        : receiver?.muted === false
+          ? "Unmuted."
+          : "Mute changed.";
+    default:
+      return CONFIRMED_TEXT[view.command];
+  }
+}
+
+// The subject of "… sent, but …": what the operator asked for.
+function sentSubject(command: CommandName, sound: SoundTarget | null): string {
+  switch (command) {
+    case "seek":
+      return "Seek";
+    case "set_volume":
+      return "Volume";
+    case "set_muted":
+      return sound?.kind === "mute" && !sound.muted ? "Unmute" : "Mute";
+    default:
+      return "Command";
+  }
+}
 
 export interface CommandFailureDescription {
   title: string;
@@ -367,7 +478,10 @@ export function describeCommandFailure(
     case "command_rejected":
       return {
         title: "The TV refused the command",
-        hint: "It received the command but didn't accept it, for example because this media can't do that right now.",
+        hint:
+          command === "set_volume" || command === "set_muted"
+            ? "It received the command but didn't accept it."
+            : "It received the command but didn't accept it, for example because this media can't do that right now.",
         recovery: "check",
         technical,
       };
@@ -376,7 +490,9 @@ export function describeCommandFailure(
         title:
           command === "seek"
             ? "Seeking isn't available for this media"
-            : "This media can't do that",
+            : command === "set_volume" || command === "set_muted"
+              ? "The TV can't do that"
+              : "This media can't do that",
         hint: "The command wasn't sent.",
         recovery: "check",
         technical,
@@ -390,7 +506,12 @@ export function describeCommandFailure(
       };
     case "invalid_argument":
       return {
-        title: command === "seek" ? "That position isn't valid" : "That request isn't valid",
+        title:
+          command === "seek"
+            ? "That position isn't valid"
+            : command === "set_volume"
+              ? "That volume isn't valid"
+              : "That request isn't valid",
         hint: "The command wasn't sent. Check the current state and try again.",
         recovery: "check",
         technical,
@@ -453,12 +574,9 @@ export function describeCommandFeedback(state: AppState): CommandFeedback {
         ...NONE,
         lines: [
           {
-            text:
-              view.command === "seek"
-                ? `Seeking to ${seekText(view.targetSeconds)}…`
-                : PENDING_TEXT[view.command],
-            // A transport command's progress is already on its button; only a seek has no other
-            // place to show the position that was requested.
+            text: pendingText(view.command, view.sound, view.targetSeconds),
+            // A transport command's progress is already on its button and a sound command's on its
+            // readout; only a seek has no other place to show the position that was requested.
             announceOnly: view.command !== "seek",
             tone: "info",
           },
@@ -467,23 +585,24 @@ export function describeCommandFeedback(state: AppState): CommandFeedback {
     case "confirmed":
       return {
         ...NONE,
-        lines: [
-          {
-            text:
-              view.command === "seek"
-                ? `Position ${seekText(view.positionSeconds)}.`
-                : CONFIRMED_TEXT[view.command],
-            announceOnly: true,
-            tone: "info",
-          },
-        ],
+        lines: [{ text: confirmedText(state, view), announceOnly: true, tone: "info" }],
       };
     case "sent": {
-      const what = view.command === "seek" ? "Seek" : "Command";
-      const text =
+      const what = sentSubject(view.command, view.sound);
+      let text =
         view.confirmation === "unconfirmed"
           ? `${what} sent, but the TV hasn't shown the change yet.`
           : `${what} sent. Its result wasn't checked.`;
+      // A receiver may settle on a level of its own: when the answer says what the TV reports,
+      // say so instead of implying nothing changed.
+      if (
+        view.confirmation === "unconfirmed" &&
+        view.sound?.kind === "volume" &&
+        view.reportedPercent !== null &&
+        view.reportedPercent !== view.sound.percent
+      ) {
+        text = `Volume sent, but the TV reports ${view.reportedPercent}%, not ${view.sound.percent}%.`;
+      }
       return {
         lines: [{ text, announceOnly: false, tone: "warning" }],
         detail: view.detail,

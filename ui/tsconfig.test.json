@@ -10,6 +10,16 @@
     "rewriteRelativeImportExtensions": true,
     "types": ["node"]
   },
-  "include": ["src/model.ts", "src/model.test.ts", "src/playback.ts", "src/playback.test.ts"],
+  "include": [
+    "src/fixtures.ts",
+    "src/model.ts",
+    "src/model.test.ts",
+    "src/playback.ts",
+    "src/playback.test.ts",
+    "src/sound.ts",
+    "src/sound.test.ts",
+    "src/interaction.ts",
+    "src/interaction.test.ts"
+  ],
   "exclude": []
 }

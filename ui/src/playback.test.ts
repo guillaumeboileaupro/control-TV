@@ -235,6 +235,7 @@ describe("seek availability and the draft", () => {
       requestId: request?.requestId,
       command: "seek",
       targetSeconds: 300,
+      sound: null,
     });
     assert.equal(state.seekDraft, null);
     assert.equal(describeControls(state).seek?.value, 212);

@@ -123,7 +123,7 @@
             <div id="seek" class="seek" hidden>
               <input
                 id="seek-input"
-                class="seek-input"
+                class="range"
                 type="range"
                 min="0"
                 max="0"
@@ -145,6 +145,35 @@
             </div>
             <p id="controls-note" class="note" hidden></p>
             <p id="seek-note" class="note" hidden></p>
+          </div>
+
+          <!-- Sound: mute and volume for any connected device, playing or not. Static elements
+               updated in place. The volume control works on a draft and sends once it settles;
+               the mute button offers the opposite of the state the TV reported. -->
+          <div id="sound" class="sound" role="group" aria-label="Sound" hidden>
+            <div class="sound-row">
+              <button
+                id="mute-button"
+                class="btn btn-mute"
+                type="button"
+                aria-label="Mute"
+                title="Mute"
+              >
+                <svg class="icon" aria-hidden="true"><use href="#i-volume" /></svg>
+              </button>
+              <input
+                id="volume-input"
+                class="range volume-input"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value="0"
+                aria-label="Volume"
+              />
+            </div>
+            <p id="sound-readout" class="sound-readout is-empty"></p>
+            <p id="sound-note" class="note" hidden></p>
           </div>
 
           <!-- Outside the controls on purpose: a command's outcome must stay visible even when
