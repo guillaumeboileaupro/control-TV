@@ -102,6 +102,9 @@ class PyChromecastTransport:
         self._browser: object | None = None
 
     def discover(self, *, timeout: float) -> list[Device]:
+        return self._discover(timeout=timeout)
+
+    def _discover(self, *, timeout: float, cleanup_deadline: float | None = None) -> list[Device]:
         """Replace the discovery snapshot while keeping its zeroconf owner alive.
 
         PyChromecast gives every returned Chromecast the browser's zeroconf instance.
@@ -115,6 +118,9 @@ class PyChromecastTransport:
             casts, browser = self._discoverer(timeout)
             discovered = [self._device(cast_device) for cast_device in casts]
             replacements = {DeviceId(str(cast_device.uuid)): cast_device for cast_device in casts}
+            if not replacements:
+                self._stop_browser(browser)
+                browser = None
         except DiscoveryError:
             self._dispose_discovery(casts, browser)
             raise
@@ -131,7 +137,10 @@ class PyChromecastTransport:
         self._browser = browser
         for previous in previous_casts.values():
             if all(previous is not current for current in replacements.values()):
-                self._disconnect(previous)
+                if cleanup_deadline is None:
+                    self._disconnect(previous)
+                else:
+                    self._disconnect_bounded(previous, cleanup_deadline)
         if previous_browser is not browser:
             self._stop_browser(previous_browser)
         return discovered
@@ -321,7 +330,10 @@ class PyChromecastTransport:
             self._casts.pop(device_id, None)
             self._disconnect_bounded(cast_device, deadline)
             try:
-                self.discover(timeout=self._budget(self._recovery_timeout, deadline, device_id))
+                self._discover(
+                    timeout=self._budget(self._recovery_timeout, deadline, device_id),
+                    cleanup_deadline=deadline,
+                )
             except DiscoveryError as discovery_error:
                 raise DeviceUnavailableError(
                     f"device {device_id} could not be rediscovered: {discovery_error.message}",

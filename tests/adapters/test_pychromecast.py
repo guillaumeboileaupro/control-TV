@@ -702,6 +702,60 @@ def test_cleanup_errors_do_not_orphan_logical_ownership_or_break_idempotence() -
     assert second_browser.stop_calls == 1
 
 
+def test_empty_discovery_stops_unowned_browser_immediately() -> None:
+    browser = FakeBrowser()
+    transport = PyChromecastTransport(discoverer=lambda timeout: ([], browser))
+
+    assert transport.discover(timeout=1.0) == []
+
+    assert browser.stop_calls == 1
+    assert transport._browser is None
+
+    transport.close()
+
+    assert browser.stop_calls == 1
+
+
+def test_status_recovery_bounds_every_superseded_disconnect_by_global_deadline() -> None:
+    clock = FakeClock()
+    old_browser = FakeBrowser()
+    new_browser = FakeBrowser()
+    stale = FakeCast(clock=clock, wait_consumes=0.2, disconnect_consumes=0.1)
+    stale.wait_error = OSError("stale")
+    other_one = FakeCast(clock=clock, disconnect_consumes=2.0)
+    other_one.uuid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    other_two = FakeCast(clock=clock, disconnect_consumes=2.0)
+    other_two.uuid = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    recovered = FakeCast(clock=clock)
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        clock.sleep(0.3)
+        return [cast(Chromecast, recovered)], new_browser
+
+    transport = PyChromecastTransport(
+        connection_timeout=3.0,
+        recovery_timeout=3.0,
+        discoverer=discoverer,
+        clock=clock.monotonic,
+    )
+    transport._casts = {
+        DEVICE_ID: cast(Chromecast, stale),
+        DeviceId(str(other_one.uuid)): cast(Chromecast, other_one),
+        DeviceId(str(other_two.uuid)): cast(Chromecast, other_two),
+    }
+    transport._browser = old_browser
+
+    with pytest.raises(OperationTimeoutError, match="status read budget exhausted"):
+        transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert clock.now == pytest.approx(1.0)
+    assert stale.disconnect_calls == [pytest.approx(0.8)]
+    assert other_one.disconnect_calls == [pytest.approx(0.4)]
+    assert other_two.disconnect_calls == [0.0]
+    assert old_browser.stop_calls == 1
+    assert new_browser.stopped is False
+
+
 def test_playing_media_uses_adjusted_position_between_cast_events() -> None:
     status = ControlledMediaStatus(adjusted=18.5)
     status.player_state = "PLAYING"
