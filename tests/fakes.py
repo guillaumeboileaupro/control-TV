@@ -73,6 +73,7 @@ class FakeTransport:
     it should be the same `FakeClock` the `ControlService` under test uses, so both sides
     agree on how much of the confirmation budget a read actually consumed.
     `status_read_delay`: simulated seconds a *successful* `get_status` call takes.
+    `status_read_delays`: per-read delays which take precedence over `status_read_delay`.
     `hang_status_reads`: when true, `get_status` always consumes exactly the `timeout` it
     was given and then raises `OperationTimeoutError` - a read that respects its bound but
     never completes usefully within it (as opposed to one that ignores its bound entirely,
@@ -90,6 +91,7 @@ class FakeTransport:
     clock: FakeClock | None = None
     status_read_delay: float = 0.0
     hang_status_reads: bool = False
+    status_read_delays: list[float] = field(default_factory=list)
     tv: TvState = field(default_factory=TvState)
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
     _pending: tuple[int, Callable[[], None]] | None = None
@@ -121,8 +123,11 @@ class FakeTransport:
             )
         if self.status_errors:
             raise self.status_errors.pop(0)
-        if self.clock is not None and self.status_read_delay:
-            self.clock.sleep(self.status_read_delay)
+        read_delay = (
+            self.status_read_delays.pop(0) if self.status_read_delays else self.status_read_delay
+        )
+        if self.clock is not None and read_delay:
+            self.clock.sleep(read_delay)
         if self._pending is not None:
             polls_left, effect = self._pending
             if polls_left == 0:

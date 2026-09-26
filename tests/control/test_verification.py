@@ -48,24 +48,46 @@ def status(
 
 
 def test_playback_in_reports_no_media_session_honestly_never_as_idle() -> None:
-    observation = _playback_in(PlaybackState.IDLE)(status())
+    observation = _playback_in(URL, PlaybackState.IDLE)(status())
 
     assert observation.matched is False
     assert observation.description == "no active media session"
 
 
+@pytest.mark.parametrize("content_id", [None, "", " ", " \t\n"])
+def test_playback_in_requires_a_usable_previously_observed_media_identity(
+    content_id: str | None,
+) -> None:
+    observation = _playback_in(content_id, PlaybackState.PLAYING)(
+        status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING))
+    )
+
+    assert observation.matched is False
+    assert observation.description == "media identity was not reported before the command"
+
+
+def test_playback_in_rejects_expected_state_on_replaced_media() -> None:
+    replacement = "http://media.local/replacement.mp4"
+    observation = _playback_in(URL, PlaybackState.PAUSED)(
+        status(media=MediaStatus(content_id=replacement, playback_state=PlaybackState.PAUSED))
+    )
+
+    assert observation.matched is False
+    assert observation.description == f"loaded content changed to {replacement!r} from {URL!r}"
+
+
 def test_playback_in_matches_one_of_several_accepted_states() -> None:
     for state in (PlaybackState.PLAYING, PlaybackState.BUFFERING):
-        observation = _playback_in(PlaybackState.PLAYING, PlaybackState.BUFFERING)(
-            status(media=MediaStatus(playback_state=state))
+        observation = _playback_in(URL, PlaybackState.PLAYING, PlaybackState.BUFFERING)(
+            status(media=MediaStatus(content_id=URL, playback_state=state))
         )
         assert observation.matched is True
         assert observation.description == f"playback is {state.value}"
 
 
 def test_playback_in_reports_the_contradicting_state() -> None:
-    observation = _playback_in(PlaybackState.PAUSED)(
-        status(media=MediaStatus(playback_state=PlaybackState.PLAYING))
+    observation = _playback_in(URL, PlaybackState.PAUSED)(
+        status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING))
     )
 
     assert observation.matched is False

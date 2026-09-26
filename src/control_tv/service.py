@@ -74,11 +74,24 @@ def _checked_id(device_id: DeviceId) -> DeviceId:
     return device_id
 
 
-def _playback_in(*states: PlaybackState) -> ExpectedState:
+def _usable_content_id(content_id: str | None) -> str | None:
+    return content_id if content_id is not None and content_id.strip() else None
+
+
+def _playback_in(expected_content_id: str | None, *states: PlaybackState) -> ExpectedState:
+    expected_content_id = _usable_content_id(expected_content_id)
+
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
+        if expected_content_id is None:
+            return Observation(False, "media identity was not reported before the command")
+        if media.content_id != expected_content_id:
+            return Observation(
+                False,
+                f"loaded content changed to {media.content_id!r} from {expected_content_id!r}",
+            )
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
 
     return check
@@ -209,23 +222,41 @@ class ControlService:
 
     def play(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        deadline = self._confirmation_deadline()
+        expected_content_id = self._playback_content_id(device_id, deadline)
         self._transport.play(device_id)
         return self._verify(
-            Command.PLAY, device_id, _playback_in(PlaybackState.PLAYING), "playback playing"
+            Command.PLAY,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.PLAYING),
+            "playback playing",
+            deadline=deadline,
         )
 
     def pause(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        deadline = self._confirmation_deadline()
+        expected_content_id = self._playback_content_id(device_id, deadline)
         self._transport.pause(device_id)
         return self._verify(
-            Command.PAUSE, device_id, _playback_in(PlaybackState.PAUSED), "playback paused"
+            Command.PAUSE,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.PAUSED),
+            "playback paused",
+            deadline=deadline,
         )
 
     def stop(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        deadline = self._confirmation_deadline()
+        expected_content_id = self._playback_content_id(device_id, deadline)
         self._transport.stop(device_id)
         return self._verify(
-            Command.STOP, device_id, _playback_in(PlaybackState.IDLE), "playback stopped"
+            Command.STOP,
+            device_id,
+            _playback_in(expected_content_id, PlaybackState.IDLE),
+            "playback stopped",
+            deadline=deadline,
         )
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
@@ -271,21 +302,52 @@ class ControlService:
             Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"
         )
 
+    def _confirmation_deadline(self) -> float | None:
+        timeout = self._confirm_timeout
+        return None if timeout is None else self._clock() + timeout
+
+    def _playback_content_id(self, device_id: DeviceId, deadline: float | None) -> str | None:
+        """Best-effort media identity captured before a playback command is sent.
+
+        A failed read must not turn an otherwise deliverable command into a delivery error.
+        Without a pre-command identity the command is still sent once, but later playback
+        state cannot prove which media reached that state and therefore cannot confirm it.
+        """
+        if deadline is None:
+            return None
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            return None
+        try:
+            status = self._transport.get_status(
+                device_id, timeout=min(self._status_timeout, remaining)
+            )
+        except ControlError:
+            return None
+        if self._clock() >= deadline:
+            return None
+        if status.connection is not ConnectionState.CONNECTED or status.media is None:
+            return None
+        return _usable_content_id(status.media.content_id)
+
     def _verify(
         self,
         command: Command,
         device_id: DeviceId,
         expected: ExpectedState,
         description: str,
+        *,
+        deadline: float | None = None,
     ) -> CommandResult:
         """Read the TV status until `expected` holds or the time budget is spent.
 
         The command was already sent by the caller; this only decides CONFIRMED versus
         UNCONFIRMED. `confirm_timeout` is a strict global budget: each status read is
         given only whatever remains of it (`CastTransport.get_status`'s own `timeout`
-        contract requires it to never block longer than that), so a slow or hung read can
-        never itself exceed the budget, and a status that only arrives after the budget
-        expired is never used to confirm - it is evidence that came too late. On
+        contract requires it to never block longer than that), so a slow or hung read cannot
+        consume more than the available budget. Playback commands pass a deadline created
+        before their identity snapshot, so snapshot and confirmation share one window. A
+        status that only arrives after the budget expired is never used to confirm. On
         UNCONFIRMED, `detail` states plainly what the TV last reported, or why nothing
         could be read at all - never a guess at what the missing command might have done.
         """
@@ -295,7 +357,8 @@ class ControlService:
                 command=command, device_id=device_id, confirmation=Confirmation.NOT_CHECKED
             )
 
-        deadline = self._clock() + timeout
+        if deadline is None:
+            deadline = self._clock() + timeout
         last_status: DeviceStatus | None = None
         last_error: ControlError | None = None
         last_observation: Observation | None = None
