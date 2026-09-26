@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   canDiscover,
   canRefresh,
+  canSelect,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -99,6 +100,9 @@ function renderDevices(elements: Elements, state: AppState, onSelect: (id: strin
     return;
   }
   devicesMessage.textContent = "Select a device to read its status.";
+  // `aria-disabled` rather than `disabled`: the buttons stay focusable for keyboard users,
+  // and a click while a request is in flight is ignored by the model (see `canSelect`).
+  const busy = !canSelect(state);
 
   for (const device of state.devices) {
     const isSelected = state.selected?.id === device.id;
@@ -109,6 +113,9 @@ function renderDevices(elements: Elements, state: AppState, onSelect: (id: strin
     button.dataset["deviceId"] = device.id;
     if (isSelected) {
       button.setAttribute("aria-current", "true");
+    }
+    if (busy) {
+      button.setAttribute("aria-disabled", "true");
     }
     const label = document.createElement("span");
     label.textContent = `${device.friendlyName} — ${device.host}:${device.port} (${device.kind})`;
@@ -174,6 +181,8 @@ function start(elements: Elements): void {
   let state = initialState();
 
   function render(): void {
+    // The list is rebuilt on every state change; put keyboard focus back on the same device.
+    const focusedDeviceId = document.activeElement?.getAttribute("data-device-id") ?? null;
     renderDevices(elements, state, (id) => {
       const next = selectDevice(state, id);
       update(next.state);
@@ -184,6 +193,11 @@ function start(elements: Elements): void {
     renderSelected(elements, state);
     elements.discoverButton.disabled = !canDiscover(state);
     elements.refreshButton.disabled = !canRefresh(state);
+    if (focusedDeviceId !== null) {
+      elements.devicesList
+        .querySelector<HTMLElement>(`[data-device-id="${CSS.escape(focusedDeviceId)}"]`)
+        ?.focus();
+    }
   }
 
   function update(next: AppState): void {

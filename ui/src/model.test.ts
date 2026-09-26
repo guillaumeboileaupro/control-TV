@@ -8,6 +8,7 @@ import { describe, test } from "node:test";
 import {
   canDiscover,
   canRefresh,
+  canSelect,
   describeFailure,
   describeStatus,
   failDiscovery,
@@ -96,7 +97,7 @@ describe("selection", () => {
     assert.equal(state.selected, null);
   });
 
-  test("changing the selection starts a new read for the new device", () => {
+  test("changing the selection starts a new read once the previous one has settled", () => {
     const first = selectDevice(discovered(device("a"), device("b")), "a");
     const settled = finishStatusRead(first.state, 1, { ok: true, status: FULL_STATUS });
 
@@ -106,13 +107,49 @@ describe("selection", () => {
     assert.deepEqual(second.request, { requestId: 2, deviceId: "b" });
   });
 
-  test("re-selecting the device already being read does not queue a second read", () => {
-    const first = selectDevice(discovered(device("a")), "a");
+  test("no selection is offered while a status read is in flight", () => {
+    const loading = selectDevice(discovered(device("a"), device("b")), "a");
 
-    const again = selectDevice(first.state, "a");
+    const other = selectDevice(loading.state, "b");
+    const same = selectDevice(loading.state, "a");
 
-    assert.equal(again.request, null);
-    assert.equal(again.state, first.state);
+    assert.equal(canSelect(loading.state), false);
+    assert.equal(other.request, null);
+    assert.equal(other.state, loading.state);
+    assert.equal(same.request, null);
+    assert.equal(same.state, loading.state);
+  });
+
+  test("rapid alternating clicks leave exactly one read in flight", () => {
+    let { state } = selectDevice(discovered(device("a"), device("b")), "a");
+    let started = 1;
+
+    for (const id of ["b", "a", "b", "a", "b"]) {
+      const next = selectDevice(state, id);
+      if (next.request !== null) {
+        started += 1;
+      }
+      state = next.state;
+    }
+
+    assert.equal(started, 1);
+    assert.equal(state.selected?.id, "a");
+    assert.deepEqual(state.status, { kind: "loading", requestId: 1 });
+    assert.equal(state.nextRequestId, 2);
+  });
+
+  test("selection is offered again once the read settles, whatever its outcome", () => {
+    const loading = selectDevice(discovered(device("a"), device("b")), "a").state;
+    const failure = { code: "timeout", message: "slow" };
+
+    assert.equal(canSelect(finishStatusRead(loading, 1, { ok: true, status: FULL_STATUS })), true);
+    assert.equal(canSelect(finishStatusRead(loading, 1, { ok: false, failure })), true);
+  });
+
+  test("selection is not offered while a discovery runs", () => {
+    const running = startDiscovery(discovered(device("a")));
+
+    assert.equal(canSelect(running), false);
   });
 });
 
@@ -134,15 +171,17 @@ describe("status reads", () => {
     assert.deepEqual(next.status, { kind: "failed", failure });
   });
 
-  test("a slow answer for the previous selection never overwrites the current one", () => {
+  test("an answer for an older read never overwrites the read now in flight", () => {
     const first = selectDevice(discovered(device("a"), device("b")), "a");
-    const second = selectDevice(first.state, "b");
+    const failure = { code: "timeout", message: "slow" };
+    const settled = finishStatusRead(first.state, 1, { ok: false, failure });
+    const second = selectDevice(settled, "b");
     assert.equal(second.request?.requestId, 2);
 
-    const afterStale = finishStatusRead(second.state, 1, { ok: true, status: FULL_STATUS });
+    const afterLate = finishStatusRead(second.state, 1, { ok: true, status: FULL_STATUS });
 
-    assert.deepEqual(afterStale.status, { kind: "loading", requestId: 2 });
-    assert.equal(afterStale.selected?.id, "b");
+    assert.deepEqual(afterLate.status, { kind: "loading", requestId: 2 });
+    assert.equal(afterLate.selected?.id, "b");
   });
 
   test("an answer that arrives after the selection was dropped is ignored", () => {

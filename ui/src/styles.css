@@ -123,6 +123,11 @@ button:focus-visible {
   text-align: left;
 }
 
+.device[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .device[aria-current="true"] {
   border-color: var(--color-accent);
   background: rgba(47, 212, 239, 0.12);

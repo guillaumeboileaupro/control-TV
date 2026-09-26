@@ -93,17 +93,25 @@ export function initialState(): AppState {
   };
 }
 
-// The backend is single-flight (one request at a time), so a discovery queued behind a
-// status read, or a status read queued behind a discovery, would eat into the other's
-// time budget. Rather than queue them, the UI does not offer one while the other runs.
-export function canDiscover(state: AppState): boolean {
+// The backend is single-flight (one request at a time) and every request's timeout starts
+// before it gets its turn, so anything queued behind a slow request eats into its own time
+// budget - and rapid clicks would queue without bound. The UI therefore keeps at most one
+// request in flight: while a discovery or a status read runs, it offers none of discovery,
+// device selection or refresh.
+function idle(state: AppState): boolean {
   return state.discovery.kind !== "running" && state.status.kind !== "loading";
 }
 
+export function canDiscover(state: AppState): boolean {
+  return idle(state);
+}
+
+export function canSelect(state: AppState): boolean {
+  return idle(state);
+}
+
 export function canRefresh(state: AppState): boolean {
-  return (
-    state.selected !== null && state.discovery.kind !== "running" && state.status.kind !== "loading"
-  );
+  return state.selected !== null && idle(state);
 }
 
 export function startDiscovery(state: AppState): AppState {
@@ -153,16 +161,14 @@ function beginStatusRead(
 }
 
 // Selects by the device's stable id, never by its display name (two devices can share a
-// friendly name). An id the backend did not just report is ignored.
+// friendly name). An id the backend did not just report is ignored, and so is any
+// selection while a request is already in flight (see `canSelect`).
 export function selectDevice(
   state: AppState,
   deviceId: string,
 ): { state: AppState; request: StatusRequest | null } {
   const device = state.devices.find((candidate) => candidate.id === deviceId);
-  if (device === undefined || state.discovery.kind === "running") {
-    return { state, request: null };
-  }
-  if (state.status.kind === "loading" && state.selected?.id === deviceId) {
+  if (device === undefined || !canSelect(state)) {
     return { state, request: null };
   }
   return beginStatusRead(state, device);
@@ -178,9 +184,9 @@ export function refreshStatus(state: AppState): {
   return beginStatusRead(state, state.selected);
 }
 
-// A response only applies if it answers the read that is still the current one. A
-// slower, older read (the operator changed the selection meanwhile, or a new discovery
-// dropped it) must never overwrite what is shown for the current selection.
+// A response only applies if it answers the read that is still the current one. Only one
+// read is ever in flight, so this is a safeguard rather than an everyday path: a late or
+// duplicate answer must never overwrite what is shown for the current selection.
 export function finishStatusRead(
   state: AppState,
   requestId: number,

@@ -25,12 +25,12 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 /// working discovery (bounded by `ControlService` itself) is never cut off by this
 /// outer guard first; only a bridge that is truly stuck exceeds it.
 const DISCOVERY_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
-/// Outer bound on one `get_status` round trip. The shared control layer already bounds a
-/// status read to its own 5s budget (`DEFAULT_STATUS_TIMEOUT` in `control_tv.service`);
-/// this is three times that, because the bridge is single-flight: a read can legitimately
-/// wait behind one earlier, slow read (the UI lets the operator change selection while a
-/// read is in flight) before its own 5s begins. Only a genuinely stuck bridge exceeds it.
-const STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+/// Outer bound on one `get_status` round trip: twice the control layer's own 5s status
+/// budget (`DEFAULT_STATUS_TIMEOUT` in `control_tv.service`), so only a genuinely stuck
+/// bridge exceeds it. The bridge is single-flight and this timer starts before a request
+/// gets its turn, so a request must never wait behind another: the UI keeps at most one
+/// request in flight (it offers no selection, refresh or discovery while one is running).
+const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
