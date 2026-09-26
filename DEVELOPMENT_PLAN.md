@@ -46,6 +46,9 @@ Exit criteria:
 
 ## Active review follow-up
 
+- [x] **Review fixes automation-validated:** superseded-instance cleanup uses the remaining status deadline and an empty-snapshot browser is stopped immediately; both targeted mutations fail, 291 tests pass with 97.76% coverage.
+- [x] **Implemented:** keep the PyChromecast discovery/zeroconf context alive for the lifetime of the cached Chromecast instances; repeated discovery atomically replaces the owned snapshot and cleanup tolerates a connection thread that has not started.
+- [x] **Automation and read-only hardware validated:** 289 tests and all Python quality gates pass; on real hardware, two bounded discoveries found the same UUID, each subsequent status read succeeded, and repeated close completed cleanly; this was revalidated after the review fixes.
 - [x] **Implemented and automation-validated:** disconnect each superseded PyChromecast instance before replacing the same UUID; repeated discovery and idempotent `close()` are covered by deterministic tests.
 - [x] **Implemented and automation-validated:** expose PyChromecast `adjusted_current_time` for actively playing media while preserving the last reported position for paused media; deterministic tests verify progression.
 - [x] **Implemented and automation-validated:** perform one bounded same-UUID rediscovery before command delivery when a cached connection is stale; never replay a command after its invocation starts.
@@ -58,7 +61,7 @@ Exit criteria:
 - [x] Real-hardware evidence is required before any hardware/platform checkbox can be completed.
 - [x] Coverage (95% minimum) and installed-dependency quality commands are implemented and validated; deterministic command tests cover orchestration and fail-fast behavior, and the defensive verification invariant is explicit.
 - [x] **P2 review follow-up:** `CastTransport.get_status` now takes an explicit `timeout`; `ControlService._verify` passes only the confirmation budget actually remaining before every read, and never treats a status that arrives after the budget expired as confirmation. The PyChromecast adapter's `get_status` (connection, bounded same-UUID recovery, and the receiver-status round trip) now honors that same per-call budget instead of its own fixed instance timeouts. Deterministic tests cover a blocked/hung read, the exact `timeout` handed to each poll, total elapsed time never exceeding the budget, a match confirmed just before the deadline, and a match arriving just after it (never confirmed).
-- [ ] Physical Chromecast/Google TV validation remains required; no hardware validation was performed in these commits.
+- [x] Read-only physical validation completed for discovery -> UUID selection -> connected receiver status, repeated discovery -> same UUID -> status, and repeated close; no media or receiver command was sent.
 
 ## Current implementation status - Tauri application shell
 
@@ -88,7 +91,8 @@ Deliverables:
 
 Exit criteria:
 - [x] at least one real compatible device was discovered on a real local network (validated 2026-09-25 through the Tauri shell -> Python bridge -> `ControlService.discover_devices` path added in this iteration; device names/addresses are not recorded here, see the local handoff);
-- [ ] a real device's status can be read and a command sent to it and confirmed - only discovery has been validated on real hardware so far, not connection or control;
+- [x] a real device status can be read after discovery and again after repeated discovery (validated read-only on 2026-09-26);
+- [ ] a real command can be sent and confirmed; no control command was sent during the read-only lifecycle validation;
 - [x] failures are represented explicitly rather than as false success.
 
 ## Phase 3 - Media controls
