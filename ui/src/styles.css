@@ -23,7 +23,8 @@
   --error: #b42318;
   --hover: #f3f5f8;
   --radius: 8px;
-  --gap: 16px;
+  /* Fluid rather than breakpointed: page gutter and headline scale with the width. */
+  --gap: clamp(12px, 4vw, 16px);
 }
 
 * {
@@ -263,10 +264,12 @@ button {
 }
 
 .summary-title {
+  display: -webkit-box;
   overflow: hidden;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .summary-sub,
@@ -373,9 +376,11 @@ button {
 }
 
 .device-name {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .device .check {
@@ -408,7 +413,7 @@ button {
 
 .headline {
   margin: 0;
-  font-size: 1.333rem;
+  font-size: clamp(1.2rem, 4.6vw, 1.333rem);
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -474,13 +479,13 @@ button {
 
 .fact {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 
 .note {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin: 12px 0 0;
   color: var(--muted);
@@ -495,7 +500,7 @@ button {
 
 .problem-title {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin: 0;
   color: var(--error);
@@ -524,19 +529,9 @@ button {
   font-family: ui-monospace, monospace;
 }
 
-/* Narrow screens: same order, tighter type; the picker already collapses to one row. */
-
-@media (max-width: 480px) {
-  :root {
-    --gap: 12px;
-  }
-
-  .headline {
-    font-size: 1.2rem;
-  }
-
-  .facts {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+/* Icons sit on the first line of text that may wrap (20px icon, 21.75px line). */
+.fact .icon,
+.note .icon,
+.problem-title .icon {
+  margin-top: 1px;
 }
