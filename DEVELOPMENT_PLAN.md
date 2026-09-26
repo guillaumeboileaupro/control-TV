@@ -95,7 +95,7 @@ Exit criteria:
 
 ## Known open items (audit of 2026-09-26)
 
-Verified in the code on 2026-09-26 and intentionally not fixed yet; each needs its own slice. None of them is a hardware finding.
+Verified in the code on 2026-09-26. Unchecked items are intentionally not fixed yet and each needs its own slice; a checked item was fixed afterwards and says where. None of them is a hardware finding.
 
 - [ ] **Distributable Python runtime:** `resolve_python()` (`src-tauri/src/lib.rs`) resolves the repository `.venv` from a compile-time path, so a built package only runs on the machine that built it (Phase 7).
 - [ ] **Tauri content security policy:** `tauri.conf.json` sets `"csp": null` (with `withGlobalTauri: true`); define a restrictive CSP before a release.
