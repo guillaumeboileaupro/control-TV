@@ -8,6 +8,7 @@ import pytest
 from control_tv.domain import (
     Command,
     CommandRejectedError,
+    CommandResult,
     Confirmation,
     ConnectionState,
     DeviceId,
@@ -55,6 +56,16 @@ def transport(clock: FakeClock) -> FakeTransport:
 @pytest.fixture
 def service(transport: FakeTransport, clock: FakeClock) -> ControlService:
     return make_service(transport, clock)
+
+
+def run_playback_command(service: ControlService, command: Command) -> CommandResult:
+    if command is Command.PLAY:
+        return service.play(DEVICE_ID)
+    if command is Command.PAUSE:
+        return service.pause(DEVICE_ID)
+    if command is Command.STOP:
+        return service.stop(DEVICE_ID)
+    raise AssertionError(f"not a playback command: {command}")
 
 
 def test_interfaces_are_satisfied_by_the_fake_and_the_service(
@@ -466,6 +477,104 @@ def test_media_identity_becoming_blank_during_confirmation_is_not_accepted(
     assert result.observed.media.content_id == replacement
     assert result.detail is not None
     assert f"loaded content changed to {replacement!r} from {MOVIE_URL!r}" in result.detail
+
+
+@pytest.mark.parametrize("command", [Command.PLAY, Command.PAUSE, Command.STOP])
+@pytest.mark.parametrize(
+    ("error_type", "message"),
+    [
+        (DeviceUnavailableError, "device vanished before delivery"),
+        (CommandRejectedError, "receiver rejected command"),
+        (OperationTimeoutError, "delivery result is ambiguous"),
+    ],
+)
+def test_each_playback_delivery_error_propagates_without_result_or_confirmation(
+    transport: FakeTransport,
+    clock: FakeClock,
+    command: Command,
+    error_type: type[DeviceUnavailableError | CommandRejectedError | OperationTimeoutError],
+    message: str,
+) -> None:
+    transport.fail_commands_with = error_type(message, device_id=DEVICE_ID)
+    service = make_service(transport, clock)
+
+    with pytest.raises(error_type):
+        run_playback_command(service, command)
+
+    assert transport.status_reads() == 1
+    assert transport.attempted() == [command.value]
+    assert transport.sent() == []
+
+
+@pytest.mark.parametrize(
+    ("command", "precommand_state", "contradictory_state"),
+    [
+        (Command.PLAY, PlaybackState.PLAYING, PlaybackState.PAUSED),
+        (Command.PAUSE, PlaybackState.PAUSED, PlaybackState.PLAYING),
+        (Command.STOP, PlaybackState.IDLE, PlaybackState.PLAYING),
+    ],
+)
+def test_precommand_expected_state_never_confirms_a_contradictory_postcommand_state(
+    transport: FakeTransport,
+    clock: FakeClock,
+    command: Command,
+    precommand_state: PlaybackState,
+    contradictory_state: PlaybackState,
+) -> None:
+    def show_precommand_state() -> None:
+        transport.tv.playback = precommand_state
+
+    def show_postcommand_state() -> None:
+        transport.tv.playback = contradictory_state
+
+    transport.ignore_commands = True
+    transport.status_effects = [show_precommand_state, show_postcommand_state]
+    service = make_service(transport, clock)
+
+    result = run_playback_command(service, command)
+
+    assert transport.sent() == [command.value]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.playback_state is contradictory_state
+
+
+@pytest.mark.parametrize("command", [Command.PLAY, Command.PAUSE, Command.STOP])
+def test_device_disappearing_after_each_playback_command_remains_unconfirmed(
+    transport: FakeTransport, clock: FakeClock, command: Command
+) -> None:
+    def disconnect_after_delivery() -> None:
+        transport.tv.connection = ConnectionState.DISCONNECTED
+
+    transport.ignore_commands = True
+    transport.status_effects = [lambda: None, disconnect_after_delivery]
+    service = make_service(transport, clock)
+
+    result = run_playback_command(service, command)
+
+    assert transport.sent() == [command.value]
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is not None
+    assert result.observed.connection is ConnectionState.DISCONNECTED
+    assert result.detail is not None
+    assert "connection is disconnected" in result.detail
+
+
+@pytest.mark.parametrize("command", [Command.PLAY, Command.PAUSE, Command.STOP])
+def test_late_identity_snapshot_never_confirms_any_playback_command(
+    transport: FakeTransport, clock: FakeClock, command: Command
+) -> None:
+    transport.status_read_delays = [1.01]
+    service = make_service(transport, clock, confirm_timeout=1.0)
+
+    result = run_playback_command(service, command)
+
+    assert transport.sent() == [command.value]
+    assert transport.status_reads() == 1
+    assert clock.now == pytest.approx(1.01)
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.observed is None
 
 
 # --- per-command expectations ---------------------------------------------------------------

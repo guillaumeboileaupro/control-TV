@@ -196,6 +196,17 @@ def make_transport(
     return transport, browser
 
 
+def send_playback_command(transport: PyChromecastTransport, command: str) -> None:
+    if command == "play":
+        transport.play(DEVICE_ID)
+    elif command == "pause":
+        transport.pause(DEVICE_ID)
+    elif command == "stop":
+        transport.stop(DEVICE_ID)
+    else:
+        raise AssertionError(f"not a playback command: {command}")
+
+
 def test_discovery_maps_stable_identity_and_keeps_browser_alive() -> None:
     cast_device = FakeCast()
     transport, browser = make_transport(cast_device)
@@ -433,6 +444,31 @@ def test_load_waits_for_delivery_acknowledgement() -> None:
             DEVICE_ID,
             MediaRequest(url="https://media.local/movie.mp4", content_type="video/mp4"),
         )
+
+
+@pytest.mark.parametrize("command", ["play", "pause", "stop"])
+@pytest.mark.parametrize(
+    ("library_error", "expected_error"),
+    [
+        (RequestTimeout("command", 4.0), OperationTimeoutError),
+        (OSError("connection lost after send"), DeviceUnavailableError),
+        (PyChromecastError("receiver rejected command"), CommandRejectedError),
+    ],
+)
+def test_each_playback_command_error_is_translated_without_replay(
+    command: str,
+    library_error: Exception,
+    expected_error: type[OperationTimeoutError | DeviceUnavailableError | CommandRejectedError],
+) -> None:
+    cast_device = FakeCast()
+    cast_device.media_controller.error = library_error
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(expected_error):
+        send_playback_command(transport, command)
+
+    assert [call[0] for call in cast_device.media_controller.calls] == [command]
+    assert cast_device.wait_timeouts == [3.0]
 
 
 def test_connection_timeout_is_translated_with_device_context() -> None:

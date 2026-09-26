@@ -111,6 +111,13 @@ Current playback-confirmation audit:
 - [x] deterministic timing/identity coverage passes; removing deadline reuse makes all four focused double-budget mutation tests fail;
 - [x] final local Ruff, format, strict mypy, 266-test suite, 98.12% coverage and dependency checks pass;
 
+Current play/pause/stop command audit:
+- [x] **P2 review follow-up:** failed transport calls are counted separately from delivered commands, proving exactly one attempted play/pause/stop call and zero delivered calls without conflating SENT with attempted;
+- [x] **Audit complete:** verify each command independently across delivery timeout, unavailable/rejected delivery, single-send/no-replay behavior, post-send disappearance, contradictory post-command state, late evidence and the shared confirmation budget;
+- [x] deterministic matrix validates all three commands; removing shared deadline reuse makes the three focused late-snapshot mutation tests fail;
+- [x] complete local Ruff, format, strict mypy, 343-test suite, 97.55% coverage and dependency checks pass; hosted CI is required on the final PR HEAD;
+- [ ] physical Chromecast/Google TV validation remains required; this audit sends no command to real hardware;
+
 Current confirmation-synchronization iteration:
 - [x] **Implemented:** bind seek confirmation to the `content_id` observed before command delivery, so different or unidentified media can never satisfy a position-only confirmation;
 - [x] deterministic targeted tests cover matching media, replaced media, missing media identity, contradictory positions and the unchanged global confirmation deadline;

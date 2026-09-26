@@ -94,11 +94,16 @@ class FakeTransport:
     status_read_delays: list[float] = field(default_factory=list)
     tv: TvState = field(default_factory=TvState)
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
+    command_attempts: list[str] = field(default_factory=list)
     _pending: tuple[int, Callable[[], None]] | None = None
 
     def sent(self) -> list[str]:
         """Names of the commands delivered to the TV (status reads excluded)."""
         return [name for name, _ in self.calls if name != "get_status"]
+
+    def attempted(self) -> list[str]:
+        """Names of command calls attempted, including calls that failed before delivery."""
+        return self.command_attempts.copy()
 
     def status_reads(self) -> int:
         return sum(1 for name, _ in self.calls if name == "get_status")
@@ -203,6 +208,7 @@ class FakeTransport:
 
     def _command(self, name: str, args: tuple[object, ...], effect: Callable[[], None]) -> None:
         self._require_known(DeviceId(str(args[0])))
+        self.command_attempts.append(name)
         if self.fail_commands_with is not None:
             raise self.fail_commands_with
         self.calls.append((name, args))
