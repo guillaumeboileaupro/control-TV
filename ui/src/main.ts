@@ -261,7 +261,9 @@ function start(elements: Elements): void {
 
   function renderContext(): void {
     const { context, contextBody, observed, refreshButton } = elements;
-    const refreshHadFocus = document.activeElement === refreshButton;
+    const active = document.activeElement;
+    const refreshHadFocus = active === refreshButton;
+    const bodyHadFocus = active !== null && contextBody.contains(active);
     context.hidden = state.selected === null;
     setBusy(refreshButton, !canRefresh(state));
     const loading = state.status.kind === "loading";
@@ -310,8 +312,13 @@ function start(elements: Elements): void {
         }
       }
     }
+    // Keep keyboard focus in the status area when the control that had it is replaced: a
+    // recovery button hands it to the refresh button while a read runs, and back again if
+    // the read fails once more.
     if (refreshHadFocus && refreshButton.hidden) {
       contextBody.querySelector<HTMLElement>(".problem .btn")?.focus();
+    } else if (bodyHadFocus && active !== null && !contextBody.contains(active)) {
+      refreshButton.focus();
     }
   }
 
