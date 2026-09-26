@@ -5,6 +5,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  // The validated logo lives once, in ../assets; serving that folder as the public dir
+  // makes it available as /logo.svg (dev and build) without a second copy to keep in sync.
+  publicDir: "../assets",
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

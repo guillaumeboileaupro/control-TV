@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::Manager;
 
@@ -25,6 +25,19 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 /// working discovery (bounded by `ControlService` itself) is never cut off by this
 /// outer guard first; only a bridge that is truly stuck exceeds it.
 const DISCOVERY_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
+/// Outer bound on one `get_status` round trip: twice the control layer's own 5s status
+/// budget (`DEFAULT_STATUS_TIMEOUT` in `control_tv.service`), so only a genuinely stuck
+/// bridge exceeds it. The bridge is single-flight and this timer starts before a request
+/// gets its turn, so a request must never wait behind another: the UI keeps at most one
+/// request in flight (it offers no selection, refresh or discovery while one is running).
+const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
+/// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
+/// the UI tell "the backend is not there" apart from "the device is not there".
+const CODE_BACKEND_UNAVAILABLE: &str = "backend_unavailable";
+const CODE_BRIDGE_TIMEOUT: &str = "bridge_timeout";
+const CODE_BRIDGE_TRANSPORT: &str = "bridge_transport";
 
 /// The one process boundary to the shared Python control layer.
 ///
@@ -44,10 +57,28 @@ struct PythonBridge {
     _child: Child,
 }
 
-#[derive(Debug, Deserialize)]
-struct BridgeError {
+/// The failure of one bridge-backed command, as the frontend receives it: a stable
+/// machine-readable `code` plus a human-readable `message`. It is both what the bridge
+/// sends as `error` (`Deserialize`) and what a rejected `invoke` carries (`Serialize`),
+/// so a `ControlError` code reaches the UI untouched instead of being flattened into text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BridgeFailure {
     code: String,
     message: String,
+}
+
+impl BridgeFailure {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+
+    /// The request or response could not travel to/from the bridge process at all.
+    fn transport(message: impl Into<String>) -> Self {
+        Self::new(CODE_BRIDGE_TRANSPORT, message)
+    }
 }
 
 /// Where `run` looks for the bridge implementation.
@@ -101,25 +132,29 @@ impl PythonBridge {
         })
     }
 
-    /// Send one `{method, params}` request and return its result, or a plain-text
-    /// error suitable for display (built from the bridge's `{code, message}` or from a
-    /// transport-level failure - the frontend does not need to distinguish the two yet).
-    fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    /// Send one `{method, params}` request and return its result, or the bridge's own
+    /// `{code, message}` error, or a `bridge_transport` failure when the request or its
+    /// response could not travel to/from the process at all.
+    fn call(&self, method: &str, params: Value) -> Result<Value, BridgeFailure> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let request = json!({ "id": id, "method": method, "params": params });
-        let line = serde_json::to_string(&request)
-            .map_err(|error| format!("failed to encode bridge request: {error}"))?;
+        let line = serde_json::to_string(&request).map_err(|error| {
+            BridgeFailure::transport(format!("failed to encode bridge request: {error}"))
+        })?;
 
         {
             let mut stdin = self
                 .stdin
                 .lock()
-                .map_err(|_| "bridge stdin lock poisoned".to_string())?;
-            writeln!(stdin, "{line}")
-                .map_err(|error| format!("failed to write to the bridge process: {error}"))?;
-            stdin
-                .flush()
-                .map_err(|error| format!("failed to flush the bridge process stdin: {error}"))?;
+                .map_err(|_| BridgeFailure::transport("bridge stdin lock poisoned"))?;
+            writeln!(stdin, "{line}").map_err(|error| {
+                BridgeFailure::transport(format!("failed to write to the bridge process: {error}"))
+            })?;
+            stdin.flush().map_err(|error| {
+                BridgeFailure::transport(format!(
+                    "failed to flush the bridge process stdin: {error}"
+                ))
+            })?;
         }
 
         let mut response_line = String::new();
@@ -127,12 +162,14 @@ impl PythonBridge {
             let mut stdout = self
                 .stdout
                 .lock()
-                .map_err(|_| "bridge stdout lock poisoned".to_string())?;
-            let bytes_read = stdout
-                .read_line(&mut response_line)
-                .map_err(|error| format!("failed to read from the bridge process: {error}"))?;
+                .map_err(|_| BridgeFailure::transport("bridge stdout lock poisoned"))?;
+            let bytes_read = stdout.read_line(&mut response_line).map_err(|error| {
+                BridgeFailure::transport(format!("failed to read from the bridge process: {error}"))
+            })?;
             if bytes_read == 0 {
-                return Err("the Python control bridge process exited unexpectedly".to_string());
+                return Err(BridgeFailure::transport(
+                    "the Python control bridge process exited unexpectedly",
+                ));
             }
         }
 
@@ -142,26 +179,28 @@ impl PythonBridge {
 
 /// Pure parsing/translation of one response line - factored out of `call` so it is
 /// testable without spawning a real process.
-fn parse_response(line: &str) -> Result<Value, String> {
-    let response: Value = serde_json::from_str(line.trim())
-        .map_err(|error| format!("received a malformed bridge response: {error}"))?;
+fn parse_response(line: &str) -> Result<Value, BridgeFailure> {
+    let response: Value = serde_json::from_str(line.trim()).map_err(|error| {
+        BridgeFailure::transport(format!("received a malformed bridge response: {error}"))
+    })?;
 
     let ok = response.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if ok {
         Ok(response.get("result").cloned().unwrap_or(Value::Null))
     } else {
-        let error: BridgeError = serde_json::from_value(
-            response.get("error").cloned().unwrap_or(Value::Null),
-        )
-        .map_err(|error| format!("bridge reported an error in an unexpected shape: {error}"))?;
-        Err(format!("{} ({})", error.message, error.code))
+        let failure = serde_json::from_value(response.get("error").cloned().unwrap_or(Value::Null))
+            .unwrap_or_else(|error| {
+                BridgeFailure::transport(format!(
+                    "bridge reported an error in an unexpected shape: {error}"
+                ))
+            });
+        Err(failure)
     }
 }
 
 /// Managed application state: either the bridge started successfully, or it did not -
-/// in which case every bridge-backed command reports why, instead of the whole
-/// application failing to launch. This is what "clear unavailable/error states" (an
-/// explicit interface requirement) means at the boundary layer, before any UI exists.
+/// in which case every bridge-backed command reports why (`backend_unavailable`), instead
+/// of the whole application failing to launch.
 enum BridgeState {
     Ready(PythonBridge),
     Unavailable(String),
@@ -192,31 +231,36 @@ async fn call_bridge(
     method: &'static str,
     params: Value,
     timeout: Duration,
-) -> Result<Value, String> {
+) -> Result<Value, BridgeFailure> {
     let task = tauri::async_runtime::spawn_blocking(move || {
         let guard = state
             .lock()
-            .map_err(|_| "bridge state lock poisoned".to_string())?;
+            .map_err(|_| BridgeFailure::transport("bridge state lock poisoned"))?;
         match &*guard {
             BridgeState::Ready(bridge) => bridge.call(method, params),
             BridgeState::Unavailable(reason) => {
-                Err(format!("Python control backend unavailable: {reason}"))
+                Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, reason.clone()))
             }
         }
     });
 
     match tokio::time::timeout(timeout, task).await {
         Ok(Ok(result)) => result,
-        Ok(Err(join_error)) => Err(format!("bridge worker thread failed: {join_error}")),
-        Err(_timed_out) => Err(format!(
-            "the Python control bridge did not respond within {:.0}s",
-            timeout.as_secs_f64()
+        Ok(Err(join_error)) => Err(BridgeFailure::transport(format!(
+            "bridge worker thread failed: {join_error}"
+        ))),
+        Err(_timed_out) => Err(BridgeFailure::new(
+            CODE_BRIDGE_TIMEOUT,
+            format!(
+                "the Python control bridge did not respond within {:.0}s",
+                timeout.as_secs_f64()
+            ),
         )),
     }
 }
 
 #[tauri::command]
-async fn bridge_ping(state: tauri::State<'_, SharedBridgeState>) -> Result<Value, String> {
+async fn bridge_ping(state: tauri::State<'_, SharedBridgeState>) -> Result<Value, BridgeFailure> {
     call_bridge(state.inner().clone(), "ping", json!({}), PING_TIMEOUT).await
 }
 
@@ -236,9 +280,36 @@ fn discovery_request(timeout_seconds: Option<f64>) -> (Value, Duration) {
 async fn bridge_discover_devices(
     state: tauri::State<'_, SharedBridgeState>,
     timeout_seconds: Option<f64>,
-) -> Result<Value, String> {
+) -> Result<Value, BridgeFailure> {
     let (params, timeout) = discovery_request(timeout_seconds);
     call_bridge(state.inner().clone(), "discover_devices", params, timeout).await
+}
+
+/// The request for one status read: only the stable device id, exactly as discovery
+/// reported it. Whether that id is valid, known or reachable is decided by the shared
+/// control layer, never here.
+fn status_request(device_id: &str) -> Value {
+    json!({ "deviceId": device_id })
+}
+
+async fn read_status(state: SharedBridgeState, device_id: &str) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state,
+        "get_status",
+        status_request(device_id),
+        STATUS_TIMEOUT,
+    )
+    .await
+}
+
+/// Read-only: asks the shared control layer for the selected device's observed status.
+/// Sends no playback, volume or mute command.
+#[tauri::command]
+async fn bridge_get_status(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    read_status(state.inner().clone(), &device_id).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -258,7 +329,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             bridge_ping,
-            bridge_discover_devices
+            bridge_discover_devices,
+            bridge_get_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -281,27 +353,47 @@ mod tests {
     }
 
     #[test]
-    fn translates_an_error_response_into_a_display_string() {
+    fn keeps_the_bridge_error_code_and_message_separate() {
         let error = parse_response(
             r#"{"id":1,"ok":false,"error":{"code":"invalid_argument","message":"bad timeout"}}"#,
         )
         .unwrap_err();
 
-        assert_eq!(error, "bad timeout (invalid_argument)");
+        assert_eq!(error, BridgeFailure::new("invalid_argument", "bad timeout"));
     }
 
     #[test]
     fn rejects_malformed_json() {
         let error = parse_response("not json").unwrap_err();
 
-        assert!(error.contains("malformed bridge response"), "{error}");
+        assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
+        assert!(
+            error.message.contains("malformed bridge response"),
+            "{error:?}"
+        );
     }
 
     #[test]
     fn a_missing_ok_field_is_treated_as_failure_not_success() {
         let error = parse_response(r#"{"id":1}"#).unwrap_err();
 
-        assert!(error.contains("unexpected shape"), "{error}");
+        assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
+        assert!(error.message.contains("unexpected shape"), "{error:?}");
+    }
+
+    #[test]
+    fn a_failure_serializes_as_the_code_and_message_object_the_frontend_reads() {
+        let failure = BridgeFailure::new("device_unavailable", "tv is asleep");
+
+        assert_eq!(
+            serde_json::to_value(&failure).unwrap(),
+            json!({"code": "device_unavailable", "message": "tv is asleep"})
+        );
+    }
+
+    #[test]
+    fn status_request_carries_only_the_stable_device_id() {
+        assert_eq!(status_request("uuid-1"), json!({"deviceId": "uuid-1"}));
     }
 
     #[test]
@@ -339,6 +431,28 @@ mod tests {
 
         assert_eq!(result["status"], "ready");
         assert!(result["controlTvVersion"].is_string());
+    }
+
+    /// The real bridge, real `ControlService`, real `PyChromecastTransport`: a device that
+    /// was never discovered is rejected before any network I/O, so this proves the Rust
+    /// -> Python `get_status` path and its error code end to end without a Chromecast.
+    #[test]
+    fn the_real_bridge_answers_get_status_for_an_undiscovered_device_with_its_code() {
+        let python = resolve_python();
+        if !python.exists() {
+            eprintln!(
+                "skipping: {} not found - run `python3 scripts/dev.py setup`",
+                python.display()
+            );
+            return;
+        }
+
+        let bridge = PythonBridge::spawn(&python).expect("failed to spawn the bridge process");
+        let error = bridge
+            .call("get_status", status_request("never-discovered"))
+            .unwrap_err();
+
+        assert_eq!(error.code, "device_not_found");
     }
 
     // --- P1 review (PR #4): bridge calls must not run on the async/main thread ---------
@@ -446,7 +560,8 @@ mod tests {
         ))
         .unwrap_err();
 
-        assert!(error.contains("exited unexpectedly"), "{error}");
+        assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
+        assert!(error.message.contains("exited unexpectedly"), "{error:?}");
     }
 
     #[test]
@@ -469,7 +584,67 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
-        assert!(error.contains("did not respond within"), "{error}");
+        assert_eq!(error.code, CODE_BRIDGE_TIMEOUT);
+        assert!(
+            error.message.contains("did not respond within"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn call_bridge_reports_an_unavailable_backend_with_its_own_code() {
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeState::Unavailable(
+            "failed to spawn the Python control bridge".to_string(),
+        )));
+
+        let error = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap_err();
+
+        assert_eq!(
+            error,
+            BridgeFailure::new(
+                CODE_BACKEND_UNAVAILABLE,
+                "failed to spawn the Python control bridge"
+            )
+        );
+    }
+
+    #[test]
+    fn read_status_sends_a_get_status_request_with_the_stable_device_id() {
+        // Echoes the request line it received back inside the result, so the test sees the
+        // exact wire request the command produced.
+        let (state, _script) =
+            ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+
+        let result = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap();
+
+        assert_eq!(result["received"]["method"], "get_status");
+        assert_eq!(result["received"]["params"], json!({"deviceId": "uuid-1"}));
+    }
+
+    #[test]
+    fn read_status_returns_the_bridge_status_result_unchanged() {
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":true,"result":{"status":{"deviceId":"uuid-1","connection":"connected","receiver":null,"media":null}}}'"#,
+        );
+
+        let result = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap();
+
+        assert_eq!(result["status"]["connection"], "connected");
+        assert_eq!(result["status"]["receiver"], Value::Null);
+    }
+
+    #[test]
+    fn read_status_relays_a_device_error_code_untouched() {
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":false,"error":{"code":"device_unavailable","message":"tv is asleep"}}'"#,
+        );
+
+        let error = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap_err();
+
+        assert_eq!(
+            error,
+            BridgeFailure::new("device_unavailable", "tv is asleep")
+        );
     }
 
     #[test]

@@ -1,0 +1,15 @@
+{
+  // Compiles only the pure model and its tests to plain ESM so Node's built-in runner can
+  // execute them (no test framework). The output stays inside node_modules/.cache, which
+  // is git-ignored and already part of the retained ui/node_modules.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "node_modules/.cache/control-tv-tests",
+    "rootDir": "src",
+    "rewriteRelativeImportExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["src/model.ts", "src/model.test.ts"],
+  "exclude": []
+}

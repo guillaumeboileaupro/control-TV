@@ -10,36 +10,110 @@
 
   <body>
     <!--
-      Application shell skeleton. Real views (device discovery/selection, receiver and
-      media state, playback controls, volume/mute, error/unavailable states) are built
-      as this section grows; see src/main.ts for the same structure on the TypeScript
-      side. Nothing here talks to Chromecast directly - every action goes through the
-      Tauri commands defined in src-tauri/src/lib.rs, which forward to the shared
-      Python control layer (src/control_tv/bridge.py). No control logic is duplicated
-      here.
+      A remote, not a dashboard: one surface, the current device and what it is doing first.
+      Nothing here talks to Chromecast directly; src/main.ts draws these regions from the
+      state rules in src/model.ts and reaches the devices only through the application's
+      commands. Icons are one consistent SVG set (24px grid, 1.75 stroke), referenced by id.
     -->
-    <main class="app">
-      <header class="app-header">
-        <h1>control-TV</h1>
-        <p id="backend-status" class="status" role="status">Checking control backend…</p>
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-tv" viewBox="0 0 24 24">
+          <rect x="3" y="4.5" width="18" height="12" rx="2" />
+          <path d="M8 20h8M12 16.5V20" />
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="M16 16l4.5 4.5" />
+        </symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24">
+          <path d="M19 12a7 7 0 1 1-2.05-4.95" />
+          <path d="M19 5v4h-4" />
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 24 24">
+          <path d="M5 12.5l4.5 4.5L19 7.5" />
+        </symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24">
+          <path d="M6 9l6 6 6-6" />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <path d="M8 5.5v13l10-6.5z" />
+        </symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24">
+          <rect x="7" y="5.5" width="3.5" height="13" rx="1" />
+          <rect x="13.5" y="5.5" width="3.5" height="13" rx="1" />
+        </symbol>
+        <symbol id="i-buffering" viewBox="0 0 24 24">
+          <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5" />
+        </symbol>
+        <symbol id="i-idle" viewBox="0 0 24 24">
+          <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+        </symbol>
+        <symbol id="i-unknown" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 16.5h.01M9.8 9.6a2.4 2.4 0 1 1 3.4 2.2c-.7.4-1.2.9-1.2 1.7" />
+        </symbol>
+        <symbol id="i-volume" viewBox="0 0 24 24">
+          <path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4z" />
+          <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11" />
+        </symbol>
+        <symbol id="i-volume-off" viewBox="0 0 24 24">
+          <path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4z" />
+          <path d="M16 9.5l5 5M21 9.5l-5 5" />
+        </symbol>
+        <symbol id="i-app" viewBox="0 0 24 24">
+          <rect x="4.5" y="4.5" width="6" height="6" rx="1.5" />
+          <rect x="13.5" y="4.5" width="6" height="6" rx="1.5" />
+          <rect x="4.5" y="13.5" width="6" height="6" rx="1.5" />
+          <rect x="13.5" y="13.5" width="6" height="6" rx="1.5" />
+        </symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7.5v5.5M12 16.5h.01" />
+        </symbol>
+        <symbol id="i-info" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5.5M12 7.5h.01" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <div class="app">
+      <header class="appbar">
+        <img class="logo" src="/logo.svg" alt="" width="32" height="27" />
+        <h1 class="wordmark">control-TV</h1>
       </header>
 
-      <!-- Device discovery / selection (Phase 4 next step) -->
-      <section class="panel" aria-labelledby="devices-heading">
-        <div class="panel-header">
-          <h2 id="devices-heading">Devices</h2>
-          <button id="discover-button" type="button">Discover devices</button>
-        </div>
-        <p id="devices-message" class="message"></p>
-        <ul id="devices-list" class="devices"></ul>
-      </section>
+      <div id="service-notice" class="notice" role="alert" hidden></div>
 
-      <!-- Placeholders for the next slices: receiver/media state, playback controls,
-           volume/mute. Left empty and unstyled on purpose - no UI is built for them
-           until the corresponding bridge methods and Tauri commands exist. -->
-      <section class="panel panel-placeholder" aria-hidden="true">
-        <p>Receiver/media state, playback controls, and volume/mute follow here.</p>
-      </section>
-    </main>
+      <main class="main">
+        <details id="picker" class="picker" open>
+          <summary id="picker-summary" class="picker-summary"></summary>
+          <div class="picker-body">
+            <button id="discover-button" class="btn btn-primary" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+              <span id="discover-label">Find devices</span>
+            </button>
+            <div id="devices-message" class="message" aria-live="polite"></div>
+            <ul id="devices-list" class="devices"></ul>
+          </div>
+        </details>
+
+        <section id="context" class="context" aria-label="Current device state" hidden>
+          <div class="context-head">
+            <p id="observed" class="meta"></p>
+            <button
+              id="refresh-button"
+              class="btn-icon"
+              type="button"
+              aria-label="Refresh status"
+              title="Refresh status"
+            >
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+            </button>
+          </div>
+          <div id="context-body" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
   </body>
 </html>
