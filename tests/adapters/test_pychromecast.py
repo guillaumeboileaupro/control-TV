@@ -37,9 +37,14 @@ NOW = datetime(2026, 9, 25, 13, 0, tzinfo=UTC)
 class FakeBrowser:
     def __init__(self) -> None:
         self.stopped = False
+        self.stop_calls = 0
+        self.stop_error: Exception | None = None
 
     def stop_discovery(self) -> None:
         self.stopped = True
+        self.stop_calls += 1
+        if self.stop_error is not None:
+            raise self.stop_error
 
 
 class FakeReceiverController:
@@ -110,6 +115,7 @@ class FakeCast:
         clock: FakeClock | None = None,
         wait_consumes: float = 0.0,
         disconnect_consumes: float = 0.0,
+        browser: FakeBrowser | None = None,
     ) -> None:
         self.uuid = UUID(str(DEVICE_ID))
         self.cast_info = SimpleNamespace(
@@ -135,6 +141,8 @@ class FakeCast:
         self.volume_calls: list[tuple[float, float]] = []
         self.mute_calls: list[tuple[bool, float]] = []
         self.disconnect_calls: list[float | None] = []
+        self.disconnect_error: Exception | None = None
+        self._browser = browser
         self._clock = clock
         self._wait_consumes = wait_consumes
         self._disconnect_consumes = disconnect_consumes
@@ -145,6 +153,8 @@ class FakeCast:
             self._clock.sleep(self._wait_consumes)
         if self.wait_error is not None:
             raise self.wait_error
+        if self._browser is not None and self._browser.stopped:
+            raise OSError("zeroconf context stopped before connection")
 
     def set_volume(self, level: float, *, timeout: float) -> float:
         self.volume_calls.append((level, timeout))
@@ -162,6 +172,8 @@ class FakeCast:
                 else min(timeout, self._disconnect_consumes)
             )
             self._clock.sleep(consumed)
+        if self.disconnect_error is not None:
+            raise self.disconnect_error
 
 
 def make_transport(
@@ -184,7 +196,7 @@ def make_transport(
     return transport, browser
 
 
-def test_discovery_maps_stable_identity_and_stops_browser() -> None:
+def test_discovery_maps_stable_identity_and_keeps_browser_alive() -> None:
     cast_device = FakeCast()
     transport, browser = make_transport(cast_device)
 
@@ -194,7 +206,12 @@ def test_discovery_maps_stable_identity_and_stops_browser() -> None:
     assert devices[0].friendly_name == "Living room"
     assert devices[0].kind is DeviceKind.CAST
     assert devices[0].host == "192.168.1.20"
+    assert browser.stopped is False
+
+    transport.close()
+
     assert browser.stopped is True
+    assert browser.stop_calls == 1
 
 
 def test_discovery_failure_is_translated() -> None:
@@ -566,6 +583,125 @@ def test_repeated_discovery_disconnects_only_the_superseded_same_uuid_instance()
     assert replacement.disconnect_calls == [3.0]
 
 
+def test_status_after_discovery_uses_live_discovery_context() -> None:
+    browser = FakeBrowser()
+    cast_device = FakeCast(browser=browser)
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        assert timeout == 1.0
+        return [cast(Chromecast, cast_device)], browser
+
+    transport = PyChromecastTransport(discoverer=discoverer, now=lambda: NOW)
+
+    transport.discover(timeout=1.0)
+    status = transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert status.device_id == DEVICE_ID
+    assert browser.stopped is False
+    assert len(cast_device.wait_timeouts) == 1
+    assert cast_device.wait_timeouts[0] is not None
+    assert 0 < cast_device.wait_timeouts[0] <= 1.0
+
+
+def test_successive_discoveries_replace_all_owned_resources_and_remain_usable() -> None:
+    first_browser = FakeBrowser()
+    second_browser = FakeBrowser()
+    first = FakeCast(browser=first_browser)
+    replacement = FakeCast(browser=second_browser)
+    discoveries = iter(((first, first_browser), (replacement, second_browser)))
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        cast_device, browser = next(discoveries)
+        return [cast(Chromecast, cast_device)], browser
+
+    transport = PyChromecastTransport(connection_timeout=3.0, discoverer=discoverer)
+
+    transport.discover(timeout=1.0)
+    transport.get_status(DEVICE_ID, timeout=1.0)
+    transport.discover(timeout=1.0)
+    status = transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert status.device_id == DEVICE_ID
+    assert first.disconnect_calls == [3.0]
+    assert first_browser.stop_calls == 1
+    assert replacement.disconnect_calls == []
+    assert second_browser.stopped is False
+
+    transport.close()
+
+    assert replacement.disconnect_calls == [3.0]
+    assert second_browser.stop_calls == 1
+
+
+def test_close_before_connection_start_tolerates_pychromecast_join_races() -> None:
+    browser = FakeBrowser()
+    browser.stop_error = RuntimeError("cannot join thread before it is started")
+    cast_device = FakeCast(browser=browser)
+    cast_device.disconnect_error = RuntimeError("cannot join thread before it is started")
+    transport = PyChromecastTransport(
+        discoverer=lambda timeout: ([cast(Chromecast, cast_device)], browser)
+    )
+
+    transport.discover(timeout=1.0)
+    transport.close()
+    transport.close()
+
+    assert cast_device.wait_timeouts == []
+    assert cast_device.disconnect_calls == [10.0]
+    assert browser.stop_calls == 1
+
+
+def test_discovery_mapping_error_cleans_new_resources_without_replacing_cache() -> None:
+    active_browser = FakeBrowser()
+    active = FakeCast(browser=active_browser)
+    broken_browser = FakeBrowser()
+    broken = FakeCast(browser=broken_browser)
+    broken.cast_info.port = "not-a-port"
+    discoveries = iter(((active, active_browser), (broken, broken_browser)))
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        cast_device, browser = next(discoveries)
+        return [cast(Chromecast, cast_device)], browser
+
+    transport = PyChromecastTransport(discoverer=discoverer)
+    transport.discover(timeout=1.0)
+
+    with pytest.raises(TypeError):
+        transport.discover(timeout=1.0)
+
+    assert broken.disconnect_calls == [10.0]
+    assert broken_browser.stop_calls == 1
+    assert active.disconnect_calls == []
+    assert active_browser.stopped is False
+    assert transport.get_status(DEVICE_ID, timeout=1.0).device_id == DEVICE_ID
+
+
+def test_cleanup_errors_do_not_orphan_logical_ownership_or_break_idempotence() -> None:
+    first_browser = FakeBrowser()
+    first_browser.stop_error = OSError("zeroconf shutdown failed")
+    second_browser = FakeBrowser()
+    first = FakeCast(browser=first_browser)
+    first.disconnect_error = RuntimeError("worker was never started")
+    replacement = FakeCast(browser=second_browser)
+    discoveries = iter(((first, first_browser), (replacement, second_browser)))
+
+    def discoverer(timeout: float) -> tuple[list[Chromecast], object]:
+        cast_device, browser = next(discoveries)
+        return [cast(Chromecast, cast_device)], browser
+
+    transport = PyChromecastTransport(discoverer=discoverer)
+
+    transport.discover(timeout=1.0)
+    transport.discover(timeout=1.0)
+    transport.close()
+    transport.close()
+
+    assert first.disconnect_calls == [10.0]
+    assert first_browser.stop_calls == 1
+    assert replacement.disconnect_calls == [10.0]
+    assert second_browser.stop_calls == 1
+
+
 def test_playing_media_uses_adjusted_position_between_cast_events() -> None:
     status = ControlledMediaStatus(adjusted=18.5)
     status.player_state = "PLAYING"
@@ -620,6 +756,10 @@ def test_discovery_uuid_selection_connects_and_reads_only_the_selected_status() 
     assert second.wait_timeouts[0] is not None
     assert 0 < second.wait_timeouts[0] <= 2.0
     assert second.receiver_controller.updates == 1
+    assert browser.stopped is False
+
+    transport.close()
+
     assert browser.stopped is True
 
 

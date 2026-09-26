@@ -99,30 +99,47 @@ class PyChromecastTransport:
         self._now = now
         self._clock = clock
         self._casts: dict[DeviceId, Chromecast] = {}
+        self._browser: object | None = None
 
     def discover(self, *, timeout: float) -> list[Device]:
+        """Replace the discovery snapshot while keeping its zeroconf owner alive.
+
+        PyChromecast gives every returned Chromecast the browser's zeroconf instance.
+        The browser must therefore live for exactly as long as those cached objects.
+        """
         if not math.isfinite(timeout) or timeout <= 0:
             raise InvalidArgumentError(f"discovery timeout must be a finite number > 0: {timeout}")
         browser: object | None = None
+        casts: list[Chromecast] = []
         try:
             casts, browser = self._discoverer(timeout)
             discovered = [self._device(cast_device) for cast_device in casts]
-            for cast_device in casts:
-                device_id = DeviceId(str(cast_device.uuid))
-                previous = self._casts.get(device_id)
-                if previous is not None and previous is not cast_device:
-                    self._disconnect(previous)
-                self._casts[device_id] = cast_device
-            return discovered
+            replacements = {DeviceId(str(cast_device.uuid)): cast_device for cast_device in casts}
         except DiscoveryError:
+            self._dispose_discovery(casts, browser)
             raise
         except (PyChromecastError, OSError) as error:
+            self._dispose_discovery(casts, browser)
             raise DiscoveryError(f"Cast discovery failed: {error}") from error
-        finally:
-            if browser is not None:
-                stop = getattr(browser, "stop_discovery", None)
-                if callable(stop):
-                    stop()
+        except Exception:
+            self._dispose_discovery(casts, browser)
+            raise
+
+        previous_casts = self._casts
+        previous_browser = self._browser
+        self._casts = replacements
+        self._browser = browser
+        for previous in previous_casts.values():
+            if all(previous is not current for current in replacements.values()):
+                self._disconnect(previous)
+        if previous_browser is not browser:
+            self._stop_browser(previous_browser)
+        return discovered
+
+    def _dispose_discovery(self, casts: list[Chromecast], browser: object | None) -> None:
+        for cast_device in casts:
+            self._disconnect(cast_device)
+        self._stop_browser(browser)
 
     def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
         """Read fresh status, never spending more than `timeout` seconds in total.
@@ -243,11 +260,14 @@ class PyChromecastTransport:
         )
 
     def close(self) -> None:
-        """Disconnect every cached socket worker owned by this adapter exactly once."""
+        """Release cached socket workers, discovery threads and zeroconf exactly once."""
         casts = list(self._casts.values())
+        browser = self._browser
         self._casts.clear()
+        self._browser = None
         for cast_device in casts:
             self._disconnect(cast_device)
+        self._stop_browser(browser)
 
     @staticmethod
     def _device(cast_device: Chromecast) -> Device:
@@ -346,8 +366,19 @@ class PyChromecastTransport:
 
     def _disconnect(self, cast_device: Chromecast, *, timeout: float | None = None) -> None:
         wait_timeout = self._connection_timeout if timeout is None else timeout
-        with suppress(PyChromecastError, OSError):
+        with suppress(PyChromecastError, OSError, RuntimeError):
             cast_device.disconnect(timeout=wait_timeout)
+
+    @staticmethod
+    def _stop_browser(browser: object | None) -> None:
+        if browser is None:
+            return
+        stop = getattr(browser, "stop_discovery", None)
+        if callable(stop):
+            # stop_discovery can race HostBrowser.start() and join() during early cleanup.
+            # The stop flag and zeroconf shutdown have already been requested in that case.
+            with suppress(PyChromecastError, OSError, RuntimeError):
+                stop()
 
     def _disconnect_bounded(self, cast_device: Chromecast, deadline: float) -> None:
         """Signal shutdown and wait no longer than the status budget still available."""
