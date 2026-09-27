@@ -169,7 +169,7 @@ class PyChromecastTransport:
         deadline = self._clock() + timeout
         cast_device = self._ready_bounded(device_id, deadline)
         self._receiver_status_bounded(cast_device, device_id, deadline)
-        media = self._media_status_bounded(cast_device, device_id, deadline)
+        media = self._fresh_media_status(cast_device, device_id, deadline)
         # Defense in depth: a library callback that violated its own timeout must never
         # let an over-budget snapshot escape as a successful status read.
         self._budget(self._request_timeout, deadline, device_id)
@@ -185,7 +185,7 @@ class PyChromecastTransport:
                 muted=receiver.volume_muted if receiver is not None else None,
                 standby=receiver.is_stand_by if receiver is not None else None,
             ),
-            media=self._media_status(media),
+            media=media,
         )
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> None:
@@ -425,17 +425,19 @@ class PyChromecastTransport:
                 f"could not read status from device {device_id}: {error}", device_id=device_id
             ) from error
 
-    def _media_status_bounded(
+    def _fresh_media_status(
         self, cast_device: Chromecast, device_id: DeviceId, deadline: float
-    ) -> PyMediaStatus:
-        """Ask the receiver for its media status now and parse only that reply.
+    ) -> MediaStatus | None:
+        """Ask the receiver for its media status now and report only what that reply says.
 
         PyChromecast merges every MEDIA_STATUS into one cached status: an empty status list is
         ignored and a field a message omits keeps its previous value, so the cache can still
-        describe a session that ended, or carry an old content id into a new state. Parsing
-        the reply into a new `MediaStatus` reports only what this read received. The request
-        is sent with `send_message_nocheck`, which never launches an application: when the
-        running application has no media namespace there is no media session to report.
+        describe a session that ended, or carry an old content id into a new state. The reply
+        is parsed into a new `MediaStatus` instead, and a field the reply omits is reported as
+        unknown rather than as that new object's default (a position of 0, no supported
+        command). The request is sent with `send_message_nocheck`, which never launches an
+        application: when the running application has no media namespace there is no media
+        session to report.
         """
         budget = self._budget(self._request_timeout, deadline, device_id)
         response = WaitResponse(budget, "media status")
@@ -445,7 +447,7 @@ class PyChromecastTransport:
             )
             response.wait_response()
         except UnsupportedNamespace:
-            return PyMediaStatus()
+            return None
         except pychromecast.RequestTimeout as error:
             raise OperationTimeoutError(
                 f"timed out reading media status from device {device_id}", device_id=device_id
@@ -464,7 +466,14 @@ class PyChromecastTransport:
             )
         fresh = PyMediaStatus()
         fresh.update(reply)
-        return fresh
+        entries = reply.get("status")
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        reported = entry if isinstance(entry, dict) else {}
+        return self._media_status(
+            fresh,
+            position_reported="currentTime" in reported,
+            commands_reported="supportedMediaCommands" in reported,
+        )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
         try:
@@ -483,7 +492,13 @@ class PyChromecastTransport:
             ) from error
 
     @staticmethod
-    def _media_status(status: PyMediaStatus) -> MediaStatus | None:
+    def _media_status(
+        status: PyMediaStatus,
+        *,
+        position_reported: bool = True,
+        commands_reported: bool = True,
+    ) -> MediaStatus | None:
+        """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
         if status.content_id is None and status.player_state in (
             MEDIA_PLAYER_STATE_IDLE,
             MEDIA_PLAYER_STATE_UNKNOWN,
@@ -491,7 +506,9 @@ class PyChromecastTransport:
             return None
         playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN)
         position = (
-            status.adjusted_current_time
+            None
+            if not position_reported
+            else status.adjusted_current_time
             if playback_state is PlaybackState.PLAYING
             else status.current_time
         )
@@ -502,5 +519,5 @@ class PyChromecastTransport:
             title=status.title,
             position_seconds=position,
             duration_seconds=status.duration,
-            supports_seek=status.supports_seek,
+            supports_seek=status.supports_seek if commands_reported else None,
         )

@@ -32,6 +32,7 @@ from control_tv.domain import (
     MediaRequest,
     OperationTimeoutError,
     PlaybackState,
+    UnsupportedOperationError,
 )
 from control_tv.service import ControlService
 from fakes import FakeClock
@@ -1283,7 +1284,7 @@ def test_media_fields_the_current_reply_omits_are_unknown_not_inherited() -> Non
     assert media.content_type is None
     assert media.title is None
     assert media.duration_seconds is None
-    assert media.supports_seek is False
+    assert media.supports_seek is None
 
 
 def test_a_replaced_session_reports_only_the_new_content() -> None:
@@ -1431,3 +1432,118 @@ def test_a_media_reply_that_is_not_a_status_is_unavailable_not_an_absent_session
 
     with pytest.raises(DeviceUnavailableError):
         transport.get_status(DEVICE_ID, timeout=5.0)
+
+
+def entry_without(field: str, **changes: object) -> dict[str, object]:
+    """A complete entry for the same content, with one field left out of the raw reply."""
+    entry = playing_entry() | changes
+    del entry[field]
+    return entry
+
+
+@pytest.mark.parametrize("state", ["PLAYING", "PAUSED", "BUFFERING"])
+def test_an_omitted_position_is_unknown_not_zero(state: str) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [entry_without("currentTime", playerState=state)]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.content_id == MOVIE
+    assert media.position_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        pytest.param(0, 0.0, id="explicit-zero"),
+        pytest.param(42.5, 42.5, id="valid"),
+        pytest.param(None, None, id="explicit-null"),
+    ],
+)
+def test_a_reported_position_is_kept_as_reported(
+    reported: float | None, expected: float | None
+) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"playerState": "PAUSED", "currentTime": reported}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.position_seconds == expected
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [
+        pytest.param("omitted", None, id="absent-is-unknown"),
+        pytest.param(0, False, id="explicit-zero-mask"),
+        pytest.param(1, False, id="pause-without-seek"),
+        pytest.param(SUPPORTS_PAUSE_AND_SEEK, True, id="seek-supported"),
+    ],
+)
+def test_seek_capability_is_unknown_only_when_the_reply_omits_it(
+    commands: int | str, expected: bool | None
+) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [
+        entry_without("supportedMediaCommands")
+        if commands == "omitted"
+        else playing_entry() | {"supportedMediaCommands": commands}
+    ]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.supports_seek is expected
+
+
+def test_seek_to_zero_is_not_confirmed_by_an_omitted_position() -> None:
+    """Same content, the reply after SEEK omits currentTime: PyChromecast's default of 0.0
+    must not be read as the receiver reporting position 0."""
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+    channel.after_command = {"SEEK": [entry_without("currentTime")]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 0.0)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "position was not reported" in (result.detail or "")
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_seek_to_zero_is_confirmed_by_a_reported_position_of_zero() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+    channel.after_command = {"SEEK": [playing_entry() | {"currentTime": 0.0}]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 0.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_seek_is_sent_when_the_reply_omits_the_capability() -> None:
+    """Unknown capability is not "unsupported": the service only refuses an explicit False."""
+    transport, channel = make_media_transport()
+    channel.state = [entry_without("supportedMediaCommands")]
+    channel.after_command = {"SEEK": [entry_without("supportedMediaCommands", currentTime=30.0)]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 30.0)
+
+    assert channel.sent_types().count("SEEK") == 1
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_seek_is_refused_before_sending_when_the_reply_reports_no_seek() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"supportedMediaCommands": 1}]
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    with pytest.raises(UnsupportedOperationError):
+        service.seek(DEVICE_ID, 30.0)
+
+    assert "SEEK" not in channel.sent_types()
