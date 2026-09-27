@@ -15,7 +15,7 @@ Record before testing:
 
 - 2026-09-26, read-only, recorded in PR #9: discovery with a 5 s bound (it returned after about 5 s), selection by UUID, receiver status read, a second discovery returning the same UUID, a second status read, and `close()` called twice without error. No command was sent.
 - 2026-09-26, read-only, through the desktop application (PRs #10, #13 and #14): discovery, selection by stable id, status read and refresh, rediscovery keeping the selection, change of selection, and the volume/mute display. No command was sent.
-- No command result (load, play, pause, stop, seek, volume, mute) is recorded yet.
+- 2026-09-26, command validation tranche: one `Pause` command was sent. Playback actually stopped and the application status showed `Paused`, but the command result was `UNCONFIRMED`. A later `Check state` was read-only and did not replay the command. Several hours later the media session had disappeared and the receiver was idle; that later state cannot be attributed to the earlier Pause. `Play`, `Seek`, `Stop`, volume and mute were not sent. No broader physical command-validation checkbox is completed from this observation.
 
 ## Discovery, identity and status
 
