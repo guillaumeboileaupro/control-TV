@@ -11,12 +11,14 @@ from typing import TypeVar
 
 import pychromecast
 from pychromecast import Chromecast
+from pychromecast.const import MESSAGE_TYPE
 from pychromecast.controllers.media import (
     MEDIA_PLAYER_STATE_BUFFERING,
     MEDIA_PLAYER_STATE_IDLE,
     MEDIA_PLAYER_STATE_PAUSED,
     MEDIA_PLAYER_STATE_PLAYING,
     MEDIA_PLAYER_STATE_UNKNOWN,
+    TYPE_GET_STATUS,
     TYPE_MEDIA_STATUS,
 )
 from pychromecast.controllers.media import (
@@ -27,6 +29,7 @@ from pychromecast.error import (
     NotConnected,
     PyChromecastError,
     RequestFailed,
+    UnsupportedNamespace,
 )
 from pychromecast.response_handler import WaitResponse
 
@@ -166,11 +169,11 @@ class PyChromecastTransport:
         deadline = self._clock() + timeout
         cast_device = self._ready_bounded(device_id, deadline)
         self._receiver_status_bounded(cast_device, device_id, deadline)
+        media = self._fresh_media_status(cast_device, device_id, deadline)
         # Defense in depth: a library callback that violated its own timeout must never
         # let an over-budget snapshot escape as a successful status read.
         self._budget(self._request_timeout, deadline, device_id)
         receiver = cast_device.status
-        media = cast_device.media_controller.status
         return DeviceStatus(
             device_id=device_id,
             connection=ConnectionState.CONNECTED,
@@ -182,7 +185,7 @@ class PyChromecastTransport:
                 muted=receiver.volume_muted if receiver is not None else None,
                 standby=receiver.is_stand_by if receiver is not None else None,
             ),
-            media=self._media_status(media),
+            media=media,
         )
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> None:
@@ -422,6 +425,58 @@ class PyChromecastTransport:
                 f"could not read status from device {device_id}: {error}", device_id=device_id
             ) from error
 
+    def _fresh_media_status(
+        self, cast_device: Chromecast, device_id: DeviceId, deadline: float
+    ) -> MediaStatus | None:
+        """Ask the receiver for its media status now and report only what that reply says.
+
+        PyChromecast merges every MEDIA_STATUS into one cached status: an empty status list is
+        ignored and a field a message omits keeps its previous value, so the cache can still
+        describe a session that ended, or carry an old content id into a new state. The reply
+        is parsed into a new `MediaStatus` instead, and a field the reply omits is reported as
+        unknown rather than as that new object's default (a position of 0, no supported
+        command). The request is sent with `send_message_nocheck`, which never launches an
+        application: when the running application has no media namespace there is no media
+        session to report.
+        """
+        budget = self._budget(self._request_timeout, deadline, device_id)
+        response = WaitResponse(budget, "media status")
+        try:
+            cast_device.media_controller.send_message_nocheck(
+                {MESSAGE_TYPE: TYPE_GET_STATUS}, callback_function=response.callback
+            )
+            response.wait_response()
+        except UnsupportedNamespace:
+            return None
+        except pychromecast.RequestTimeout as error:
+            raise OperationTimeoutError(
+                f"timed out reading media status from device {device_id}", device_id=device_id
+            ) from error
+        except (NotConnected, ChromecastConnectionError, PyChromecastError, OSError) as error:
+            raise DeviceUnavailableError(
+                f"could not read media status from device {device_id}: {error}",
+                device_id=device_id,
+            ) from error
+        reply = response.response
+        reply_type = reply.get(MESSAGE_TYPE) if reply is not None else None
+        if reply is None or reply_type != TYPE_MEDIA_STATUS:
+            raise DeviceUnavailableError(
+                f"device {device_id} answered the media status request with {reply_type!r}",
+                device_id=device_id,
+            )
+        fresh = PyMediaStatus()
+        fresh.update(reply)
+        entries = reply.get("status")
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        reported = entry if isinstance(entry, dict) else {}
+        # A command mask is only usable as a number: omitted or null means unknown.
+        commands = reported.get("supportedMediaCommands")
+        return self._media_status(
+            fresh,
+            position_reported="currentTime" in reported,
+            commands_reported=isinstance(commands, int) and not isinstance(commands, bool),
+        )
+
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
         try:
             return operation()
@@ -439,24 +494,38 @@ class PyChromecastTransport:
             ) from error
 
     @staticmethod
-    def _media_status(status: PyMediaStatus) -> MediaStatus | None:
+    def _media_status(
+        status: PyMediaStatus,
+        *,
+        position_reported: bool = True,
+        commands_reported: bool = True,
+    ) -> MediaStatus | None:
+        """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
         if status.content_id is None and status.player_state in (
             MEDIA_PLAYER_STATE_IDLE,
             MEDIA_PLAYER_STATE_UNKNOWN,
         ):
             return None
         playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN)
+        # Extrapolating a playing position needs the playback rate; without one (a null
+        # rate), the position is the one the receiver reported.
+        extrapolate = playback_state is PlaybackState.PLAYING and isinstance(
+            status.playback_rate, int | float
+        )
         position = (
-            status.adjusted_current_time
-            if playback_state is PlaybackState.PLAYING
+            None
+            if not position_reported
+            else status.adjusted_current_time
+            if extrapolate
             else status.current_time
         )
+        metadata = status.media_metadata
         return MediaStatus(
             playback_state=playback_state,
             content_id=status.content_id,
             content_type=status.content_type,
-            title=status.title,
+            title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,
             duration_seconds=status.duration,
-            supports_seek=status.supports_seek,
+            supports_seek=status.supports_seek if commands_reported else None,
         )

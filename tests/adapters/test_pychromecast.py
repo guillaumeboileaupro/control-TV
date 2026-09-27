@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.metadata
 import math
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -10,13 +12,17 @@ from uuid import UUID
 import pychromecast.response_handler
 import pytest
 from pychromecast import Chromecast, PyChromecastError, RequestTimeout
+from pychromecast.controllers.media import MediaController
 from pychromecast.controllers.media import MediaStatus as PyMediaStatus
-from pychromecast.error import RequestFailed
+from pychromecast.error import RequestFailed, UnsupportedNamespace
+from pychromecast.generated.cast_channel_pb2 import CastMessage
+from pychromecast.socket_client import SocketClient
 
 import control_tv.adapters.pychromecast as pychromecast_adapter
 from control_tv.adapters import PyChromecastTransport
 from control_tv.domain import (
     CommandRejectedError,
+    Confirmation,
     DeviceId,
     DeviceKind,
     DeviceNotFoundError,
@@ -26,6 +32,7 @@ from control_tv.domain import (
     MediaRequest,
     OperationTimeoutError,
     PlaybackState,
+    UnsupportedOperationError,
 )
 from control_tv.service import ControlService
 from fakes import FakeClock
@@ -51,6 +58,7 @@ class FakeReceiverController:
     def __init__(self, clock: FakeClock | None = None, consumes: float = 0.0) -> None:
         self.error: Exception | None = None
         self.updates = 0
+        self.launched: list[str] = []
         self._clock = clock
         self._consumes = consumes
 
@@ -61,6 +69,13 @@ class FakeReceiverController:
         if self.error is not None:
             raise self.error
         callback_function(True, {})  # type: ignore[operator]
+
+    def launch_app(self, app_id: str, **kwargs: object) -> None:
+        """Recorded, never performed: a status read must not start an application."""
+        self.launched.append(app_id)
+        callback = kwargs.get("callback_function")
+        if callback is not None:
+            callback(False, None)  # type: ignore[operator]
 
 
 class ControlledMediaStatus(PyMediaStatus):
@@ -78,6 +93,9 @@ class ControlledMediaStatus(PyMediaStatus):
 class FakeMediaController:
     def __init__(self) -> None:
         self.status = PyMediaStatus()
+        # What the receiver answers on the media channel; empty means no media session.
+        self.reported: list[dict[str, object]] = []
+        self.status_requests = 0
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.error: Exception | None = None
         self.acknowledge_load = True
@@ -94,6 +112,16 @@ class FakeMediaController:
         if self.acknowledge_load:
             callback = kwargs["callback_function"]
             callback(self.load_sent, self.load_response)  # type: ignore[operator]
+
+    def send_message_nocheck(
+        self,
+        data: dict[str, object],
+        *,
+        callback_function: Callable[[bool, dict[str, object] | None], None],
+    ) -> None:
+        assert data == {"type": "GET_STATUS"}
+        self.status_requests += 1
+        callback_function(True, {"type": "MEDIA_STATUS", "status": list(self.reported)})
 
     def play(self, *, timeout: float) -> None:
         self._call("play", timeout=timeout)
@@ -246,14 +274,7 @@ def test_unknown_device_never_connects() -> None:
 
 def test_status_is_fresh_receiver_and_media_snapshot() -> None:
     cast_device = FakeCast()
-    media = cast_device.media_controller.status
-    media.player_state = "PLAYING"
-    media.content_id = "https://media.local/movie.mp4"
-    media.content_type = "video/mp4"
-    media.current_time = 12.0
-    media.duration = 90.0
-    media.media_metadata = {"title": "Movie"}
-    media.supported_media_commands = 2
+    cast_device.media_controller.reported = [playing_entry()]
     transport, _ = make_transport(cast_device)
 
     status = transport.get_status(DEVICE_ID, timeout=5.0)
@@ -266,6 +287,7 @@ def test_status_is_fresh_receiver_and_media_snapshot() -> None:
     assert status.media.content_id == "https://media.local/movie.mp4"
     assert status.media.title == "Movie"
     assert cast_device.receiver_controller.updates == 1
+    assert cast_device.media_controller.status_requests == 1
     assert cast_device.wait_timeouts[-1] == 3.0
 
 
@@ -338,6 +360,10 @@ def test_get_status_bounds_the_receiver_read_by_what_the_connect_left_behind(
         def callback(self) -> Callable[..., None]:
             return self._real.callback
 
+        @property
+        def response(self) -> dict[str, object] | None:
+            return self._real.response
+
         def wait_response(self) -> None:
             self._real.wait_response()
 
@@ -353,7 +379,7 @@ def test_get_status_bounds_the_receiver_read_by_what_the_connect_left_behind(
 
     assert status is not None
     assert cast_device.wait_timeouts[-1] == 1.0
-    assert recorded_timeouts == [pytest.approx(0.4)]
+    assert recorded_timeouts == [pytest.approx(0.4), pytest.approx(0.4)]
 
 
 def test_get_status_recovers_a_stale_connection_within_its_own_budget() -> None:
@@ -1031,3 +1057,532 @@ def test_terminal_load_rejection_never_starts_service_confirmation() -> None:
 
     assert [call[0] for call in cast_device.media_controller.calls] == ["load_media"]
     assert cast_device.receiver_controller.updates == 0
+
+
+# --- Media status freshness -------------------------------------------------------------
+#
+# PyChromecast keeps one cached `MediaStatus` per device and merges every MEDIA_STATUS
+# message into it (`MediaStatus.update`). The tests below first pin what PyChromecast
+# 14.0.10 actually does with the messages a receiver sends, then require that a status
+# read never presents, or lets a confirmation use, media information that the current read
+# did not itself receive.
+
+MEDIA_NAMESPACE = "urn:x-cast:com.google.cast.media"
+MOVIE = "https://media.local/movie.mp4"
+EPISODE = "https://media.local/episode.mp4"
+SUPPORTS_PAUSE_AND_SEEK = 3
+
+
+def playing_entry(content_id: str = MOVIE, session: int = 1) -> dict[str, object]:
+    """One complete media session entry, as a receiver reports it after a load."""
+    return {
+        "mediaSessionId": session,
+        "playerState": "PLAYING",
+        "currentTime": 12.0,
+        "playbackRate": 1,
+        "supportedMediaCommands": SUPPORTS_PAUSE_AND_SEEK,
+        "media": {
+            "contentId": content_id,
+            "contentType": "video/mp4",
+            "duration": 90.0,
+            "metadata": {"title": "Movie"},
+        },
+    }
+
+
+def idle_entry_without_media(session: int = 1) -> dict[str, object]:
+    """A partial entry: the state changed, the `media` block is not repeated."""
+    return {"mediaSessionId": session, "playerState": "IDLE", "idleReason": "CANCELLED"}
+
+
+def media_status_message(*entries: dict[str, object]) -> dict[str, object]:
+    return {"type": "MEDIA_STATUS", "status": list(entries)}
+
+
+def test_characterized_pychromecast_version() -> None:
+    """The characterization below is for this exact version; revisit it on any upgrade."""
+    assert importlib.metadata.version("PyChromecast") == "14.0.10"
+
+
+def test_pychromecast_ignores_an_empty_status_list_and_keeps_the_ended_session() -> None:
+    cached = PyMediaStatus()
+    cached.update(media_status_message(playing_entry()))
+
+    cached.update(media_status_message())
+
+    assert cached.player_state == "PLAYING"
+    assert cached.content_id == MOVIE
+    assert cached.media_session_id == 1
+
+
+def test_pychromecast_keeps_the_old_content_id_on_a_partial_idle_status() -> None:
+    cached = PyMediaStatus()
+    cached.update(media_status_message(playing_entry()))
+
+    cached.update(media_status_message(idle_entry_without_media()))
+
+    assert cached.player_state == "IDLE"
+    assert cached.content_id == MOVIE
+    assert cached.duration == 90.0
+    assert cached.title == "Movie"
+
+
+def test_pychromecast_carries_old_media_fields_into_a_new_session() -> None:
+    cached = PyMediaStatus()
+    cached.update(media_status_message(playing_entry(session=1)))
+
+    cached.update(
+        media_status_message({"mediaSessionId": 2, "playerState": "PAUSED", "currentTime": 3.0})
+    )
+
+    assert cached.media_session_id == 2
+    assert cached.player_state == "PAUSED"
+    assert cached.content_id == MOVIE
+    assert cached.content_type == "video/mp4"
+    assert cached.duration == 90.0
+
+
+def test_a_new_pychromecast_status_holds_only_the_message_it_parsed() -> None:
+    fresh = PyMediaStatus()
+    fresh.update(media_status_message(idle_entry_without_media()))
+
+    assert fresh.player_state == "IDLE"
+    assert fresh.content_id is None
+    assert fresh.duration is None
+
+    empty = PyMediaStatus()
+    empty.update(media_status_message())
+
+    assert empty.player_state == "UNKNOWN"
+    assert empty.content_id is None
+    assert empty.media_session_id is None
+
+
+class ScriptedMediaChannel:
+    """The receiver's side of the media namespace, for PyChromecast's real MediaController.
+
+    It mirrors what PyChromecast's `SocketClient.send_app_message` does: a namespace the
+    running application does not expose is refused, and a reply is first merged by the
+    controller into its cached status and then handed to the request's callback. `state` is
+    what the receiver currently reports; a command listed in `after_command` changes it.
+    `mode` decides how requests are answered: "reply", "silent" (never), "late" (held
+    until `deliver_late`) or "refuse" (not sent).
+    """
+
+    def __init__(self, receiver_controller: FakeReceiverController) -> None:
+        self.receiver_controller = receiver_controller
+        self.app_namespaces = [MEDIA_NAMESPACE]
+        self.destination_id = "transport-1"
+        self.state: list[dict[str, object]] = []
+        self.after_command: dict[str, list[dict[str, object]]] = {}
+        self.mode = "reply"
+        self.sent: list[dict[str, object]] = []
+        self.controller = MediaController()
+        self.controller.registered(cast(SocketClient, self))
+        self._late: list[tuple[Callable[[bool, dict[str, object] | None], None], dict[str, object]]]
+        self._late = []
+        self._request_id = 0
+
+    def send_app_message(
+        self,
+        namespace: str,
+        message: dict[str, object],
+        *,
+        inc_session_id: bool = False,
+        callback_function: Callable[[bool, dict[str, object] | None], None] | None = None,
+        no_add_request_id: bool = False,
+    ) -> None:
+        del inc_session_id, no_add_request_id
+        if namespace not in self.app_namespaces:
+            if callback_function is not None:
+                callback_function(False, None)
+            raise UnsupportedNamespace(f"Namespace {namespace} is not supported")
+        self.sent.append(dict(message))
+        if self.mode == "refuse":
+            if callback_function is not None:
+                callback_function(False, None)
+            return
+        new_state = self.after_command.get(str(message["type"]))
+        if new_state is not None:
+            self.state = new_state
+        self._request_id += 1
+        reply = media_status_message(*self.state) | {"requestId": self._request_id}
+        if self.mode == "silent" or callback_function is None:
+            return
+        if self.mode == "late":
+            self._late.append((callback_function, reply))
+            return
+        self.controller.receive_message(cast(CastMessage, None), reply)
+        callback_function(True, reply)
+
+    def broadcast(self, *entries: dict[str, object]) -> None:
+        """An unsolicited MEDIA_STATUS pushed by the receiver to every connected sender."""
+        self.controller.receive_message(cast(CastMessage, None), media_status_message(*entries))
+
+    def deliver_late(self) -> None:
+        for callback_function, reply in self._late:
+            self.controller.receive_message(cast(CastMessage, None), reply)
+            callback_function(True, reply)
+        self._late = []
+
+    def sent_types(self) -> list[str]:
+        return [str(message["type"]) for message in self.sent]
+
+
+def make_media_transport() -> tuple[PyChromecastTransport, ScriptedMediaChannel]:
+    cast_device = FakeCast()
+    channel = ScriptedMediaChannel(cast_device.receiver_controller)
+    cast_device.media_controller = channel.controller  # type: ignore[assignment]
+    cast_device.socket_client = channel  # type: ignore[assignment]
+    transport = PyChromecastTransport(connection_timeout=3.0, request_timeout=4.0, now=lambda: NOW)
+    transport._casts[DEVICE_ID] = cast(Chromecast, cast_device)
+    return transport, channel
+
+
+def test_status_read_reports_the_media_the_receiver_reports_now() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.playback_state is PlaybackState.PLAYING
+    assert media.content_id == MOVIE
+    assert media.title == "Movie"
+    assert media.duration_seconds == 90.0
+    assert media.supports_seek is True
+    assert channel.sent_types() == ["GET_STATUS"]
+
+
+def test_an_ended_session_reported_as_an_empty_list_is_absent() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.state = []
+
+    assert transport.get_status(DEVICE_ID, timeout=5.0).media is None
+
+
+def test_a_partial_idle_status_does_not_inherit_the_previous_content() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.state = [idle_entry_without_media()]
+
+    assert transport.get_status(DEVICE_ID, timeout=5.0).media is None
+
+
+def test_media_fields_the_current_reply_omits_are_unknown_not_inherited() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry(session=1))
+    channel.state = [{"mediaSessionId": 2, "playerState": "PAUSED", "currentTime": 3.0}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.playback_state is PlaybackState.PAUSED
+    assert media.position_seconds == 3.0
+    assert media.content_id is None
+    assert media.content_type is None
+    assert media.title is None
+    assert media.duration_seconds is None
+    assert media.supports_seek is None
+
+
+def test_a_replaced_session_reports_only_the_new_content() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry(MOVIE, session=1))
+    channel.state = [playing_entry(EPISODE, session=2)]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.content_id == EPISODE
+
+
+def test_an_application_without_media_has_no_session_and_nothing_is_launched() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.app_namespaces = []
+
+    assert transport.get_status(DEVICE_ID, timeout=5.0).media is None
+    assert channel.sent == []
+    assert channel.receiver_controller.launched == []
+
+
+def test_no_media_reply_within_the_budget_is_a_timeout_not_a_cached_status() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.mode = "silent"
+    started = time.monotonic()
+
+    with pytest.raises(OperationTimeoutError):
+        transport.get_status(DEVICE_ID, timeout=0.2)
+
+    assert time.monotonic() - started < 1.0
+    assert channel.sent_types() == ["GET_STATUS"]
+
+
+def test_the_media_request_gets_only_what_the_receiver_read_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[tuple[str, float]] = []
+
+    class RecordingWaitResponse:
+        def __init__(self, timeout: float, description: str) -> None:
+            recorded.append((description, timeout))
+            self._real = pychromecast.response_handler.WaitResponse(timeout, description)
+
+        @property
+        def callback(self) -> Callable[..., None]:
+            return self._real.callback
+
+        @property
+        def response(self) -> dict[str, object] | None:
+            return self._real.response
+
+        def wait_response(self) -> None:
+            self._real.wait_response()
+
+    monkeypatch.setattr(pychromecast_adapter, "WaitResponse", RecordingWaitResponse)
+    clock = FakeClock()
+    transport, channel = make_media_transport()
+    transport._clock = clock.monotonic
+    channel.receiver_controller._clock = clock
+    channel.receiver_controller._consumes = 0.3
+    channel.state = [playing_entry()]
+
+    transport.get_status(DEVICE_ID, timeout=1.0)
+
+    assert recorded == [("receiver status", 1.0), ("media status", pytest.approx(0.7))]
+
+
+def test_a_late_media_reply_is_never_used_by_a_later_read() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+    channel.mode = "late"
+
+    with pytest.raises(OperationTimeoutError):
+        transport.get_status(DEVICE_ID, timeout=0.2)
+
+    channel.deliver_late()
+    channel.mode = "reply"
+    channel.state = []
+
+    assert transport.get_status(DEVICE_ID, timeout=5.0).media is None
+
+
+def test_a_media_request_that_could_not_be_sent_is_an_unavailable_device() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.mode = "refuse"
+
+    with pytest.raises(DeviceUnavailableError):
+        transport.get_status(DEVICE_ID, timeout=5.0)
+
+
+def test_stop_is_not_confirmed_by_a_content_id_the_receiver_did_not_repeat() -> None:
+    """A receiver answering STOP with a partial IDLE entry leaves PyChromecast's cache as
+    IDLE plus the old content id; that inherited identity must not confirm the stop."""
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.state = [playing_entry()]
+    channel.after_command = {"STOP": [idle_entry_without_media()]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.stop(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert channel.sent_types().count("STOP") == 1
+
+
+def test_pause_is_confirmed_by_a_complete_paused_reply_for_the_same_content() -> None:
+    transport, channel = make_media_transport()
+    channel.broadcast(playing_entry())
+    channel.state = [playing_entry()]
+    paused = playing_entry() | {"playerState": "PAUSED"}
+    channel.after_command = {"PAUSE": [paused]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(None, id="no-data"),
+        pytest.param({"type": "INVALID_REQUEST", "reason": "INVALID_COMMAND"}, id="error-reply"),
+    ],
+)
+def test_a_media_reply_that_is_not_a_status_is_unavailable_not_an_absent_session(
+    reply: dict[str, object] | None,
+) -> None:
+    cast_device = FakeCast()
+
+    def answer_without_data(
+        data: dict[str, object],
+        *,
+        callback_function: Callable[[bool, dict[str, object] | None], None],
+    ) -> None:
+        callback_function(True, reply)
+
+    cast_device.media_controller.send_message_nocheck = answer_without_data  # type: ignore[method-assign]
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(DeviceUnavailableError):
+        transport.get_status(DEVICE_ID, timeout=5.0)
+
+
+def entry_without(field: str, **changes: object) -> dict[str, object]:
+    """A complete entry for the same content, with one field left out of the raw reply."""
+    entry = playing_entry() | changes
+    del entry[field]
+    return entry
+
+
+@pytest.mark.parametrize("state", ["PLAYING", "PAUSED", "BUFFERING"])
+def test_an_omitted_position_is_unknown_not_zero(state: str) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [entry_without("currentTime", playerState=state)]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.content_id == MOVIE
+    assert media.position_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        pytest.param(0, 0.0, id="explicit-zero"),
+        pytest.param(42.5, 42.5, id="valid"),
+        pytest.param(None, None, id="explicit-null"),
+    ],
+)
+def test_a_reported_position_is_kept_as_reported(
+    reported: float | None, expected: float | None
+) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"playerState": "PAUSED", "currentTime": reported}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.position_seconds == expected
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [
+        pytest.param("omitted", None, id="absent-is-unknown"),
+        pytest.param(None, None, id="explicit-null-is-unknown"),
+        pytest.param(0, False, id="explicit-zero-mask"),
+        pytest.param(1, False, id="pause-without-seek"),
+        pytest.param(SUPPORTS_PAUSE_AND_SEEK, True, id="seek-supported"),
+    ],
+)
+def test_seek_capability_is_unknown_only_when_the_reply_omits_it(
+    commands: int | str | None, expected: bool | None
+) -> None:
+    transport, channel = make_media_transport()
+    channel.state = [
+        entry_without("supportedMediaCommands")
+        if commands == "omitted"
+        else playing_entry() | {"supportedMediaCommands": commands}
+    ]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.supports_seek is expected
+
+
+def test_seek_to_zero_is_not_confirmed_by_an_omitted_position() -> None:
+    """Same content, the reply after SEEK omits currentTime: PyChromecast's default of 0.0
+    must not be read as the receiver reporting position 0."""
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+    channel.after_command = {"SEEK": [entry_without("currentTime")]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 0.0)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "position was not reported" in (result.detail or "")
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_seek_to_zero_is_confirmed_by_a_reported_position_of_zero() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry()]
+    channel.after_command = {"SEEK": [playing_entry() | {"currentTime": 0.0}]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 0.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_seek_is_sent_when_the_reply_omits_the_capability() -> None:
+    """Unknown capability is not "unsupported": the service only refuses an explicit False."""
+    transport, channel = make_media_transport()
+    channel.state = [entry_without("supportedMediaCommands")]
+    channel.after_command = {"SEEK": [entry_without("supportedMediaCommands", currentTime=30.0)]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 30.0)
+
+    assert channel.sent_types().count("SEEK") == 1
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_seek_is_refused_before_sending_when_the_reply_reports_no_seek() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"supportedMediaCommands": 1}]
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    with pytest.raises(UnsupportedOperationError):
+        service.seek(DEVICE_ID, 30.0)
+
+    assert "SEEK" not in channel.sent_types()
+
+
+def test_seek_is_sent_and_confirmed_when_the_capability_is_null() -> None:
+    """A null command mask is unknown: no internal error, and no refusal as unsupported."""
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"supportedMediaCommands": None}]
+    channel.after_command = {
+        "SEEK": [playing_entry() | {"supportedMediaCommands": None, "currentTime": 30.0}]
+    }
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 30.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_a_null_playback_rate_keeps_the_reported_position() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"playbackRate": None}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.playback_state is PlaybackState.PLAYING
+    assert media.position_seconds == 12.0
+
+
+def test_null_metadata_leaves_the_title_unknown() -> None:
+    transport, channel = make_media_transport()
+    media_block = cast(dict[str, object], playing_entry()["media"]) | {"metadata": None}
+    channel.state = [playing_entry() | {"media": media_block}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.content_id == MOVIE
+    assert media.title is None
