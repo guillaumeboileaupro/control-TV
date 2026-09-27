@@ -1477,13 +1477,14 @@ def test_a_reported_position_is_kept_as_reported(
     ("commands", "expected"),
     [
         pytest.param("omitted", None, id="absent-is-unknown"),
+        pytest.param(None, None, id="explicit-null-is-unknown"),
         pytest.param(0, False, id="explicit-zero-mask"),
         pytest.param(1, False, id="pause-without-seek"),
         pytest.param(SUPPORTS_PAUSE_AND_SEEK, True, id="seek-supported"),
     ],
 )
 def test_seek_capability_is_unknown_only_when_the_reply_omits_it(
-    commands: int | str, expected: bool | None
+    commands: int | str | None, expected: bool | None
 ) -> None:
     transport, channel = make_media_transport()
     channel.state = [
@@ -1547,3 +1548,41 @@ def test_seek_is_refused_before_sending_when_the_reply_reports_no_seek() -> None
         service.seek(DEVICE_ID, 30.0)
 
     assert "SEEK" not in channel.sent_types()
+
+
+def test_seek_is_sent_and_confirmed_when_the_capability_is_null() -> None:
+    """A null command mask is unknown: no internal error, and no refusal as unsupported."""
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"supportedMediaCommands": None}]
+    channel.after_command = {
+        "SEEK": [playing_entry() | {"supportedMediaCommands": None, "currentTime": 30.0}]
+    }
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.seek(DEVICE_ID, 30.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("SEEK") == 1
+
+
+def test_a_null_playback_rate_keeps_the_reported_position() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry() | {"playbackRate": None}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.playback_state is PlaybackState.PLAYING
+    assert media.position_seconds == 12.0
+
+
+def test_null_metadata_leaves_the_title_unknown() -> None:
+    transport, channel = make_media_transport()
+    media_block = cast(dict[str, object], playing_entry()["media"]) | {"metadata": None}
+    channel.state = [playing_entry() | {"media": media_block}]
+
+    media = transport.get_status(DEVICE_ID, timeout=5.0).media
+
+    assert media is not None
+    assert media.content_id == MOVIE
+    assert media.title is None

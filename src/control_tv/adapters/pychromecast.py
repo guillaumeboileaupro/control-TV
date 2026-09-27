@@ -469,10 +469,12 @@ class PyChromecastTransport:
         entries = reply.get("status")
         entry = entries[0] if isinstance(entries, list) and entries else {}
         reported = entry if isinstance(entry, dict) else {}
+        # A command mask is only usable as a number: omitted or null means unknown.
+        commands = reported.get("supportedMediaCommands")
         return self._media_status(
             fresh,
             position_reported="currentTime" in reported,
-            commands_reported="supportedMediaCommands" in reported,
+            commands_reported=isinstance(commands, int) and not isinstance(commands, bool),
         )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
@@ -505,18 +507,24 @@ class PyChromecastTransport:
         ):
             return None
         playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN)
+        # Extrapolating a playing position needs the playback rate; without one (a null
+        # rate), the position is the one the receiver reported.
+        extrapolate = playback_state is PlaybackState.PLAYING and isinstance(
+            status.playback_rate, int | float
+        )
         position = (
             None
             if not position_reported
             else status.adjusted_current_time
-            if playback_state is PlaybackState.PLAYING
+            if extrapolate
             else status.current_time
         )
+        metadata = status.media_metadata
         return MediaStatus(
             playback_state=playback_state,
             content_id=status.content_id,
             content_type=status.content_type,
-            title=status.title,
+            title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,
             duration_seconds=status.duration,
             supports_seek=status.supports_seek if commands_reported else None,
