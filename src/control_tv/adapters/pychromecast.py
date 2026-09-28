@@ -75,6 +75,96 @@ def _default_discoverer(timeout: float) -> tuple[list[Chromecast], object]:
     return devices, browser
 
 
+def _finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an integer too large for a float
+        return False
+
+
+def _non_negative_number(value: object) -> bool:
+    return _finite_number(value) and isinstance(value, int | float) and value >= 0
+
+
+def _command_mask(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _text(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _unusable_to_null(
+    fields: dict[str, object], checks: tuple[tuple[str, Callable[[object], bool]], ...]
+) -> dict[str, object]:
+    """A copy of `fields` where each checked value that is present but unusable is null."""
+    checked = dict(fields)
+    for key, usable in checks:
+        if checked.get(key) is not None and not usable(checked[key]):
+            checked[key] = None
+    return checked
+
+
+def _checked_media_block(block: object) -> dict[str, object] | None:
+    if not isinstance(block, dict):
+        return None
+    checked = _unusable_to_null(
+        block,
+        (
+            ("contentId", _text),
+            ("contentType", _text),
+            ("duration", _non_negative_number),
+            ("metadata", lambda value: isinstance(value, dict)),
+        ),
+    )
+    metadata = checked.get("metadata")
+    if isinstance(metadata, dict):
+        checked["metadata"] = _unusable_to_null(metadata, (("title", _text),))
+    return checked
+
+
+def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[str, object] | None:
+    """The first media session of a MEDIA_STATUS reply, checked before PyChromecast parses it.
+
+    A reply that is not shaped like a media status (no status list, an entry that is not an
+    object) fails the read. Inside a well-shaped entry, a field whose value cannot be what the
+    Cast protocol defines (wrong JSON type, negative or non-finite number) is set to null, so
+    it is reported as unknown exactly like an omitted field: never as a plausible value and
+    never as a crash. The media block may come from `extendedStatus`, as PyChromecast reads it;
+    the media-channel volume is not mapped and is dropped when it is not an object.
+    Returns None when the reply reports no media session (an empty status list).
+    """
+    entries = reply.get("status")
+    if not isinstance(entries, list) or (entries and not isinstance(entries[0], dict)):
+        raise DeviceUnavailableError(
+            f"device {device_id} sent a malformed media status", device_id=device_id
+        )
+    if not entries:
+        return None
+    entry = _unusable_to_null(
+        entries[0],
+        (
+            ("currentTime", _non_negative_number),
+            ("playbackRate", _finite_number),
+            ("playerState", _text),
+            ("supportedMediaCommands", _command_mask),
+        ),
+    )
+    media = _checked_media_block(entry.get("media"))
+    if media is None:
+        extended = entry.get("extendedStatus")
+        media = _checked_media_block(extended.get("media")) if isinstance(extended, dict) else None
+    entry.pop("extendedStatus", None)
+    entry.pop("media", None)
+    if media is not None:
+        entry["media"] = media
+    if not isinstance(entry.get("volume", {}), dict):
+        del entry["volume"]
+    return entry
+
+
 class PyChromecastTransport:
     """Translate PyChromecast devices, state and failures into the shared domain."""
 
@@ -464,17 +554,16 @@ class PyChromecastTransport:
                 f"device {device_id} answered the media status request with {reply_type!r}",
                 device_id=device_id,
             )
+        entry = _checked_media_entry(reply, device_id)
+        if entry is None:
+            return None
         fresh = PyMediaStatus()
-        fresh.update(reply)
-        entries = reply.get("status")
-        entry = entries[0] if isinstance(entries, list) and entries else {}
-        reported = entry if isinstance(entry, dict) else {}
-        # A command mask is only usable as a number: omitted or null means unknown.
-        commands = reported.get("supportedMediaCommands")
+        fresh.update({"status": [entry]})
+        # After the check an omitted, null or unusable field is absent or null: unknown.
         return self._media_status(
             fresh,
-            position_reported="currentTime" in reported,
-            commands_reported=isinstance(commands, int) and not isinstance(commands, bool),
+            position_reported=entry.get("currentTime") is not None,
+            commands_reported=entry.get("supportedMediaCommands") is not None,
         )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
