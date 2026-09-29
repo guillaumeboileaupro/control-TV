@@ -120,9 +120,10 @@ def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> s
     """Why this one read cannot be shown to show the media identified before the command.
 
     The content id must be the same, and a session reported before the command must be
-    reported by the read (a missing one is no evidence). A different session is a replacement,
-    which `_IdentityCheck` handles for the whole attempt. A session unknown before the command
-    leaves the content id as the only proof, as it was before sessions were read.
+    reported by the read (a missing one is no evidence). An explicitly different content id or
+    session is a contradiction, which `_IdentityCheck` keeps for the whole attempt. A session
+    unknown before the command leaves the content id as the only proof, as it was before
+    sessions were read.
     """
     if expected is None:
         return "media identity was not reported before the command"
@@ -133,37 +134,52 @@ def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> s
     return None
 
 
+def _identity_contradiction(expected: _MediaIdentity, media: MediaStatus) -> str | None:
+    """An identity other than the pre-command one, explicitly reported by this read, or None.
+
+    Only a reported value can contradict: a usable content id other than the expected one
+    (another queue item keeps the session but changes it), or a session other than the one
+    reported before the command. An absent, empty or blank content id and a missing session
+    are no evidence either way.
+    """
+    content_id = _usable_content_id(media.content_id)
+    if content_id is not None and content_id != expected.content_id:
+        return f"loaded content changed to {content_id!r} from {expected.content_id!r}"
+    session_id = media.media_session_id
+    if (
+        expected.session_id is not None
+        and session_id is not None
+        and session_id != expected.session_id
+    ):
+        return (
+            f"media session changed to {session_id} from {expected.session_id} during confirmation"
+        )
+    return None
+
+
 class _IdentityCheck:
     """Checks the reads of ONE confirmation attempt against the pre-command identity.
 
-    It remembers one thing across those reads: once a read explicitly reports a session other
-    than the one seen before the command, that attempt can no longer confirm. A later read back
-    in the original session cannot show which change the command caused (A -> B -> A). A read
-    that reports no session is rejected on its own but is not a replacement. A new instance is
-    built with each command's predicate, so nothing carries over to another command.
+    It remembers the first explicit identity contradiction across those reads: once a read
+    reports another content id (X -> Y) or another session (A -> B), that attempt can no longer
+    confirm, because a later read back in the original identity cannot show which change the
+    command caused (X -> Y -> X, A -> B -> A). A read that reports no content id or no session
+    is rejected on its own but contradicts nothing. A new instance is built with each command's
+    predicate, so nothing carries over to another command.
     """
 
-    __slots__ = ("_expected", "_replaced_by")
+    __slots__ = ("_contradiction", "_expected")
 
     def __init__(self, expected: _MediaIdentity | None) -> None:
         self._expected = expected
-        self._replaced_by: int | None = None
+        self._contradiction: str | None = None
 
     def mismatch(self, media: MediaStatus) -> str | None:
         expected = self._expected
-        if (
-            self._replaced_by is None
-            and expected is not None
-            and expected.session_id is not None
-            and media.media_session_id is not None
-            and media.media_session_id != expected.session_id
-        ):
-            self._replaced_by = media.media_session_id
-        if self._replaced_by is not None and expected is not None:
-            return (
-                f"media session changed to {self._replaced_by} from {expected.session_id} "
-                "during confirmation"
-            )
+        if self._contradiction is None and expected is not None:
+            self._contradiction = _identity_contradiction(expected, media)
+        if self._contradiction is not None:
+            return self._contradiction
         return _identity_mismatch(expected, media)
 
 

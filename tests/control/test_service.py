@@ -1395,3 +1395,132 @@ def test_each_command_starts_with_its_own_confirmation_state(command: str) -> No
     assert first.confirmation is Confirmation.UNCONFIRMED
     assert second.confirmation is Confirmation.CONFIRMED
     assert transport.attempted() == [command, command]
+
+
+Identity = tuple[str | None, int | None]
+
+
+def identity_sequence_run(
+    command: str,
+    reads_after: list[Identity],
+    service_transport: tuple[ControlService, FakeTransport] | None = None,
+) -> tuple[CommandResult, FakeTransport]:
+    """One command with the pre-command read reporting (MOVIE_URL, SESSION), then the given
+    (content id, session) pairs on the following reads (the last one repeats). The TV acts on
+    the command at once, so every read after it already shows the expected state or position.
+    """
+    if service_transport is None:
+        clock = FakeClock()
+        transport = FakeTransport(clock=clock)
+        control = make_service(transport, clock)
+    else:
+        control, transport = service_transport
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = MOVIE_URL, SESSION
+
+    def report(identity: Identity) -> None:
+        transport.tv.content_id, transport.tv.media_session_id = identity
+
+    reads = [*reads_after, *[reads_after[-1]] * 20]
+    transport.status_effects = [lambda: None] + [partial(report, identity) for identity in reads]
+    return send(control), transport
+
+
+X_A: Identity = (MOVIE_URL, SESSION)
+Y_A: Identity = (OTHER_CONTENT, SESSION)
+Y_B: Identity = (OTHER_CONTENT, OTHER_SESSION)
+
+
+@ALL_COMMANDS
+def test_content_replaced_then_restored_during_confirmation_never_confirms(command: str) -> None:
+    """X -> Y -> X in one session: a queue can move to another item and back, so once another
+    usable content id was reported, a later read of X cannot show what the command caused."""
+    result, transport = identity_sequence_run(command, [Y_A, X_A])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "loaded content changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+    assert transport.status_reads() > 2
+
+
+@ALL_COMMANDS
+def test_content_replaced_for_good_during_confirmation_never_confirms(command: str) -> None:
+    result, transport = identity_sequence_run(command, [Y_A, Y_A])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "loaded content changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_content_and_session_replaced_then_restored_never_confirm(command: str) -> None:
+    result, transport = identity_sequence_run(command, [Y_B, X_A])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_stable_identity_confirms(command: str) -> None:
+    result, transport = identity_sequence_run(command, [X_A])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize("unreported", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_a_content_id_briefly_unreported_is_not_a_contradiction(
+    command: str, unreported: str | None
+) -> None:
+    """X -> nothing usable -> X: a read without a usable content id is rejected on its own but
+    names no other media, so a later read of X may still confirm."""
+    result, transport = identity_sequence_run(command, [(unreported, SESSION), X_A])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+def test_seek_to_the_exact_target_after_a_content_round_trip_is_not_confirmed() -> None:
+    result, transport = identity_sequence_run("seek", [Y_A, X_A])
+
+    assert transport.tv.position == 30.0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "loaded content changed" in (result.detail or "")
+    assert transport.attempted() == ["seek"]
+
+
+@ALL_COMMANDS
+def test_a_content_contradiction_does_not_carry_over_to_the_next_command(command: str) -> None:
+    clock = FakeClock()
+    transport = FakeTransport(clock=clock)
+    control = make_service(transport, clock)
+
+    first, _ = identity_sequence_run(command, [Y_A, X_A], (control, transport))
+    second, _ = identity_sequence_run(command, [X_A], (control, transport))
+
+    assert first.confirmation is Confirmation.UNCONFIRMED
+    assert second.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command, command]
+
+
+@ALL_COMMANDS
+def test_a_restored_identity_that_only_arrives_after_the_deadline_does_not_confirm(
+    command: str,
+) -> None:
+    clock = FakeClock()
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport = FakeTransport(clock=clock)
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = X_A
+    # Every read inside the 1 s window reports another item; X only after the window.
+    transport.status_effects = [lambda: None] + [
+        partial(setattr, transport.tv, "content_id", OTHER_CONTENT)
+    ] * 200
+
+    result = send(make_service(transport, clock, confirm_timeout=1.0))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    assert transport.attempted() == [command]
