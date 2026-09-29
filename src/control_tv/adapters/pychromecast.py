@@ -88,7 +88,7 @@ def _non_negative_number(value: object) -> bool:
     return _finite_number(value) and isinstance(value, int | float) and value >= 0
 
 
-def _command_mask(value: object) -> bool:
+def _non_negative_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
@@ -149,7 +149,9 @@ def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[
             ("currentTime", _non_negative_number),
             ("playbackRate", _finite_number),
             ("playerState", _text),
-            ("supportedMediaCommands", _command_mask),
+            ("supportedMediaCommands", _non_negative_integer),
+            ("mediaSessionId", _non_negative_integer),
+            ("currentItemId", _non_negative_integer),
         ),
     )
     media = _checked_media_block(entry.get("media"))
@@ -560,10 +562,13 @@ class PyChromecastTransport:
         fresh = PyMediaStatus()
         fresh.update({"status": [entry]})
         # After the check an omitted, null or unusable field is absent or null: unknown.
+        # PyChromecast 14.0.10 does not parse currentItemId: it is read from the checked entry.
+        item = entry.get("currentItemId")
         return self._media_status(
             fresh,
             position_reported=entry.get("currentTime") is not None,
             commands_reported=entry.get("supportedMediaCommands") is not None,
+            current_item_id=item if isinstance(item, int) and not isinstance(item, bool) else None,
         )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
@@ -588,6 +593,7 @@ class PyChromecastTransport:
         *,
         position_reported: bool = True,
         commands_reported: bool = True,
+        current_item_id: int | None = None,
     ) -> MediaStatus | None:
         """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
         if status.content_id is None and status.player_state in (
@@ -612,6 +618,8 @@ class PyChromecastTransport:
         return MediaStatus(
             playback_state=playback_state,
             content_id=status.content_id,
+            media_session_id=status.media_session_id,
+            current_item_id=current_item_id,
             content_type=status.content_type,
             title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,

@@ -20,7 +20,9 @@ from control_tv.domain import (
     ReceiverStatus,
 )
 from control_tv.service import (
+    _identity_of,
     _loaded,
+    _MediaIdentity,
     _muted_is,
     _playback_in,
     _position_near,
@@ -30,6 +32,7 @@ from control_tv.service import (
 DEVICE_ID = DeviceId("uuid-1")
 OBSERVED_AT = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 URL = "http://media.local/movie.mp4"
+KNOWN_URL = _MediaIdentity(URL, None, None)  # a content id, no session or item
 
 
 def status(
@@ -48,7 +51,7 @@ def status(
 
 
 def test_playback_in_reports_no_media_session_honestly_never_as_idle() -> None:
-    observation = _playback_in(URL, PlaybackState.IDLE)(status())
+    observation = _playback_in(KNOWN_URL, PlaybackState.IDLE)(status())
 
     assert observation.matched is False
     assert observation.description == "no active media session"
@@ -58,9 +61,9 @@ def test_playback_in_reports_no_media_session_honestly_never_as_idle() -> None:
 def test_playback_in_requires_a_usable_previously_observed_media_identity(
     content_id: str | None,
 ) -> None:
-    observation = _playback_in(content_id, PlaybackState.PLAYING)(
-        status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING))
-    )
+    observation = _playback_in(
+        _identity_of(MediaStatus(content_id=content_id)), PlaybackState.PLAYING
+    )(status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING)))
 
     assert observation.matched is False
     assert observation.description == "media identity was not reported before the command"
@@ -68,7 +71,7 @@ def test_playback_in_requires_a_usable_previously_observed_media_identity(
 
 def test_playback_in_rejects_expected_state_on_replaced_media() -> None:
     replacement = "http://media.local/replacement.mp4"
-    observation = _playback_in(URL, PlaybackState.PAUSED)(
+    observation = _playback_in(KNOWN_URL, PlaybackState.PAUSED)(
         status(media=MediaStatus(content_id=replacement, playback_state=PlaybackState.PAUSED))
     )
 
@@ -78,7 +81,7 @@ def test_playback_in_rejects_expected_state_on_replaced_media() -> None:
 
 def test_playback_in_matches_one_of_several_accepted_states() -> None:
     for state in (PlaybackState.PLAYING, PlaybackState.BUFFERING):
-        observation = _playback_in(URL, PlaybackState.PLAYING, PlaybackState.BUFFERING)(
+        observation = _playback_in(KNOWN_URL, PlaybackState.PLAYING, PlaybackState.BUFFERING)(
             status(media=MediaStatus(content_id=URL, playback_state=state))
         )
         assert observation.matched is True
@@ -86,7 +89,7 @@ def test_playback_in_matches_one_of_several_accepted_states() -> None:
 
 
 def test_playback_in_reports_the_contradicting_state() -> None:
-    observation = _playback_in(URL, PlaybackState.PAUSED)(
+    observation = _playback_in(KNOWN_URL, PlaybackState.PAUSED)(
         status(media=MediaStatus(content_id=URL, playback_state=PlaybackState.PLAYING))
     )
 
@@ -132,7 +135,7 @@ def test_loaded_matches_right_content_in_a_loaded_state() -> None:
 
 
 def test_position_near_reports_no_media_session() -> None:
-    observation = _position_near(10.0, 1.0, URL)(status())
+    observation = _position_near(10.0, 1.0, KNOWN_URL)(status())
 
     assert observation.matched is False
     assert observation.description == "no active media session"
@@ -149,7 +152,7 @@ def test_position_near_requires_a_previously_observed_media_identity() -> None:
 
 def test_position_near_rejects_a_matching_position_on_replaced_media() -> None:
     replacement = "http://media.local/replacement.mp4"
-    observation = _position_near(10.0, 1.0, URL)(
+    observation = _position_near(10.0, 1.0, KNOWN_URL)(
         status(media=MediaStatus(content_id=replacement, position_seconds=10.0))
     )
 
@@ -158,7 +161,7 @@ def test_position_near_rejects_a_matching_position_on_replaced_media() -> None:
 
 
 def test_position_near_reports_when_the_device_does_not_report_a_position() -> None:
-    observation = _position_near(10.0, 1.0, URL)(status(media=MediaStatus(content_id=URL)))
+    observation = _position_near(10.0, 1.0, KNOWN_URL)(status(media=MediaStatus(content_id=URL)))
 
     assert observation.matched is False
     assert observation.description == "position was not reported"
@@ -166,7 +169,7 @@ def test_position_near_reports_when_the_device_does_not_report_a_position() -> N
 
 @pytest.mark.parametrize(("position", "matched"), [(9.0, True), (11.0, True), (7.0, False)])
 def test_position_near_applies_the_tolerance(position: float, matched: bool) -> None:
-    observation = _position_near(10.0, 1.0, URL)(
+    observation = _position_near(10.0, 1.0, KNOWN_URL)(
         status(media=MediaStatus(content_id=URL, position_seconds=position))
     )
 

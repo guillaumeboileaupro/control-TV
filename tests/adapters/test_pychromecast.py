@@ -1798,3 +1798,149 @@ def test_a_content_id_that_is_not_a_string_never_confirms_a_command() -> None:
 
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert channel.sent_types().count("PAUSE") == 1
+
+
+# --- mediaSessionId -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(1, 1, id="valid"),
+        pytest.param(0, 0, id="explicit-zero"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param(True, None, id="boolean"),
+        pytest.param("1", None, id="string"),
+        pytest.param(1.5, None, id="float"),
+        pytest.param(-1, None, id="negative"),
+        pytest.param(10**400, 10**400, id="large-integer"),
+        pytest.param({}, None, id="object"),
+    ],
+)
+def test_the_media_session_id_is_kept_only_when_it_is_a_non_negative_integer(
+    raw: object, expected: int | None
+) -> None:
+    entry = paused_entry()
+    if raw == "omitted":
+        del entry["mediaSessionId"]
+    else:
+        entry["mediaSessionId"] = raw
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.media_session_id == expected
+    assert media.content_id == MOVIE
+
+
+def test_pause_answered_from_a_new_session_of_the_same_content_is_not_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=1)]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=2)]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media session changed" in (result.detail or "")
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+def test_a_queue_moving_to_another_item_in_the_same_session_is_not_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(MOVIE, session=1)]
+    channel.after_command = {
+        "PAUSE": [playing_entry(EPISODE, session=1) | {"playerState": "PAUSED"}]
+    }
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "loaded content changed" in (result.detail or "")
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+def test_an_empty_content_id_stays_unconfirmed_even_with_a_stable_session() -> None:
+    """Generic rule, no per-application logic: a session id never replaces the content id."""
+    transport, channel = make_media_transport()
+    channel.state = [paused_entry_with_media(contentId="") | {"playerState": "PLAYING"}]
+    channel.after_command = {"PAUSE": [paused_entry_with_media(contentId="")]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media identity was not reported before the command" in (result.detail or "")
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+def test_pause_in_the_same_session_and_content_is_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=4)]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=4)]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+# --- currentItemId (not parsed by PyChromecast 14.0.10: read from the checked raw entry) --
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(101, 101, id="valid"),
+        pytest.param(0, 0, id="explicit-zero"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param(True, None, id="true"),
+        pytest.param(False, None, id="false"),
+        pytest.param(-1, None, id="negative"),
+        pytest.param(1.5, None, id="float"),
+        pytest.param("101", None, id="string"),
+        pytest.param(10**400, 10**400, id="large-integer"),
+        pytest.param({}, None, id="object"),
+    ],
+)
+def test_the_queue_item_id_is_kept_only_when_it_is_a_non_negative_integer(
+    raw: object, expected: int | None
+) -> None:
+    entry = paused_entry()
+    if raw != "omitted":
+        entry["currentItemId"] = raw
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.current_item_id == expected
+    assert media.content_id == MOVIE
+
+
+def test_pause_answered_by_another_queue_item_of_the_same_content_is_not_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=1) | {"currentItemId": 101}]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=1, currentItemId=102)]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media queue item changed to 102 from 101" in (result.detail or "")
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+def test_pause_on_the_same_queue_item_is_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=1) | {"currentItemId": 101}]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=1, currentItemId=101)]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("PAUSE") == 1
