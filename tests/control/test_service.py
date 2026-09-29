@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from functools import partial
 
 import pytest
 
@@ -1309,3 +1310,88 @@ def test_a_media_session_id_must_be_a_non_negative_integer(session: object) -> N
 @pytest.mark.parametrize("session", [None, 0, 7])
 def test_a_media_session_id_can_be_unknown_zero_or_positive(session: int | None) -> None:
     assert MediaStatus(media_session_id=session).media_session_id == session
+
+
+def session_sequence_run(
+    command: str,
+    sessions_after: list[int | None],
+    service_transport: tuple[ControlService, FakeTransport] | None = None,
+) -> tuple[CommandResult, FakeTransport]:
+    """One command with the pre-command read in SESSION, then the given sessions on the
+    following reads (the last one repeats). The TV acts on the command at once, so every
+    read after it already shows the expected state or position."""
+    if service_transport is None:
+        clock = FakeClock()
+        transport = FakeTransport(clock=clock)
+        control = make_service(transport, clock)
+    else:
+        control, transport = service_transport
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = MOVIE_URL, SESSION
+    reads = [*sessions_after, *[sessions_after[-1]] * 20]
+    transport.status_effects = [lambda: None] + [
+        partial(setattr, transport.tv, "media_session_id", session) for session in reads
+    ]
+    return send(control), transport
+
+
+@ALL_COMMANDS
+def test_a_session_replaced_then_restored_during_confirmation_never_confirms(command: str) -> None:
+    """A -> B -> A: once another session was explicitly reported, a later read back in A
+    cannot show which change the command caused."""
+    result, transport = session_sequence_run(command, [OTHER_SESSION, SESSION])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media session changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+    assert transport.status_reads() > 2
+
+
+@ALL_COMMANDS
+def test_a_session_replaced_for_good_during_confirmation_never_confirms(command: str) -> None:
+    result, transport = session_sequence_run(command, [OTHER_SESSION, OTHER_SESSION])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_stable_session_confirms(command: str) -> None:
+    result, transport = session_sequence_run(command, [SESSION])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_session_briefly_unreported_is_not_a_replacement(command: str) -> None:
+    """A -> not reported -> A: a missing session is no evidence either way; that read is
+    rejected on its own, and a later read in A may confirm (unchanged contract)."""
+    result, transport = session_sequence_run(command, [None, SESSION])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+def test_seek_to_the_exact_target_after_a_session_round_trip_is_not_confirmed() -> None:
+    result, transport = session_sequence_run("seek", [OTHER_SESSION, SESSION])
+
+    assert transport.tv.position == 30.0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["seek"]
+
+
+@ALL_COMMANDS
+def test_each_command_starts_with_its_own_confirmation_state(command: str) -> None:
+    """An ambiguity seen while confirming one command never carries over to the next."""
+    clock = FakeClock()
+    transport = FakeTransport(clock=clock)
+    control = make_service(transport, clock)
+
+    first, _ = session_sequence_run(command, [OTHER_SESSION, SESSION], (control, transport))
+    second, _ = session_sequence_run(command, [SESSION], (control, transport))
+
+    assert first.confirmation is Confirmation.UNCONFIRMED
+    assert second.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command, command]

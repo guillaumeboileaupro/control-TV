@@ -117,31 +117,64 @@ def _identity_of(media: MediaStatus | None) -> _MediaIdentity | None:
 
 
 def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> str | None:
-    """Why `media` cannot be shown to be the media identified before the command, or None.
+    """Why this one read cannot be shown to show the media identified before the command.
 
-    The content id must be the same. A session reported before the command must be reported,
-    unchanged, afterwards: a different one is a new playback of the media, a missing one is no
-    evidence. A session unknown before the command leaves the content id as the only proof,
-    as it was before sessions were read.
+    The content id must be the same, and a session reported before the command must be
+    reported by the read (a missing one is no evidence). A different session is a replacement,
+    which `_IdentityCheck` handles for the whole attempt. A session unknown before the command
+    leaves the content id as the only proof, as it was before sessions were read.
     """
     if expected is None:
         return "media identity was not reported before the command"
     if media.content_id != expected.content_id:
         return f"loaded content changed to {media.content_id!r} from {expected.content_id!r}"
-    if expected.session_id is not None:
-        if media.media_session_id is None:
-            return "media session was not reported after the command"
-        if media.media_session_id != expected.session_id:
-            return f"media session changed to {media.media_session_id} from {expected.session_id}"
+    if expected.session_id is not None and media.media_session_id is None:
+        return "media session was not reported after the command"
     return None
 
 
+class _IdentityCheck:
+    """Checks the reads of ONE confirmation attempt against the pre-command identity.
+
+    It remembers one thing across those reads: once a read explicitly reports a session other
+    than the one seen before the command, that attempt can no longer confirm. A later read back
+    in the original session cannot show which change the command caused (A -> B -> A). A read
+    that reports no session is rejected on its own but is not a replacement. A new instance is
+    built with each command's predicate, so nothing carries over to another command.
+    """
+
+    __slots__ = ("_expected", "_replaced_by")
+
+    def __init__(self, expected: _MediaIdentity | None) -> None:
+        self._expected = expected
+        self._replaced_by: int | None = None
+
+    def mismatch(self, media: MediaStatus) -> str | None:
+        expected = self._expected
+        if (
+            self._replaced_by is None
+            and expected is not None
+            and expected.session_id is not None
+            and media.media_session_id is not None
+            and media.media_session_id != expected.session_id
+        ):
+            self._replaced_by = media.media_session_id
+        if self._replaced_by is not None and expected is not None:
+            return (
+                f"media session changed to {self._replaced_by} from {expected.session_id} "
+                "during confirmation"
+            )
+        return _identity_mismatch(expected, media)
+
+
 def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> ExpectedState:
+    identity = _IdentityCheck(expected)
+
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
-        mismatch = _identity_mismatch(expected, media)
+        mismatch = identity.mismatch(media)
         if mismatch is not None:
             return Observation(False, mismatch)
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
@@ -165,11 +198,13 @@ def _loaded(url: str) -> ExpectedState:
 def _position_near(
     target: float, tolerance: float, expected: _MediaIdentity | None
 ) -> ExpectedState:
+    identity = _IdentityCheck(expected)
+
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
-        mismatch = _identity_mismatch(expected, media)
+        mismatch = identity.mismatch(media)
         if mismatch is not None:
             return Observation(False, mismatch)
         if media.position_seconds is None:
