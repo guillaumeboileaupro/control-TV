@@ -18,6 +18,7 @@ from control_tv.domain import (
     ErrorCode,
     InvalidArgumentError,
     MediaRequest,
+    MediaStatus,
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
@@ -1140,3 +1141,171 @@ def test_discover_devices_rejects_an_invalid_timeout_before_discovery(
         service.discover_devices(timeout=timeout)  # type: ignore[arg-type]
 
     assert transport.calls == []
+
+
+# --- Media identity: content id and media session ---------------------------------------
+#
+# A receiver's mediaSessionId names a playback session, which can hold several queued items
+# (QUEUE_INSERT/QUEUE_UPDATE stay in the same session), so it never identifies a media item
+# on its own. The content id stays required; a session reported before the command must be
+# reported, unchanged, by the confirming read. A richer identity may only turn a match into
+# a mismatch, never the reverse.
+
+SESSION = 7
+OTHER_SESSION = 8
+OTHER_CONTENT = "https://media.example/other.mp4"
+
+PLAYBACK_COMMANDS: dict[str, tuple[PlaybackState, Callable[[ControlService], CommandResult]]] = {
+    "play": (PlaybackState.PAUSED, lambda control: control.play(DEVICE_ID)),
+    "pause": (PlaybackState.PLAYING, lambda control: control.pause(DEVICE_ID)),
+    "stop": (PlaybackState.PLAYING, lambda control: control.stop(DEVICE_ID)),
+    "seek": (PlaybackState.PLAYING, lambda control: control.seek(DEVICE_ID, 30.0)),
+}
+
+
+def identity_run(
+    command: str,
+    *,
+    before: tuple[str | None, int | None],
+    after: tuple[str | None, int | None] | None = None,
+) -> tuple[CommandResult, FakeTransport]:
+    """Send one command with the TV reporting `before` on the pre-command read and `after`
+    (default: unchanged) on every read that follows it."""
+    clock = FakeClock()
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport = FakeTransport(clock=clock)
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = before
+
+    def report_after() -> None:
+        if after is not None:
+            transport.tv.content_id, transport.tv.media_session_id = after
+
+    transport.status_effects = [lambda: None] + [report_after] * 20
+    result = send(make_service(transport, clock))
+    return result, transport
+
+
+ALL_COMMANDS = pytest.mark.parametrize("command", sorted(PLAYBACK_COMMANDS))
+
+
+@ALL_COMMANDS
+def test_same_content_and_same_session_confirm(command: str) -> None:
+    result, transport = identity_run(command, before=(MOVIE_URL, SESSION))
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_same_content_in_a_new_session_does_not_confirm(command: str) -> None:
+    result, transport = identity_run(
+        command, before=(MOVIE_URL, SESSION), after=(MOVIE_URL, OTHER_SESSION)
+    )
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media session changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_other_content_in_the_same_session_does_not_confirm(command: str) -> None:
+    """A queue moving to its next item keeps the session but changes the media."""
+    result, transport = identity_run(
+        command, before=(MOVIE_URL, SESSION), after=(OTHER_CONTENT, SESSION)
+    )
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "loaded content changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize("content_id", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_a_session_alone_never_identifies_the_media(command: str, content_id: str | None) -> None:
+    result, transport = identity_run(command, before=(content_id, SESSION))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media identity was not reported before the command" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize(
+    "after_session", [None, SESSION], ids=["never-reported", "reported-only-after"]
+)
+def test_a_session_unknown_before_the_command_keeps_the_content_rule(
+    command: str, after_session: int | None
+) -> None:
+    result, _ = identity_run(command, before=(MOVIE_URL, None), after=(MOVIE_URL, after_session))
+
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+@ALL_COMMANDS
+def test_a_session_missing_after_the_command_does_not_confirm(command: str) -> None:
+    result, transport = identity_run(command, before=(MOVIE_URL, SESSION), after=(MOVIE_URL, None))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media session was not reported after the command" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_no_identity_before_the_command_does_not_confirm(command: str) -> None:
+    result, transport = identity_run(command, before=(None, None), after=(MOVIE_URL, SESSION))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_session_change_while_polling_never_confirms(command: str) -> None:
+    """The TV shows the expected state only in a new session: every read is a mismatch."""
+    clock = FakeClock()
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport = FakeTransport(clock=clock, effect_delay_polls=2)
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = MOVIE_URL, SESSION
+    transport.status_effects = [lambda: None, lambda: None] + [
+        lambda: setattr(transport.tv, "media_session_id", OTHER_SESSION)
+    ] * 20
+
+    result = send(make_service(transport, clock))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == [command]
+    assert transport.status_reads() > 2
+
+
+@ALL_COMMANDS
+def test_a_matching_session_that_only_arrives_after_the_deadline_does_not_confirm(
+    command: str,
+) -> None:
+    clock = FakeClock()
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport = FakeTransport(clock=clock)
+    transport.tv.playback = initial_state
+    transport.tv.content_id, transport.tv.media_session_id = MOVIE_URL, SESSION
+    transport.status_effects = [lambda: None] + [
+        lambda: setattr(transport.tv, "media_session_id", None)
+    ] * 200
+
+    result = send(make_service(transport, clock, confirm_timeout=1.0))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    assert transport.attempted() == [command]
+
+
+@pytest.mark.parametrize(
+    "session", [True, False, -1, 1.5, "7"], ids=["true", "false", "negative", "float", "string"]
+)
+def test_a_media_session_id_must_be_a_non_negative_integer(session: object) -> None:
+    with pytest.raises(InvalidArgumentError):
+        MediaStatus(content_id=MOVIE_URL, media_session_id=session)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("session", [None, 0, 7])
+def test_a_media_session_id_can_be_unknown_zero_or_positive(session: int | None) -> None:
+    assert MediaStatus(media_session_id=session).media_session_id == session

@@ -119,6 +119,9 @@ class MediaStatus:
 
     playback_state: PlaybackState = PlaybackState.UNKNOWN
     content_id: str | None = None
+    media_session_id: int | None = None
+    """The receiver's mediaSessionId: it names a playback session, which can hold several
+    queued items, so it narrows `content_id` but never identifies a media item on its own."""
     content_type: str | None = None
     title: str | None = None
     position_seconds: float | None = None
@@ -131,6 +134,12 @@ class MediaStatus:
             ("duration", self.duration_seconds),
         ):
             _require(value is None or value >= 0, f"media {name} must not be negative: {value}")
+        session = self.media_session_id
+        _require(
+            session is None
+            or (isinstance(session, int) and not isinstance(session, bool) and session >= 0),
+            f"media session id must be a non-negative integer: {session!r}",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

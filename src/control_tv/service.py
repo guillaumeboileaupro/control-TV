@@ -29,6 +29,7 @@ from control_tv.domain import (
     DeviceStatus,
     InvalidArgumentError,
     MediaRequest,
+    MediaStatus,
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
@@ -95,20 +96,54 @@ def _usable_content_id(content_id: str | None) -> str | None:
     return content_id if content_id is not None and content_id.strip() else None
 
 
-def _playback_in(expected_content_id: str | None, *states: PlaybackState) -> ExpectedState:
-    expected_content_id = _usable_content_id(expected_content_id)
+@dataclass(frozen=True, slots=True)
+class _MediaIdentity:
+    """What a pre-command status read established about the media being controlled.
 
+    `content_id` names the media item and is required. `session_id` is the receiver's
+    mediaSessionId: it names the playback session, which can hold several queued items, so it
+    can only narrow a match on `content_id`, never establish one on its own.
+    """
+
+    content_id: str
+    session_id: int | None
+
+
+def _identity_of(media: MediaStatus | None) -> _MediaIdentity | None:
+    content_id = _usable_content_id(media.content_id if media is not None else None)
+    if media is None or content_id is None:
+        return None
+    return _MediaIdentity(content_id, media.media_session_id)
+
+
+def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> str | None:
+    """Why `media` cannot be shown to be the media identified before the command, or None.
+
+    The content id must be the same. A session reported before the command must be reported,
+    unchanged, afterwards: a different one is a new playback of the media, a missing one is no
+    evidence. A session unknown before the command leaves the content id as the only proof,
+    as it was before sessions were read.
+    """
+    if expected is None:
+        return "media identity was not reported before the command"
+    if media.content_id != expected.content_id:
+        return f"loaded content changed to {media.content_id!r} from {expected.content_id!r}"
+    if expected.session_id is not None:
+        if media.media_session_id is None:
+            return "media session was not reported after the command"
+        if media.media_session_id != expected.session_id:
+            return f"media session changed to {media.media_session_id} from {expected.session_id}"
+    return None
+
+
+def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
-        if expected_content_id is None:
-            return Observation(False, "media identity was not reported before the command")
-        if media.content_id != expected_content_id:
-            return Observation(
-                False,
-                f"loaded content changed to {media.content_id!r} from {expected_content_id!r}",
-            )
+        mismatch = _identity_mismatch(expected, media)
+        if mismatch is not None:
+            return Observation(False, mismatch)
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
 
     return check
@@ -128,19 +163,15 @@ def _loaded(url: str) -> ExpectedState:
 
 
 def _position_near(
-    target: float, tolerance: float, expected_content_id: str | None
+    target: float, tolerance: float, expected: _MediaIdentity | None
 ) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
             return Observation(False, "no active media session")
-        if expected_content_id is None:
-            return Observation(False, "media identity was not reported before the command")
-        if media.content_id != expected_content_id:
-            return Observation(
-                False,
-                f"loaded content changed to {media.content_id!r} from {expected_content_id!r}",
-            )
+        mismatch = _identity_mismatch(expected, media)
+        if mismatch is not None:
+            return Observation(False, mismatch)
         if media.position_seconds is None:
             return Observation(False, "position was not reported")
         matched = abs(media.position_seconds - target) <= tolerance
@@ -238,12 +269,12 @@ class ControlService:
     def play(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected_content_id = self._playback_content_id(device_id, deadline)
+        expected = self._playback_identity(device_id, deadline)
         self._transport.play(device_id)
         return self._verify(
             Command.PLAY,
             device_id,
-            _playback_in(expected_content_id, PlaybackState.PLAYING),
+            _playback_in(expected, PlaybackState.PLAYING),
             "playback playing",
             deadline=deadline,
         )
@@ -251,12 +282,12 @@ class ControlService:
     def pause(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected_content_id = self._playback_content_id(device_id, deadline)
+        expected = self._playback_identity(device_id, deadline)
         self._transport.pause(device_id)
         return self._verify(
             Command.PAUSE,
             device_id,
-            _playback_in(expected_content_id, PlaybackState.PAUSED),
+            _playback_in(expected, PlaybackState.PAUSED),
             "playback paused",
             deadline=deadline,
         )
@@ -264,12 +295,12 @@ class ControlService:
     def stop(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected_content_id = self._playback_content_id(device_id, deadline)
+        expected = self._playback_identity(device_id, deadline)
         self._transport.stop(device_id)
         return self._verify(
             Command.STOP,
             device_id,
-            _playback_in(expected_content_id, PlaybackState.IDLE),
+            _playback_in(expected, PlaybackState.IDLE),
             "playback stopped",
             deadline=deadline,
         )
@@ -284,12 +315,10 @@ class ControlService:
         )
         deadline = self._confirmation_deadline()
         media = None
-        expected_content_id = None
+        expected = None
         if deadline is None:
             media = self._transport.get_status(device_id, timeout=self._status_timeout).media
-            expected_content_id = _usable_content_id(
-                media.content_id if media is not None else None
-            )
+            expected = _identity_of(media)
         else:
             remaining = deadline - self._clock()
             if remaining <= 0:
@@ -303,9 +332,7 @@ class ControlService:
                 )
                 media = status.media
                 if self._clock() < deadline:
-                    expected_content_id = _usable_content_id(
-                        media.content_id if media is not None else None
-                    )
+                    expected = _identity_of(media)
         if media is not None and media.supports_seek is False:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
@@ -314,7 +341,7 @@ class ControlService:
         return self._verify(
             Command.SEEK,
             device_id,
-            _position_near(position_seconds, self._seek_tolerance, expected_content_id),
+            _position_near(position_seconds, self._seek_tolerance, expected),
             f"position near {position_seconds:g}s",
             deadline=deadline,
         )
@@ -345,7 +372,9 @@ class ControlService:
         timeout = self._confirm_timeout
         return None if timeout is None else self._clock() + timeout
 
-    def _playback_content_id(self, device_id: DeviceId, deadline: float | None) -> str | None:
+    def _playback_identity(
+        self, device_id: DeviceId, deadline: float | None
+    ) -> _MediaIdentity | None:
         """Best-effort media identity captured before a playback command is sent.
 
         A failed read must not turn an otherwise deliverable command into a delivery error.
@@ -365,9 +394,9 @@ class ControlService:
             return None
         if self._clock() >= deadline:
             return None
-        if status.connection is not ConnectionState.CONNECTED or status.media is None:
+        if status.connection is not ConnectionState.CONNECTED:
             return None
-        return _usable_content_id(status.media.content_id)
+        return _identity_of(status.media)
 
     def _verify(
         self,

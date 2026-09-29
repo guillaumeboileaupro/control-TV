@@ -88,7 +88,7 @@ def _non_negative_number(value: object) -> bool:
     return _finite_number(value) and isinstance(value, int | float) and value >= 0
 
 
-def _command_mask(value: object) -> bool:
+def _non_negative_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
@@ -149,7 +149,8 @@ def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[
             ("currentTime", _non_negative_number),
             ("playbackRate", _finite_number),
             ("playerState", _text),
-            ("supportedMediaCommands", _command_mask),
+            ("supportedMediaCommands", _non_negative_integer),
+            ("mediaSessionId", _non_negative_integer),
         ),
     )
     media = _checked_media_block(entry.get("media"))
@@ -612,6 +613,7 @@ class PyChromecastTransport:
         return MediaStatus(
             playback_state=playback_state,
             content_id=status.content_id,
+            media_session_id=status.media_session_id,
             content_type=status.content_type,
             title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,
