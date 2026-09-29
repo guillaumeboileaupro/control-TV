@@ -70,6 +70,22 @@ def _is_finite(value: float) -> bool:
     return math.isfinite(value)
 
 
+def _number(value: object, name: str, device_id: str | None = None) -> float:
+    """`value` as a float when it is a real, finite number.
+
+    A bool is not a number here (`True` would otherwise mean 1), and neither is a string or an
+    integer too large for a float; each is an `InvalidArgumentError`, not a crash.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise InvalidArgumentError(f"{name} must be a number: {value!r}", device_id=device_id)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise InvalidArgumentError(f"{name} is too large: {value!r}", device_id=device_id) from None
+    _require(_is_finite(number), f"{name} must be a finite number: {value!r}", device_id)
+    return number
+
+
 def _checked_id(device_id: DeviceId) -> DeviceId:
     _require(bool(device_id.strip()), "device id must not be blank")
     return device_id
@@ -207,10 +223,8 @@ class ControlService:
         self._sleep = sleep
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
-        _require(
-            _is_finite(timeout) and timeout > 0,
-            f"discovery timeout must be a finite number > 0: {timeout}",
-        )
+        timeout = _number(timeout, "discovery timeout")
+        _require(timeout > 0, f"discovery timeout must be a finite number > 0: {timeout}")
         return list(self._transport.discover(timeout=timeout))
 
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
@@ -262,8 +276,9 @@ class ControlService:
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
         device_id = _checked_id(device_id)
+        position_seconds = _number(position_seconds, "seek position", device_id)
         _require(
-            _is_finite(position_seconds) and position_seconds >= 0,
+            position_seconds >= 0,
             f"seek position must be a finite number >= 0: {position_seconds}",
             device_id,
         )
@@ -306,11 +321,8 @@ class ControlService:
 
     def set_volume(self, device_id: DeviceId, level: float) -> CommandResult:
         device_id = _checked_id(device_id)
-        _require(
-            _is_finite(level) and 0.0 <= level <= 1.0,
-            f"volume level must be within 0.0-1.0: {level}",
-            device_id,
-        )
+        level = _number(level, "volume level", device_id)
+        _require(0.0 <= level <= 1.0, f"volume level must be within 0.0-1.0: {level}", device_id)
         self._transport.set_volume(device_id, level)
         return self._verify(
             Command.SET_VOLUME,
@@ -321,6 +333,9 @@ class ControlService:
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> CommandResult:
         device_id = _checked_id(device_id)
+        # An absolute state: only a real bool, never 0/1, a string or None.
+        if not isinstance(muted, bool):
+            raise InvalidArgumentError(f"muted must be a boolean: {muted!r}", device_id=device_id)
         self._transport.set_muted(device_id, muted)
         return self._verify(
             Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"

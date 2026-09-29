@@ -4,6 +4,7 @@ import importlib.metadata
 import math
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -30,6 +31,7 @@ from control_tv.domain import (
     DiscoveryError,
     InvalidArgumentError,
     MediaRequest,
+    MediaStatus,
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
@@ -1163,7 +1165,9 @@ class ScriptedMediaChannel:
 
     It mirrors what PyChromecast's `SocketClient.send_app_message` does: a namespace the
     running application does not expose is refused, and a reply is first merged by the
-    controller into its cached status and then handed to the request's callback. `state` is
+    controller into its cached status and then handed to the request's callback; like
+    `SocketClient._route_message`, an exception raised while merging is swallowed (logged
+    there) and the callback still receives the reply. `state` is
     what the receiver currently reports; a command listed in `after_command` changes it.
     `mode` decides how requests are answered: "reply", "silent" (never), "late" (held
     until `deliver_late`) or "refuse" (not sent).
@@ -1212,8 +1216,12 @@ class ScriptedMediaChannel:
         if self.mode == "late":
             self._late.append((callback_function, reply))
             return
-        self.controller.receive_message(cast(CastMessage, None), reply)
+        self._merge(reply)
         callback_function(True, reply)
+
+    def _merge(self, reply: dict[str, object]) -> None:
+        with suppress(Exception):
+            self.controller.receive_message(cast(CastMessage, None), reply)
 
     def broadcast(self, *entries: dict[str, object]) -> None:
         """An unsolicited MEDIA_STATUS pushed by the receiver to every connected sender."""
@@ -1221,7 +1229,7 @@ class ScriptedMediaChannel:
 
     def deliver_late(self) -> None:
         for callback_function, reply in self._late:
-            self.controller.receive_message(cast(CastMessage, None), reply)
+            self._merge(reply)
             callback_function(True, reply)
         self._late = []
 
@@ -1586,3 +1594,207 @@ def test_null_metadata_leaves_the_title_unknown() -> None:
     assert media is not None
     assert media.content_id == MOVIE
     assert media.title is None
+
+
+# --- Structurally invalid MEDIA_STATUS replies --------------------------------------------
+#
+# A field whose value cannot be what the Cast protocol defines (wrong JSON type, a negative
+# or non-finite number) is reported as unknown, exactly like an omitted or null field: never
+# as a plausible value (0, false, "") and never as a crash. A reply whose overall shape is not
+# a media status (no status list, an entry that is not an object) fails the read cleanly.
+
+
+def paused_entry(**changes: object) -> dict[str, object]:
+    return playing_entry() | {"playerState": "PAUSED"} | changes
+
+
+def paused_entry_with_media(**media_changes: object) -> dict[str, object]:
+    media_block = cast(dict[str, object], playing_entry()["media"]) | media_changes
+    return paused_entry(media=media_block)
+
+
+def read_media(entry: dict[str, object]) -> MediaStatus | None:
+    transport, channel = make_media_transport()
+    channel.state = [entry]
+    return transport.get_status(DEVICE_ID, timeout=5.0).media
+
+
+UNUSABLE_NUMBERS = [
+    pytest.param("", id="empty-string"),
+    pytest.param("12", id="numeric-string"),
+    pytest.param(True, id="boolean"),
+    pytest.param(-5, id="negative"),
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="infinity"),
+    pytest.param(10**400, id="integer-too-large-for-a-float"),
+    pytest.param({}, id="object"),
+]
+
+
+@pytest.mark.parametrize("value", UNUSABLE_NUMBERS)
+def test_an_unusable_position_is_unknown(value: object) -> None:
+    media = read_media(paused_entry(currentTime=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.position_seconds is None
+    assert media.content_id == MOVIE
+    assert media.playback_state is PlaybackState.PAUSED
+
+
+@pytest.mark.parametrize("value", UNUSABLE_NUMBERS)
+def test_an_unusable_duration_is_unknown(value: object) -> None:
+    media = read_media(paused_entry_with_media(duration=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.duration_seconds is None
+    assert media.content_id == MOVIE
+
+
+def test_an_explicit_zero_duration_is_kept() -> None:
+    media = read_media(paused_entry_with_media(duration=0))
+
+    assert isinstance(media, MediaStatus)
+    assert media.duration_seconds == 0.0
+
+
+@pytest.mark.parametrize("value", [0, 12, {}, [], True], ids=str)
+def test_a_content_id_that_is_not_a_string_is_unknown(value: object) -> None:
+    media = read_media(paused_entry_with_media(contentId=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.content_id is None
+
+
+@pytest.mark.parametrize("value", [5, {}, True], ids=str)
+def test_a_content_type_that_is_not_a_string_is_unknown(value: object) -> None:
+    media = read_media(paused_entry_with_media(contentType=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.content_type is None
+    assert media.content_id == MOVIE
+
+
+@pytest.mark.parametrize("value", [5, {}, True], ids=str)
+def test_a_player_state_that_is_not_a_string_is_unknown(value: object) -> None:
+    media = read_media(paused_entry(playerState=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.playback_state is PlaybackState.UNKNOWN
+    assert media.content_id == MOVIE
+
+
+@pytest.mark.parametrize("value", ["3", 3.5, True, -1, {}], ids=str)
+def test_an_unusable_command_mask_leaves_seek_capability_unknown(value: object) -> None:
+    media = read_media(paused_entry(supportedMediaCommands=value))
+
+    assert isinstance(media, MediaStatus)
+    assert media.supports_seek is None
+
+
+@pytest.mark.parametrize("metadata", ["x", [], 5, {"title": 5}, {"title": {}}], ids=str)
+def test_unusable_metadata_leaves_the_title_unknown(metadata: object) -> None:
+    media = read_media(paused_entry_with_media(metadata=metadata))
+
+    assert isinstance(media, MediaStatus)
+    assert media.title is None
+    assert media.content_id == MOVIE
+
+
+@pytest.mark.parametrize("rate", ["1", True, math.nan, math.inf, {}], ids=str)
+def test_an_unusable_playback_rate_keeps_the_reported_position(rate: object) -> None:
+    media = read_media(playing_entry() | {"playbackRate": rate})
+
+    assert isinstance(media, MediaStatus)
+    assert media.playback_state is PlaybackState.PLAYING
+    assert media.position_seconds == 12.0
+
+
+@pytest.mark.parametrize("volume", [None, "x", 5, []], ids=str)
+def test_an_unusable_media_volume_block_is_ignored(volume: object) -> None:
+    """The media-channel volume is not mapped; a malformed one must not break the read."""
+    media = read_media(paused_entry(volume=volume))
+
+    assert isinstance(media, MediaStatus)
+    assert media.content_id == MOVIE
+
+
+@pytest.mark.parametrize("media_block", ["x", 5, []], ids=str)
+def test_a_media_block_that_is_not_an_object_leaves_the_content_unknown(
+    media_block: object,
+) -> None:
+    media = read_media(paused_entry(media=media_block))
+
+    assert isinstance(media, MediaStatus)
+    assert media.playback_state is PlaybackState.PAUSED
+    assert media.content_id is None
+    assert media.duration_seconds is None
+
+
+def test_media_from_the_extended_status_is_checked_the_same_way() -> None:
+    entry = paused_entry()
+    del entry["media"]
+    entry["extendedStatus"] = {"media": {"contentId": 0, "duration": "", "metadata": "x"}}
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.content_id is None
+    assert media.duration_seconds is None
+    assert media.title is None
+
+
+@pytest.mark.parametrize("extended", ["x", 5, None], ids=str)
+def test_an_extended_status_that_is_not_an_object_is_ignored(extended: object) -> None:
+    entry = paused_entry()
+    del entry["media"]
+    entry["extendedStatus"] = extended
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.content_id is None
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param({"type": "MEDIA_STATUS"}, id="no-status-list"),
+        pytest.param({"type": "MEDIA_STATUS", "status": None}, id="null-status"),
+        pytest.param({"type": "MEDIA_STATUS", "status": "x"}, id="status-string"),
+        pytest.param({"type": "MEDIA_STATUS", "status": {}}, id="status-object"),
+        pytest.param({"type": "MEDIA_STATUS", "status": ["x"]}, id="entry-string"),
+        pytest.param({"type": "MEDIA_STATUS", "status": [None]}, id="entry-null"),
+    ],
+)
+def test_a_reply_that_is_not_shaped_like_a_media_status_fails_the_read(
+    reply: dict[str, object],
+) -> None:
+    cast_device = FakeCast()
+
+    def answer(
+        data: dict[str, object],
+        *,
+        callback_function: Callable[[bool, dict[str, object] | None], None],
+    ) -> None:
+        callback_function(True, reply)
+
+    cast_device.media_controller.send_message_nocheck = answer  # type: ignore[method-assign]
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(DeviceUnavailableError, match="malformed media status"):
+        transport.get_status(DEVICE_ID, timeout=5.0)
+
+
+def test_a_content_id_that_is_not_a_string_never_confirms_a_command() -> None:
+    """Before this check a numeric content id reached the service and crashed its identity
+    check; now it is unknown, so the pause is sent once and stays unconfirmed."""
+    transport, channel = make_media_transport()
+    numeric_id = paused_entry_with_media(contentId=0) | {"playerState": "PLAYING"}
+    channel.state = [numeric_id]
+    channel.after_command = {"PAUSE": [paused_entry_with_media(contentId=0)]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert channel.sent_types().count("PAUSE") == 1

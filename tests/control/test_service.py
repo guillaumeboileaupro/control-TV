@@ -1033,3 +1033,110 @@ def test_receiver_rejection_raises_without_confirmation_or_invented_result(
     assert excinfo.value.code is ErrorCode.COMMAND_REJECTED
     assert transport.sent() == []
     assert transport.status_reads() == 0
+
+
+# --- Input contract at the service boundary ---------------------------------------------
+#
+# The GUI bridge already refuses these values, but every other caller (a future MCP adapter,
+# scripts) reaches the service directly, so the service itself must refuse them before any
+# status read or transport call.
+
+HUGE_INTEGER = 10**400  # a valid JSON number that no float can hold
+
+
+@pytest.mark.parametrize(
+    "level",
+    [True, False, "0.5", None, HUGE_INTEGER, math.nan, math.inf, -0.1, 1.1],
+    ids=["true", "false", "string", "none", "huge-integer", "nan", "infinity", "below", "above"],
+)
+def test_set_volume_accepts_only_a_finite_number_from_0_to_1(
+    service: ControlService, transport: FakeTransport, level: object
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        service.set_volume(DEVICE_ID, level)  # type: ignore[arg-type]
+
+    assert transport.calls == []
+    assert transport.attempted() == []
+
+
+@pytest.mark.parametrize("level", [0, 1, 0.25])
+def test_set_volume_sends_an_integer_or_float_level_as_a_float(
+    service: ControlService, transport: FakeTransport, level: float
+) -> None:
+    service.set_volume(DEVICE_ID, level)
+
+    sent = [args for name, args in transport.calls if name == "set_volume"]
+    assert sent == [(DEVICE_ID, float(level))]
+    assert isinstance(sent[0][1], float)
+
+
+@pytest.mark.parametrize(
+    "muted",
+    [1, 0, 1.0, "true", "false", None],
+    ids=["one", "zero", "float-one", "string-true", "string-false", "none"],
+)
+def test_set_muted_accepts_only_a_real_boolean(
+    service: ControlService, transport: FakeTransport, muted: object
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        service.set_muted(DEVICE_ID, muted)  # type: ignore[arg-type]
+
+    assert transport.calls == []
+    assert transport.attempted() == []
+
+
+@pytest.mark.parametrize("muted", [True, False])
+def test_set_muted_sends_a_real_boolean(
+    service: ControlService, transport: FakeTransport, muted: bool
+) -> None:
+    service.set_muted(DEVICE_ID, muted)
+
+    assert [args for name, args in transport.calls if name == "set_muted"] == [(DEVICE_ID, muted)]
+
+
+@pytest.mark.parametrize(
+    "position",
+    [True, False, "5", None, HUGE_INTEGER, math.nan, math.inf, -math.inf, -1.0],
+    ids=["true", "false", "string", "none", "huge-integer", "nan", "inf", "-inf", "negative"],
+)
+def test_seek_rejects_an_invalid_position_before_any_status_read_or_command(
+    service: ControlService, transport: FakeTransport, position: object
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        service.seek(DEVICE_ID, position)  # type: ignore[arg-type]
+
+    assert transport.calls == []
+    assert transport.attempted() == []
+
+
+def test_seek_sends_an_integer_position_as_a_float(
+    service: ControlService, transport: FakeTransport
+) -> None:
+    service.seek(DEVICE_ID, 0)
+
+    sent = [args for name, args in transport.calls if name == "seek"]
+    assert sent == [(DEVICE_ID, 0.0)]
+    assert isinstance(sent[0][1], float)
+
+
+def test_seek_sets_no_maximum_position_of_its_own(
+    service: ControlService, transport: FakeTransport
+) -> None:
+    """The domain defines no maximum: a large finite position is the receiver's to judge."""
+    service.seek(DEVICE_ID, 1e300)
+
+    assert [args for name, args in transport.calls if name == "seek"] == [(DEVICE_ID, 1e300)]
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    [True, "5", None, HUGE_INTEGER, math.nan, math.inf, 0, -1.0],
+    ids=["true", "string", "none", "huge-integer", "nan", "inf", "zero", "negative"],
+)
+def test_discover_devices_rejects_an_invalid_timeout_before_discovery(
+    service: ControlService, transport: FakeTransport, timeout: object
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        service.discover_devices(timeout=timeout)  # type: ignore[arg-type]
+
+    assert transport.calls == []

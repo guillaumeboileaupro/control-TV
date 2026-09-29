@@ -911,3 +911,37 @@ def test_the_real_transport_refuses_sound_commands_for_an_undiscovered_device_of
         if process.stdin is not None:
             process.stdin.close()
         process.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        pytest.param("seek", {"deviceId": DEVICE_ID, "positionSeconds": 10**400}, id="seek-huge"),
+        pytest.param("discover_devices", {"timeoutSeconds": 10**400}, id="discovery-huge"),
+        pytest.param("discover_devices", {"timeoutSeconds": True}, id="discovery-boolean"),
+    ],
+)
+def test_an_unusable_number_is_an_invalid_argument_not_an_internal_error(
+    method: str, params: dict[str, object]
+) -> None:
+    transport = FakeTransport()
+    control = ControlService(transport)
+
+    response = dispatch(control, {"id": 9, "method": method, "params": params})
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "invalid_argument"
+    assert transport.calls == []
+
+
+def test_seek_forwards_an_integer_position() -> None:
+    transport = FakeTransport()
+    control = ControlService(transport, confirm_timeout=None)
+
+    response = dispatch(
+        control,
+        {"id": 10, "method": "seek", "params": {"deviceId": DEVICE_ID, "positionSeconds": 0}},
+    )
+
+    assert response["ok"] is True
+    assert [args for name, args in transport.calls if name == "seek"] == [(DEVICE_ID, 0.0)]

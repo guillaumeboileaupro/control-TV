@@ -136,7 +136,8 @@ def _handle_discover_devices(control: ControlService, params: dict[str, Any]) ->
     timeout = params.get("timeoutSeconds", DEFAULT_DISCOVERY_TIMEOUT)
     if not isinstance(timeout, int | float):
         raise InvalidArgumentError(f"timeoutSeconds must be a number: {timeout!r}")
-    devices = control.discover_devices(timeout=float(timeout))
+    # The service validates the number itself (bool, non-finite, too large for a float).
+    devices = control.discover_devices(timeout=timeout)
     return {"devices": [_device_to_json(device) for device in devices]}
 
 
@@ -162,7 +163,8 @@ def _handle_seek(control: ControlService, params: dict[str, Any]) -> Any:
     # A JSON boolean is an int in Python; it is never a position.
     if isinstance(position, bool) or not isinstance(position, int | float):
         raise InvalidArgumentError(f"positionSeconds must be a number: {position!r}")
-    return {"result": _command_result_to_json(control.seek(device_id, float(position)))}
+    # The service validates the number itself (non-finite, negative, too large for a float).
+    return {"result": _command_result_to_json(control.seek(device_id, position))}
 
 
 def _handle_set_volume(control: ControlService, params: dict[str, Any]) -> Any:
