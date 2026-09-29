@@ -1524,3 +1524,207 @@ def test_a_restored_identity_that_only_arrives_after_the_deadline_does_not_confi
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert clock.now <= 1.0 + 1e-9
     assert transport.attempted() == [command]
+
+
+# --- Queue item identity (currentItemId) ---------------------------------------------------
+#
+# Two items of one queue can share the content id and the session and differ only by their
+# currentItemId. When the item was reported before the command it narrows the identity like
+# the session: an explicitly different item is terminal for the attempt, a missing one only
+# rejects that read, and it never identifies the media on its own.
+
+ITEM = 101
+OTHER_ITEM = 102
+Full = tuple[str | None, int | None, int | None]
+X_A_101: Full = (MOVIE_URL, SESSION, ITEM)
+
+
+def item_sequence_run(
+    command: str,
+    reads_after: list[Full],
+    *,
+    before: Full = X_A_101,
+    service_transport: tuple[ControlService, FakeTransport] | None = None,
+) -> tuple[CommandResult, FakeTransport]:
+    """One command with the pre-command read reporting `before` (content, session, item), then
+    `reads_after` on the following reads (the last one repeats). The TV acts on the command at
+    once, so every read after it already shows the expected state or position."""
+    if service_transport is None:
+        clock = FakeClock()
+        transport = FakeTransport(clock=clock)
+        control = make_service(transport, clock)
+    else:
+        control, transport = service_transport
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport.tv.playback = initial_state
+
+    def report(identity: Full) -> None:
+        tv = transport.tv
+        tv.content_id, tv.media_session_id, tv.current_item_id = identity
+
+    report(before)
+    reads = [*reads_after, *[reads_after[-1]] * 20]
+    transport.status_effects = [lambda: None] + [partial(report, identity) for identity in reads]
+    return send(control), transport
+
+
+@ALL_COMMANDS
+def test_a_stable_queue_item_confirms(command: str) -> None:
+    result, transport = item_sequence_run(command, [X_A_101])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_another_queue_item_does_not_confirm(command: str) -> None:
+    result, transport = item_sequence_run(command, [(MOVIE_URL, SESSION, OTHER_ITEM)])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media queue item changed to 102 from 101" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_queue_item_replaced_then_restored_never_confirms(command: str) -> None:
+    """Item 101 -> 102 -> 101 with the same content id and session."""
+    result, transport = item_sequence_run(command, [(MOVIE_URL, SESSION, OTHER_ITEM), X_A_101])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media queue item changed" in (result.detail or "")
+    assert transport.attempted() == [command]
+    assert transport.status_reads() > 2
+
+
+def test_seek_to_the_exact_target_after_a_queue_item_round_trip_is_not_confirmed() -> None:
+    result, transport = item_sequence_run("seek", [(MOVIE_URL, SESSION, OTHER_ITEM), X_A_101])
+
+    assert transport.tv.position == 30.0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["seek"]
+
+
+@ALL_COMMANDS
+def test_a_queue_item_briefly_unreported_is_not_a_contradiction(command: str) -> None:
+    result, transport = item_sequence_run(command, [(MOVIE_URL, SESSION, None), X_A_101])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+def test_a_queue_item_missing_after_the_command_does_not_confirm(command: str) -> None:
+    result, transport = item_sequence_run(command, [(MOVIE_URL, SESSION, None)])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media queue item was not reported after the command" in (result.detail or "")
+    assert transport.attempted() == [command]
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize("after_item", [ITEM, OTHER_ITEM, None])
+def test_a_queue_item_unknown_before_the_command_adds_no_requirement(
+    command: str, after_item: int | None
+) -> None:
+    """An item that only appears after the command cannot be compared with anything: the
+    content id and the session decide, exactly as before items were read."""
+    result, _ = item_sequence_run(
+        command, [(MOVIE_URL, SESSION, after_item)], before=(MOVIE_URL, SESSION, None)
+    )
+
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize(
+    "contradiction",
+    [(MOVIE_URL, OTHER_SESSION, ITEM), (OTHER_CONTENT, SESSION, ITEM)],
+    ids=["session", "content"],
+)
+def test_other_contradictions_with_the_same_item_still_never_confirm(
+    command: str, contradiction: Full
+) -> None:
+    result, transport = item_sequence_run(command, [contradiction, X_A_101])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == [command]
+
+
+def test_the_first_of_several_contradictions_is_the_one_reported() -> None:
+    result, transport = item_sequence_run(
+        "pause",
+        [
+            (OTHER_CONTENT, SESSION, ITEM),
+            (MOVIE_URL, OTHER_SESSION, ITEM),
+            (MOVIE_URL, SESSION, OTHER_ITEM),
+            X_A_101,
+        ],
+    )
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert f"loaded content changed to {OTHER_CONTENT!r} from {MOVIE_URL!r}" in (
+        result.detail or ""
+    )
+    assert "media session changed" not in (result.detail or "")
+    assert "media queue item changed" not in (result.detail or "")
+    assert transport.attempted() == ["pause"]
+
+
+@ALL_COMMANDS
+@pytest.mark.parametrize("content_id", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_a_queue_item_never_identifies_the_media_without_a_content_id(
+    command: str, content_id: str | None
+) -> None:
+    result, _ = item_sequence_run(
+        command, [(content_id, SESSION, ITEM)], before=(content_id, SESSION, ITEM)
+    )
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+
+
+@ALL_COMMANDS
+def test_a_queue_item_contradiction_does_not_carry_over_to_the_next_command(command: str) -> None:
+    clock = FakeClock()
+    transport = FakeTransport(clock=clock)
+    control = make_service(transport, clock)
+
+    first, _ = item_sequence_run(
+        command, [(MOVIE_URL, SESSION, OTHER_ITEM), X_A_101], service_transport=(control, transport)
+    )
+    second, _ = item_sequence_run(command, [X_A_101], service_transport=(control, transport))
+
+    assert first.confirmation is Confirmation.UNCONFIRMED
+    assert second.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == [command, command]
+
+
+@ALL_COMMANDS
+def test_the_original_item_only_after_the_deadline_does_not_confirm(command: str) -> None:
+    clock = FakeClock()
+    initial_state, send = PLAYBACK_COMMANDS[command]
+    transport = FakeTransport(clock=clock)
+    transport.tv.playback = initial_state
+    tv = transport.tv
+    tv.content_id, tv.media_session_id, tv.current_item_id = X_A_101
+    transport.status_effects = [lambda: None] + [
+        partial(setattr, transport.tv, "current_item_id", None)
+    ] * 200
+
+    result = send(make_service(transport, clock, confirm_timeout=1.0))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    assert transport.attempted() == [command]
+
+
+@pytest.mark.parametrize(
+    "item", [True, False, -1, 1.5, "101"], ids=["true", "false", "negative", "float", "string"]
+)
+def test_a_queue_item_id_must_be_a_non_negative_integer(item: object) -> None:
+    with pytest.raises(InvalidArgumentError):
+        MediaStatus(content_id=MOVIE_URL, current_item_id=item)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("item", [None, 0, 101])
+def test_a_queue_item_id_can_be_unknown_zero_or_positive(item: int | None) -> None:
+    assert MediaStatus(current_item_id=item).current_item_id == item

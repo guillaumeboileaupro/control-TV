@@ -32,7 +32,7 @@ from control_tv.service import (
 DEVICE_ID = DeviceId("uuid-1")
 OBSERVED_AT = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 URL = "http://media.local/movie.mp4"
-KNOWN_URL = _MediaIdentity(URL, None)  # a content id, no session reported
+KNOWN_URL = _MediaIdentity(URL, None, None)  # a content id, no session or item
 
 
 def status(

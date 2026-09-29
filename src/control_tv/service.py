@@ -100,20 +100,23 @@ def _usable_content_id(content_id: str | None) -> str | None:
 class _MediaIdentity:
     """What a pre-command status read established about the media being controlled.
 
-    `content_id` names the media item and is required. `session_id` is the receiver's
-    mediaSessionId: it names the playback session, which can hold several queued items, so it
-    can only narrow a match on `content_id`, never establish one on its own.
+    `content_id` names the media item and is required. `session_id` (the receiver's
+    mediaSessionId) names the playback session, which can hold several queued items, and
+    `item_id` (currentItemId) names the active item within that session's queue, so two items
+    with the same content id can still differ. Both can only narrow a match on `content_id`,
+    never establish one on their own.
     """
 
     content_id: str
     session_id: int | None
+    item_id: int | None
 
 
 def _identity_of(media: MediaStatus | None) -> _MediaIdentity | None:
     content_id = _usable_content_id(media.content_id if media is not None else None)
     if media is None or content_id is None:
         return None
-    return _MediaIdentity(content_id, media.media_session_id)
+    return _MediaIdentity(content_id, media.media_session_id, media.current_item_id)
 
 
 def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> str | None:
@@ -131,6 +134,8 @@ def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> s
         return f"loaded content changed to {media.content_id!r} from {expected.content_id!r}"
     if expected.session_id is not None and media.media_session_id is None:
         return "media session was not reported after the command"
+    if expected.item_id is not None and media.current_item_id is None:
+        return "media queue item was not reported after the command"
     return None
 
 
@@ -138,9 +143,10 @@ def _identity_contradiction(expected: _MediaIdentity, media: MediaStatus) -> str
     """An identity other than the pre-command one, explicitly reported by this read, or None.
 
     Only a reported value can contradict: a usable content id other than the expected one
-    (another queue item keeps the session but changes it), or a session other than the one
-    reported before the command. An absent, empty or blank content id and a missing session
-    are no evidence either way.
+    (another queue item keeps the session but changes it), or a session or queue item other
+    than the one reported before the command (two queue items can share the content id and the
+    session). An absent, empty or blank content id and a missing session or item are no
+    evidence either way.
     """
     content_id = _usable_content_id(media.content_id)
     if content_id is not None and content_id != expected.content_id:
@@ -154,6 +160,9 @@ def _identity_contradiction(expected: _MediaIdentity, media: MediaStatus) -> str
         return (
             f"media session changed to {session_id} from {expected.session_id} during confirmation"
         )
+    item_id = media.current_item_id
+    if expected.item_id is not None and item_id is not None and item_id != expected.item_id:
+        return f"media queue item changed to {item_id} from {expected.item_id} during confirmation"
     return None
 
 
@@ -161,9 +170,10 @@ class _IdentityCheck:
     """Checks the reads of ONE confirmation attempt against the pre-command identity.
 
     It remembers the first explicit identity contradiction across those reads: once a read
-    reports another content id (X -> Y) or another session (A -> B), that attempt can no longer
-    confirm, because a later read back in the original identity cannot show which change the
-    command caused (X -> Y -> X, A -> B -> A). A read that reports no content id or no session
+    reports another content id (X -> Y), another session (A -> B) or another queue item
+    (101 -> 102), that attempt can no longer confirm, because a later read back in the
+    original identity cannot show which change the command caused (X -> Y -> X,
+    A -> B -> A, 101 -> 102 -> 101). A read that reports no content id, no session or no item
     is rejected on its own but contradicts nothing. A new instance is built with each command's
     predicate, so nothing carries over to another command.
     """

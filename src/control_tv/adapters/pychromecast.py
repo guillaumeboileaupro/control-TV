@@ -151,6 +151,7 @@ def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[
             ("playerState", _text),
             ("supportedMediaCommands", _non_negative_integer),
             ("mediaSessionId", _non_negative_integer),
+            ("currentItemId", _non_negative_integer),
         ),
     )
     media = _checked_media_block(entry.get("media"))
@@ -561,10 +562,13 @@ class PyChromecastTransport:
         fresh = PyMediaStatus()
         fresh.update({"status": [entry]})
         # After the check an omitted, null or unusable field is absent or null: unknown.
+        # PyChromecast 14.0.10 does not parse currentItemId: it is read from the checked entry.
+        item = entry.get("currentItemId")
         return self._media_status(
             fresh,
             position_reported=entry.get("currentTime") is not None,
             commands_reported=entry.get("supportedMediaCommands") is not None,
+            current_item_id=item if isinstance(item, int) and not isinstance(item, bool) else None,
         )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
@@ -589,6 +593,7 @@ class PyChromecastTransport:
         *,
         position_reported: bool = True,
         commands_reported: bool = True,
+        current_item_id: int | None = None,
     ) -> MediaStatus | None:
         """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
         if status.content_id is None and status.player_state in (
@@ -614,6 +619,7 @@ class PyChromecastTransport:
             playback_state=playback_state,
             content_id=status.content_id,
             media_session_id=status.media_session_id,
+            current_item_id=current_item_id,
             content_type=status.content_type,
             title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,

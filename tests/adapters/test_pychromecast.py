@@ -1886,3 +1886,61 @@ def test_pause_in_the_same_session_and_content_is_confirmed() -> None:
 
     assert result.confirmation is Confirmation.CONFIRMED
     assert channel.sent_types().count("PAUSE") == 1
+
+
+# --- currentItemId (not parsed by PyChromecast 14.0.10: read from the checked raw entry) --
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(101, 101, id="valid"),
+        pytest.param(0, 0, id="explicit-zero"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param(True, None, id="true"),
+        pytest.param(False, None, id="false"),
+        pytest.param(-1, None, id="negative"),
+        pytest.param(1.5, None, id="float"),
+        pytest.param("101", None, id="string"),
+        pytest.param(10**400, 10**400, id="large-integer"),
+        pytest.param({}, None, id="object"),
+    ],
+)
+def test_the_queue_item_id_is_kept_only_when_it_is_a_non_negative_integer(
+    raw: object, expected: int | None
+) -> None:
+    entry = paused_entry()
+    if raw != "omitted":
+        entry["currentItemId"] = raw
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.current_item_id == expected
+    assert media.content_id == MOVIE
+
+
+def test_pause_answered_by_another_queue_item_of_the_same_content_is_not_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=1) | {"currentItemId": 101}]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=1, currentItemId=102)]}
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media queue item changed to 102 from 101" in (result.detail or "")
+    assert channel.sent_types().count("PAUSE") == 1
+
+
+def test_pause_on_the_same_queue_item_is_confirmed() -> None:
+    transport, channel = make_media_transport()
+    channel.state = [playing_entry(session=1) | {"currentItemId": 101}]
+    channel.after_command = {"PAUSE": [paused_entry(mediaSessionId=1, currentItemId=101)]}
+    service = ControlService(transport, confirm_timeout=1.0, poll_interval=0.05)
+
+    result = service.pause(DEVICE_ID)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert channel.sent_types().count("PAUSE") == 1

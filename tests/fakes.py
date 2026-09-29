@@ -49,6 +49,8 @@ class TvState:
     content_id: str | None = MOVIE_URL
     media_session_id: int | None = None
     """The receiver's mediaSessionId; None mimics a receiver that does not report one."""
+    current_item_id: int | None = None
+    """The receiver's currentItemId; None mimics a receiver that does not report one."""
     position: float = 10.0
     supports_seek: bool | None = True
     volume: float = 0.5
@@ -154,6 +156,7 @@ class FakeTransport:
                 playback_state=tv.playback,
                 content_id=tv.content_id,
                 media_session_id=tv.media_session_id,
+                current_item_id=tv.current_item_id,
                 position_seconds=tv.position,
                 supports_seek=tv.supports_seek,
             )
