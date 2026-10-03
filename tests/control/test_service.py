@@ -1728,3 +1728,52 @@ def test_a_queue_item_id_must_be_a_non_negative_integer(item: object) -> None:
 @pytest.mark.parametrize("item", [None, 0, 101])
 def test_a_queue_item_id_can_be_unknown_zero_or_positive(item: int | None) -> None:
     assert MediaStatus(current_item_id=item).current_item_id == item
+
+
+# --- Seek hardware finding (2026-09-29, YouTube receiver) -----------------------------------
+#
+# On real hardware a Seek +30 s was sent once; the receiver then reported target + elapsed
+# time while the picture did not move, later replaced its session (19 -> 20) and realigned to
+# the no-seek timeline. CONFIRMED means "the receiver reported the expected state for the
+# same identified media", never an independent proof of the physical effect. These tests pin
+# that meaning without changing it.
+
+
+def test_seek_is_confirmed_from_the_receiver_report_alone() -> None:
+    """With a usable identity, a receiver reporting the target confirms the seek: the
+    confirmation rests on what the receiver reports, not on what the screen shows."""
+    result, transport = item_sequence_run("seek", [X_A_101])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert transport.attempted() == ["seek"]
+
+
+def test_seek_reported_in_a_replaced_session_is_not_confirmed() -> None:
+    """The receiver reports the target position, but from another session (19 -> 20)."""
+    result, transport = item_sequence_run("seek", [(MOVIE_URL, OTHER_SESSION, ITEM)])
+
+    assert transport.tv.position == 30.0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media session changed" in (result.detail or "")
+    assert transport.attempted() == ["seek"]
+
+
+def test_seek_target_then_replaced_session_then_original_never_confirms() -> None:
+    result, transport = item_sequence_run(
+        "seek", [(MOVIE_URL, OTHER_SESSION, ITEM), X_A_101, X_A_101]
+    )
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["seek"]
+
+
+def test_seek_with_an_empty_content_id_stays_unconfirmed_like_the_real_youtube_case() -> None:
+    """As observed: empty content id, stable session and item, target reported -> UNCONFIRMED."""
+    empty = ("", SESSION, ITEM)
+
+    result, transport = item_sequence_run("seek", [empty], before=empty)
+
+    assert transport.tv.position == 30.0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "media identity was not reported before the command" in (result.detail or "")
+    assert transport.attempted() == ["seek"]

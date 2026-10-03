@@ -46,9 +46,11 @@ from control_tv.domain import (
     InvalidArgumentError,
     MediaRequest,
     MediaStatus,
+    MetadataType,
     OperationTimeoutError,
     PlaybackState,
     ReceiverStatus,
+    StreamType,
 )
 
 Discoverer = Callable[[float], tuple[list[Chromecast], object]]
@@ -115,14 +117,53 @@ def _checked_media_block(block: object) -> dict[str, object] | None:
         (
             ("contentId", _text),
             ("contentType", _text),
+            ("streamType", _text),
             ("duration", _non_negative_number),
             ("metadata", lambda value: isinstance(value, dict)),
         ),
     )
     metadata = checked.get("metadata")
     if isinstance(metadata, dict):
-        checked["metadata"] = _unusable_to_null(metadata, (("title", _text),))
+        checked["metadata"] = _unusable_to_null(
+            metadata,
+            (("title", _text), ("artist", _text), ("metadataType", _non_negative_integer)),
+        )
     return checked
+
+
+_STREAM_TYPES = {"BUFFERED": StreamType.BUFFERED, "LIVE": StreamType.LIVE}
+_METADATA_TYPES = {
+    0: MetadataType.GENERIC,
+    1: MetadataType.MOVIE,
+    2: MetadataType.TV_SHOW,
+    3: MetadataType.MUSIC_TRACK,
+    4: MetadataType.PHOTO,
+    5: MetadataType.AUDIOBOOK_CHAPTER,
+}
+
+
+def _reported_details(
+    entry: dict[str, object],
+) -> tuple[str | None, StreamType | None, MetadataType | None]:
+    """Artist, stream type and metadata type exactly as the checked entry reports them.
+
+    They are read here rather than from PyChromecast, whose defaults would invent a value for
+    an omitted field (`stream_type` "UNKNOWN", an empty metadata dict). An omitted, null, blank
+    or unrecognized value is unknown (`None`): Cast's "NONE" stream type and metadata types
+    beyond the known ones name nothing the product can use.
+    """
+    media = entry.get("media")
+    media = media if isinstance(media, dict) else {}
+    metadata = media.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    artist = metadata.get("artist")
+    stream = media.get("streamType")
+    kind = metadata.get("metadataType")
+    return (
+        artist.strip() if isinstance(artist, str) and artist.strip() else None,
+        _STREAM_TYPES.get(stream) if isinstance(stream, str) else None,
+        _METADATA_TYPES.get(kind) if isinstance(kind, int) and not isinstance(kind, bool) else None,
+    )
 
 
 def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[str, object] | None:
@@ -564,11 +605,15 @@ class PyChromecastTransport:
         # After the check an omitted, null or unusable field is absent or null: unknown.
         # PyChromecast 14.0.10 does not parse currentItemId: it is read from the checked entry.
         item = entry.get("currentItemId")
+        artist, stream_type, metadata_type = _reported_details(entry)
         return self._media_status(
             fresh,
             position_reported=entry.get("currentTime") is not None,
             commands_reported=entry.get("supportedMediaCommands") is not None,
             current_item_id=item if isinstance(item, int) and not isinstance(item, bool) else None,
+            artist=artist,
+            stream_type=stream_type,
+            metadata_type=metadata_type,
         )
 
     def _command(self, device_id: DeviceId, action: str, operation: Callable[[], T]) -> T:
@@ -594,6 +639,9 @@ class PyChromecastTransport:
         position_reported: bool = True,
         commands_reported: bool = True,
         current_item_id: int | None = None,
+        artist: str | None = None,
+        stream_type: StreamType | None = None,
+        metadata_type: MetadataType | None = None,
     ) -> MediaStatus | None:
         """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
         if status.content_id is None and status.player_state in (
@@ -624,5 +672,9 @@ class PyChromecastTransport:
             title=metadata.get("title") if isinstance(metadata, dict) else None,
             position_seconds=position,
             duration_seconds=status.duration,
+            artist=artist,
+            stream_type=stream_type,
+            metadata_type=metadata_type,
             supports_seek=status.supports_seek if commands_reported else None,
+            supports_pause=status.supports_pause if commands_reported else None,
         )

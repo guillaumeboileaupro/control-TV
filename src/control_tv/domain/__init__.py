@@ -24,8 +24,10 @@ from control_tv.domain.models import (
     DeviceStatus,
     MediaRequest,
     MediaStatus,
+    MetadataType,
     PlaybackState,
     ReceiverStatus,
+    StreamType,
 )
 from control_tv.domain.results import Command, CommandResult, Confirmation
 
@@ -48,9 +50,11 @@ __all__ = [
     "InvalidArgumentError",
     "MediaRequest",
     "MediaStatus",
+    "MetadataType",
     "OperationTimeoutError",
     "PlaybackState",
     "ReceiverStatus",
+    "StreamType",
     "UnsupportedMediaError",
     "UnsupportedOperationError",
 ]

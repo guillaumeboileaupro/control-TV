@@ -1030,6 +1030,23 @@ done"#,
     }
 
     #[test]
+    fn read_status_relays_the_media_details_untouched_and_keeps_null_as_null() {
+        let (state, _script) = ready_state(
+            r#"echo '{"id":1,"ok":true,"result":{"status":{"deviceId":"uuid-1","connection":"connected","receiver":null,"media":{"playbackState":"paused","contentId":"","title":"A video","artist":"A channel","streamType":"buffered","metadataType":"generic","positionSeconds":12.5,"durationSeconds":90.0,"supportsSeek":true,"supportsPause":null}}}}'"#,
+        );
+
+        let result = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap();
+
+        let media = &result["status"]["media"];
+        assert_eq!(media["artist"], "A channel");
+        assert_eq!(media["streamType"], "buffered");
+        assert_eq!(media["metadataType"], "generic");
+        assert_eq!(media["supportsSeek"], true);
+        assert_eq!(media["supportsPause"], Value::Null);
+        assert_eq!(media["contentId"], "");
+    }
+
+    #[test]
     fn read_status_relays_a_device_error_code_untouched() {
         let (state, _script) = ready_state(
             r#"echo '{"id":1,"ok":false,"error":{"code":"device_unavailable","message":"tv is asleep"}}'"#,

@@ -21,6 +21,10 @@ Read-only methods:
 - `get_status`       -> {"status": {...}}; required param `deviceId` (the stable id from
                         discovery, never a display name). Fields the TV did not report are
                         `null`, never a default: `null` means unknown, not "off" or "zero".
+                        `media` carries `playbackState`, `contentId`, `contentType`, `title`,
+                        `artist`, `streamType` ("buffered"/"live"), `metadataType` ("generic",
+                        "movie", "tv_show", "music_track", "photo", "audiobook_chapter"),
+                        `positionSeconds`, `durationSeconds`, `supportsSeek`, `supportsPause`.
 
 Commands, each a plain forward to the same-named `ControlService` method (no Cast
 logic, no retry, no replay), all taking the stable `deviceId`:
@@ -103,9 +107,13 @@ def _status_to_json(status: DeviceStatus) -> dict[str, Any]:
             "contentId": media.content_id,
             "contentType": media.content_type,
             "title": media.title,
+            "artist": media.artist,
+            "streamType": None if media.stream_type is None else media.stream_type.value,
+            "metadataType": None if media.metadata_type is None else media.metadata_type.value,
             "positionSeconds": media.position_seconds,
             "durationSeconds": media.duration_seconds,
             "supportsSeek": media.supports_seek,
+            "supportsPause": media.supports_pause,
         },
     }
 

@@ -93,6 +93,7 @@ interface Elements {
   stopLabel: HTMLElement;
   controlsNote: HTMLElement;
   seekNote: HTMLElement;
+  pauseNote: HTMLElement;
   sound: HTMLElement;
   muteButton: HTMLButtonElement;
   volumeInput: HTMLInputElement;
@@ -307,6 +308,9 @@ function start(elements: Elements): void {
       headline.classList.add("is-empty");
     }
     parts.push(headline);
+    if (description.byline !== null) {
+      parts.push(text("p", "byline", description.byline));
+    }
 
     if (description.playback !== null && description.position !== null) {
       const row = document.createElement("p");
@@ -465,6 +469,11 @@ function start(elements: Elements): void {
     if (controls.unavailable !== null) {
       el.controlsNote.append(icon("info"), controls.unavailable);
     }
+    el.pauseNote.hidden = controls.pauseNote === null;
+    el.pauseNote.replaceChildren();
+    if (controls.pauseNote !== null) {
+      el.pauseNote.append(icon("info"), controls.pauseNote);
+    }
     el.seekNote.hidden = controls.seekNote === null;
     el.seekNote.replaceChildren();
     if (controls.seekNote !== null) {
@@ -474,6 +483,10 @@ function start(elements: Elements): void {
     renderFeedback();
     if (controlsHadFocus && el.controls.hidden) {
       (el.refreshButton.hidden ? el.pickerSummary : el.refreshButton).focus();
+    } else if (active === el.primaryButton && el.primaryButton.hidden && !el.stopButton.hidden) {
+      // The toggle went away (the TV says this media can't be paused): keep keyboard focus on
+      // the controls rather than dropping it to the page.
+      el.stopButton.focus();
     }
   }
 
@@ -796,6 +809,7 @@ window.addEventListener("DOMContentLoaded", () => {
     stopLabel: byId("stop-label"),
     controlsNote: byId("controls-note"),
     seekNote: byId("seek-note"),
+    pauseNote: byId("pause-note"),
     sound: byId("sound"),
     muteButton: byId<HTMLButtonElement>("mute-button"),
     volumeInput: byId<HTMLInputElement>("volume-input"),

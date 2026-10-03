@@ -26,6 +26,7 @@ import {
   type AppState,
   type Device,
   type DeviceStatus,
+  type MediaStatus,
 } from "./model.ts";
 
 function device(id: string, friendlyName = `Device ${id}`): Device {
@@ -609,6 +610,62 @@ describe("status wording", () => {
     assert.equal(formatClock(null), "");
     assert.equal(formatClock(-1), "");
     assert.equal(formatClock(Number.POSITIVE_INFINITY), "");
+  });
+});
+
+describe("media details", () => {
+  const media = FULL_STATUS.media as MediaStatus;
+  const withMedia = (changes: Partial<MediaStatus>): DeviceStatus => ({
+    ...FULL_STATUS,
+    media: { ...media, ...changes },
+  });
+
+  test("the artist the TV reports is shown as a byline, trimmed", () => {
+    assert.equal(describeStatus(withMedia({ artist: "A channel" }), at).byline, "A channel");
+    assert.equal(describeStatus(withMedia({ artist: "  A channel " }), at).byline, "A channel");
+  });
+
+  test("no artist, a null one or a blank one says nothing (no placeholder)", () => {
+    assert.equal(describeStatus(FULL_STATUS, at).byline, null);
+    assert.equal(describeStatus(withMedia({ artist: null }), at).byline, null);
+    assert.equal(describeStatus(withMedia({ artist: "" }), at).byline, null);
+    assert.equal(describeStatus(withMedia({ artist: "   " }), at).byline, null);
+  });
+
+  test("nothing playing or a disconnected device has no byline", () => {
+    assert.equal(describeStatus({ ...FULL_STATUS, media: null }, at).byline, null);
+    assert.equal(describeStatus({ ...FULL_STATUS, connection: "disconnected" }, at).byline, null);
+  });
+
+  test("a blank title or content id is not a headline: the next fact is used", () => {
+    assert.equal(
+      describeStatus(withMedia({ title: "", contentId: "", artist: "A channel" }), at).headline,
+      "Unidentified media",
+    );
+    assert.equal(describeStatus(withMedia({ title: "  " }), at).headline, media.contentId);
+    assert.equal(
+      describeStatus(withMedia({ title: null, contentId: "" }), at).headline,
+      "Unidentified media",
+    );
+  });
+
+  test("a live stream shows Live instead of a length and draws no progress", () => {
+    const position = describeStatus(withMedia({ streamType: "live" }), at).position;
+    assert.deepEqual(position, { text: "Live", fraction: null });
+  });
+
+  test("a buffered or unreported stream type keeps position and length", () => {
+    for (const streamType of ["buffered", null, undefined]) {
+      const position = describeStatus(withMedia({ streamType }), at).position;
+      assert.equal(position?.text, "1:05 / 2:02:05");
+    }
+  });
+
+  test("a status from an older backend without the new fields reads as before", () => {
+    const description = describeStatus(FULL_STATUS, at);
+    assert.equal(description.headline, "Movie");
+    assert.equal(description.byline, null);
+    assert.equal(description.application, "Default Media Receiver");
   });
 });
 

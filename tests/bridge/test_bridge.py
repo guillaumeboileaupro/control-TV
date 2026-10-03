@@ -28,9 +28,11 @@ from control_tv.domain import (
     DeviceStatus,
     DeviceUnavailableError,
     MediaStatus,
+    MetadataType,
     OperationTimeoutError,
     PlaybackState,
     ReceiverStatus,
+    StreamType,
 )
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeClock, FakeTransport
@@ -153,9 +155,13 @@ def test_get_status_returns_the_observed_status_as_json(control: ControlService)
                     "contentId": MOVIE_URL,
                     "contentType": None,
                     "title": None,
+                    "artist": None,
+                    "streamType": None,
+                    "metadataType": None,
                     "positionSeconds": 10.0,
                     "durationSeconds": None,
                     "supportsSeek": True,
+                    "supportsPause": None,
                 },
             }
         },
@@ -187,9 +193,13 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
         "contentId": None,
         "contentType": None,
         "title": None,
+        "artist": None,
+        "streamType": None,
+        "metadataType": None,
         "positionSeconds": None,
         "durationSeconds": None,
         "supportsSeek": None,
+        "supportsPause": None,
     }
 
 
@@ -945,3 +955,60 @@ def test_seek_forwards_an_integer_position() -> None:
 
     assert response["ok"] is True
     assert [args for name, args in transport.calls if name == "seek"] == [(DEVICE_ID, 0.0)]
+
+
+def test_get_status_carries_the_media_details_the_receiver_reported() -> None:
+    transport = ScriptedStatusTransport(
+        scripted=DeviceStatus(
+            device_id=DEVICE_ID,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+            receiver=ReceiverStatus(app_name="YouTube"),
+            media=MediaStatus(
+                playback_state=PlaybackState.PAUSED,
+                content_id="",
+                title="A video",
+                artist="A channel",
+                stream_type=StreamType.BUFFERED,
+                metadata_type=MetadataType.GENERIC,
+                position_seconds=12.0,
+                duration_seconds=90.0,
+                supports_seek=True,
+                supports_pause=True,
+            ),
+        )
+    )
+
+    media = dispatch(ControlService(transport), status_request(str(DEVICE_ID)))["result"]["status"][
+        "media"
+    ]
+
+    assert media["artist"] == "A channel"
+    assert media["streamType"] == "buffered"
+    assert media["metadataType"] == "generic"
+    assert media["supportsPause"] is True
+    assert media["supportsSeek"] is True
+    assert media["title"] == "A video"
+    json.dumps(media)  # plain JSON values only
+
+
+@pytest.mark.parametrize(
+    ("stream_type", "expected"), [(StreamType.LIVE, "live"), (None, None)], ids=["live", "unknown"]
+)
+def test_get_status_serializes_the_stream_type_as_a_plain_string_or_null(
+    stream_type: StreamType | None, expected: str | None
+) -> None:
+    transport = ScriptedStatusTransport(
+        scripted=DeviceStatus(
+            device_id=DEVICE_ID,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+            media=MediaStatus(playback_state=PlaybackState.PLAYING, stream_type=stream_type),
+        )
+    )
+
+    media = dispatch(ControlService(transport), status_request(str(DEVICE_ID)))["result"]["status"][
+        "media"
+    ]
+
+    assert media["streamType"] == expected
