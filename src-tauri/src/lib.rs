@@ -889,6 +889,101 @@ done"#,
         );
         std::thread::sleep(Duration::from_millis(1200));
         assert_eq!(logged_methods(&log), vec!["slow"]);
+
+        // Nothing re-sends it: the next request is written once, after it.
+        tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "ping",
+            json!({}),
+            Duration::from_secs(5),
+        ))
+        .unwrap();
+        assert_eq!(logged_methods(&log), vec!["slow", "ping"]);
+        let _ = std::fs::remove_file(&log);
+    }
+
+    fn temp_log(prefix: &str) -> PathBuf {
+        let n = SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "control-tv-{prefix}-{}-{n}.log",
+            std::process::id()
+        ))
+    }
+
+    /// Runs `slow` on the bridge for about a second on another thread, after which the bridge
+    /// is held: the caller then sends requests that have to wait for it.
+    fn hold_the_bridge(
+        state: &SharedBridgeState,
+    ) -> std::thread::JoinHandle<Result<Value, BridgeFailure>> {
+        let busy = Arc::clone(state);
+        let holder = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(call_bridge(
+                busy,
+                "slow",
+                json!({}),
+                Duration::from_secs(10),
+            ))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        holder
+    }
+
+    #[test]
+    fn a_startup_ping_that_gives_up_behind_a_long_request_is_never_sent() {
+        let log = temp_log("ping");
+        let (state, _script) = recording_state(&log, 1000);
+        let holder = hold_the_bridge(&state);
+
+        let ping = tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "ping",
+            json!({}),
+            Duration::from_millis(200),
+        ))
+        .unwrap_err();
+
+        assert!(holder.join().unwrap().is_ok());
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(logged_methods(&log), vec!["slow"]);
+        // Busy, not broken: the UI can tell the service is alive (no false outage banner).
+        assert_eq!(ping.code, CODE_BRIDGE_BUSY);
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn several_abandoned_requests_are_never_sent_and_the_next_one_is_sent_once() {
+        let log = temp_log("many");
+        let (state, _script) = recording_state(&log, 1000);
+        let holder = hold_the_bridge(&state);
+
+        let waiting: Vec<_> = ["pause", "stop", "seek"]
+            .into_iter()
+            .map(|method| {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    tauri::async_runtime::block_on(call_bridge(
+                        state,
+                        method,
+                        json!({"deviceId": "uuid-1"}),
+                        Duration::from_millis(200),
+                    ))
+                })
+            })
+            .collect();
+        for request in waiting {
+            assert_eq!(request.join().unwrap().unwrap_err().code, CODE_BRIDGE_BUSY);
+        }
+
+        assert!(holder.join().unwrap().is_ok());
+        std::thread::sleep(Duration::from_millis(500));
+        tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "play",
+            json!({"deviceId": "uuid-1"}),
+            Duration::from_secs(5),
+        ))
+        .unwrap();
+        assert_eq!(logged_methods(&log), vec!["slow", "play"]);
         let _ = std::fs::remove_file(&log);
     }
 
