@@ -533,6 +533,13 @@ export function describeCommandFailure(
         recovery: "check",
         technical,
       };
+    case "bridge_busy":
+      return {
+        title: "The app was busy with another request",
+        hint: "The command wasn't sent. Check the current state, then try again.",
+        recovery: "check",
+        technical,
+      };
     case "bridge_timeout":
     case "bridge_transport":
       return {

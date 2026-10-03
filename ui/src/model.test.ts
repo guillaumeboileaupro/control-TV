@@ -18,6 +18,7 @@ import {
   finishStatusRead,
   formatClock,
   initialState,
+  isServiceFailure,
   refreshStatus,
   selectDevice,
   startDiscovery,
@@ -399,6 +400,7 @@ describe("failure wording", () => {
     ["backend_unavailable", "backend_unavailable", "retry"],
     ["bridge_transport", "backend_unavailable", "retry"],
     ["bridge_timeout", "backend_timeout", "retry"],
+    ["bridge_busy", "backend_timeout", "retry"],
     ["device_unavailable", "device_unavailable", "retry"],
     ["device_not_found", "device_unknown", "discover"],
     ["timeout", "device_timeout", "retry"],
@@ -448,6 +450,7 @@ describe("failure wording", () => {
       "backend_unavailable",
       "bridge_transport",
       "bridge_timeout",
+      "bridge_busy",
       "device_unavailable",
       "device_not_found",
       "timeout",
@@ -663,5 +666,21 @@ describe("media details", () => {
     assert.equal(description.headline, "Movie");
     assert.equal(description.byline, null);
     assert.equal(description.application, "Default Media Receiver");
+  });
+});
+
+describe("service check", () => {
+  test("a request refused because the service was busy is not a service problem", () => {
+    assert.equal(isServiceFailure({ code: "bridge_busy", message: "m" }), false);
+  });
+
+  test("every other failure of the startup check is a service problem", () => {
+    for (const code of ["bridge_timeout", "bridge_transport", "backend_unavailable", "weird"]) {
+      assert.equal(isServiceFailure({ code, message: "m" }), true);
+    }
+  });
+
+  test("a busy status read says nothing was sent", () => {
+    assert.match(describeFailure({ code: "bridge_busy", message: "m" }).hint, /Nothing was sent/);
   });
 });

@@ -12,6 +12,7 @@ import {
   finishDiscovery,
   finishStatusRead,
   initialState,
+  isServiceFailure,
   refreshStatus,
   selectDevice,
   startDiscovery,
@@ -723,8 +724,11 @@ function start(elements: Elements): void {
     try {
       await invoke<PingResult>("bridge_ping");
     } catch (error) {
-      serviceFailure = toBridgeFailure(error);
-      renderNotice();
+      const failure = toBridgeFailure(error);
+      if (isServiceFailure(failure)) {
+        serviceFailure = failure;
+        renderNotice();
+      }
     }
   }
 
