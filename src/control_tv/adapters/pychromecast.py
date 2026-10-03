@@ -51,6 +51,7 @@ from control_tv.domain import (
     PlaybackState,
     ReceiverStatus,
     StreamType,
+    VolumeControlType,
 )
 
 Discoverer = Callable[[float], tuple[list[Chromecast], object]]
@@ -208,6 +209,25 @@ def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[
     return entry
 
 
+_VOLUME_CONTROL_TYPES = {
+    "attenuation": VolumeControlType.ATTENUATION,
+    "fixed": VolumeControlType.FIXED,
+    "master": VolumeControlType.MASTER,
+}
+
+
+def _reported_volume_control_type(reply: dict[str, object] | None) -> VolumeControlType | None:
+    """The volume control type exactly as the receiver status reply reports it.
+
+    Read from the raw reply because PyChromecast's `CastStatus` substitutes "attenuation"
+    when the receiver omits `controlType`; an omitted or unrecognized value is unknown.
+    """
+    status = reply.get("status") if isinstance(reply, dict) else None
+    volume = status.get("volume") if isinstance(status, dict) else None
+    kind = volume.get("controlType") if isinstance(volume, dict) else None
+    return _VOLUME_CONTROL_TYPES.get(kind) if isinstance(kind, str) else None
+
+
 class PyChromecastTransport:
     """Translate PyChromecast devices, state and failures into the shared domain."""
 
@@ -301,7 +321,7 @@ class PyChromecastTransport:
             )
         deadline = self._clock() + timeout
         cast_device = self._ready_bounded(device_id, deadline)
-        self._receiver_status_bounded(cast_device, device_id, deadline)
+        receiver_reply = self._receiver_status_bounded(cast_device, device_id, deadline)
         media = self._fresh_media_status(cast_device, device_id, deadline)
         # Defense in depth: a library callback that violated its own timeout must never
         # let an over-budget snapshot escape as a successful status read.
@@ -317,6 +337,7 @@ class PyChromecastTransport:
                 volume_level=receiver.volume_level if receiver is not None else None,
                 muted=receiver.volume_muted if receiver is not None else None,
                 standby=receiver.is_stand_by if receiver is not None else None,
+                volume_control_type=_reported_volume_control_type(receiver_reply),
             ),
             media=media,
         )
@@ -535,14 +556,15 @@ class PyChromecastTransport:
 
     def _receiver_status_bounded(
         self, cast_device: Chromecast, device_id: DeviceId, deadline: float
-    ) -> None:
+    ) -> dict[str, object] | None:
         """Like `_receiver_status`, bounded by what remains of the caller's `timeout`."""
         budget = self._budget(self._request_timeout, deadline, device_id)
-        self._receiver_status_with_timeout(cast_device, device_id, budget)
+        return self._receiver_status_with_timeout(cast_device, device_id, budget)
 
     def _receiver_status_with_timeout(
         self, cast_device: Chromecast, device_id: DeviceId, timeout: float
-    ) -> None:
+    ) -> dict[str, object] | None:
+        """Refresh the receiver status and return the raw reply, when there is one."""
         response = WaitResponse(timeout, "receiver status")
         try:
             cast_device.socket_client.receiver_controller.update_status(
@@ -557,6 +579,7 @@ class PyChromecastTransport:
             raise DeviceUnavailableError(
                 f"could not read status from device {device_id}: {error}", device_id=device_id
             ) from error
+        return response.response
 
     def _fresh_media_status(
         self, cast_device: Chromecast, device_id: DeviceId, deadline: float

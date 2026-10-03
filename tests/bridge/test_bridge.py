@@ -33,6 +33,7 @@ from control_tv.domain import (
     PlaybackState,
     ReceiverStatus,
     StreamType,
+    VolumeControlType,
 )
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeClock, FakeTransport
@@ -149,6 +150,7 @@ def test_get_status_returns_the_observed_status_as_json(control: ControlService)
                     "volumeLevel": 0.5,
                     "muted": False,
                     "standby": None,
+                    "volumeControlType": None,
                 },
                 "media": {
                     "playbackState": "playing",
@@ -187,6 +189,7 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
         "volumeLevel": None,
         "muted": None,
         "standby": None,
+        "volumeControlType": None,
     }
     assert status["media"] == {
         "playbackState": "unknown",
@@ -633,7 +636,9 @@ def test_set_volume_forwards_the_level_and_is_confirmed_by_the_observed_volume(
     assert result["detail"] is None
     assert result["observed"]["receiver"]["volumeLevel"] == float(level)
     assert transport.sent() == ["set_volume"]
-    assert transport.calls[0] == ("set_volume", (DEVICE_ID, float(level)))
+    assert [call for call in transport.calls if call[0] == "set_volume"] == [
+        ("set_volume", (DEVICE_ID, float(level)))
+    ]
 
 
 def test_a_whole_number_level_is_sent_to_the_control_layer_as_a_float() -> None:
@@ -1012,3 +1017,47 @@ def test_get_status_serializes_the_stream_type_as_a_plain_string_or_null(
     ]
 
     assert media["streamType"] == expected
+
+
+@pytest.mark.parametrize(
+    ("control_type", "expected"),
+    [(VolumeControlType.FIXED, "fixed"), (VolumeControlType.MASTER, "master"), (None, None)],
+    ids=["fixed", "master", "unknown"],
+)
+def test_get_status_serializes_the_volume_control_type(
+    control_type: VolumeControlType | None, expected: str | None
+) -> None:
+    transport = ScriptedStatusTransport(
+        scripted=DeviceStatus(
+            device_id=DEVICE_ID,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+            receiver=ReceiverStatus(volume_level=1.0, volume_control_type=control_type),
+        )
+    )
+
+    receiver = dispatch(ControlService(transport), status_request(str(DEVICE_ID)))["result"][
+        "status"
+    ]["receiver"]
+
+    assert receiver["volumeControlType"] == expected
+
+
+def test_a_fixed_volume_is_refused_through_the_bridge_without_sending() -> None:
+    transport = ScriptedStatusTransport(
+        scripted=DeviceStatus(
+            device_id=DEVICE_ID,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+            receiver=ReceiverStatus(volume_level=1.0, volume_control_type=VolumeControlType.FIXED),
+        )
+    )
+
+    response = dispatch(
+        ControlService(transport),
+        {"id": 3, "method": "set_volume", "params": {"deviceId": DEVICE_ID, "level": 0.5}},
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "unsupported_operation"
+    assert transport.attempted() == []

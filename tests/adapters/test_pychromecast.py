@@ -37,6 +37,7 @@ from control_tv.domain import (
     PlaybackState,
     StreamType,
     UnsupportedOperationError,
+    VolumeControlType,
 )
 from control_tv.service import ControlService
 from fakes import FakeClock
@@ -63,6 +64,8 @@ class FakeReceiverController:
         self.error: Exception | None = None
         self.updates = 0
         self.launched: list[str] = []
+        # The raw receiver status reply this receiver answers with.
+        self.reply: dict[str, object] = {}
         self._clock = clock
         self._consumes = consumes
 
@@ -72,7 +75,7 @@ class FakeReceiverController:
             self._clock.sleep(self._consumes)
         if self.error is not None:
             raise self.error
-        callback_function(True, {})  # type: ignore[operator]
+        callback_function(True, self.reply)  # type: ignore[operator]
 
     def launch_app(self, app_id: str, **kwargs: object) -> None:
         """Recorded, never performed: a status read must not start an application."""
@@ -2145,3 +2148,46 @@ def test_details_read_from_the_extended_status_are_checked_the_same_way() -> Non
     assert media.stream_type is StreamType.LIVE
     assert media.metadata_type is MetadataType.MOVIE
     assert media.artist is None
+
+
+# --- Volume control type (read from the raw receiver reply) --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        pytest.param(
+            {"status": {"volume": {"controlType": "fixed"}}}, VolumeControlType.FIXED, id="fixed"
+        ),
+        pytest.param(
+            {"status": {"volume": {"controlType": "attenuation"}}},
+            VolumeControlType.ATTENUATION,
+            id="attenuation",
+        ),
+        pytest.param(
+            {"status": {"volume": {"controlType": "master"}}}, VolumeControlType.MASTER, id="master"
+        ),
+        pytest.param({"status": {"volume": {"level": 0.5}}}, None, id="absent"),
+        pytest.param({"status": {"volume": {"controlType": None}}}, None, id="null"),
+        pytest.param(
+            {"status": {"volume": {"controlType": "FIXED"}}}, None, id="unrecognized-case"
+        ),
+        pytest.param({"status": {"volume": {"controlType": 5}}}, None, id="number"),
+        pytest.param({"status": {"volume": "x"}}, None, id="volume-not-an-object"),
+        pytest.param({"status": "x"}, None, id="status-not-an-object"),
+        pytest.param({}, None, id="no-status"),
+    ],
+)
+def test_the_volume_control_type_comes_only_from_the_raw_receiver_reply(
+    reply: dict[str, object], expected: VolumeControlType | None
+) -> None:
+    """PyChromecast substitutes "attenuation" when controlType is omitted; that default must
+    never reach the domain as if the receiver had reported it."""
+    cast_device = FakeCast()
+    cast_device.receiver_controller.reply = reply
+    transport, _ = make_transport(cast_device)
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.volume_control_type is expected

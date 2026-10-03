@@ -28,6 +28,7 @@ from control_tv.domain.models import (
     PlaybackState,
     ReceiverStatus,
     StreamType,
+    VolumeControlType,
 )
 from control_tv.domain.results import Command, CommandResult, Confirmation
 
@@ -57,4 +58,5 @@ __all__ = [
     "StreamType",
     "UnsupportedMediaError",
     "UnsupportedOperationError",
+    "VolumeControlType",
 ]

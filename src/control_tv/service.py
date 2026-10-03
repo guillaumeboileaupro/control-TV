@@ -33,6 +33,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
+    VolumeControlType,
 )
 from control_tv.ports import CastTransport
 
@@ -442,12 +443,19 @@ class ControlService:
         device_id = _checked_id(device_id)
         level = _number(level, "volume level", device_id)
         _require(0.0 <= level <= 1.0, f"volume level must be within 0.0-1.0: {level}", device_id)
+        deadline = self._confirmation_deadline()
+        if self._volume_is_fixed(device_id, deadline):
+            raise UnsupportedOperationError(
+                "this device reports a fixed volume, which cannot be changed",
+                device_id=device_id,
+            )
         self._transport.set_volume(device_id, level)
         return self._verify(
             Command.SET_VOLUME,
             device_id,
             _volume_near(level, self._volume_tolerance),
             f"volume near {level:g}",
+            deadline=deadline,
         )
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> CommandResult:
@@ -463,6 +471,32 @@ class ControlService:
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout
         return None if timeout is None else self._clock() + timeout
+
+    def _volume_is_fixed(self, device_id: DeviceId, deadline: float | None) -> bool:
+        """Whether a pre-command read explicitly reports a fixed volume.
+
+        Only an explicit FIXED blocks the command: a type that is not reported, another type,
+        or a read that fails or answers too late leaves the volume possibly adjustable, so the
+        command is sent once as before. The read shares the command's single deadline.
+        """
+        timeout = self._status_timeout
+        if deadline is not None:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return False
+            timeout = min(timeout, remaining)
+        try:
+            status = self._transport.get_status(device_id, timeout=timeout)
+        except ControlError:
+            return False
+        if deadline is not None and self._clock() >= deadline:
+            return False
+        receiver = status.receiver
+        return (
+            status.connection is ConnectionState.CONNECTED
+            and receiver is not None
+            and receiver.volume_control_type is VolumeControlType.FIXED
+        )
 
     def _playback_identity(
         self, device_id: DeviceId, deadline: float | None

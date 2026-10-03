@@ -33,6 +33,14 @@ class ConnectionState(StrEnum):
     CONNECTED = "connected"
 
 
+class VolumeControlType(StrEnum):
+    """How the receiver's volume can be controlled (Cast `volume.controlType`)."""
+
+    ATTENUATION = "attenuation"
+    FIXED = "fixed"
+    MASTER = "master"
+
+
 class PlaybackState(StrEnum):
     IDLE = "idle"
     PLAYING = "playing"
@@ -122,6 +130,8 @@ class ReceiverStatus:
     volume_level: float | None = None
     muted: bool | None = None
     standby: bool | None = None
+    volume_control_type: VolumeControlType | None = None
+    """Reported by the receiver; None means it did not say (never assumed adjustable or fixed)."""
 
     def __post_init__(self) -> None:
         if self.volume_level is not None:

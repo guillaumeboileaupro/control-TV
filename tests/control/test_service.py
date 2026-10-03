@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 
 import pytest
@@ -14,6 +16,7 @@ from control_tv.domain import (
     ConnectionState,
     DeviceId,
     DeviceNotFoundError,
+    DeviceStatus,
     DeviceUnavailableError,
     DiscoveryError,
     ErrorCode,
@@ -23,6 +26,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
+    VolumeControlType,
 )
 from control_tv.ports import CastTransport, TvControl
 from control_tv.service import ControlService
@@ -254,7 +258,7 @@ def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
     transport.hang_status_reads = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     # The one read that was attempted consumed exactly the whole budget by itself (as a
     # spec-compliant transport must: it never blocks longer than the `timeout` it was
@@ -262,7 +266,7 @@ def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
     # "sleep" is the read itself, the service's own scheduler never gets to run.
     assert transport.status_reads() == 1
     assert transport.calls == [
-        ("set_volume", (DEVICE_ID, 0.7)),
+        ("set_muted", (DEVICE_ID, True)),
         ("get_status", (DEVICE_ID, 1.0)),
     ]
     assert clock.now == pytest.approx(1.0)
@@ -281,7 +285,7 @@ def test_each_poll_is_given_only_the_time_actually_remaining(
     transport.ignore_commands = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    service.set_volume(DEVICE_ID, 0.7)
+    service.set_muted(DEVICE_ID, True)
 
     status_read_timeouts = [args[1] for name, args in transport.calls if name == "get_status"]
     assert status_read_timeouts == [pytest.approx(1.0), pytest.approx(0.6), pytest.approx(0.2)]
@@ -315,7 +319,7 @@ def test_a_match_confirmed_just_before_the_deadline_is_accepted(
     transport.status_read_delay = 0.99
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     assert clock.now == pytest.approx(0.99)
     assert result.confirmation is Confirmation.CONFIRMED
@@ -334,7 +338,7 @@ def test_a_match_arriving_after_the_deadline_is_never_confirmed(
     transport.status_read_delay = 1.01
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     assert clock.now == pytest.approx(1.01)
     assert result.confirmation is Confirmation.UNCONFIRMED
@@ -388,7 +392,7 @@ def test_a_command_that_cannot_be_delivered_raises_and_never_returns_a_result(
     transport.fail_commands_with = DeviceUnavailableError("no route", device_id=DEVICE_ID)
 
     with pytest.raises(DeviceUnavailableError) as excinfo:
-        service.set_volume(DEVICE_ID, 0.7)
+        service.set_muted(DEVICE_ID, True)
 
     assert excinfo.value.code is ErrorCode.DEVICE_UNAVAILABLE
     assert transport.sent() == []
@@ -1905,3 +1909,80 @@ def test_play_and_pause_are_still_never_confirmed_by_a_session_end() -> None:
 
         assert result.confirmation is Confirmation.UNCONFIRMED
         assert transport.attempted() == [command]
+
+
+# --- Fixed volume ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScriptedReceiverTransport(FakeTransport):
+    """`FakeTransport` whose receiver reports a given volume control type."""
+
+    control_type: VolumeControlType | None = None
+
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        status = super().get_status(device_id, timeout=timeout)
+        if status.receiver is None:
+            return status
+        receiver = dataclasses.replace(status.receiver, volume_control_type=self.control_type)
+        return dataclasses.replace(status, receiver=receiver)
+
+
+def test_a_reported_fixed_volume_is_refused_before_anything_is_sent(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    with pytest.raises(UnsupportedOperationError, match="fixed volume"):
+        make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == []
+    assert transport.sent() == []
+    assert transport.status_reads() == 1
+
+
+@pytest.mark.parametrize(
+    "control_type",
+    [None, VolumeControlType.ATTENUATION, VolumeControlType.MASTER],
+    ids=["not-reported", "attenuation", "master"],
+)
+def test_a_volume_not_reported_as_fixed_is_sent_once(
+    clock: FakeClock, control_type: VolumeControlType | None
+) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=control_type)
+
+    result = make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_failed_pre_command_read_does_not_make_the_volume_fixed(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(
+        clock=clock,
+        control_type=VolumeControlType.FIXED,
+        status_errors=[DeviceUnavailableError("blip", device_id=DEVICE_ID)],
+    )
+
+    make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+
+
+def test_the_fixed_volume_check_shares_the_single_confirmation_deadline(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, status_read_delays=[0.4])
+    transport.ignore_commands = True
+
+    result = make_service(transport, clock, confirm_timeout=1.0).set_volume(DEVICE_ID, 0.7)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    reads = [args[1] for name, args in transport.calls if name == "get_status"]
+    assert reads[0] == pytest.approx(1.0)
+    assert reads[1] == pytest.approx(0.6)
+
+
+def test_mute_is_not_affected_by_a_fixed_volume(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    make_service(transport, clock).set_muted(DEVICE_ID, True)
+
+    assert transport.attempted() == ["set_muted"]
