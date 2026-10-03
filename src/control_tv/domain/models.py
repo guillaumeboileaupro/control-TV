@@ -134,6 +134,11 @@ class ReceiverStatus:
     """Reported by the receiver; None means it did not say (never assumed adjustable or fixed)."""
 
     def __post_init__(self) -> None:
+        _require(
+            self.volume_control_type is None
+            or isinstance(self.volume_control_type, VolumeControlType),
+            f"invalid volume control type: {self.volume_control_type!r}",
+        )
         if self.volume_level is not None:
             _require(
                 0.0 <= self.volume_level <= 1.0,

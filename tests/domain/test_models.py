@@ -19,6 +19,7 @@ from control_tv.domain import (
     PlaybackState,
     ReceiverStatus,
     StreamType,
+    VolumeControlType,
 )
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
@@ -95,6 +96,32 @@ def test_receiver_reports_unknown_as_none_not_false() -> None:
     assert receiver.muted is None
     assert receiver.volume_level is None
     assert receiver.standby is None
+
+
+@pytest.mark.parametrize(
+    "control_type",
+    [
+        None,
+        VolumeControlType.FIXED,
+        VolumeControlType.ATTENUATION,
+        VolumeControlType.MASTER,
+    ],
+    ids=["unknown", "fixed", "attenuation", "master"],
+)
+def test_receiver_accepts_a_known_or_unknown_volume_control_type(
+    control_type: VolumeControlType | None,
+) -> None:
+    assert ReceiverStatus(volume_control_type=control_type).volume_control_type is control_type
+
+
+@pytest.mark.parametrize(
+    "control_type",
+    ["fixed", True, 1, 1.0, object(), [], {}],
+    ids=["string", "bool", "int", "float", "object", "list", "dict"],
+)
+def test_receiver_rejects_an_invalid_volume_control_type(control_type: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="invalid volume control type"):
+        ReceiverStatus(volume_control_type=control_type)  # type: ignore[arg-type]
 
 
 def test_media_status_defaults_to_unknown() -> None:
