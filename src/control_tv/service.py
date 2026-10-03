@@ -184,6 +184,11 @@ class _IdentityCheck:
         self._expected = expected
         self._contradiction: str | None = None
 
+    @property
+    def contradiction(self) -> str | None:
+        """The first explicit identity contradiction seen in this attempt, if any."""
+        return self._contradiction
+
     def mismatch(self, media: MediaStatus) -> str | None:
         expected = self._expected
         if self._contradiction is None and expected is not None:
@@ -194,8 +199,10 @@ class _IdentityCheck:
 
 
 def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> ExpectedState:
-    identity = _IdentityCheck(expected)
+    return _playback_in_check(_IdentityCheck(expected), *states)
 
+
+def _playback_in_check(identity: _IdentityCheck, *states: PlaybackState) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
@@ -204,6 +211,30 @@ def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> Exp
         if mismatch is not None:
             return Observation(False, mismatch)
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
+
+    return check
+
+
+def _stopped(expected: _MediaIdentity | None) -> ExpectedState:
+    """Stop is shown either by IDLE on the same media, or by the media session ending.
+
+    A receiver commonly ends the media session on stop instead of reporting IDLE. That fresh
+    absence confirms the stop only when the media was identified before the command and no
+    read of this attempt explicitly reported another content, session or queue item: a
+    replacement followed by an absence says nothing about what the stop did. Nothing is
+    invented: the observed status keeps `media` as None, never a fabricated IDLE.
+    """
+    identity = _IdentityCheck(expected)
+    playback = _playback_in_check(identity, PlaybackState.IDLE)
+
+    def check(status: DeviceStatus) -> Observation:
+        if status.media is not None:
+            return playback(status)
+        if expected is None:
+            return Observation(False, "no active media session")
+        if identity.contradiction is not None:
+            return Observation(False, identity.contradiction)
+        return Observation(True, "the media session ended")
 
     return check
 
@@ -361,7 +392,7 @@ class ControlService:
         return self._verify(
             Command.STOP,
             device_id,
-            _playback_in(expected, PlaybackState.IDLE),
+            _stopped(expected),
             "playback stopped",
             deadline=deadline,
         )

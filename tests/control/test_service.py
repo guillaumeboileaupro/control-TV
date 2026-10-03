@@ -362,22 +362,21 @@ def test_a_device_that_is_not_connected_never_confirms(
 def test_stop_never_fabricates_an_idle_state_the_device_did_not_report(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
-    """A receiver that merely stops reporting a media session is not proof of idle.
+    """A receiver that ends the media session on stop instead of reporting IDLE.
 
-    Some receivers drop the media session entirely on stop instead of reporting an
-    explicit idle state. The service must not treat that absence as confirmation.
+    With the media identified before the command and no contradiction since, that fresh end
+    of the session confirms the stop; the observed status still says there is no media
+    session, never a fabricated IDLE state.
     """
     transport.clears_media_on_stop = True
     service = make_service(transport, clock)
 
     result = service.stop(DEVICE_ID)
 
-    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.confirmation is Confirmation.CONFIRMED
     assert result.observed is not None
     assert result.observed.media is None
-    assert result.detail is not None
-    assert "expected playback stopped, but no active media session" in result.detail
-    assert "idle" not in result.detail
+    assert transport.attempted() == ["stop"]
 
 
 # --- failures are errors, never results -----------------------------------------------------
@@ -1777,3 +1776,132 @@ def test_seek_with_an_empty_content_id_stays_unconfirmed_like_the_real_youtube_c
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert "media identity was not reported before the command" in (result.detail or "")
     assert transport.attempted() == ["seek"]
+
+
+# --- Stop confirmed by the end of the media session ----------------------------------------
+
+
+def stop_run(
+    reads_after: list[Callable[[FakeTransport], None]],
+    *,
+    before: Full = X_A_101,
+    confirm_timeout: float = 1.0,
+) -> tuple[CommandResult, FakeTransport, FakeClock]:
+    """One Stop; the pre-command read reports `before`, then each later read first applies the
+    next change (the last one repeats). The TV does not act by itself: the changes say what it
+    reports."""
+    clock = FakeClock()
+    transport = FakeTransport(clock=clock, ignore_commands=True)
+    tv = transport.tv
+    tv.playback = PlaybackState.PLAYING
+    tv.content_id, tv.media_session_id, tv.current_item_id = before
+    reads = [*reads_after, *[reads_after[-1]] * 400]
+    transport.status_effects = [lambda: None] + [partial(change, transport) for change in reads]
+    result = make_service(transport, clock, confirm_timeout=confirm_timeout).stop(DEVICE_ID)
+    return result, transport, clock
+
+
+def session_ends(transport: FakeTransport) -> None:
+    transport.tv.has_media = False
+
+
+def reports(identity: Full) -> Callable[[FakeTransport], None]:
+    def change(transport: FakeTransport) -> None:
+        tv = transport.tv
+        tv.has_media = True
+        tv.content_id, tv.media_session_id, tv.current_item_id = identity
+
+    return change
+
+
+def test_stop_is_confirmed_when_the_identified_session_ends() -> None:
+    result, transport, _ = stop_run([session_ends])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert transport.attempted() == ["stop"]
+
+
+def test_stop_is_confirmed_by_idle_on_the_same_media_as_before() -> None:
+    def idle(transport: FakeTransport) -> None:
+        transport.tv.playback = PlaybackState.IDLE
+
+    result, _transport, _ = stop_run([idle])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.playback_state is PlaybackState.IDLE
+
+
+@pytest.mark.parametrize("content_id", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_a_session_end_confirms_nothing_without_a_media_identity_before(
+    content_id: str | None,
+) -> None:
+    result, transport, _ = stop_run([session_ends], before=(content_id, SESSION, ITEM))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["stop"]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        (MOVIE_URL, OTHER_SESSION, ITEM),
+        (OTHER_CONTENT, SESSION, ITEM),
+        (MOVIE_URL, SESSION, OTHER_ITEM),
+    ],
+    ids=["session", "content", "queue-item"],
+)
+def test_a_replacement_then_a_session_end_never_confirms(replacement: Full) -> None:
+    result, transport, _ = stop_run([reports(replacement), session_ends])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "changed" in (result.detail or "")
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert transport.attempted() == ["stop"]
+
+
+def test_a_session_end_after_a_missing_identity_read_still_confirms() -> None:
+    """A read without a session id is no contradiction, so the later end still confirms."""
+    result, _, _ = stop_run([reports((MOVIE_URL, None, ITEM)), session_ends])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_session_that_ends_only_after_the_deadline_does_not_confirm() -> None:
+    playing = reports(X_A_101)
+    result, transport, clock = stop_run([playing] * 50 + [session_ends], confirm_timeout=1.0)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    assert transport.attempted() == ["stop"]
+
+
+def test_a_disconnected_receiver_after_stop_does_not_confirm() -> None:
+    def disconnected(transport: FakeTransport) -> None:
+        transport.tv.connection = ConnectionState.DISCONNECTED
+        transport.tv.has_media = False
+
+    result, transport, _ = stop_run([disconnected])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["stop"]
+
+
+def test_play_and_pause_are_still_never_confirmed_by_a_session_end() -> None:
+    for command in ("play", "pause"):
+        clock = FakeClock()
+        initial_state, send = PLAYBACK_COMMANDS[command]
+        transport = FakeTransport(clock=clock, ignore_commands=True)
+        transport.tv.playback = initial_state
+        tv = transport.tv
+        tv.content_id, tv.media_session_id, tv.current_item_id = X_A_101
+        transport.status_effects = [lambda: None] + [partial(session_ends, transport)] * 50
+
+        result = send(make_service(transport, clock))
+
+        assert result.confirmation is Confirmation.UNCONFIRMED
+        assert transport.attempted() == [command]

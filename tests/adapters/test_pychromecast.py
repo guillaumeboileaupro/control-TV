@@ -1391,7 +1391,9 @@ def test_a_media_request_that_could_not_be_sent_is_an_unavailable_device() -> No
 
 def test_stop_is_not_confirmed_by_a_content_id_the_receiver_did_not_repeat() -> None:
     """A receiver answering STOP with a partial IDLE entry leaves PyChromecast's cache as
-    IDLE plus the old content id; that inherited identity must not confirm the stop."""
+    IDLE plus the old content id. That inherited identity is never used: the fresh reply has
+    no media, so the confirmation can only come from the session having ended, and the
+    observed status reports no media (never IDLE with the old content id)."""
     transport, channel = make_media_transport()
     channel.broadcast(playing_entry())
     channel.state = [playing_entry()]
@@ -1400,7 +1402,9 @@ def test_stop_is_not_confirmed_by_a_content_id_the_receiver_did_not_repeat() -> 
 
     result = service.stop(DEVICE_ID)
 
-    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is None
     assert channel.sent_types().count("STOP") == 1
 
 
