@@ -122,6 +122,8 @@ export interface ControlsDescription {
   seek: SeekDescription | null;
   // Why seeking is not offered, when transport controls are.
   seekNote: string | null;
+  // Why pausing is not offered although the media is playing: the TV said it can't pause.
+  pauseNote: string | null;
   // Why no transport control is offered although there is media (idle or unknown state).
   unavailable: string | null;
   // A request is in flight (a command or a discovery): nothing may be sent, so the controls
@@ -136,6 +138,7 @@ const HIDDEN: ControlsDescription = {
   stop: false,
   seek: null,
   seekNote: null,
+  pauseNote: null,
   unavailable: null,
   busy: false,
   pendingCommand: null,
@@ -190,10 +193,16 @@ export function describeControls(state: AppState): ControlsDescription {
     };
   }
 
-  const primary: PrimaryControl =
+  // Pause is not offered when the TV explicitly says this media can't be paused; unknown still
+  // offers it (the TV then answers for itself), exactly as before pause support was read.
+  const pausable = media.supportsPause !== false;
+  const primary: PrimaryControl | null =
     kind === "paused"
       ? { command: "play", label: "Play", busyLabel: "Starting…" }
-      : { command: "pause", label: "Pause", busyLabel: "Pausing…" };
+      : pausable
+        ? { command: "pause", label: "Pause", busyLabel: "Pausing…" }
+        : null;
+  const pauseNote = primary === null ? "Pausing isn't available for this media." : null;
 
   const reason = seekReason(media);
   let seek: SeekDescription | null = null;
@@ -210,6 +219,7 @@ export function describeControls(state: AppState): ControlsDescription {
     stop: true,
     seek,
     seekNote: reason,
+    pauseNote,
     unavailable: null,
     busy,
     pendingCommand,

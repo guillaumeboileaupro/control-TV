@@ -32,8 +32,10 @@ from control_tv.domain import (
     InvalidArgumentError,
     MediaRequest,
     MediaStatus,
+    MetadataType,
     OperationTimeoutError,
     PlaybackState,
+    StreamType,
     UnsupportedOperationError,
 )
 from control_tv.service import ControlService
@@ -1944,3 +1946,198 @@ def test_pause_on_the_same_queue_item_is_confirmed() -> None:
 
     assert result.confirmation is Confirmation.CONFIRMED
     assert channel.sent_types().count("PAUSE") == 1
+
+
+# --- Media details: artist, stream type, metadata type, pause support ----------------------
+#
+# Read from the checked reply, never from PyChromecast's defaults: an omitted, null, blank,
+# wrongly typed or unrecognized value is unknown (None), never a plausible invented value.
+
+
+def entry_with_metadata(**metadata_changes: object) -> dict[str, object]:
+    media_block = cast(dict[str, object], playing_entry()["media"])
+    metadata = cast(dict[str, object], media_block["metadata"]) | metadata_changes
+    return paused_entry(media=media_block | {"metadata": metadata})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("JOYCA", "JOYCA", id="valid"),
+        pytest.param("  JOYCA  ", "JOYCA", id="surrounding-spaces"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param("", None, id="empty"),
+        pytest.param("   ", None, id="blank"),
+        pytest.param(5, None, id="number"),
+        pytest.param({}, None, id="object"),
+        pytest.param(True, None, id="boolean"),
+    ],
+)
+def test_the_artist_is_kept_only_when_it_is_a_non_blank_string(
+    raw: object, expected: str | None
+) -> None:
+    entry = entry_with_metadata() if raw == "omitted" else entry_with_metadata(artist=raw)
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.artist == expected
+    assert media.title == "Movie"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("BUFFERED", StreamType.BUFFERED, id="buffered"),
+        pytest.param("LIVE", StreamType.LIVE, id="live"),
+        pytest.param("NONE", None, id="cast-none"),
+        pytest.param("buffered", None, id="unrecognized-case"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param("", None, id="empty"),
+        pytest.param(5, None, id="number"),
+    ],
+)
+def test_the_stream_type_is_kept_only_when_it_is_a_known_value(
+    raw: object, expected: StreamType | None
+) -> None:
+    media_block = cast(dict[str, object], playing_entry()["media"])
+    if raw == "omitted":
+        media_block = {k: v for k, v in media_block.items() if k != "streamType"}
+    else:
+        media_block = media_block | {"streamType": raw}
+
+    media = read_media(paused_entry(media=media_block))
+
+    assert isinstance(media, MediaStatus)
+    assert media.stream_type is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(0, MetadataType.GENERIC, id="generic"),
+        pytest.param(1, MetadataType.MOVIE, id="movie"),
+        pytest.param(2, MetadataType.TV_SHOW, id="tv-show"),
+        pytest.param(3, MetadataType.MUSIC_TRACK, id="music-track"),
+        pytest.param(4, MetadataType.PHOTO, id="photo"),
+        pytest.param(5, MetadataType.AUDIOBOOK_CHAPTER, id="audiobook-chapter"),
+        pytest.param(6, None, id="unknown-number"),
+        pytest.param(-1, None, id="negative"),
+        pytest.param(True, None, id="boolean"),
+        pytest.param("0", None, id="string"),
+        pytest.param(1.0, None, id="float"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+    ],
+)
+def test_the_metadata_type_is_kept_only_when_it_is_a_known_number(
+    raw: object, expected: MetadataType | None
+) -> None:
+    entry = entry_with_metadata() if raw == "omitted" else entry_with_metadata(metadataType=raw)
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.metadata_type is expected
+
+
+@pytest.mark.parametrize(
+    ("mask", "expected"),
+    [
+        pytest.param(1, True, id="pause-bit"),
+        pytest.param(207, True, id="real-youtube-mask"),
+        pytest.param(2, False, id="seek-only"),
+        pytest.param(0, False, id="explicit-zero"),
+        pytest.param("omitted", None, id="absent"),
+        pytest.param(None, None, id="null"),
+        pytest.param(True, None, id="boolean"),
+        pytest.param("1", None, id="string"),
+    ],
+)
+def test_pause_support_is_known_only_from_a_reported_mask(
+    mask: object, expected: bool | None
+) -> None:
+    entry = paused_entry()
+    if mask == "omitted":
+        del entry["supportedMediaCommands"]
+    else:
+        entry["supportedMediaCommands"] = mask
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.supports_pause is expected
+
+
+def test_an_omitted_stream_type_is_not_pychromecasts_unknown_default() -> None:
+    """PyChromecast fills `stream_type` with "UNKNOWN" when the reply omits it; that default
+    must not reach the domain as an observation."""
+    media_block = {
+        k: v
+        for k, v in cast(dict[str, object], playing_entry()["media"]).items()
+        if k != "streamType"
+    }
+
+    media = read_media(paused_entry(media=media_block))
+
+    assert isinstance(media, MediaStatus)
+    assert media.stream_type is None
+
+
+def test_the_details_of_a_real_youtube_reply_are_kept() -> None:
+    """Shape observed on a real receiver (anonymized): empty content id, title and artist in
+    generic metadata, buffered stream, mask 207, session and queue item ids."""
+    entry = {
+        "mediaSessionId": 19,
+        "playerState": "PAUSED",
+        "playbackRate": 0,
+        "currentTime": 3085.668,
+        "supportedMediaCommands": 207,
+        "volume": {"level": 0, "muted": False},
+        "activeTrackIds": [],
+        "media": {
+            "contentId": "",
+            "streamType": "BUFFERED",
+            "metadata": {"metadataType": 0, "title": "A video", "artist": "A channel"},
+            "duration": 6259.801,
+        },
+        "currentItemId": 1,
+        "repeatMode": "REPEAT_OFF",
+    }
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.playback_state is PlaybackState.PAUSED
+    assert media.content_id == ""
+    assert media.title == "A video"
+    assert media.artist == "A channel"
+    assert media.stream_type is StreamType.BUFFERED
+    assert media.metadata_type is MetadataType.GENERIC
+    assert media.supports_seek is True
+    assert media.supports_pause is True
+    assert media.media_session_id == 19
+    assert media.current_item_id == 1
+    assert media.position_seconds == 3085.668
+    assert media.duration_seconds == 6259.801
+
+
+def test_details_read_from_the_extended_status_are_checked_the_same_way() -> None:
+    entry = paused_entry()
+    del entry["media"]
+    entry["extendedStatus"] = {
+        "media": {
+            "contentId": MOVIE,
+            "streamType": "LIVE",
+            "metadata": {"metadataType": 1, "artist": "  "},
+        }
+    }
+
+    media = read_media(entry)
+
+    assert isinstance(media, MediaStatus)
+    assert media.stream_type is StreamType.LIVE
+    assert media.metadata_type is MetadataType.MOVIE
+    assert media.artist is None

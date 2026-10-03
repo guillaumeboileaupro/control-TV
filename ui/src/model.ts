@@ -30,9 +30,14 @@ export interface MediaStatus {
   contentId: string | null;
   contentType: string | null;
   title: string | null;
+  // Optional: an older control backend does not send these, which reads as "not reported".
+  artist?: string | null;
+  streamType?: string | null;
+  metadataType?: string | null;
   positionSeconds: number | null;
   durationSeconds: number | null;
   supportsSeek: boolean | null;
+  supportsPause?: boolean | null;
 }
 
 // `null` means the device did not report it - unknown, never "zero" or "off".
@@ -417,6 +422,9 @@ export interface StatusDescription {
   observedAt: string;
   // What is on the device: the media's title, else its identity, else "Nothing playing".
   headline: string;
+  // Who the device names as the media's artist (for a video, often its channel); null means
+  // say nothing, never a placeholder.
+  byline: string | null;
   hasMedia: boolean;
   playback: { kind: PlaybackKind; label: string } | null;
   // `fraction` is null when the duration is unknown, so no progress bar is drawn.
@@ -440,6 +448,11 @@ const PLAYBACK_LABELS: Record<PlaybackKind, string> = {
   idle: "Idle",
   unknown: "State unknown",
 };
+
+// A reported text with something to read, else null: blank is not a value worth showing.
+function nonBlank(value: string | null): string | null {
+  return value !== null && value.trim() !== "" ? value.trim() : null;
+}
 
 function capitalize(value: string): string {
   return value.length === 0 ? value : value.charAt(0).toUpperCase() + value.slice(1);
@@ -467,6 +480,10 @@ export function formatClock(seconds: number | null): string {
 }
 
 function describePosition(media: MediaStatus): { text: string; fraction: number | null } {
+  // A live stream has no end to measure against: its length and progress mean nothing.
+  if (media.streamType === "live") {
+    return { text: "Live", fraction: null };
+  }
   const position = formatClock(media.positionSeconds);
   if (position === "") {
     return { text: "Position not reported", fraction: null };
@@ -502,6 +519,7 @@ export function describeStatus(
     return {
       ...common,
       headline: "",
+      byline: null,
       hasMedia: false,
       playback: null,
       position: null,
@@ -527,7 +545,10 @@ export function describeStatus(
   return {
     ...common,
     headline:
-      media === null ? "Nothing playing" : (media.title ?? media.contentId ?? "Unidentified media"),
+      media === null
+        ? "Nothing playing"
+        : (nonBlank(media.title) ?? nonBlank(media.contentId) ?? "Unidentified media"),
+    byline: media === null ? null : nonBlank(media.artist ?? null),
     hasMedia: media !== null,
     playback: kind === null ? null : { kind, label: PLAYBACK_LABELS[kind] },
     position: media === null ? null : describePosition(media),
