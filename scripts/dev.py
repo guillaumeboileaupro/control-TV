@@ -31,6 +31,7 @@ repository. Shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) are never to
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -291,8 +292,65 @@ def cmd_depcheck(root: Path) -> int:
     return _run_uv(root, ["pip", "check"])
 
 
+def _toml_section_version(path: Path, section: str) -> str | None:
+    """The `version = "..."` of one TOML table, read without a TOML library (dev.py also runs
+    on interpreters older than tomllib)."""
+    current = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            current = line.strip("[]").strip()
+        elif current == section and line.startswith("version") and "=" in line:
+            key, _, value = line.partition("=")
+            if key.strip() == "version":
+                return value.strip().strip('"').strip("'")
+    return None
+
+
+def _python_package_version(path: Path) -> str | None:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("__version__") and "=" in line:
+            return line.partition("=")[2].strip().strip('"').strip("'")
+    return None
+
+
+def declared_versions(root: Path) -> dict[str, str | None]:
+    """Every place that declares the application version. They must all agree."""
+    package = json.loads((root / "ui" / "package.json").read_text(encoding="utf-8"))
+    lock = json.loads((root / "ui" / "package-lock.json").read_text(encoding="utf-8"))
+    tauri = json.loads((root / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+    versions: dict[str, str | None] = {
+        "pyproject.toml [project]": _toml_section_version(root / "pyproject.toml", "project"),
+        "src/control_tv/__init__.py __version__": _python_package_version(
+            root / "src" / "control_tv" / "__init__.py"
+        ),
+        "src-tauri/Cargo.toml [package]": _toml_section_version(
+            root / "src-tauri" / "Cargo.toml", "package"
+        ),
+        "ui/package.json": package.get("version"),
+        "ui/package-lock.json": lock.get("version"),
+        'ui/package-lock.json packages[""]': lock.get("packages", {}).get("", {}).get("version"),
+    }
+    # Without its own "version", Tauri uses the Cargo package version: nothing to compare.
+    if "version" in tauri:
+        versions["src-tauri/tauri.conf.json"] = tauri["version"]
+    return versions
+
+
+def cmd_version_check(root: Path) -> int:
+    versions = declared_versions(root)
+    distinct = set(versions.values())
+    if len(distinct) == 1 and None not in distinct:
+        print(f"version {distinct.pop()} declared consistently in {len(versions)} places")
+        return 0
+    print("error: the application version is not declared consistently:", file=sys.stderr)
+    for where, version in versions.items():
+        print(f"  {where}: {version}", file=sys.stderr)
+    return 1
+
+
 def cmd_check(root: Path) -> int:
-    for step in (cmd_lint, cmd_typecheck, cmd_test, cmd_depcheck):
+    for step in (cmd_version_check, cmd_lint, cmd_typecheck, cmd_test, cmd_depcheck):
         code = step(root)
         if code != 0:
             return code
@@ -356,6 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
         "coverage",
         "depcheck",
         "check",
+        "version-check",
         "rust-check",
         "ui-check",
         "disk-usage",
@@ -382,6 +441,7 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "coverage": cmd_coverage,
         "depcheck": cmd_depcheck,
         "check": cmd_check,
+        "version-check": cmd_version_check,
         "rust-check": cmd_rust_check,
         "ui-check": cmd_ui_check,
         "disk-usage": cmd_disk_usage,

@@ -33,6 +33,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
+    VolumeControlType,
 )
 from control_tv.ports import CastTransport
 
@@ -184,6 +185,11 @@ class _IdentityCheck:
         self._expected = expected
         self._contradiction: str | None = None
 
+    @property
+    def contradiction(self) -> str | None:
+        """The first explicit identity contradiction seen in this attempt, if any."""
+        return self._contradiction
+
     def mismatch(self, media: MediaStatus) -> str | None:
         expected = self._expected
         if self._contradiction is None and expected is not None:
@@ -194,8 +200,10 @@ class _IdentityCheck:
 
 
 def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> ExpectedState:
-    identity = _IdentityCheck(expected)
+    return _playback_in_check(_IdentityCheck(expected), *states)
 
+
+def _playback_in_check(identity: _IdentityCheck, *states: PlaybackState) -> ExpectedState:
     def check(status: DeviceStatus) -> Observation:
         media = status.media
         if media is None:
@@ -204,6 +212,30 @@ def _playback_in(expected: _MediaIdentity | None, *states: PlaybackState) -> Exp
         if mismatch is not None:
             return Observation(False, mismatch)
         return Observation(media.playback_state in states, f"playback is {media.playback_state}")
+
+    return check
+
+
+def _stopped(expected: _MediaIdentity | None) -> ExpectedState:
+    """Stop is shown either by IDLE on the same media, or by the media session ending.
+
+    A receiver commonly ends the media session on stop instead of reporting IDLE. That fresh
+    absence confirms the stop only when the media was identified before the command and no
+    read of this attempt explicitly reported another content, session or queue item: a
+    replacement followed by an absence says nothing about what the stop did. Nothing is
+    invented: the observed status keeps `media` as None, never a fabricated IDLE.
+    """
+    identity = _IdentityCheck(expected)
+    playback = _playback_in_check(identity, PlaybackState.IDLE)
+
+    def check(status: DeviceStatus) -> Observation:
+        if status.media is not None:
+            return playback(status)
+        if expected is None:
+            return Observation(False, "no active media session")
+        if identity.contradiction is not None:
+            return Observation(False, identity.contradiction)
+        return Observation(True, "the media session ended")
 
     return check
 
@@ -361,7 +393,7 @@ class ControlService:
         return self._verify(
             Command.STOP,
             device_id,
-            _playback_in(expected, PlaybackState.IDLE),
+            _stopped(expected),
             "playback stopped",
             deadline=deadline,
         )
@@ -411,12 +443,19 @@ class ControlService:
         device_id = _checked_id(device_id)
         level = _number(level, "volume level", device_id)
         _require(0.0 <= level <= 1.0, f"volume level must be within 0.0-1.0: {level}", device_id)
+        deadline = self._confirmation_deadline()
+        if self._volume_is_fixed(device_id, deadline):
+            raise UnsupportedOperationError(
+                "this device reports a fixed volume, which cannot be changed",
+                device_id=device_id,
+            )
         self._transport.set_volume(device_id, level)
         return self._verify(
             Command.SET_VOLUME,
             device_id,
             _volume_near(level, self._volume_tolerance),
             f"volume near {level:g}",
+            deadline=deadline,
         )
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> CommandResult:
@@ -432,6 +471,32 @@ class ControlService:
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout
         return None if timeout is None else self._clock() + timeout
+
+    def _volume_is_fixed(self, device_id: DeviceId, deadline: float | None) -> bool:
+        """Whether a pre-command read explicitly reports a fixed volume.
+
+        Only an explicit FIXED blocks the command: a type that is not reported, another type,
+        or a read that fails or answers too late leaves the volume possibly adjustable, so the
+        command is sent once as before. The read shares the command's single deadline.
+        """
+        timeout = self._status_timeout
+        if deadline is not None:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return False
+            timeout = min(timeout, remaining)
+        try:
+            status = self._transport.get_status(device_id, timeout=timeout)
+        except ControlError:
+            return False
+        if deadline is not None and self._clock() >= deadline:
+            return False
+        receiver = status.receiver
+        return (
+            status.connection is ConnectionState.CONNECTED
+            and receiver is not None
+            and receiver.volume_control_type is VolumeControlType.FIXED
+        )
 
     def _playback_identity(
         self, device_id: DeviceId, deadline: float | None

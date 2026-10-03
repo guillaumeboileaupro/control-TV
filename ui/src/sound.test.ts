@@ -938,3 +938,29 @@ describe("the raise limit", () => {
     assert.deepEqual(startMute(muted).request?.sound, { kind: "mute", muted: false });
   });
 });
+
+describe("fixed volume", () => {
+  test("a TV reporting a fixed volume offers no slider, shows its level and says why", () => {
+    const state = readyWith(statusOf({ receiver: { volumeLevel: 1, volumeControlType: "fixed" } }));
+    const sound = describeSound(state);
+
+    assert.equal(sound.volume, null);
+    assert.equal(sound.readout, "Volume 100%");
+    assert.equal(sound.note, "This TV's volume is fixed, so it can't be changed here.");
+    assert.notEqual(sound.mute, null);
+  });
+
+  test("no volume draft or command is possible on a fixed volume", () => {
+    const state = readyWith(statusOf({ receiver: { volumeLevel: 1, volumeControlType: "fixed" } }));
+
+    assert.equal(setVolumeDraft(state, 50), state);
+    assert.equal(startVolume(state).request, null);
+  });
+
+  test("an unreported or adjustable control type keeps the slider", () => {
+    for (const volumeControlType of [undefined, null, "attenuation", "master"]) {
+      const state = readyWith(statusOf({ receiver: { volumeControlType } }));
+      assert.notEqual(describeSound(state).volume, null);
+    }
+  });
+});

@@ -91,12 +91,14 @@ export function describeSound(state: AppState): SoundDescription {
   }
   const level = status.receiver?.volumeLevel ?? null;
   const muted = status.receiver?.muted ?? null;
+  // Only an explicit "fixed" removes the slider: a type that is not reported stays adjustable.
+  const fixed = status.receiver?.volumeControlType === "fixed";
   const busy = !idle(state);
   const pending = state.command.kind === "pending" ? state.command : null;
   const pendingSound = pending?.sound ?? null;
 
   let volume: VolumeControl | null = null;
-  if (level !== null) {
+  if (level !== null && !fixed) {
     const observed = percentOf(level);
     if (pendingSound?.kind === "volume") {
       volume = { value: pendingSound.percent, observed, phase: "sending" };
@@ -112,6 +114,9 @@ export function describeSound(state: AppState): SoundDescription {
   let readout = "";
   if (pendingSound?.kind === "mute") {
     readout = pendingSound.muted ? "Muting…" : "Unmuting…";
+  } else if (volume === null && fixed && level !== null) {
+    readout =
+      muted === true ? `Volume ${percentOf(level)}% · Muted` : `Volume ${percentOf(level)}%`;
   } else if (volume === null) {
     readout = muted === true ? "Muted" : "";
   } else if (volume.phase === "sending") {
@@ -127,7 +132,9 @@ export function describeSound(state: AppState): SoundDescription {
   }
 
   let note: string | null = null;
-  if (volume === null && mute === null) {
+  if (fixed) {
+    note = "This TV's volume is fixed, so it can't be changed here.";
+  } else if (volume === null && mute === null) {
     note = "The TV didn't report its volume or mute state, so sound controls aren't available.";
   } else if (volume === null) {
     note = "The TV didn't report its volume.";
