@@ -1986,3 +1986,28 @@ def test_mute_is_not_affected_by_a_fixed_volume(clock: FakeClock) -> None:
     make_service(transport, clock).set_muted(DEVICE_ID, True)
 
     assert transport.attempted() == ["set_muted"]
+
+
+def test_no_budget_left_for_the_fixed_volume_check_sends_the_command_once(
+    clock: FakeClock,
+) -> None:
+    """With no confirmation budget the check cannot read anything, so nothing says FIXED."""
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    result = make_service(transport, clock, confirm_timeout=0.0).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert transport.status_reads() == 0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+
+
+def test_a_fixed_volume_reported_after_the_deadline_does_not_block(clock: FakeClock) -> None:
+    """A read that answers too late is no evidence: it neither blocks nor confirms."""
+    transport = ScriptedReceiverTransport(
+        clock=clock, control_type=VolumeControlType.FIXED, status_read_delays=[1.5]
+    )
+
+    result = make_service(transport, clock, confirm_timeout=1.0).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert result.confirmation is Confirmation.UNCONFIRMED
