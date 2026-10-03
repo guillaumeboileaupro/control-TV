@@ -41,6 +41,24 @@ class PlaybackState(StrEnum):
     UNKNOWN = "unknown"
 
 
+class StreamType(StrEnum):
+    """How the media is delivered, as the receiver reported it (Cast `streamType`)."""
+
+    BUFFERED = "buffered"
+    LIVE = "live"
+
+
+class MetadataType(StrEnum):
+    """What kind of media the receiver says it is (Cast `metadataType`)."""
+
+    GENERIC = "generic"
+    MOVIE = "movie"
+    TV_SHOW = "tv_show"
+    MUSIC_TRACK = "music_track"
+    PHOTO = "photo"
+    AUDIOBOOK_CHAPTER = "audiobook_chapter"
+
+
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise InvalidArgumentError(message)
@@ -127,9 +145,15 @@ class MediaStatus:
     within that queue, so it narrows `content_id` and the session but identifies nothing alone."""
     content_type: str | None = None
     title: str | None = None
+    artist: str | None = None
+    """Who the receiver names as the media's artist (for a video, often the channel); never
+    blank: an absent, null or blank value is unknown."""
+    stream_type: StreamType | None = None
+    metadata_type: MetadataType | None = None
     position_seconds: float | None = None
     duration_seconds: float | None = None
     supports_seek: bool | None = None
+    supports_pause: bool | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -150,6 +174,26 @@ class MediaStatus:
                 ),
                 f"media {name} must be a non-negative integer: {identifier!r}",
             )
+        _require(
+            self.artist is None or (isinstance(self.artist, str) and bool(self.artist.strip())),
+            f"media artist must be None or a non-blank string: {self.artist!r}",
+        )
+        for name, flag in (
+            ("supports_seek", self.supports_seek),
+            ("supports_pause", self.supports_pause),
+        ):
+            _require(
+                flag is None or isinstance(flag, bool),
+                f"media {name} must be a boolean or None: {flag!r}",
+            )
+        _require(
+            self.stream_type is None or isinstance(self.stream_type, StreamType),
+            f"media stream type must be a StreamType or None: {self.stream_type!r}",
+        )
+        _require(
+            self.metadata_type is None or isinstance(self.metadata_type, MetadataType),
+            f"media metadata type must be a MetadataType or None: {self.metadata_type!r}",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

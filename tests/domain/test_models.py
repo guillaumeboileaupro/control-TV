@@ -15,8 +15,10 @@ from control_tv.domain import (
     InvalidArgumentError,
     MediaRequest,
     MediaStatus,
+    MetadataType,
     PlaybackState,
     ReceiverStatus,
+    StreamType,
 )
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
@@ -247,3 +249,50 @@ def test_media_request_accepts_valid_mime_parameter_spacing(content_type: str) -
 def test_media_request_still_rejects_a_truly_invalid_mime_value() -> None:
     with pytest.raises(InvalidArgumentError, match="valid MIME"):
         MediaRequest(url="https://media.local/movie.mp4", content_type="video / mp4 ; codecs")
+
+
+# --- Media details --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("artist", ["", "   ", 5, True])
+def test_media_artist_is_none_or_a_non_blank_string(artist: object) -> None:
+    with pytest.raises(InvalidArgumentError):
+        MediaStatus(artist=artist)  # type: ignore[arg-type]
+
+
+def test_media_details_default_to_unknown() -> None:
+    media = MediaStatus()
+
+    assert media.artist is None
+    assert media.stream_type is None
+    assert media.metadata_type is None
+    assert media.supports_pause is None
+
+
+def test_media_details_keep_reported_values() -> None:
+    media = MediaStatus(
+        artist="A channel",
+        stream_type=StreamType.LIVE,
+        metadata_type=MetadataType.MUSIC_TRACK,
+        supports_pause=False,
+    )
+
+    assert media.artist == "A channel"
+    assert media.stream_type is StreamType.LIVE
+    assert media.metadata_type is MetadataType.MUSIC_TRACK
+    assert media.supports_pause is False
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"supports_pause": 1},
+        {"supports_seek": "yes"},
+        {"stream_type": "live"},
+        {"metadata_type": 0},
+    ],
+    ids=["pause-int", "seek-string", "stream-raw-string", "metadata-raw-int"],
+)
+def test_media_details_require_their_own_types(changes: dict[str, object]) -> None:
+    with pytest.raises(InvalidArgumentError):
+        MediaStatus(**changes)  # type: ignore[arg-type]
