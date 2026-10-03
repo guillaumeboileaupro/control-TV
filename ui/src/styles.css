@@ -424,6 +424,13 @@ button {
   font-weight: 500;
 }
 
+/* The artist the TV names (for a video, often its channel): quiet, under the title. */
+.byline {
+  margin: 2px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .playback {
   display: flex;
   flex-wrap: wrap;

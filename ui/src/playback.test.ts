@@ -658,3 +658,45 @@ describe("failure wording", () => {
     assert.deepEqual(feedback.lines, []);
   });
 });
+
+describe("pause support", () => {
+  test("a TV that says the media can't be paused gets no Pause, and is told why", () => {
+    const controls = describeControls(
+      ready(statusWith({ playbackState: "playing", supportsPause: false })),
+    );
+    assert.equal(controls.primary, null);
+    assert.equal(controls.pauseNote, "Pausing isn't available for this media.");
+    assert.equal(controls.stop, true);
+  });
+
+  test("a Pause click on such media sends nothing", () => {
+    const state = ready(statusWith({ playbackState: "playing", supportsPause: false }));
+    assert.equal(startTransport(state, "pause").request, null);
+  });
+
+  test("buffering media that can't be paused offers no Pause either", () => {
+    const controls = describeControls(
+      ready(statusWith({ playbackState: "buffering", supportsPause: false })),
+    );
+    assert.equal(controls.primary, null);
+    assert.notEqual(controls.pauseNote, null);
+  });
+
+  test("paused media still offers Play whatever pause support says", () => {
+    const controls = describeControls(
+      ready(statusWith({ playbackState: "paused", supportsPause: false })),
+    );
+    assert.equal(controls.primary?.command, "play");
+    assert.equal(controls.pauseNote, null);
+  });
+
+  test("unknown or reported pause support offers Pause, as before", () => {
+    for (const supportsPause of [true, null, undefined]) {
+      const controls = describeControls(
+        ready(statusWith({ playbackState: "playing", supportsPause })),
+      );
+      assert.equal(controls.primary?.command, "pause");
+      assert.equal(controls.pauseNote, null);
+    }
+  });
+});
