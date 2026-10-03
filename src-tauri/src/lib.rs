@@ -9,7 +9,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,6 +45,13 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const CODE_BACKEND_UNAVAILABLE: &str = "backend_unavailable";
 const CODE_BRIDGE_TIMEOUT: &str = "bridge_timeout";
 const CODE_BRIDGE_TRANSPORT: &str = "bridge_transport";
+/// A request that timed out before it was written: certainly not sent, so not ambiguous.
+const CODE_BRIDGE_BUSY: &str = "bridge_busy";
+
+/// The fate of one bridge call, settled once: see `call_bridge`.
+const CLAIM_PENDING: u8 = 0;
+const CLAIM_STARTED: u8 = 1;
+const CLAIM_ABANDONED: u8 = 2;
 
 /// The one process boundary to the shared Python control layer.
 ///
@@ -233,18 +240,45 @@ type SharedBridgeState = Arc<Mutex<BridgeState>>;
 /// without also killing the process, which this does not do, so it can reply to a
 /// *later* request after an earlier one timed out; this is a documented limitation, not
 /// a correctness bug (responses are still matched by id).
+///
+/// A request that times out before it was written must never be written afterwards: the
+/// caller has already been told it failed, so a late write would deliver a command nobody is
+/// waiting for. Each call therefore has a claim, settled exactly once by a compare-and-swap:
+/// the worker claims it (`CLAIM_STARTED`) after it holds the bridge and before anything
+/// reaches stdin; the timeout claims it (`CLAIM_ABANDONED`). If the timeout wins, the worker
+/// gives the bridge back without writing, and the error says the request was not sent; if the
+/// worker won, the request was sent and the timeout stays ambiguous.
 async fn call_bridge(
     state: SharedBridgeState,
     method: &'static str,
     params: Value,
     timeout: Duration,
 ) -> Result<Value, BridgeFailure> {
+    let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
+    let worker_claim = Arc::clone(&claim);
     let task = tauri::async_runtime::spawn_blocking(move || {
         let guard = state
             .lock()
             .map_err(|_| BridgeFailure::transport("bridge state lock poisoned"))?;
         match &*guard {
-            BridgeState::Ready(bridge) => bridge.call(method, params),
+            BridgeState::Ready(bridge) => {
+                if worker_claim
+                    .compare_exchange(
+                        CLAIM_PENDING,
+                        CLAIM_STARTED,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_err()
+                {
+                    // The caller gave up while this request waited for the bridge.
+                    return Err(BridgeFailure::new(
+                        CODE_BRIDGE_BUSY,
+                        "the request was abandoned before it was sent",
+                    ));
+                }
+                bridge.call(method, params)
+            }
             BridgeState::Unavailable(reason) => {
                 Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, reason.clone()))
             }
@@ -256,13 +290,34 @@ async fn call_bridge(
         Ok(Err(join_error)) => Err(BridgeFailure::transport(format!(
             "bridge worker thread failed: {join_error}"
         ))),
-        Err(_timed_out) => Err(BridgeFailure::new(
-            CODE_BRIDGE_TIMEOUT,
-            format!(
-                "the Python control bridge did not respond within {:.0}s",
-                timeout.as_secs_f64()
-            ),
-        )),
+        Err(_timed_out) => {
+            let never_sent = claim
+                .compare_exchange(
+                    CLAIM_PENDING,
+                    CLAIM_ABANDONED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok();
+            if never_sent {
+                Err(BridgeFailure::new(
+                    CODE_BRIDGE_BUSY,
+                    format!(
+                        "the request was not sent: the Python control bridge was still busy \
+                         after {:.0}s",
+                        timeout.as_secs_f64()
+                    ),
+                ))
+            } else {
+                Err(BridgeFailure::new(
+                    CODE_BRIDGE_TIMEOUT,
+                    format!(
+                        "the Python control bridge did not respond within {:.0}s",
+                        timeout.as_secs_f64()
+                    ),
+                ))
+            }
+        }
     }
 }
 
@@ -727,6 +782,114 @@ mod tests {
             error.message.contains("did not respond within"),
             "{error:?}"
         );
+    }
+
+    /// A fake bridge that appends every request line it receives to `log`, waits `slow_ms`
+    /// before answering a request for the method "slow", and answers everything else at once.
+    fn recording_state(log: &std::path::Path, slow_ms: u64) -> (SharedBridgeState, FakeScript) {
+        let slow = slow_ms as f64 / 1000.0;
+        let guard = PROCESS_SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (script, bridge) = spawn_fake_bridge(&format!(
+            r#"while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{log}'
+  case "$line" in *'"method":"slow"'*) sleep {slow} ;; esac
+  echo '{{"ok":true,"result":{{}}}}'
+done"#,
+            log = log.display()
+        ));
+        drop(guard);
+        (
+            Arc::new(Mutex::new(BridgeState::Ready(bridge))),
+            FakeScript(script),
+        )
+    }
+
+    fn logged_methods(log: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<Value>(line).unwrap()["method"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_request_that_times_out_while_waiting_for_the_bridge_is_never_sent() {
+        let n = SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let log =
+            std::env::temp_dir().join(format!("control-tv-sent-{}-{n}.log", std::process::id()));
+        let (state, _script) = recording_state(&log, 1000);
+
+        // A holds the bridge for about one second.
+        let a_state = Arc::clone(&state);
+        let a = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(call_bridge(
+                a_state,
+                "slow",
+                json!({}),
+                Duration::from_secs(10),
+            ))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+
+        // B gives up while A still holds the bridge.
+        let b = tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "pause",
+            json!({"deviceId": "uuid-1"}),
+            Duration::from_millis(200),
+        ))
+        .unwrap_err();
+
+        // A finishes and releases the bridge; B's worker then gets the lock, but must not send.
+        assert!(a.join().unwrap().is_ok());
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(logged_methods(&log), vec!["slow"]);
+        assert_eq!(b.code, CODE_BRIDGE_BUSY);
+        assert!(b.message.contains("was not sent"), "{b:?}");
+
+        // The bridge is still usable: the next request is sent and answered.
+        tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "ping",
+            json!({}),
+            Duration::from_secs(5),
+        ))
+        .unwrap();
+        assert_eq!(logged_methods(&log), vec!["slow", "ping"]);
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn a_request_already_sent_when_it_times_out_stays_ambiguous() {
+        let n = SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let log =
+            std::env::temp_dir().join(format!("control-tv-started-{}-{n}.log", std::process::id()));
+        let (state, _script) = recording_state(&log, 1000);
+
+        let error = tauri::async_runtime::block_on(call_bridge(
+            Arc::clone(&state),
+            "slow",
+            json!({}),
+            Duration::from_millis(200),
+        ))
+        .unwrap_err();
+
+        // It reached the bridge, so the timeout cannot say it was not sent.
+        assert_eq!(error.code, CODE_BRIDGE_TIMEOUT);
+        assert!(
+            error.message.contains("did not respond within"),
+            "{error:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(logged_methods(&log), vec!["slow"]);
+        let _ = std::fs::remove_file(&log);
     }
 
     #[test]

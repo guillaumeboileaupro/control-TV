@@ -726,6 +726,7 @@ describe("feedback while a sound command runs", () => {
       "invalid_argument",
       "backend_unavailable",
       "bridge_timeout",
+      "bridge_busy",
       "bridge_transport",
       "internal_error",
       "weird",

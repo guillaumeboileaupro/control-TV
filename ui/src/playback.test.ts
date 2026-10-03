@@ -570,6 +570,7 @@ describe("failure wording", () => {
     ["timeout", "The TV didn't answer in time", "check"],
     ["backend_unavailable", "The app's background service isn't available", "check"],
     ["bridge_timeout", "The app's background service stopped answering", "check"],
+    ["bridge_busy", "The app was busy with another request", "check"],
     ["bridge_transport", "The app's background service stopped answering", "check"],
     ["internal_error", "Couldn't send the command", "check"],
   ];
@@ -593,7 +594,12 @@ describe("failure wording", () => {
   });
 
   test("a command that was certainly not sent says so", () => {
-    for (const code of ["device_unavailable", "device_not_found", "backend_unavailable"]) {
+    for (const code of [
+      "device_unavailable",
+      "device_not_found",
+      "backend_unavailable",
+      "bridge_busy",
+    ]) {
       assert.match(describeCommandFailure("play", { code, message: "m" }).hint, /wasn't sent/);
     }
   });

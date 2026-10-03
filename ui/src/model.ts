@@ -94,6 +94,13 @@ export interface StatusRequest {
 export type StatusOutcome =
   { ok: true; status: DeviceStatus } | { ok: false; failure: BridgeFailure };
 
+// Whether a failed startup check means the background service is in trouble. A request that
+// was not sent because the service was busy with another one (\`bridge_busy\`) proves it is
+// alive, so it is not reported as a service problem.
+export function isServiceFailure(failure: BridgeFailure): boolean {
+  return failure.code !== "bridge_busy";
+}
+
 export interface DevicesMessageLine {
   text: string;
   // Read out by assistive technology but not drawn: the list appearing is the visual cue.
@@ -331,6 +338,14 @@ export function describeFailure(
         kind: "backend_unavailable",
         title: "The app's background service isn't available",
         hint: "Restart control-TV. If this keeps happening, the details can help diagnose it.",
+        recovery: "retry",
+        technical,
+      };
+    case "bridge_busy":
+      return {
+        kind: "backend_timeout",
+        title: "The app was busy with another request",
+        hint: "Nothing was sent. Try again.",
         recovery: "retry",
         technical,
       };
