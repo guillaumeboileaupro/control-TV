@@ -188,3 +188,28 @@ def test_an_unreasonable_watch_window_is_refused_before_any_network_access(
 ) -> None:
     with pytest.raises(SystemExit, match="seconds"):
         observe.main(["watch", "--device-id", "x", "--seconds", seconds])
+
+
+@pytest.mark.parametrize(
+    "run",
+    ["../../tmp/campaign", "../escape", "/tmp/absolute", "nested/../../escape"],
+    ids=["two-levels-up", "one-level-up", "absolute", "nested-escape"],
+)
+def test_a_run_name_cannot_leave_the_private_root(tmp_path: Path, run: str) -> None:
+    repo = git_repo(tmp_path / "repo", "private")
+    # The escape target is ignored too, so only the containment check can refuse it.
+    (repo / ".gitignore").write_text("/private/\n/tmp/\n/escape/\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="outside the private root"):
+        observe.private_run_dir(repo / "private" / "hardware", run, repo=repo)
+
+    assert not (repo / "tmp").exists()
+    assert not (repo / "escape").exists()
+
+
+def test_a_nested_run_name_inside_the_private_root_is_accepted(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo", "private")
+
+    directory = observe.private_run_dir(repo / "private" / "hardware", "2026/run-1", repo=repo)
+
+    assert directory == (repo / "private" / "hardware" / "2026" / "run-1").resolve()

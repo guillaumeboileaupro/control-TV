@@ -48,13 +48,17 @@ def private_run_dir(root: Path, run: str, *, repo: Path = REPO_ROOT) -> Path:
     resolved = root.resolve()
     if repo.resolve() not in resolved.parents:
         raise SystemExit(f"refused: {resolved} is not inside the repository")
-    probe = resolved / run / "probe.jsonl"
+    # The run name is user input: resolve the complete directory and keep it under the root,
+    # so "../" or an absolute path can never move the evidence elsewhere.
+    directory = (resolved / run).resolve()
+    if resolved not in directory.parents:
+        raise SystemExit(f"refused: run {run!r} is outside the private root")
+    probe = directory / "probe.jsonl"
     ignored = subprocess.run(
         ["git", "check-ignore", "-q", str(probe)], cwd=repo, check=False
     ).returncode
     if ignored != 0:
         raise SystemExit(f"refused: {resolved} is not ignored by git")
-    directory = resolved / run
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
     return directory
