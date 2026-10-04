@@ -1,14 +1,14 @@
 # Licenses of the Linux release package
 
-This is an engineering inventory of what the Linux release `.deb` contains and of what each license asks of a distributor. **It is not a legal review, and no legal validation has taken place.** It records the state found on 2026-10-04 for version 0.1.0 (`python3 scripts/dev.py release-deb`).
+This is an engineering inventory of what the Linux release `.deb` contains and of what each license asks of a distributor. **It is not a legal review, and no legal validation has taken place.** It records the state found on 2026-10-04 for version 0.1.0 built with CPython 3.12.15 (`python3 scripts/dev.py release-deb`).
 
 ## What the package ships
 
 | Component | Version | How it is shipped | License | Text in the package |
 |---|---|---|---|---|
 | control-TV | 0.1.0 | Rust binary, frozen Python bridge | GPL-3.0 (version not stated as "only" or "or later") | `/usr/share/doc/control-tv/copyright` |
-| CPython (libpython, standard library) | 3.12.13 | `libpython3.12.so.1.0`, `base_library.zip`, frozen archive | PSF-2.0 | `python-bridge/licenses/CPython-3.12.13/` |
-| Libraries linked statically into that libpython by python-build-standalone | OpenSSL 3.5.7, SQLite 3.53.1, zlib 1.3.2, libedit, libffi, xz, bzip2, ncurses/terminfo, mpdecimal, expat, libuuid, HACL* | inside `libpython3.12.so.1.0` | Apache-2.0, public domain, Zlib, BSD, MIT, 0BSD, bzip2, X11 | **missing** |
+| CPython (libpython, standard library) | 3.12.15 (`packaging/release-python-version`) | `libpython3.12.so.1.0`, `base_library.zip`, frozen archive | PSF-2.0 | `python-bridge/licenses/CPython-3.12.15/` |
+| Libraries linked statically into that libpython by python-build-standalone | OpenSSL 3.5.9, SQLite 3.53.1, zlib 1.3.2, libedit, libffi, xz, bzip2, ncurses/terminfo, mpdecimal, expat, libuuid, HACL* | inside `libpython3.12.so.1.0` | Apache-2.0, public domain, Zlib, BSD, MIT, 0BSD, bzip2, X11 | **missing** |
 | PyInstaller bootloader | 6.22.3 | the `control-tv-bridge` executable | GPL-2.0-or-later with the bootloader exception | `python-bridge/licenses/PyInstaller-6.22.3/` |
 | libstdc++, libgcc_s (copied from the Ubuntu 22.04 build system; needed by protobuf's C extension) | GCC 12 | `_internal/` | GPL-3.0-or-later with the GCC Runtime Library Exception | Debian copyright files |
 | PyChromecast | 14.0.10 | frozen archive | MIT | yes |
