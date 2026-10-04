@@ -95,26 +95,104 @@ impl BridgeFailure {
     }
 }
 
-/// Where `run` looks for the bridge implementation.
-///
-/// Placeholder for this iteration only: resolves the `uv`-managed development virtual
-/// environment next to the repository this crate is compiled from
-/// (`CARGO_MANIFEST_DIR/../.venv`), which only makes sense for a locally built,
-/// locally run application. Packaging a real Python runtime/sidecar for a distributed
-/// build is Phase 7 work and will replace this function's body, not its signature.
-fn resolve_python() -> PathBuf {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BridgeProgram {
+    executable: PathBuf,
+    args: Vec<String>,
+}
+
+#[cfg(any(debug_assertions, test))]
+fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> BridgeProgram {
+    let repo_root = manifest_dir
         .parent()
-        .expect("src-tauri always has a parent directory")
-        .to_path_buf();
-    if cfg!(windows) {
+        .expect("src-tauri always has a parent directory");
+    let executable = if windows {
         repo_root.join(".venv").join("Scripts").join("python.exe")
     } else {
         repo_root.join(".venv").join("bin").join("python")
+    };
+    BridgeProgram {
+        executable,
+        args: vec!["-m".to_string(), "control_tv.bridge".to_string()],
     }
 }
 
+#[cfg(any(not(debug_assertions), test))]
+fn packaged_bridge_program(resource_dir: &std::path::Path, windows: bool) -> BridgeProgram {
+    let executable = if windows {
+        "control-tv-bridge.exe"
+    } else {
+        "control-tv-bridge"
+    };
+    BridgeProgram {
+        executable: resource_dir.join("python-bridge").join(executable),
+        args: Vec::new(),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn resolve_bridge_program<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<BridgeProgram, String> {
+    let _ = app;
+    Ok(development_bridge_program(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        cfg!(windows),
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn resolve_bridge_program<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<BridgeProgram, String> {
+    let resource_dir = app.path().resource_dir().map_err(|error| {
+        format!("failed to resolve the application resource directory: {error}")
+    })?;
+    Ok(packaged_bridge_program(&resource_dir, cfg!(windows)))
+}
+
+#[cfg(test)]
+fn resolve_python() -> PathBuf {
+    development_bridge_program(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        cfg!(windows),
+    )
+    .executable
+}
+
 impl PythonBridge {
+    fn spawn_program(program: &BridgeProgram) -> Result<Self, String> {
+        let mut child = Command::new(&program.executable)
+            .args(&program.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|error| {
+                format!(
+                    "failed to spawn the Python control bridge ({}): {error}",
+                    program.executable.display()
+                )
+            })?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or("spawned bridge process has no stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("spawned bridge process has no stdout")?;
+
+        Ok(Self {
+            stdin: Mutex::new(stdin),
+            stdout: Mutex::new(BufReader::new(stdout)),
+            next_id: AtomicU64::new(1),
+            _child: child,
+        })
+    }
+
+    #[cfg(test)]
     fn spawn(python: &PathBuf) -> Result<Self, String> {
         let mut child = Command::new(python)
             .args(["-m", "control_tv.bridge"])
@@ -503,8 +581,8 @@ async fn bridge_set_muted(
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let python = resolve_python();
-            let state = match PythonBridge::spawn(&python) {
+            let program = resolve_bridge_program(app.handle());
+            let state = match program.and_then(|program| PythonBridge::spawn_program(&program)) {
                 Ok(bridge) => BridgeState::Ready(bridge),
                 Err(error) => {
                     eprintln!("control-tv: Python control bridge unavailable: {error}");
@@ -587,6 +665,34 @@ mod tests {
     #[test]
     fn status_request_carries_only_the_stable_device_id() {
         assert_eq!(status_request("uuid-1"), json!({"deviceId": "uuid-1"}));
+    }
+
+    #[test]
+    fn bridge_programs_keep_debug_and_release_strictly_separate() {
+        let debug = development_bridge_program(std::path::Path::new("/checkout/src-tauri"), false);
+        assert_eq!(
+            debug.executable,
+            PathBuf::from("/checkout/.venv/bin/python")
+        );
+        assert_eq!(debug.args, ["-m", "control_tv.bridge"]);
+        let release = packaged_bridge_program(std::path::Path::new("/installed/resources"), false);
+        assert_eq!(
+            release.executable,
+            PathBuf::from("/installed/resources/python-bridge/control-tv-bridge")
+        );
+        assert!(release.args.is_empty());
+    }
+
+    #[test]
+    fn windows_release_uses_only_the_bundled_executable() {
+        let release = packaged_bridge_program(std::path::Path::new(r"C:\resources"), true);
+        assert_eq!(
+            release.executable,
+            PathBuf::from(r"C:\resources")
+                .join("python-bridge")
+                .join("control-tv-bridge.exe")
+        );
+        assert!(release.args.is_empty());
     }
 
     #[test]

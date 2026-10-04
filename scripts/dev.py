@@ -70,6 +70,7 @@ TARGETS: tuple[Target, ...] = (
     Target(".ruff_cache", CLEAN, "ruff cache"),
     Target(".coverage", CLEAN, "coverage data"),
     Target("htmlcov", CLEAN, "coverage report"),
+    Target("packaging/.pyinstaller", CLEAN, "project-local PyInstaller work and cache"),
     Target("build", CLEAN, "Python packaging staging"),
     Target("tmp", CLEAN, "project scratch directory"),
     Target("temp", CLEAN, "project scratch directory"),
