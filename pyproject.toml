@@ -19,6 +19,12 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.5",
 ]
+# The frozen Python bridge shipped inside release packages (`dev.py bridge-build`); exact
+# pins so a release sidecar is rebuilt with the same freezer and hooks.
+packaging = [
+    "pyinstaller==6.22.3",
+    "pyinstaller-hooks-contrib==2026.8",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -33,12 +39,17 @@ addopts = "-ra --strict-markers --strict-config"
 
 [tool.mypy]
 strict = true
-files = ["src", "tests", "scripts"]
+files = ["src", "tests", "scripts", "packaging"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# PyInstaller ships no type information and is installed only by `dev.py bridge-build`.
+module = ["PyInstaller", "PyInstaller.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 # Python sources only: recent ruff releases also format Markdown and TOML by default.
-include = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+include = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py", "packaging/**/*.py"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests", "scripts"]

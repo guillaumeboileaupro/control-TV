@@ -51,6 +51,8 @@ def repo(tmp_path: Path) -> Path:
         "src-tauri/Cargo.toml",
         "src-tauri/gen/android/settings.gradle",
         "ui/package.json",
+        "packaging/bridge_entry.py",
+        "packaging/build_bridge.py",
     ):
         _write(root / tracked)
     return root
@@ -82,6 +84,10 @@ def _generate(root: Path) -> None:
         ".venv/lib/site.py",
         ".venv/lib/__pycache__/site.cpython-312.pyc",
         "dist/control-tv.deb",
+        "dist/python-bridge/control-tv-bridge",
+        "packaging/.pyinstaller/work/control-tv-bridge/base_library.zip",
+        "packaging/.pyinstaller/sanitized/_sysconfigdata__linux_x86_64-linux-gnu.py",
+        "packaging/__pycache__/build_bridge.cpython-312.pyc",
     ):
         _write(root / generated)
 
@@ -100,6 +106,8 @@ TRACKED = {
     "src-tauri/Cargo.toml",
     "src-tauri/gen/android/settings.gradle",
     "ui/package.json",
+    "packaging/bridge_entry.py",
+    "packaging/build_bridge.py",
 }
 
 
@@ -112,6 +120,7 @@ def test_clean_removes_disposable_output_only(repo: Path) -> None:
         ".venv/lib/site.py",
         ".venv/lib/__pycache__/site.cpython-312.pyc",
         "dist/control-tv.deb",
+        "dist/python-bridge/control-tv-bridge",
         "ui/node_modules/pkg/index.js",
     }
 
@@ -545,3 +554,100 @@ def test_the_dependency_version_in_cargo_toml_is_not_taken_for_the_package_versi
 
 def test_the_repository_declares_one_version() -> None:
     assert dev.main(["version-check"]) == 0
+
+
+def test_bridge_build_syncs_the_packaging_group_then_freezes(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "uv-calls.log"
+    _fake_uv(monkeypatch, tmp_path, log)
+    calls: list[list[str]] = []
+
+    def fake_run(root: Path, args: Sequence[str]) -> int:
+        calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr(dev, "_run", fake_run)
+    _write(repo / "packaging" / "release-python-version", "3.12.15\n")
+
+    assert dev.main(["bridge-build"], root=repo) == 0
+
+    assert log.read_text().splitlines() == ["sync --locked --group packaging --python 3.12.15"]
+    assert calls == [[str(repo / "packaging" / "build_bridge.py"), "build"]]
+
+
+def test_bridge_build_does_not_freeze_when_the_sync_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    _write(repo / "packaging" / "release-python-version", "3.12.15\n")
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr(dev, "_run_uv", lambda root, args: 1)
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["bridge-build"], root=repo) == 1
+    assert calls == []
+
+
+def test_bridge_smoke_runs_the_smoke_with_the_development_interpreter(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["bridge-smoke"], root=repo) == 0
+    assert calls == [[str(repo / "packaging" / "build_bridge.py"), "smoke"]]
+
+
+def test_release_deb_builds_and_smokes_the_bridge_before_the_package(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    steps: list[str] = []
+
+    def step(name: str) -> Callable[[Path], int]:
+        def run(root: Path) -> int:
+            steps.append(name)
+            return 0
+
+        return run
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        steps.append(" ".join(args))
+        return 0
+
+    monkeypatch.setattr(dev, "cmd_bridge_build", step("bridge-build"))
+    monkeypatch.setattr(dev, "cmd_bridge_smoke", step("informative-smoke"))
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["release-deb"], root=repo) == 0
+    # The release runs the strict smoke, never the informative one that may skip isolation.
+    assert steps == [
+        "bridge-build",
+        f"{repo / 'packaging' / 'build_bridge.py'} smoke --strict",
+        str(repo / "packaging" / "release_linux.py"),
+    ]
+
+
+def test_release_deb_stops_when_the_smoke_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    released: list[Sequence[str]] = []
+    monkeypatch.setattr(dev, "cmd_bridge_build", lambda root: 0)
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        released.append(args)
+        return 1 if "--strict" in args else 0
+
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["release-deb"], root=repo) == 1
+    assert [list(args)[1:] for args in released] == [["smoke", "--strict"]]
