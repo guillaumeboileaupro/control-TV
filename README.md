@@ -62,12 +62,21 @@ python3 scripts/dev.py rust-check             # cargo fmt --check, clippy -D war
 python3 scripts/dev.py ui-check               # tsc --noEmit, prettier --check, UI model tests (node --test)
 npx --prefix ui tauri dev                     # run the app (from the repository root)
 npx --prefix ui tauri build --debug --no-bundle     # debug binary only: src-tauri/target/debug/control-tv
-npx --prefix ui tauri build --debug --bundles deb   # package a real, installable .deb
+npx --prefix ui tauri build --debug --bundles deb   # debug .deb: still runs the bridge from this checkout's .venv
 ```
 
 The Tauri CLI comes from `ui/node_modules` (`npx --prefix ui tauri ...`); the separate `cargo tauri` subcommand is not required. `tauri dev` starts the Vite dev server on port 1420 (`src-tauri/tauri.conf.json`), so only one dev instance can run at a time on a machine. A build leaves several GiB in `src-tauri/target`: run `python3 scripts/dev.py disk-usage` and `clean` afterwards.
 
-Only Linux (Debian/Ubuntu) has been built, installed and launched so far. `resolve_python()` (`src-tauri/src/lib.rs`) is a development-only placeholder that finds this developer's own `.venv` next to the repository; packaging a real Python runtime for a distributed build is future work (see `DEVELOPMENT_PLAN.md`, Phase 7).
+A debug build starts the bridge as `python -m control_tv.bridge` from this checkout's `.venv`, so it only runs on the machine that built it. A release build starts only the frozen bridge bundled as the `python-bridge/` resource, which carries its own Python runtime; it never falls back to a `.venv`, `python`/`python3`, `PATH` or `PYTHONPATH`, and a missing bundle shows the backend as unavailable:
+
+```bash
+python3 scripts/dev.py bridge-build   # freeze the bridge (PyInstaller --onedir) into dist/python-bridge/
+python3 scripts/dev.py bridge-smoke   # ping that frozen bridge outside the checkout, without network
+npx --prefix ui tauri build --config src-tauri/tauri.release.conf.json --no-bundle      # release binary + python-bridge/
+npx --prefix ui tauri build --config src-tauri/tauri.release.conf.json --bundles deb    # release .deb
+```
+
+`bridge-build` adds the locked `packaging` dependency group (PyInstaller) to `.venv` and keeps all PyInstaller state under `packaging/.pyinstaller/` (removed by `clean`); `setup` removes the group again. It refuses a frozen bridge that still names a build-machine path. Only Linux (Debian/Ubuntu) has been built, installed and launched so far, and the release `.deb` has not yet been installed and validated outside the checkout (see `DEVELOPMENT_PLAN.md`, Phase 7).
 
 ## Repository layout
 
@@ -95,7 +104,7 @@ assets/                    project assets
 
 ## Status
 
-The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Read-only physical validation of discovery, UUID selection and status is done (see `DEVELOPMENT_PLAN.md`). Real commands have also been sent one at a time to a YouTube session (see `docs/CAST_HARDWARE_VALIDATION.md`): Pause and Play had a physical effect but stayed `UNCONFIRMED` because the session reported no usable content id, and a Seek had no physical effect although the receiver reported the target position, so playback-command hardware validation remains incomplete and `CONFIRMED` is documented as receiver-reported, not as proof of the picture. Follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming confirmed Chromecast or Google TV command behavior. There is still no MCP adapter, no media-loading action in the application (it controls media already playing), no system tray, no Android or Windows build, and no release packaging.
+The shared control foundation and PyChromecast transport are implemented and covered by deterministic tests. Discovery, UUID selection, bounded status/recovery, media commands, input validation and connection cleanup are automated-test validated. Read-only physical validation of discovery, UUID selection and status is done (see `DEVELOPMENT_PLAN.md`). Real commands have also been sent one at a time to a YouTube session (see `docs/CAST_HARDWARE_VALIDATION.md`): Pause and Play had a physical effect but stayed `UNCONFIRMED` because the session reported no usable content id, and a Seek had no physical effect although the receiver reported the target position, so playback-command hardware validation remains incomplete and `CONFIRMED` is documented as receiver-reported, not as proof of the picture. Follow `docs/CAST_HARDWARE_VALIDATION.md` before claiming confirmed Chromecast or Google TV command behavior. There is still no MCP adapter, no media-loading action in the application (it controls media already playing), no system tray, no Android or Windows build, and no validated release package (the release `.deb` with the frozen bridge is built but not yet installed and validated).
 
 Phase 4 (Tauri UI) has an initial application shell: a Tauri 2 Rust crate that spawns the shared control layer as a Python subprocess over a stdio JSON bridge, and a one-page frontend with device discovery, selection by stable device id and a read-only view of the selected device's receiver/media status. It has been built, installed as a real `.deb` and launched on Debian/Ubuntu (Ubuntu 22.04); Windows and Android are untouched. Play, pause, stop, seek, volume and mute controls are built (one volume gesture can raise the level by at most 10 points; lowering is not limited) and are validated by automated tests and runs of the real application against a fake TV. On real hardware, Pause and Play were each sent once to a YouTube session and had a physical effect but returned `UNCONFIRMED` (no usable content id), a Seek returned `UNCONFIRMED` and had no physical effect, and `Stop`, volume and mute remain untested on real hardware. The window shows the media's title, its artist when the receiver names one, the application, the state, the position and length (`Live` for a live stream) and only the controls the receiver says the media supports. The application also discovers devices, selects one by its stable id and reads and refreshes status, including after rediscovery. Open items and planned work (tray, Android and its home-screen widget, MCP, packaging) are tracked in `DEVELOPMENT_PLAN.md`.
 

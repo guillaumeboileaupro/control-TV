@@ -25,7 +25,7 @@ Core completion, in order (the critical path):
 - [x] **A. Bridge requests never sent after their timeout (PR #23, merged):** see "Bridge request claim" under the Tauri shell status.
 - [ ] **B. Stop by session end, fixed-volume refusal and one application version (PR #24, open, not merged):** see the Stop, "Volume control type" and "One application version" entries; nothing of it is on `main` yet.
 - [ ] **C. Receiver volume and mute defaults (to do):** PyChromecast can invent a volume of 100% and "not muted"; see "Known open items".
-- [ ] **D. Autonomous Python bridge sidecar and Tauri packaging for Linux (in progress, nothing on `main`):** see Phase 7.
+- [ ] **D. Autonomous Python bridge sidecar and Tauri packaging for Linux (in progress on branch `feat/python-bridge-sidecar`, not on `main`):** frozen bridge, release resolution, smoke and release `.deb` build are automation-validated on that branch; see Phase 7.
 - [ ] **E. Autonomous `.deb` really installed and validated** on a machine state without the checkout, the `.venv` or a system Python used by the bridge (Phase 7).
 - [ ] **F. Windows packaging and validation** (Phase 7).
 - [ ] **G. Bridge recovery (P3):** restart a stuck or dead Python bridge; see "Known open items".
@@ -116,7 +116,7 @@ Exit criteria:
   - Stop, volume and mute were never sent to real hardware.
   - No physical playback-validation checkbox is completed: a command is validated only when its physical effect and a `CONFIRMED` result for identified media are both recorded.
 - [ ] Windows and Android are not built, installed or launched; nothing here validates them.
-- [ ] **No distributable Python runtime on `main`:** `resolve_python()` (`src-tauri/src/lib.rs`) resolves the repository `.venv` from a compile-time path, so a built package only runs on the machine that built it; the autonomous sidecar is critical-path item D, tracked in Phase 7.
+- [ ] **No distributable Python runtime on `main`:** `resolve_python()` (`src-tauri/src/lib.rs`) resolves the repository `.venv` from a compile-time path, so a built package only runs on the machine that built it; the autonomous sidecar (critical-path item D) is implemented on branch `feat/python-bridge-sidecar`, not merged, and tracked in Phase 7.
 
 ## Known open items (audit of 2026-09-26)
 
@@ -310,7 +310,22 @@ Exit criteria:
 
 ### Autonomous Python bridge sidecar - Linux desktop (critical-path items D and E)
 
-Retained design (owner decision, 2026-10-03). Status: in progress; nothing is on `main` and no pull request is open yet. A local draft exists but is not committed, and it still has to be moved onto the current `main` and aligned with this design. The `.deb` validated on 2026-09-25 (see the Tauri shell status) ran the bridge from the developer's `.venv`: it is **not** a validated distributable package.
+Retained design (owner decision, 2026-10-03). Status: implemented on branch `feat/python-bridge-sidecar` (rebuilt on `main` `78b557f` with the #22/#23 code untouched; not merged), so every item below stays `[ ]` until it is on `main`. The `.deb` validated on 2026-09-25 (see the Tauri shell status) ran the bridge from the developer's `.venv`: it is **not** a validated distributable package.
+
+Automation results on the branch (2026-10-04, Ubuntu 22.04, no Cast discovery, no hardware command):
+- `dev.py bridge-build` freezes `packaging/bridge_entry.py` (`--onedir`, 42 MB) with all PyInstaller state under `packaging/.pyinstaller/`, never `--clean`; nothing was written to the user's PyInstaller cache.
+- `dev.py bridge-smoke` copies the bundle outside the checkout and runs it with an empty environment inside a user/mount namespace where the checkout and the build Python are empty: `ping` answers `ready`, `get_status` of an undiscovered device answers `device_not_found` without network, and the bridge exits 0 on end of input. The development bridge fails in the same namespace (control).
+- The release Tauri build (`--config src-tauri/tauri.release.conf.json`) places the bundle next to the binary; launched on a private Xvfb display with `PYTHONPATH` set to a trap, it started `python-bridge/control-tv-bridge` (whose environment had no `PYTHONPATH`) and showed the normal start screen; with the bundle removed it started no bridge, logged "the bundled Python control bridge is missing" and showed "The app's background service isn't available" although `.venv` and `python3` were present. Nothing was clicked.
+- The release `.deb` builds (18 MB) and contains `/usr/lib/control-tv/python-bridge/control-tv-bridge` (mode 755, `libpython3.12.so` included, no symlinks; package dependencies only `libwebkit2gtk-4.1-0` and `libgtk-3-0`). It was inspected, **not installed**.
+- The release binary contains no checkout path, `.venv`, `control_tv.bridge` or `python3` string.
+- Tests: Rust 51 (7 new: debug/release resolution, no fallback, missing bundle -> `backend_unavailable`, `PYTHONPATH`/`PYTHONHOME` withheld); Python 914 with PyInstaller installed (913 + 1 skipped without it, as in CI), coverage 98.32%.
+
+Findings (2026-10-04):
+- [ ] **Build-machine path in the frozen bridge (fixed on the branch, automation-validated, not on `main`):** PyInstaller froze `_sysconfigdata__linux_x86_64-linux-gnu`, where uv writes the build machine's Python install prefix (a home directory, so the builder's user name) in 21 of 984 build variables (`prefix`, `LIBDIR`, `INCLUDEPY`...). Impact: privacy (path and user name shipped to every user) and reproducibility (the bundle differs per build machine and user); runtime: none found, since no bundled dependency reads `sysconfig` and the bridge's `ping`/`get_status` path never imports it (only `setuptools`/`packaging`, `pydoc`, `_aix_support` and `_osx_support` referenced it). Fix: excluding setuptools removes `sysconfig` and `_sysconfigdata` from the bundle entirely; as a defense, the build also freezes a copy of `_sysconfigdata` whose prefix is the neutral `/install` (verified with a control build that keeps setuptools), and `bridge-build` fails if any file or archive member (zip, PyInstaller PKG and PYZ, decompressed) names the checkout, the home directory or the build Python prefix.
+- [ ] **setuptools frozen without need (fixed on the branch, automation-validated, not on `main`):** PyInstaller's setuptools hook pulled in setuptools, `pkg_resources` and vendored packages (132 of 525 frozen modules, plus a literal `.venv` string). They are excluded (`--exclude-module setuptools/pkg_resources/_distutils_hack`): 354 modules, 42 MB instead of 44 MB, and the full smoke still passes.
+- [ ] **Build-machine paths in the Rust release binary (new finding, open):** the release `control-tv` binary contains 195 paths under the builder's `~/.cargo/registry` (panic locations of dependencies). Cargo's `trim-paths` is still unstable (Cargo 1.98); candidates: `RUSTFLAGS=--remap-path-prefix=...` in a documented release command, or release builds only in CI.
+- [ ] **Release-only Rust code is not compiled by CI (open):** `resolve_bridge_program`'s release variant compiles only in a release profile; CI builds debug only. It was checked locally (`cargo clippy --release -D warnings`); a CI release job is part of the CI packaging items.
+- [ ] `bridge-build` adds the `packaging` group to `.venv` (`setup` removes it again), so a later `setup` is needed before measuring the CI-equivalent environment.
 
 Design:
 - [ ] the Python runtime is embedded in the application, never taken from the user's system;
