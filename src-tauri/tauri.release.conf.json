@@ -3,6 +3,14 @@
   "bundle": {
     "resources": {
       "../dist/python-bridge/": "python-bridge/"
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/doc/control-tv/copyright": "../LICENSE",
+          "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses"
+        }
+      }
     }
   }
 }

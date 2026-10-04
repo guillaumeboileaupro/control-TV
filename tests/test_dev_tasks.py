@@ -604,3 +604,44 @@ def test_bridge_smoke_runs_the_smoke_with_the_development_interpreter(
 
     assert dev.main(["bridge-smoke"], root=repo) == 0
     assert calls == [[str(repo / "packaging" / "build_bridge.py"), "smoke"]]
+
+
+def test_release_deb_builds_and_smokes_the_bridge_before_the_package(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    steps: list[str] = []
+
+    def step(name: str) -> Callable[[Path], int]:
+        def run(root: Path) -> int:
+            steps.append(name)
+            return 0
+
+        return run
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        steps.append(" ".join(args))
+        return 0
+
+    monkeypatch.setattr(dev, "cmd_bridge_build", step("bridge-build"))
+    monkeypatch.setattr(dev, "cmd_bridge_smoke", step("bridge-smoke"))
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["release-deb"], root=repo) == 0
+    assert steps == ["bridge-build", "bridge-smoke", str(repo / "packaging" / "release_linux.py")]
+
+
+def test_release_deb_stops_when_the_smoke_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    released: list[Sequence[str]] = []
+    monkeypatch.setattr(dev, "cmd_bridge_build", lambda root: 0)
+    monkeypatch.setattr(dev, "cmd_bridge_smoke", lambda root: 1)
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        released.append(args)
+        return 0
+
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["release-deb"], root=repo) == 1
+    assert released == []

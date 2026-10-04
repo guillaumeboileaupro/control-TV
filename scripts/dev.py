@@ -16,6 +16,7 @@ Commands:
   ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
+  release-deb  bridge-build, bridge-smoke, then the release .deb, its notices and dist/SHA256SUMS
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -420,6 +421,15 @@ def cmd_bridge_smoke(root: Path) -> int:
     return _run_bridge_packaging(root, "smoke")
 
 
+def cmd_release_deb(root: Path) -> int:
+    """The Linux release package, built only around a frozen bridge that passed its smoke."""
+    for step in (cmd_bridge_build, cmd_bridge_smoke):
+        code = step(root)
+        if code != 0:
+            return code
+    return _run(root, [str(root / "packaging" / "release_linux.py")])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -437,6 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
         "ui-check",
         "bridge-build",
         "bridge-smoke",
+        "release-deb",
         "disk-usage",
     )
     for name in names:
@@ -466,6 +477,7 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "ui-check": cmd_ui_check,
         "bridge-build": cmd_bridge_build,
         "bridge-smoke": cmd_bridge_smoke,
+        "release-deb": cmd_release_deb,
         "disk-usage": cmd_disk_usage,
     }
     return handlers[command](root)
