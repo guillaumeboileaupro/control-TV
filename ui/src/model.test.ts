@@ -19,6 +19,10 @@ import {
   formatClock,
   initialState,
   isServiceFailure,
+  HEALTHY,
+  recordServiceAnswer,
+  recordServiceFailure,
+  serviceAnswered,
   refreshStatus,
   selectDevice,
   startDiscovery,
@@ -28,6 +32,7 @@ import {
   type DeviceStatus,
   type MediaStatus,
 } from "./model.ts";
+import { describeCommandFailure } from "./playback.ts";
 
 function device(id: string, friendlyName = `Device ${id}`): Device {
   return { id, friendlyName, host: "192.0.2.10", port: 8009, kind: "cast", modelName: null };
@@ -691,5 +696,80 @@ describe("service check", () => {
 
   test("a busy status read says nothing was sent", () => {
     assert.match(describeFailure({ code: "bridge_busy", message: "m" }).hint, /Nothing was sent/);
+  });
+});
+
+describe("service problem after a restarted background service", () => {
+  const dead = { code: "bridge_transport", message: "the bridge exited" };
+  const answered = { code: "device_unavailable", message: "tv is asleep" };
+
+  test("a failed startup check is recorded with the requests started so far", () => {
+    const health = recordServiceFailure(HEALTHY, dead, 1);
+
+    assert.deepEqual(health, { failure: dead, recordedAfter: 1 });
+  });
+
+  test("a busy service is not recorded as a problem", () => {
+    const busy = { code: "bridge_busy", message: "not sent" };
+
+    assert.equal(recordServiceFailure(HEALTHY, busy, 1), HEALTHY);
+  });
+
+  test("a later request answered by the service ends the problem", () => {
+    const health = recordServiceFailure(HEALTHY, dead, 1);
+
+    assert.equal(recordServiceAnswer(health, 2, null), HEALTHY);
+  });
+
+  test("an error the service itself sent back also shows that it answers", () => {
+    const health = recordServiceFailure(HEALTHY, dead, 1);
+
+    assert.equal(recordServiceAnswer(health, 2, answered), HEALTHY);
+    assert.equal(serviceAnswered(answered), true);
+    assert.equal(serviceAnswered({ code: "invalid_argument", message: "x" }), true);
+    assert.equal(serviceAnswered({ code: "internal_error", message: "x" }), true);
+  });
+
+  test("a failure without an answer from the service never ends the problem", () => {
+    const health = recordServiceFailure(HEALTHY, dead, 1);
+
+    for (const code of [
+      "backend_unavailable",
+      "bridge_transport",
+      "bridge_timeout",
+      "bridge_busy",
+      "unexpected",
+    ]) {
+      const failure = { code, message: "x" };
+      assert.equal(serviceAnswered(failure), false, code);
+      assert.equal(recordServiceAnswer(health, 2, failure), health, code);
+    }
+  });
+
+  test("a request started before the problem was recorded proves nothing about it", () => {
+    // Requests 1 and 2 had started when the failure was recorded; 2 answers late.
+    const health = recordServiceFailure(HEALTHY, dead, 2);
+
+    assert.equal(recordServiceAnswer(health, 2, null), health);
+    assert.equal(recordServiceAnswer(health, 3, null), HEALTHY);
+  });
+
+  test("ending the problem leaves an ambiguous command failure as it was reported", () => {
+    // The command's own outcome is reported from its own failure, never from the service's
+    // later health: a timeout stays "may or may not have reached it" and is not resent.
+    const timedOut = { code: "bridge_timeout", message: "did not respond" };
+    const health = recordServiceFailure(HEALTHY, dead, 1);
+    const afterCommand = recordServiceAnswer(health, 2, timedOut);
+    const afterRead = recordServiceAnswer(afterCommand, 3, null);
+
+    assert.equal(afterCommand, health);
+    assert.equal(afterRead, HEALTHY);
+    assert.equal(describeCommandFailure("pause", timedOut).hint.includes("may or may not"), true);
+    assert.equal(describeCommandFailure("pause", timedOut).recovery, "check");
+  });
+
+  test("nothing is recorded or ended while the service is healthy", () => {
+    assert.equal(recordServiceAnswer(HEALTHY, 5, null), HEALTHY);
+    assert.equal(recordServiceAnswer(HEALTHY, 5, dead), HEALTHY);
   });
 });

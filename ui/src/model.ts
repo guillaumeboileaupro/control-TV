@@ -108,6 +108,54 @@ export function isServiceFailure(failure: BridgeFailure): boolean {
   return failure.code !== "bridge_busy";
 }
 
+// Failures the app reports without any answer from the background service: it was not
+// running, the exchange broke, it did not answer in time, or it was busy with another request.
+const NO_ANSWER_CODES: ReadonlySet<string> = new Set([
+  "backend_unavailable",
+  "bridge_transport",
+  "bridge_timeout",
+  "bridge_busy",
+  "unexpected",
+]);
+
+// Whether a request's outcome shows that the background service answered it: a result, or an
+// error the service itself sent back (for example an unreachable device). \`null\` is success.
+export function serviceAnswered(failure: BridgeFailure | null): boolean {
+  return failure === null || !NO_ANSWER_CODES.has(failure.code);
+}
+
+// The background service's problem shown to the user, and which requests may end it. The
+// service process is restarted for later requests after a failure, so a request started
+// after the problem was recorded, and answered by the service, shows that it works again.
+// A request started earlier proves nothing about the problem, and no request is ever resent:
+// each request's own outcome is still reported as it is.
+export interface ServiceHealth {
+  failure: BridgeFailure | null;
+  // Requests numbered up to this one had started when the failure was recorded.
+  recordedAfter: number;
+}
+
+export const HEALTHY: ServiceHealth = { failure: null, recordedAfter: 0 };
+
+export function recordServiceFailure(
+  health: ServiceHealth,
+  failure: BridgeFailure,
+  requestsStarted: number,
+): ServiceHealth {
+  return isServiceFailure(failure) ? { failure, recordedAfter: requestsStarted } : health;
+}
+
+export function recordServiceAnswer(
+  health: ServiceHealth,
+  request: number,
+  failure: BridgeFailure | null,
+): ServiceHealth {
+  if (health.failure === null || request <= health.recordedAfter || !serviceAnswered(failure)) {
+    return health;
+  }
+  return HEALTHY;
+}
+
 export interface DevicesMessageLine {
   text: string;
   // Read out by assistive technology but not drawn: the list appearing is the visual cue.

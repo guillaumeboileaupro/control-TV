@@ -27,6 +27,11 @@ serde_json = "1"
 # bridge call never runs on the async thread. Both are feature-unified with tauri's own tokio.
 tokio = { version = "1", features = ["time", "rt"] }
 
+# Stopping a stuck bridge kills its whole process group, so no descendant keeps its pipes
+# open (and its reader blocked). Already in the dependency graph through GTK and Tauri.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

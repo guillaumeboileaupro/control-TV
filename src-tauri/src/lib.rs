@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -55,20 +55,60 @@ const CLAIM_ABANDONED: u8 = 2;
 
 /// The one process boundary to the shared Python control layer.
 ///
-/// Spawned once in `run()`'s `setup` hook and kept alive for the application's
-/// lifetime. Requests are sent and answered sequentially (single-flight, serialized by
+/// Spawned in `run()`'s `setup` hook and kept until it fails, when `BridgeSlot` replaces
+/// it for later requests. Requests are sent and answered sequentially (single-flight, serialized by
 /// `stdin`/`stdout` each being behind their own `Mutex`) and matched by a monotonically
 /// increasing id; nothing today needs concurrent in-flight requests, so this is
 /// deliberately the simplest correct thing, not a protocol limitation.
 struct PythonBridge {
-    /// Kept alive so the process is not dropped early; not otherwise touched. Dropping
-    /// `PythonBridge` drops `stdin` first (field order), closing that pipe and sending
-    /// EOF, which is exactly what makes `bridge.py`'s `for line in stdin` loop end and
-    /// the Python process exit on its own - no signal/kill is needed for a clean shutdown.
+    /// Dropping `PythonBridge` drops `stdin` first (field order), closing that pipe and
+    /// sending EOF, which is exactly what makes `bridge.py`'s `for line in stdin` loop end
+    /// and the Python process exit on its own - no signal/kill is needed for a clean
+    /// shutdown. A bridge found broken is stopped explicitly instead (`BridgeProcess`).
     stdin: Mutex<ChildStdin>,
     stdout: Mutex<BufReader<ChildStdout>>,
     next_id: AtomicU64,
-    _child: Child,
+    process: Arc<BridgeProcess>,
+}
+
+/// The bridge's operating-system process, shared so that a caller whose request timed out
+/// after it was written can stop it without the bridge lock, which the worker still holds
+/// while it waits for the reply.
+struct BridgeProcess {
+    child: Mutex<Child>,
+    /// Set by the first `terminate`; the process group is killed only once, while its
+    /// leader is known to be ours.
+    terminated: std::sync::atomic::AtomicBool,
+}
+
+impl BridgeProcess {
+    fn lock_child(&self) -> std::sync::MutexGuard<'_, Child> {
+        self.child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn has_exited(&self) -> bool {
+        !matches!(self.lock_child().try_wait(), Ok(None))
+    }
+
+    /// Kill the process and everything it started (on Unix, its process group), then reap
+    /// it, so no zombie is left behind. With no process left holding its pipes, a worker
+    /// blocked on them sees end of file and returns.
+    fn terminate(&self) {
+        let mut child = self.lock_child();
+        if !self.terminated.swap(true, Ordering::SeqCst) {
+            #[cfg(unix)]
+            if let Ok(group) = i32::try_from(child.id()) {
+                // SAFETY: plain kill(2) on the group this bridge leads (`process_group(0)`).
+                unsafe {
+                    libc::kill(-group, libc::SIGKILL);
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 /// The failure of one bridge-backed command, as the frontend receives it: a stable
@@ -183,21 +223,12 @@ fn resolve_bridge_program<R: tauri::Runtime>(
     packaged_bridge(resource_dir, cfg!(windows))
 }
 
-/// The bridge state the application starts with: a running bridge, or the reason every
-/// bridge-backed command will report `backend_unavailable`.
-fn start_bridge(program: Result<BridgeProgram, String>) -> BridgeState {
-    match program.and_then(|program| PythonBridge::spawn(&program)) {
-        Ok(bridge) => BridgeState::Ready(bridge),
-        Err(error) => {
-            eprintln!("control-tv: Python control bridge unavailable: {error}");
-            BridgeState::Unavailable(error)
-        }
-    }
-}
-
 impl PythonBridge {
     fn command(program: &BridgeProgram) -> Command {
         let mut command = Command::new(&program.executable);
+        // Its own process group, so recovery can stop everything it started.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
         command
             .args(&program.args)
             .stdin(Stdio::piped())
@@ -232,7 +263,10 @@ impl PythonBridge {
             stdin: Mutex::new(stdin),
             stdout: Mutex::new(BufReader::new(stdout)),
             next_id: AtomicU64::new(1),
-            _child: child,
+            process: Arc::new(BridgeProcess {
+                child: Mutex::new(child),
+                terminated: std::sync::atomic::AtomicBool::new(false),
+            }),
         })
     }
 
@@ -310,10 +344,71 @@ enum BridgeState {
     Unavailable(String),
 }
 
+/// Starts a bridge process: the same launch `run()` uses at startup.
+type BridgeLauncher = Box<dyn Fn() -> Result<PythonBridge, String> + Send>;
+
+/// The bridge and how to start a replacement for it.
+///
+/// Recovery replaces the process, never a request: a bridge found dead, broken or stuck is
+/// stopped and marked unavailable, and the next request that reaches it starts a new one
+/// before anything of that request is written. The request that met the failure keeps its
+/// own result (`bridge_transport` or `bridge_timeout`, both "may have been delivered") and
+/// is never sent again.
+struct BridgeSlot {
+    state: BridgeState,
+    /// `None` only where no replacement may be started (some tests).
+    launcher: Option<BridgeLauncher>,
+}
+
+impl BridgeSlot {
+    fn new(launcher: BridgeLauncher) -> Self {
+        let state = match launcher() {
+            Ok(bridge) => BridgeState::Ready(bridge),
+            Err(error) => {
+                eprintln!("control-tv: Python control bridge unavailable: {error}");
+                BridgeState::Unavailable(error)
+            }
+        };
+        Self {
+            state,
+            launcher: Some(launcher),
+        }
+    }
+
+    /// Stop the current process, if any, and leave the slot unavailable for `reason`.
+    fn retire(&mut self, reason: String) {
+        if let BridgeState::Ready(bridge) = &self.state {
+            bridge.process.terminate();
+        }
+        eprintln!("control-tv: Python control bridge stopped: {reason}");
+        self.state = BridgeState::Unavailable(reason);
+    }
+
+    /// Before a request is written: replace a process that has exited, and start one where
+    /// none runs. Nothing is sent to the new process here.
+    fn recover(&mut self) {
+        if let BridgeState::Ready(bridge) = &self.state {
+            if !bridge.process.has_exited() {
+                return;
+            }
+            self.retire("the Python control bridge process exited".to_string());
+        }
+        if let Some(launcher) = &self.launcher {
+            self.state = match launcher() {
+                Ok(bridge) => {
+                    eprintln!("control-tv: Python control bridge started again");
+                    BridgeState::Ready(bridge)
+                }
+                Err(error) => BridgeState::Unavailable(error),
+            };
+        }
+    }
+}
+
 /// `Arc` so a command can clone a handle to it and move that clone onto the blocking
 /// worker thread `call_bridge` spawns, independently of the `'_`-scoped `tauri::State`
 /// borrow (which cannot itself cross into a `'static` spawned task).
-type SharedBridgeState = Arc<Mutex<BridgeState>>;
+type SharedBridgeState = Arc<Mutex<BridgeSlot>>;
 
 /// Run one bridge request off Tauri's async/main thread and bound how long a command
 /// will wait for it.
@@ -325,11 +420,9 @@ type SharedBridgeState = Arc<Mutex<BridgeState>>;
 /// thread free regardless of how long the bridge takes; wrapping that in
 /// `tokio::time::timeout` additionally guarantees this function itself always resolves
 /// within `timeout`, so a stuck bridge is reported as an error instead of leaving the
-/// caller (and the UI) waiting forever. The dedicated worker thread can still be left
-/// blocked on `read_line` in that case - there is no way to cancel a blocking OS read
-/// without also killing the process, which this does not do, so it can reply to a
-/// *later* request after an earlier one timed out; this is a documented limitation, not
-/// a correctness bug (responses are still matched by id).
+/// caller (and the UI) waiting forever. A blocking OS read cannot be cancelled, so a
+/// request that times out after its claim kills its bridge process instead (see below):
+/// that ends the read, and the worker returns.
 ///
 /// A request that times out before it was written must never be written afterwards: the
 /// caller has already been told it failed, so a late write would deliver a command nobody is
@@ -338,6 +431,12 @@ type SharedBridgeState = Arc<Mutex<BridgeState>>;
 /// reaches stdin; the timeout claims it (`CLAIM_ABANDONED`). If the timeout wins, the worker
 /// gives the bridge back without writing, and the error says the request was not sent; if the
 /// worker won, the request was sent and the timeout stays ambiguous.
+///
+/// Recovery (`BridgeSlot`) only ever acts on the process: before a still-pending request
+/// is claimed, a dead process is replaced; a request that ends in `bridge_transport`
+/// retires its process; a request that times out after its claim stops the process it was
+/// written to, which also frees a worker stuck reading from it. The next request then
+/// starts a new process. No request is retried or replayed.
 async fn call_bridge(
     state: SharedBridgeState,
     method: &'static str,
@@ -346,33 +445,53 @@ async fn call_bridge(
 ) -> Result<Value, BridgeFailure> {
     let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
     let worker_claim = Arc::clone(&claim);
+    // The process this request is written to, set before the claim, so a caller that loses
+    // the claim race to the worker can stop that process (and only that one).
+    let written_to: Arc<OnceLock<Arc<BridgeProcess>>> = Arc::new(OnceLock::new());
+    let worker_written_to = Arc::clone(&written_to);
     let task = tauri::async_runtime::spawn_blocking(move || {
-        let guard = state
-            .lock()
-            .map_err(|_| BridgeFailure::transport("bridge state lock poisoned"))?;
-        match &*guard {
-            BridgeState::Ready(bridge) => {
-                if worker_claim
-                    .compare_exchange(
-                        CLAIM_PENDING,
-                        CLAIM_STARTED,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .is_err()
-                {
-                    // The caller gave up while this request waited for the bridge.
-                    return Err(BridgeFailure::new(
-                        CODE_BRIDGE_BUSY,
-                        "the request was abandoned before it was sent",
-                    ));
-                }
-                bridge.call(method, params)
+        let mut slot = match state.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => {
+                // A worker panicked while it used the bridge, so its pipes may be mid-message.
+                state.clear_poison();
+                let mut slot = poisoned.into_inner();
+                slot.retire("a request failed while it used the bridge".to_string());
+                slot
             }
+        };
+        if worker_claim.load(Ordering::SeqCst) == CLAIM_PENDING {
+            slot.recover();
+        }
+        let bridge = match &slot.state {
+            BridgeState::Ready(bridge) => bridge,
             BridgeState::Unavailable(reason) => {
-                Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, reason.clone()))
+                return Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, reason.clone()));
+            }
+        };
+        let _ = worker_written_to.set(Arc::clone(&bridge.process));
+        if worker_claim
+            .compare_exchange(
+                CLAIM_PENDING,
+                CLAIM_STARTED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            // The caller gave up while this request waited for the bridge.
+            return Err(BridgeFailure::new(
+                CODE_BRIDGE_BUSY,
+                "the request was abandoned before it was sent",
+            ));
+        }
+        let result = bridge.call(method, params);
+        if let Err(failure) = &result {
+            if failure.code == CODE_BRIDGE_TRANSPORT {
+                slot.retire(failure.message.clone());
             }
         }
+        result
     });
 
     match tokio::time::timeout(timeout, task).await {
@@ -399,6 +518,12 @@ async fn call_bridge(
                     ),
                 ))
             } else {
+                // The request was written, or about to be: its result stays ambiguous. Its
+                // process is stopped so that a stuck bridge cannot hold every later request.
+                if let Some(process) = written_to.get() {
+                    let process = Arc::clone(process);
+                    tauri::async_runtime::spawn_blocking(move || process.terminate());
+                }
                 Err(BridgeFailure::new(
                     CODE_BRIDGE_TIMEOUT,
                     format!(
@@ -593,8 +718,13 @@ async fn bridge_set_muted(
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let state = start_bridge(resolve_bridge_program(app.handle()));
-            app.manage(Arc::new(Mutex::new(state)) as SharedBridgeState);
+            // Every launch, the first and every recovery, resolves the bridge program again:
+            // a release build can only ever start its bundled bridge, never another Python.
+            let handle = app.handle().clone();
+            let slot = BridgeSlot::new(Box::new(move || {
+                resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
+            }));
+            app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -750,10 +880,11 @@ mod tests {
     #[test]
     fn a_missing_bundled_bridge_leaves_the_backend_unavailable() {
         let resources = scratch_dir("unavailable");
-        let state: SharedBridgeState = Arc::new(Mutex::new(start_bridge(packaged_bridge(
-            Ok(resources.clone()),
-            false,
-        ))));
+        let bundle_dir = resources.clone();
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeSlot::new(Box::new(move || {
+            packaged_bridge(Ok(bundle_dir.clone()), false)
+                .and_then(|program| PythonBridge::spawn(&program))
+        }))));
 
         let error = tauri::async_runtime::block_on(call_bridge(
             state,
@@ -864,6 +995,15 @@ mod tests {
         assert_eq!(error.code, "device_not_found");
     }
 
+    /// A bridge state that is never replaced: the behavior these tests pin does not involve
+    /// recovery (see the recovery tests for that).
+    fn fixed_slot(state: BridgeState) -> SharedBridgeState {
+        Arc::new(Mutex::new(BridgeSlot {
+            state,
+            launcher: None,
+        }))
+    }
+
     // --- P1 review (PR #4): bridge calls must not run on the async/main thread ---------
 
     /// Writes a fake "python" - a plain shell script - that `PythonBridge::spawn` can
@@ -940,10 +1080,7 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (script, bridge) = spawn_fake_bridge(&format!("read request\n{body}"));
         drop(guard);
-        (
-            Arc::new(Mutex::new(BridgeState::Ready(bridge))),
-            FakeScript(script),
-        )
+        (fixed_slot(BridgeState::Ready(bridge)), FakeScript(script))
     }
 
     #[test]
@@ -1021,10 +1158,7 @@ done"#,
             log = log.display()
         ));
         drop(guard);
-        (
-            Arc::new(Mutex::new(BridgeState::Ready(bridge))),
-            FakeScript(script),
-        )
+        (fixed_slot(BridgeState::Ready(bridge)), FakeScript(script))
     }
 
     fn logged_methods(log: &std::path::Path) -> Vec<String> {
@@ -1108,18 +1242,18 @@ done"#,
             error.message.contains("did not respond within"),
             "{error:?}"
         );
-        std::thread::sleep(Duration::from_millis(1200));
-        assert_eq!(logged_methods(&log), vec!["slow"]);
-
-        // Nothing re-sends it: the next request is written once, after it.
-        tauri::async_runtime::block_on(call_bridge(
+        // Nothing re-sends it. Its process was stopped, and this bridge has no way to start
+        // another (see the recovery tests), so the next request is not written anywhere.
+        let next = tauri::async_runtime::block_on(call_bridge(
             Arc::clone(&state),
             "ping",
             json!({}),
             Duration::from_secs(5),
         ))
-        .unwrap();
-        assert_eq!(logged_methods(&log), vec!["slow", "ping"]);
+        .unwrap_err();
+        assert_eq!(next.code, CODE_BACKEND_UNAVAILABLE);
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(logged_methods(&log), vec!["slow"]);
         let _ = std::fs::remove_file(&log);
     }
 
@@ -1210,9 +1344,9 @@ done"#,
 
     #[test]
     fn call_bridge_reports_an_unavailable_backend_with_its_own_code() {
-        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeState::Unavailable(
+        let state: SharedBridgeState = fixed_slot(BridgeState::Unavailable(
             "failed to spawn the Python control bridge".to_string(),
-        )));
+        ));
 
         let error = tauri::async_runtime::block_on(read_status(state, "uuid-1")).unwrap_err();
 
@@ -1363,9 +1497,9 @@ done"#,
 
     #[test]
     fn commands_report_an_unavailable_backend_with_its_own_code() {
-        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeState::Unavailable(
+        let state: SharedBridgeState = fixed_slot(BridgeState::Unavailable(
             "failed to spawn the Python control bridge".to_string(),
-        )));
+        ));
 
         let error = tauri::async_runtime::block_on(send_seek(state, "uuid-1", 5.0)).unwrap_err();
 
@@ -1510,9 +1644,9 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     #[test]
     fn sound_commands_report_an_unavailable_backend_with_its_own_code() {
         let unavailable = || -> SharedBridgeState {
-            Arc::new(Mutex::new(BridgeState::Unavailable(
+            fixed_slot(BridgeState::Unavailable(
                 "failed to spawn the Python control bridge".to_string(),
-            )))
+            ))
         };
 
         let volume = tauri::async_runtime::block_on(send_set_volume(unavailable(), "uuid-1", 0.5))
@@ -1628,5 +1762,334 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
         let (_, timeout) = discovery_request(Some(-10.0));
 
         assert_eq!(timeout, DISCOVERY_TIMEOUT_MARGIN);
+    }
+
+    // --- Bridge recovery: the process is replaced, a request never is ----------------------
+
+    /// A fake bridge started by a launcher, as `run()` starts the real one. Every instance
+    /// takes the next number (`$n`), records its pid, and logs each request line it reads as
+    /// "<instance> <method>", so a test can tell which process received what, and how often.
+    struct Relaunching {
+        state: SharedBridgeState,
+        script: FakeScript,
+        dir: PathBuf,
+    }
+
+    impl Relaunching {
+        fn log(&self) -> Vec<String> {
+            std::fs::read_to_string(self.dir.join("log"))
+                .unwrap_or_default()
+                .lines()
+                .map(|line| {
+                    let (instance, request) = line.split_once(' ').unwrap();
+                    let method = serde_json::from_str::<Value>(request).unwrap()["method"]
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    format!("{instance} {method}")
+                })
+                .collect()
+        }
+
+        fn instances(&self) -> usize {
+            self.pids().len()
+        }
+
+        fn pids(&self) -> Vec<u32> {
+            std::fs::read_to_string(self.dir.join("pids"))
+                .unwrap_or_default()
+                .lines()
+                .map(|pid| pid.parse().unwrap())
+                .collect()
+        }
+
+        fn call(&self, method: &'static str, timeout: Duration) -> Result<Value, BridgeFailure> {
+            tauri::async_runtime::block_on(call_bridge(
+                Arc::clone(&self.state),
+                method,
+                json!({"deviceId": "uuid-1"}),
+                timeout,
+            ))
+        }
+
+        fn wait_until(&self, what: &str, done: impl Fn() -> bool) {
+            let started = std::time::Instant::now();
+            while !done() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "timed out: {what}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    impl Drop for Relaunching {
+        fn drop(&mut self) {
+            for pid in self.pids() {
+                let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+            let _ = &self.script;
+        }
+    }
+
+    /// The answer every healthy instance gives, after logging the request.
+    const ANSWER: &str =
+        r#"printf '%s %s\n' "$n" "$line" >> "$dir/log"; echo '{"ok":true,"result":{}}'"#;
+
+    /// `first` is what instance 1 does; every later instance logs and answers each request.
+    fn relaunching(first: &str) -> Relaunching {
+        let dir = std::env::temp_dir().join(format!(
+            "control-tv-recovery-{}-{}",
+            std::process::id(),
+            SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = format!(
+            r#"dir='{dir}'
+n=$(( $(cat "$dir/count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$dir/count"
+echo $$ >> "$dir/pids"
+if [ "$n" = 1 ]; then
+{first}
+fi
+while IFS= read -r line; do {ANSWER}; done"#,
+            dir = dir.display()
+        );
+        let guard = PROCESS_SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (path, first_bridge) = spawn_fake_bridge(&body);
+        drop(guard);
+        let launch_path = path.clone();
+        let launcher: BridgeLauncher = Box::new(move || {
+            PythonBridge::spawn(&BridgeProgram {
+                executable: launch_path.clone(),
+                args: Vec::new(),
+                isolate_python_env: false,
+            })
+        });
+        let relaunching = Relaunching {
+            state: Arc::new(Mutex::new(BridgeSlot {
+                state: BridgeState::Ready(first_bridge),
+                launcher: Some(launcher),
+            })),
+            script: FakeScript(path),
+            dir,
+        };
+        relaunching.wait_until("instance 1 started", || relaunching.instances() == 1);
+        relaunching
+    }
+
+    /// Gone from the process table: killed and reaped, so not even a zombie remains.
+    fn reaped(pid: u32) -> bool {
+        !std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+
+    #[test]
+    fn a_bridge_that_died_before_a_request_is_replaced_before_anything_is_written() {
+        let bridge = relaunching("exit 0");
+        let first = bridge.pids()[0];
+        bridge.wait_until("instance 1 exited", || {
+            let slot = bridge.state.lock().unwrap();
+            matches!(&slot.state, BridgeState::Ready(b) if b.process.has_exited())
+        });
+
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+
+        assert_eq!(bridge.log(), ["2 ping"]);
+        assert_eq!(bridge.instances(), 2);
+        assert!(reaped(first));
+    }
+
+    #[test]
+    fn a_bridge_that_dies_during_a_request_fails_it_once_and_serves_the_next_one() {
+        let bridge = relaunching(
+            r#"IFS= read -r line; printf '%s %s\n' "$n" "$line" >> "$dir/log"; exit 3"#,
+        );
+        let first = bridge.pids()[0];
+
+        let failure = bridge.call("pause", Duration::from_secs(5)).unwrap_err();
+
+        // It reached the process: maybe delivered, never reported as not sent.
+        assert_eq!(failure.code, CODE_BRIDGE_TRANSPORT);
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+        assert_eq!(bridge.log(), ["1 pause", "2 ping"]);
+        assert!(reaped(first));
+    }
+
+    #[test]
+    fn a_broken_pipe_retires_the_process_and_the_next_request_gets_a_new_one() {
+        // Instance 1 closes its input but stays alive: the write fails with a broken pipe.
+        let bridge = relaunching("exec 0<&-; sleep 30");
+        let first = bridge.pids()[0];
+        std::thread::sleep(Duration::from_millis(100));
+
+        let failure = bridge.call("pause", Duration::from_secs(5)).unwrap_err();
+
+        assert_eq!(failure.code, CODE_BRIDGE_TRANSPORT);
+        assert!(failure.message.contains("failed to write"), "{failure:?}");
+        assert!(reaped(first), "the live process was not stopped and reaped");
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+        assert_eq!(bridge.log(), ["2 ping"]);
+    }
+
+    #[test]
+    fn a_timeout_after_the_claim_stops_the_stuck_process_without_resending_the_request() {
+        // Instance 1 reads the request and never answers.
+        let bridge = relaunching(
+            r#"IFS= read -r line; printf '%s %s\n' "$n" "$line" >> "$dir/log"; sleep 30"#,
+        );
+        let first = bridge.pids()[0];
+
+        let failure = bridge
+            .call("pause", Duration::from_millis(300))
+            .unwrap_err();
+
+        assert_eq!(failure.code, CODE_BRIDGE_TIMEOUT);
+        bridge.wait_until("instance 1 reaped", || reaped(first));
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+        // The paused request went to instance 1 once and to no other process.
+        assert_eq!(bridge.log(), ["1 pause", "2 ping"]);
+        assert_eq!(bridge.instances(), 2);
+    }
+
+    #[test]
+    fn a_request_abandoned_behind_a_stuck_one_is_never_written_even_after_recovery() {
+        let bridge = relaunching(
+            r#"IFS= read -r line; printf '%s %s\n' "$n" "$line" >> "$dir/log"; sleep 30"#,
+        );
+        let holder_state = Arc::clone(&bridge.state);
+        let holder = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(call_bridge(
+                holder_state,
+                "slow",
+                json!({}),
+                Duration::from_millis(800),
+            ))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+
+        let waiting = bridge
+            .call("pause", Duration::from_millis(200))
+            .unwrap_err();
+
+        assert_eq!(waiting.code, CODE_BRIDGE_BUSY);
+        assert_eq!(
+            holder.join().unwrap().unwrap_err().code,
+            CODE_BRIDGE_TIMEOUT
+        );
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+        // "pause" reached no process, the abandoned worker started none, and nothing repeats.
+        assert_eq!(bridge.log(), ["1 slow", "2 ping"]);
+        assert_eq!(bridge.instances(), 2);
+    }
+
+    #[test]
+    fn concurrent_requests_after_a_crash_start_one_replacement_and_each_is_written_once() {
+        let bridge = relaunching("exit 0");
+        bridge.wait_until("instance 1 exited", || {
+            let slot = bridge.state.lock().unwrap();
+            matches!(&slot.state, BridgeState::Ready(b) if b.process.has_exited())
+        });
+
+        let requests: Vec<_> = ["play", "pause", "stop"]
+            .into_iter()
+            .map(|method| {
+                let state = Arc::clone(&bridge.state);
+                std::thread::spawn(move || {
+                    tauri::async_runtime::block_on(call_bridge(
+                        state,
+                        method,
+                        json!({}),
+                        Duration::from_secs(10),
+                    ))
+                })
+            })
+            .collect();
+        for request in requests {
+            request.join().unwrap().unwrap();
+        }
+
+        let mut log = bridge.log();
+        log.sort();
+        assert_eq!(log, ["2 pause", "2 play", "2 stop"]);
+        assert_eq!(bridge.instances(), 2);
+    }
+
+    #[test]
+    fn a_poisoned_bridge_lock_retires_the_process_and_the_next_request_recovers() {
+        let bridge = relaunching(":");
+        let first = bridge.pids()[0];
+        let poisoner = Arc::clone(&bridge.state);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoner.lock().unwrap();
+            panic!("a worker panicked while it used the bridge");
+        })
+        .join();
+        assert!(bridge.state.is_poisoned());
+
+        bridge.call("ping", Duration::from_secs(5)).unwrap();
+
+        assert!(!bridge.state.is_poisoned());
+        assert!(reaped(first));
+        assert_eq!(bridge.log(), ["2 ping"]);
+    }
+
+    #[test]
+    fn a_bridge_that_could_not_start_is_started_by_a_later_request() {
+        let attempts = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&attempts);
+        let ok_state = ready_state(r#"echo '{"ok":true,"result":{"status":"ready"}}'"#);
+        let ready = Arc::new(Mutex::new(Some(ok_state)));
+        let launcher: BridgeLauncher = Box::new(move || {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err("failed to spawn the Python control bridge".to_string());
+            }
+            let (state, script) = ready.lock().unwrap().take().expect("launched twice");
+            std::mem::forget(script);
+            let mut slot = state.lock().unwrap();
+            Ok(std::mem::replace(
+                &mut slot.state,
+                BridgeState::Unavailable("moved".to_string()),
+            ))
+            .and_then(|taken| match taken {
+                BridgeState::Ready(bridge) => Ok(bridge),
+                BridgeState::Unavailable(reason) => Err(reason),
+            })
+        });
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeSlot::new(launcher)));
+        assert!(matches!(
+            state.lock().unwrap().state,
+            BridgeState::Unavailable(_)
+        ));
+
+        let result = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "ping",
+            json!({}),
+            Duration::from_secs(5),
+        ))
+        .unwrap();
+
+        assert_eq!(result["status"], "ready");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_failed_restart_reports_an_unavailable_backend_and_sends_nothing() {
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeSlot::new(Box::new(|| {
+            Err("failed to spawn the Python control bridge".to_string())
+        }))));
+
+        let error = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "pause",
+            json!({}),
+            Duration::from_secs(5),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.code, CODE_BACKEND_UNAVAILABLE);
     }
 }
