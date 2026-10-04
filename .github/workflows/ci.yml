@@ -112,3 +112,87 @@ jobs:
       - name: Clean disposable build/test output
         if: always()
         run: python3 scripts/dev.py clean
+
+  linux-release:
+    name: Linux release package (frozen bridge and .deb)
+    # The oldest supported Ubuntu LTS runner: the frozen bridge copies this system's GCC
+    # runtime, so the build host sets the oldest glibc the package can run on.
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            build-essential
+
+      - name: Install the Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install the locked, reproducible Python environment
+        run: python3 scripts/dev.py setup
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      # The debug job never compiles the release-only bridge resolution.
+      - name: Lint the release build of the Tauri shell crate
+        working-directory: src-tauri
+        run: cargo clippy --release -- -D warnings
+
+      # Freeze the bridge, smoke it outside the checkout, build the release .deb with
+      # remapped build paths, scan the package for build-machine paths, check its content
+      # and modes, and write the bridge inventory and dist/SHA256SUMS.
+      - name: Build, smoke and package the Linux release
+        run: python3 scripts/dev.py release-deb
+
+      # Installs the package on this runner and pings the installed bridge directly, with an
+      # empty environment from outside the checkout. It does not launch the application.
+      - name: Install the package, ping its bridge and remove it
+        run: |
+          sudo apt-get install --no-install-recommends -y ./dist/control-tv_*_amd64.deb
+          cd "$RUNNER_TEMP"
+          printf '{"id":1,"method":"ping","params":{}}\n' \
+            | env -i PATH=/nonexistent /usr/lib/control-tv/python-bridge/control-tv-bridge \
+            | tee ping.json
+          grep -q '"status": "ready"' ping.json
+          sudo apt-get remove --purge -y control-tv
+          test ! -e /usr/lib/control-tv
+
+      - name: Keep the release package, inventory and checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-tv-linux-release
+          path: |
+            dist/control-tv_*_amd64.deb
+            dist/python-bridge.inventory.tsv
+            dist/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Inspect remaining project-owned generated footprint
+        if: always()
+        run: python3 scripts/dev.py disk-usage
+
+      - name: Clean disposable build/test output
+        if: always()
+        run: python3 scripts/dev.py clean
