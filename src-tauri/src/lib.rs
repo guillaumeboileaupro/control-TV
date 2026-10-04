@@ -95,11 +95,25 @@ impl BridgeFailure {
     }
 }
 
+/// How `run` starts the bridge process.
+///
+/// A debug build runs the shared package from the repository's `uv`-managed `.venv`
+/// (`python -m control_tv.bridge`), so development needs no packaging step. A release build
+/// runs only the frozen bridge bundled as the `python-bridge/` resource
+/// (`dev.py bridge-build`), which carries its own Python runtime: there is no fallback to a
+/// `.venv`, to `python`/`python3`, to `PATH` or to `PYTHONPATH`, and a missing bundle leaves
+/// the backend unavailable instead of picking up another Python.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BridgeProgram {
     executable: PathBuf,
     args: Vec<String>,
+    /// Withhold the session's Python environment variables (`PYTHON_ENV_WITHHELD`), so they
+    /// cannot point the bundled runtime at another Python installation or package.
+    isolate_python_env: bool,
 }
+
+/// Python variables that could make the frozen bridge import code other than its own.
+const PYTHON_ENV_WITHHELD: [&str; 2] = ["PYTHONPATH", "PYTHONHOME"];
 
 #[cfg(any(debug_assertions, test))]
 fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> BridgeProgram {
@@ -114,6 +128,7 @@ fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> 
     BridgeProgram {
         executable,
         args: vec!["-m".to_string(), "control_tv.bridge".to_string()],
+        isolate_python_env: false,
     }
 }
 
@@ -127,14 +142,30 @@ fn packaged_bridge_program(resource_dir: &std::path::Path, windows: bool) -> Bri
     BridgeProgram {
         executable: resource_dir.join("python-bridge").join(executable),
         args: Vec::new(),
+        isolate_python_env: true,
     }
+}
+
+/// The bundled bridge under `resource_dir`, or why it cannot be used. Never another Python.
+#[cfg(any(not(debug_assertions), test))]
+fn packaged_bridge(
+    resource_dir: Result<PathBuf, String>,
+    windows: bool,
+) -> Result<BridgeProgram, String> {
+    let program = packaged_bridge_program(&resource_dir?, windows);
+    if !program.executable.is_file() {
+        return Err(format!(
+            "the bundled Python control bridge is missing ({})",
+            program.executable.display()
+        ));
+    }
+    Ok(program)
 }
 
 #[cfg(debug_assertions)]
 fn resolve_bridge_program<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+    _app: &tauri::AppHandle<R>,
 ) -> Result<BridgeProgram, String> {
-    let _ = app;
     Ok(development_bridge_program(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
         cfg!(windows),
@@ -145,67 +176,48 @@ fn resolve_bridge_program<R: tauri::Runtime>(
 fn resolve_bridge_program<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<BridgeProgram, String> {
-    let resource_dir = app.path().resource_dir().map_err(|error| {
-        format!("failed to resolve the application resource directory: {error}")
-    })?;
-    Ok(packaged_bridge_program(&resource_dir, cfg!(windows)))
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("failed to resolve the application resource directory: {error}"));
+    packaged_bridge(resource_dir, cfg!(windows))
 }
 
-#[cfg(test)]
-fn resolve_python() -> PathBuf {
-    development_bridge_program(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-        cfg!(windows),
-    )
-    .executable
+/// The bridge state the application starts with: a running bridge, or the reason every
+/// bridge-backed command will report `backend_unavailable`.
+fn start_bridge(program: Result<BridgeProgram, String>) -> BridgeState {
+    match program.and_then(|program| PythonBridge::spawn(&program)) {
+        Ok(bridge) => BridgeState::Ready(bridge),
+        Err(error) => {
+            eprintln!("control-tv: Python control bridge unavailable: {error}");
+            BridgeState::Unavailable(error)
+        }
+    }
 }
 
 impl PythonBridge {
-    fn spawn_program(program: &BridgeProgram) -> Result<Self, String> {
-        let mut child = Command::new(&program.executable)
+    fn command(program: &BridgeProgram) -> Command {
+        let mut command = Command::new(&program.executable);
+        command
             .args(&program.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "failed to spawn the Python control bridge ({}): {error}",
-                    program.executable.display()
-                )
-            })?;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or("spawned bridge process has no stdin")?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("spawned bridge process has no stdout")?;
-
-        Ok(Self {
-            stdin: Mutex::new(stdin),
-            stdout: Mutex::new(BufReader::new(stdout)),
-            next_id: AtomicU64::new(1),
-            _child: child,
-        })
+            .stderr(Stdio::inherit());
+        if program.isolate_python_env {
+            for variable in PYTHON_ENV_WITHHELD {
+                command.env_remove(variable);
+            }
+        }
+        command
     }
 
-    #[cfg(test)]
-    fn spawn(python: &PathBuf) -> Result<Self, String> {
-        let mut child = Command::new(python)
-            .args(["-m", "control_tv.bridge"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "failed to spawn the Python control bridge ({}): {error}",
-                    python.display()
-                )
-            })?;
+    fn spawn(program: &BridgeProgram) -> Result<Self, String> {
+        let mut child = Self::command(program).spawn().map_err(|error| {
+            format!(
+                "failed to spawn the Python control bridge ({}): {error}",
+                program.executable.display()
+            )
+        })?;
 
         let stdin = child
             .stdin
@@ -581,14 +593,7 @@ async fn bridge_set_muted(
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let program = resolve_bridge_program(app.handle());
-            let state = match program.and_then(|program| PythonBridge::spawn_program(&program)) {
-                Ok(bridge) => BridgeState::Ready(bridge),
-                Err(error) => {
-                    eprintln!("control-tv: Python control bridge unavailable: {error}");
-                    BridgeState::Unavailable(error)
-                }
-            };
+            let state = start_bridge(resolve_bridge_program(app.handle()));
             app.manage(Arc::new(Mutex::new(state)) as SharedBridgeState);
             Ok(())
         })
@@ -667,6 +672,18 @@ mod tests {
         assert_eq!(status_request("uuid-1"), json!({"deviceId": "uuid-1"}));
     }
 
+    /// The development bridge `run()` starts in a debug build (and these tests spawn).
+    fn development_program() -> BridgeProgram {
+        development_bridge_program(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+            cfg!(windows),
+        )
+    }
+
+    fn resolve_python() -> PathBuf {
+        development_program().executable
+    }
+
     #[test]
     fn bridge_programs_keep_debug_and_release_strictly_separate() {
         let debug = development_bridge_program(std::path::Path::new("/checkout/src-tauri"), false);
@@ -675,12 +692,14 @@ mod tests {
             PathBuf::from("/checkout/.venv/bin/python")
         );
         assert_eq!(debug.args, ["-m", "control_tv.bridge"]);
+        assert!(!debug.isolate_python_env);
         let release = packaged_bridge_program(std::path::Path::new("/installed/resources"), false);
         assert_eq!(
             release.executable,
             PathBuf::from("/installed/resources/python-bridge/control-tv-bridge")
         );
         assert!(release.args.is_empty());
+        assert!(release.isolate_python_env);
     }
 
     #[test]
@@ -693,6 +712,95 @@ mod tests {
                 .join("control-tv-bridge.exe")
         );
         assert!(release.args.is_empty());
+    }
+
+    fn scratch_dir(prefix: &str) -> PathBuf {
+        let n = SCRIPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir =
+            std::env::temp_dir().join(format!("control-tv-{prefix}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch directory");
+        dir
+    }
+
+    #[test]
+    fn a_release_without_its_bundled_bridge_never_falls_back_to_another_python() {
+        // This checkout has a working `.venv`, and `python3` is on PATH: neither may be used.
+        let resources = scratch_dir("no-bundle");
+
+        let error = packaged_bridge(Ok(resources.clone()), false).unwrap_err();
+
+        assert!(
+            error.contains("bundled Python control bridge is missing"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&resources.join("python-bridge").display().to_string()),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(&resources);
+    }
+
+    #[test]
+    fn a_release_without_a_resource_directory_reports_why() {
+        let error = packaged_bridge(Err("no resource directory".to_string()), false).unwrap_err();
+
+        assert_eq!(error, "no resource directory");
+    }
+
+    #[test]
+    fn a_missing_bundled_bridge_leaves_the_backend_unavailable() {
+        let resources = scratch_dir("unavailable");
+        let state: SharedBridgeState = Arc::new(Mutex::new(start_bridge(packaged_bridge(
+            Ok(resources.clone()),
+            false,
+        ))));
+
+        let error = tauri::async_runtime::block_on(call_bridge(
+            state,
+            "ping",
+            json!({}),
+            Duration::from_secs(5),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.code, CODE_BACKEND_UNAVAILABLE);
+        assert!(error
+            .message
+            .contains("bundled Python control bridge is missing"));
+        let _ = std::fs::remove_dir_all(&resources);
+    }
+
+    #[test]
+    fn a_present_bundled_bridge_is_the_one_started() {
+        let resources = scratch_dir("bundle");
+        let bundle = resources.join("python-bridge");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("control-tv-bridge"), "").unwrap();
+
+        let program = packaged_bridge(Ok(resources.clone()), false).unwrap();
+
+        assert_eq!(program, packaged_bridge_program(&resources, false));
+        let _ = std::fs::remove_dir_all(&resources);
+    }
+
+    #[test]
+    fn the_bundled_bridge_never_inherits_the_sessions_python_path() {
+        let packaged = PythonBridge::command(&packaged_bridge_program(
+            std::path::Path::new("/installed/resources"),
+            false,
+        ));
+        let mut removed: Vec<_> = packaged
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        removed.sort();
+        let mut withheld = PYTHON_ENV_WITHHELD.to_vec();
+        withheld.sort();
+        assert_eq!(removed, withheld);
+
+        let development = PythonBridge::command(&development_program());
+        assert_eq!(development.get_envs().count(), 0);
     }
 
     #[test]
@@ -725,7 +833,8 @@ mod tests {
             return;
         }
 
-        let bridge = PythonBridge::spawn(&python).expect("failed to spawn the bridge process");
+        let bridge = PythonBridge::spawn(&development_program())
+            .expect("failed to spawn the bridge process");
         let result = bridge.call("ping", json!({})).expect("ping request failed");
 
         assert_eq!(result["status"], "ready");
@@ -746,7 +855,8 @@ mod tests {
             return;
         }
 
-        let bridge = PythonBridge::spawn(&python).expect("failed to spawn the bridge process");
+        let bridge = PythonBridge::spawn(&development_program())
+            .expect("failed to spawn the bridge process");
         let error = bridge
             .call("get_status", status_request("never-discovered"))
             .unwrap_err();
@@ -787,7 +897,12 @@ mod tests {
             std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
             std::fs::set_permissions(&path, perms).expect("chmod fake bridge script");
 
-            match PythonBridge::spawn(&path) {
+            let program = BridgeProgram {
+                executable: path.clone(),
+                args: Vec::new(),
+                isolate_python_env: false,
+            };
+            match PythonBridge::spawn(&program) {
                 Ok(bridge) => return (path, bridge),
                 Err(error) if error.contains("Text file busy") && attempt < 5 => {
                     let _ = std::fs::remove_file(&path);
@@ -1475,7 +1590,8 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
             return;
         }
 
-        let bridge = PythonBridge::spawn(&python).expect("failed to spawn the bridge process");
+        let bridge = PythonBridge::spawn(&development_program())
+            .expect("failed to spawn the bridge process");
         let volume = bridge
             .call("set_volume", volume_request("never-discovered", 0.4))
             .unwrap_err();
