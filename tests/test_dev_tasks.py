@@ -7,6 +7,7 @@ never touched.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -356,11 +357,11 @@ def test_check_runs_every_quality_step_in_order(
 
         return run
 
-    for name in ("lint", "typecheck", "test", "depcheck"):
+    for name in ("version_check", "lint", "typecheck", "test", "depcheck"):
         monkeypatch.setattr(dev, f"cmd_{name}", step(name))
 
     assert dev.main(["check"], root=repo) == 0
-    assert calls == ["lint", "typecheck", "test", "depcheck"]
+    assert calls == ["version_check", "lint", "typecheck", "test", "depcheck"]
 
 
 def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,13 +380,14 @@ def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.Mon
         calls.append("typecheck")
         return 7
 
+    monkeypatch.setattr(dev, "cmd_version_check", successful("version_check"))
     monkeypatch.setattr(dev, "cmd_lint", successful("lint"))
     monkeypatch.setattr(dev, "cmd_typecheck", fail_typecheck)
     monkeypatch.setattr(dev, "cmd_test", successful("test"))
     monkeypatch.setattr(dev, "cmd_depcheck", successful("depcheck"))
 
     assert dev.main(["check"], root=repo) == 7
-    assert calls == ["lint", "typecheck"]
+    assert calls == ["version_check", "lint", "typecheck"]
 
 
 def test_rust_check_requires_cargo(
@@ -454,3 +456,92 @@ def test_ui_check_runs_typecheck_format_check_and_tests(
     assert dev.main(["ui-check"], root=repo) == 0
 
     assert log.read_text().splitlines() == ["run typecheck", "run format:check", "run test"]
+
+
+def write_versions(
+    root: Path,
+    *,
+    python: str = "0.1.0",
+    package: str = "0.1.0",
+    cargo: str = "0.1.0",
+    npm: str = "0.1.0",
+    lock: str = "0.1.0",
+    tauri: str | None = "0.1.0",
+) -> None:
+    (root / "src" / "control_tv").mkdir(parents=True, exist_ok=True)
+    (root / "src-tauri").mkdir(parents=True, exist_ok=True)
+    (root / "ui").mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["x"]\n\n'
+        f'[project]\nname = "control-tv"\nversion = "{python}"\n',
+        encoding="utf-8",
+    )
+    (root / "src" / "control_tv" / "__init__.py").write_text(
+        f'"""Doc."""\n\n__version__ = "{package}"\n', encoding="utf-8"
+    )
+    (root / "src-tauri" / "Cargo.toml").write_text(
+        f'[package]\nname = "control-tv"\nversion = "{cargo}"\n\n'
+        '[dependencies]\nserde = { version = "1" }\n',
+        encoding="utf-8",
+    )
+    (root / "ui" / "package.json").write_text(
+        json.dumps({"name": "ui", "version": npm}), encoding="utf-8"
+    )
+    (root / "ui" / "package-lock.json").write_text(
+        json.dumps({"name": "ui", "version": lock, "packages": {"": {"version": lock}}}),
+        encoding="utf-8",
+    )
+    conf: dict[str, object] = {"productName": "control-tv"}
+    if tauri is not None:
+        conf["version"] = tauri
+    (root / "src-tauri" / "tauri.conf.json").write_text(json.dumps(conf), encoding="utf-8")
+
+
+def test_version_check_passes_when_every_declaration_agrees(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_versions(tmp_path)
+
+    assert dev.main(["version-check"], root=tmp_path) == 0
+    assert "version 0.1.0 declared consistently in 7 places" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("changes", "where"),
+    [
+        ({"python": "0.0.0"}, "pyproject.toml"),
+        ({"package": "0.2.0"}, "__init__.py"),
+        ({"cargo": "1.0.0"}, "Cargo.toml"),
+        ({"npm": "0.1.1"}, "ui/package.json"),
+        ({"lock": "0.0.9"}, "package-lock.json"),
+        ({"tauri": "0.3.0"}, "tauri.conf.json"),
+    ],
+)
+def test_version_check_fails_and_names_every_declaration_on_any_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], changes: dict[str, str], where: str
+) -> None:
+    write_versions(tmp_path, **changes)
+
+    assert dev.main(["version-check"], root=tmp_path) == 1
+    error = capsys.readouterr().err
+    assert "not declared consistently" in error
+    assert where in error
+
+
+def test_a_tauri_config_without_its_own_version_uses_the_cargo_one(tmp_path: Path) -> None:
+    write_versions(tmp_path, tauri=None)
+
+    assert dev.main(["version-check"], root=tmp_path) == 0
+
+
+def test_the_dependency_version_in_cargo_toml_is_not_taken_for_the_package_version(
+    tmp_path: Path,
+) -> None:
+    """Only the [package] table counts; `serde = { version = "1" }` must be ignored."""
+    write_versions(tmp_path)
+
+    assert dev.declared_versions(tmp_path)["src-tauri/Cargo.toml [package]"] == "0.1.0"
+
+
+def test_the_repository_declares_one_version() -> None:
+    assert dev.main(["version-check"]) == 0

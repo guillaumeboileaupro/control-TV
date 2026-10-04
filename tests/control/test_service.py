@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 
 import pytest
@@ -14,6 +16,7 @@ from control_tv.domain import (
     ConnectionState,
     DeviceId,
     DeviceNotFoundError,
+    DeviceStatus,
     DeviceUnavailableError,
     DiscoveryError,
     ErrorCode,
@@ -23,6 +26,7 @@ from control_tv.domain import (
     OperationTimeoutError,
     PlaybackState,
     UnsupportedOperationError,
+    VolumeControlType,
 )
 from control_tv.ports import CastTransport, TvControl
 from control_tv.service import ControlService
@@ -254,7 +258,7 @@ def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
     transport.hang_status_reads = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     # The one read that was attempted consumed exactly the whole budget by itself (as a
     # spec-compliant transport must: it never blocks longer than the `timeout` it was
@@ -262,7 +266,7 @@ def test_a_blocked_read_is_bounded_by_the_remaining_budget_not_left_hanging(
     # "sleep" is the read itself, the service's own scheduler never gets to run.
     assert transport.status_reads() == 1
     assert transport.calls == [
-        ("set_volume", (DEVICE_ID, 0.7)),
+        ("set_muted", (DEVICE_ID, True)),
         ("get_status", (DEVICE_ID, 1.0)),
     ]
     assert clock.now == pytest.approx(1.0)
@@ -281,7 +285,7 @@ def test_each_poll_is_given_only_the_time_actually_remaining(
     transport.ignore_commands = True
     service = make_service(transport, clock, confirm_timeout=1.0, poll_interval=0.4)
 
-    service.set_volume(DEVICE_ID, 0.7)
+    service.set_muted(DEVICE_ID, True)
 
     status_read_timeouts = [args[1] for name, args in transport.calls if name == "get_status"]
     assert status_read_timeouts == [pytest.approx(1.0), pytest.approx(0.6), pytest.approx(0.2)]
@@ -315,7 +319,7 @@ def test_a_match_confirmed_just_before_the_deadline_is_accepted(
     transport.status_read_delay = 0.99
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     assert clock.now == pytest.approx(0.99)
     assert result.confirmation is Confirmation.CONFIRMED
@@ -334,7 +338,7 @@ def test_a_match_arriving_after_the_deadline_is_never_confirmed(
     transport.status_read_delay = 1.01
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.set_volume(DEVICE_ID, 0.7)
+    result = service.set_muted(DEVICE_ID, True)
 
     assert clock.now == pytest.approx(1.01)
     assert result.confirmation is Confirmation.UNCONFIRMED
@@ -362,22 +366,21 @@ def test_a_device_that_is_not_connected_never_confirms(
 def test_stop_never_fabricates_an_idle_state_the_device_did_not_report(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
-    """A receiver that merely stops reporting a media session is not proof of idle.
+    """A receiver that ends the media session on stop instead of reporting IDLE.
 
-    Some receivers drop the media session entirely on stop instead of reporting an
-    explicit idle state. The service must not treat that absence as confirmation.
+    With the media identified before the command and no contradiction since, that fresh end
+    of the session confirms the stop; the observed status still says there is no media
+    session, never a fabricated IDLE state.
     """
     transport.clears_media_on_stop = True
     service = make_service(transport, clock)
 
     result = service.stop(DEVICE_ID)
 
-    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.confirmation is Confirmation.CONFIRMED
     assert result.observed is not None
     assert result.observed.media is None
-    assert result.detail is not None
-    assert "expected playback stopped, but no active media session" in result.detail
-    assert "idle" not in result.detail
+    assert transport.attempted() == ["stop"]
 
 
 # --- failures are errors, never results -----------------------------------------------------
@@ -389,7 +392,7 @@ def test_a_command_that_cannot_be_delivered_raises_and_never_returns_a_result(
     transport.fail_commands_with = DeviceUnavailableError("no route", device_id=DEVICE_ID)
 
     with pytest.raises(DeviceUnavailableError) as excinfo:
-        service.set_volume(DEVICE_ID, 0.7)
+        service.set_muted(DEVICE_ID, True)
 
     assert excinfo.value.code is ErrorCode.DEVICE_UNAVAILABLE
     assert transport.sent() == []
@@ -1777,3 +1780,234 @@ def test_seek_with_an_empty_content_id_stays_unconfirmed_like_the_real_youtube_c
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert "media identity was not reported before the command" in (result.detail or "")
     assert transport.attempted() == ["seek"]
+
+
+# --- Stop confirmed by the end of the media session ----------------------------------------
+
+
+def stop_run(
+    reads_after: list[Callable[[FakeTransport], None]],
+    *,
+    before: Full = X_A_101,
+    confirm_timeout: float = 1.0,
+) -> tuple[CommandResult, FakeTransport, FakeClock]:
+    """One Stop; the pre-command read reports `before`, then each later read first applies the
+    next change (the last one repeats). The TV does not act by itself: the changes say what it
+    reports."""
+    clock = FakeClock()
+    transport = FakeTransport(clock=clock, ignore_commands=True)
+    tv = transport.tv
+    tv.playback = PlaybackState.PLAYING
+    tv.content_id, tv.media_session_id, tv.current_item_id = before
+    reads = [*reads_after, *[reads_after[-1]] * 400]
+    transport.status_effects = [lambda: None] + [partial(change, transport) for change in reads]
+    result = make_service(transport, clock, confirm_timeout=confirm_timeout).stop(DEVICE_ID)
+    return result, transport, clock
+
+
+def session_ends(transport: FakeTransport) -> None:
+    transport.tv.has_media = False
+
+
+def reports(identity: Full) -> Callable[[FakeTransport], None]:
+    def change(transport: FakeTransport) -> None:
+        tv = transport.tv
+        tv.has_media = True
+        tv.content_id, tv.media_session_id, tv.current_item_id = identity
+
+    return change
+
+
+def test_stop_is_confirmed_when_the_identified_session_ends() -> None:
+    result, transport, _ = stop_run([session_ends])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert transport.attempted() == ["stop"]
+
+
+def test_stop_is_confirmed_by_idle_on_the_same_media_as_before() -> None:
+    def idle(transport: FakeTransport) -> None:
+        transport.tv.playback = PlaybackState.IDLE
+
+    result, _transport, _ = stop_run([idle])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None
+    assert result.observed.media is not None
+    assert result.observed.media.playback_state is PlaybackState.IDLE
+
+
+@pytest.mark.parametrize("content_id", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_a_session_end_confirms_nothing_without_a_media_identity_before(
+    content_id: str | None,
+) -> None:
+    result, transport, _ = stop_run([session_ends], before=(content_id, SESSION, ITEM))
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["stop"]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        (MOVIE_URL, OTHER_SESSION, ITEM),
+        (OTHER_CONTENT, SESSION, ITEM),
+        (MOVIE_URL, SESSION, OTHER_ITEM),
+    ],
+    ids=["session", "content", "queue-item"],
+)
+def test_a_replacement_then_a_session_end_never_confirms(replacement: Full) -> None:
+    result, transport, _ = stop_run([reports(replacement), session_ends])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert "changed" in (result.detail or "")
+    assert result.observed is not None
+    assert result.observed.media is None
+    assert transport.attempted() == ["stop"]
+
+
+def test_a_session_end_after_a_missing_identity_read_still_confirms() -> None:
+    """A read without a session id is no contradiction, so the later end still confirms."""
+    result, _, _ = stop_run([reports((MOVIE_URL, None, ITEM)), session_ends])
+
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_session_that_ends_only_after_the_deadline_does_not_confirm() -> None:
+    playing = reports(X_A_101)
+    result, transport, clock = stop_run([playing] * 50 + [session_ends], confirm_timeout=1.0)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    assert transport.attempted() == ["stop"]
+
+
+def test_a_disconnected_receiver_after_stop_does_not_confirm() -> None:
+    def disconnected(transport: FakeTransport) -> None:
+        transport.tv.connection = ConnectionState.DISCONNECTED
+        transport.tv.has_media = False
+
+    result, transport, _ = stop_run([disconnected])
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert transport.attempted() == ["stop"]
+
+
+def test_play_and_pause_are_still_never_confirmed_by_a_session_end() -> None:
+    for command in ("play", "pause"):
+        clock = FakeClock()
+        initial_state, send = PLAYBACK_COMMANDS[command]
+        transport = FakeTransport(clock=clock, ignore_commands=True)
+        transport.tv.playback = initial_state
+        tv = transport.tv
+        tv.content_id, tv.media_session_id, tv.current_item_id = X_A_101
+        transport.status_effects = [lambda: None] + [partial(session_ends, transport)] * 50
+
+        result = send(make_service(transport, clock))
+
+        assert result.confirmation is Confirmation.UNCONFIRMED
+        assert transport.attempted() == [command]
+
+
+# --- Fixed volume ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScriptedReceiverTransport(FakeTransport):
+    """`FakeTransport` whose receiver reports a given volume control type."""
+
+    control_type: VolumeControlType | None = None
+
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        status = super().get_status(device_id, timeout=timeout)
+        if status.receiver is None:
+            return status
+        receiver = dataclasses.replace(status.receiver, volume_control_type=self.control_type)
+        return dataclasses.replace(status, receiver=receiver)
+
+
+def test_a_reported_fixed_volume_is_refused_before_anything_is_sent(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    with pytest.raises(UnsupportedOperationError, match="fixed volume"):
+        make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == []
+    assert transport.sent() == []
+    assert transport.status_reads() == 1
+
+
+@pytest.mark.parametrize(
+    "control_type",
+    [None, VolumeControlType.ATTENUATION, VolumeControlType.MASTER],
+    ids=["not-reported", "attenuation", "master"],
+)
+def test_a_volume_not_reported_as_fixed_is_sent_once(
+    clock: FakeClock, control_type: VolumeControlType | None
+) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=control_type)
+
+    result = make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_failed_pre_command_read_does_not_make_the_volume_fixed(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(
+        clock=clock,
+        control_type=VolumeControlType.FIXED,
+        status_errors=[DeviceUnavailableError("blip", device_id=DEVICE_ID)],
+    )
+
+    make_service(transport, clock).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+
+
+def test_the_fixed_volume_check_shares_the_single_confirmation_deadline(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, status_read_delays=[0.4])
+    transport.ignore_commands = True
+
+    result = make_service(transport, clock, confirm_timeout=1.0).set_volume(DEVICE_ID, 0.7)
+
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert clock.now <= 1.0 + 1e-9
+    reads = [args[1] for name, args in transport.calls if name == "get_status"]
+    assert reads[0] == pytest.approx(1.0)
+    assert reads[1] == pytest.approx(0.6)
+
+
+def test_mute_is_not_affected_by_a_fixed_volume(clock: FakeClock) -> None:
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    make_service(transport, clock).set_muted(DEVICE_ID, True)
+
+    assert transport.attempted() == ["set_muted"]
+
+
+def test_no_budget_left_for_the_fixed_volume_check_sends_the_command_once(
+    clock: FakeClock,
+) -> None:
+    """With no confirmation budget the check cannot read anything, so nothing says FIXED."""
+    transport = ScriptedReceiverTransport(clock=clock, control_type=VolumeControlType.FIXED)
+
+    result = make_service(transport, clock, confirm_timeout=0.0).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert transport.status_reads() == 0
+    assert result.confirmation is Confirmation.UNCONFIRMED
+
+
+def test_a_fixed_volume_reported_after_the_deadline_does_not_block(clock: FakeClock) -> None:
+    """A read that answers too late is no evidence: it neither blocks nor confirms."""
+    transport = ScriptedReceiverTransport(
+        clock=clock, control_type=VolumeControlType.FIXED, status_read_delays=[1.5]
+    )
+
+    result = make_service(transport, clock, confirm_timeout=1.0).set_volume(DEVICE_ID, 0.7)
+
+    assert transport.attempted() == ["set_volume"]
+    assert result.confirmation is Confirmation.UNCONFIRMED

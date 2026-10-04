@@ -23,6 +23,8 @@ export interface ReceiverStatus {
   volumeLevel: number | null;
   muted: boolean | null;
   standby: boolean | null;
+  // Optional: an older control backend does not send it, which reads as "not reported".
+  volumeControlType?: string | null;
 }
 
 export interface MediaStatus {

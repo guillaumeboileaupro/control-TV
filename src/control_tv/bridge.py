@@ -99,6 +99,9 @@ def _status_to_json(status: DeviceStatus) -> dict[str, Any]:
             "volumeLevel": receiver.volume_level,
             "muted": receiver.muted,
             "standby": receiver.standby,
+            "volumeControlType": None
+            if receiver.volume_control_type is None
+            else receiver.volume_control_type.value,
         },
         "media": None
         if media is None
