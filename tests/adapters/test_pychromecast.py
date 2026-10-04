@@ -2380,3 +2380,71 @@ def test_a_zero_volume_is_a_reported_level_that_confirms_silence() -> None:
     assert result.confirmation is Confirmation.CONFIRMED
     assert result.observed is not None and result.observed.receiver is not None
     assert result.observed.receiver.volume_level == 0.0
+
+
+# --- Standby (read from the raw receiver reply) ---------------------------------------------
+
+
+def test_pychromecast_itself_reports_an_omitted_standby_as_true_for_a_video_device() -> None:
+    """The origin of the default this adapter must not repeat: `ReceiverController._parse_status`
+    substitutes `isStandBy` True for cast type "cast" (None only for audio and groups)."""
+    from pychromecast.controllers.receiver import ReceiverController
+
+    parsed = ReceiverController._parse_status({"status": {}}, "cast")
+    audio = ReceiverController._parse_status({"status": {}}, "audio")
+
+    assert parsed.is_stand_by is True
+    assert audio.is_stand_by is None
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        pytest.param({"isStandBy": True}, True, id="true"),
+        pytest.param({"isStandBy": False}, False, id="false"),
+        pytest.param({}, None, id="absent"),
+        pytest.param({"isStandBy": None}, None, id="null"),
+        pytest.param({"isStandBy": 0}, None, id="zero"),
+        pytest.param({"isStandBy": 1}, None, id="one"),
+        pytest.param({"isStandBy": "true"}, None, id="string"),
+        pytest.param({"isStandBy": {}}, None, id="object"),
+        pytest.param({"isStandBy": [True]}, None, id="list"),
+        pytest.param({"isActiveInput": True}, None, id="only-active-input"),
+    ],
+)
+@pytest.mark.parametrize(
+    "cached", [True, False, None], ids=["cache-true", "cache-false", "cache-none"]
+)
+def test_standby_comes_only_from_the_raw_receiver_reply(
+    status: dict[str, object], expected: bool | None, cached: bool | None
+) -> None:
+    """Whatever PyChromecast's parsed status holds (its True default included), the domain sees
+    only an explicit JSON boolean from this read's own receiver status reply."""
+    cast_device = FakeCast()
+    cast_device.status.is_stand_by = cached
+    cast_device.receiver_controller.reply = {"status": status}
+    transport, _ = make_transport(cast_device)
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.standby is expected
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [{}, {"status": "x"}, {"status": None}, None],
+    ids=["no-status", "status-not-an-object", "status-null", "no-reply"],
+)
+def test_a_reply_without_a_status_object_reports_no_standby(
+    reply: dict[str, object] | None,
+) -> None:
+    cast_device = FakeCast()
+    cast_device.status.is_stand_by = True
+    cast_device.receiver_controller.reply = reply  # type: ignore[assignment]
+    transport, _ = make_transport(cast_device)
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.standby is None

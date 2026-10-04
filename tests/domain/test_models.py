@@ -110,6 +110,17 @@ def test_receiver_rejects_a_mute_state_that_is_not_a_boolean(muted: object) -> N
         ReceiverStatus(muted=muted)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("standby", [None, True, False])
+def test_receiver_accepts_a_known_or_unknown_standby(standby: bool | None) -> None:
+    assert ReceiverStatus(standby=standby).standby is standby
+
+
+@pytest.mark.parametrize("standby", [0, 1, "true", "false", 0.0, [], {}])
+def test_receiver_rejects_a_standby_that_is_not_a_boolean(standby: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="standby must be a boolean"):
+        ReceiverStatus(standby=standby)  # type: ignore[arg-type]
+
+
 def test_receiver_reports_unknown_as_none_not_false() -> None:
     receiver = ReceiverStatus()
 
