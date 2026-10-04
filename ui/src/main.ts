@@ -11,8 +11,10 @@ import {
   failDiscovery,
   finishDiscovery,
   finishStatusRead,
+  HEALTHY,
   initialState,
-  isServiceFailure,
+  recordServiceAnswer,
+  recordServiceFailure,
   refreshStatus,
   selectDevice,
   startDiscovery,
@@ -22,6 +24,7 @@ import {
   type Device,
   type PlaybackKind,
   type DeviceStatus,
+  type ServiceHealth,
   type StatusOutcome,
   type StatusRequest,
 } from "./model.ts";
@@ -196,7 +199,10 @@ function setIcon(button: HTMLElement, name: string): void {
 
 function start(elements: Elements): void {
   let state = initialState();
-  let serviceFailure: BridgeFailure | null = null;
+  let health: ServiceHealth = HEALTHY;
+  // Numbers every bridge request when it starts, so only a request started after a service
+  // problem was recorded can show that the service answers again.
+  let requestsStarted = 0;
   // The device message and the status area are live regions: rebuilding one whose content
   // did not change would make assistive technology read it out again, so each is redrawn only
   // when what it says has changed. The message and the list have separate keys: the list also
@@ -227,9 +233,19 @@ function start(elements: Elements): void {
 
   function renderNotice(): void {
     elements.serviceNotice.replaceChildren();
-    elements.serviceNotice.hidden = serviceFailure === null;
-    if (serviceFailure !== null) {
-      elements.serviceNotice.append(problem(serviceFailure, "start", null));
+    elements.serviceNotice.hidden = health.failure === null;
+    if (health.failure !== null) {
+      elements.serviceNotice.append(problem(health.failure, "start", null));
+    }
+  }
+
+  // Ends a recorded service problem once a later request was answered by the service. The
+  // request's own outcome is handled by its caller, unchanged.
+  function noteAnswer(request: number, failure: BridgeFailure | null): void {
+    const next = recordServiceAnswer(health, request, failure);
+    if (next !== health) {
+      health = next;
+      renderNotice();
     }
   }
 
@@ -662,6 +678,7 @@ function start(elements: Elements): void {
   }
 
   async function readStatus(request: StatusRequest): Promise<void> {
+    const number = ++requestsStarted;
     let outcome: StatusOutcome;
     try {
       const result = await invoke<GetStatusResult>("bridge_get_status", {
@@ -671,11 +688,13 @@ function start(elements: Elements): void {
     } catch (error) {
       outcome = { ok: false, failure: toBridgeFailure(error) };
     }
+    noteAnswer(number, outcome.ok ? null : outcome.failure);
     // `state` is read when the answer arrives, so a late answer cannot overwrite a newer read.
     update(finishStatusRead(state, request.requestId, outcome));
   }
 
   async function runCommand(request: CommandRequest): Promise<void> {
+    const number = ++requestsStarted;
     let outcome: CommandOutcome;
     try {
       const answer = await invoke<CommandAnswer>(
@@ -686,6 +705,7 @@ function start(elements: Elements): void {
     } catch (error) {
       outcome = { ok: false, failure: toBridgeFailure(error) };
     }
+    noteAnswer(number, outcome.ok ? null : outcome.failure);
     // `state` is read when the answer arrives, so a late answer cannot overwrite anything.
     update(finishCommand(state, request.requestId, outcome));
   }
@@ -712,21 +732,27 @@ function start(elements: Elements): void {
     }
     elements.picker.open = true;
     update(startDiscovery(state));
+    const number = ++requestsStarted;
     try {
       const result = await invoke<DiscoverDevicesResult>("bridge_discover_devices");
+      noteAnswer(number, null);
       update(finishDiscovery(state, result.devices));
     } catch (error) {
-      update(failDiscovery(state, toBridgeFailure(error)));
+      const failure = toBridgeFailure(error);
+      noteAnswer(number, failure);
+      update(failDiscovery(state, failure));
     }
   }
 
   async function checkBackend(): Promise<void> {
+    const number = ++requestsStarted;
     try {
       await invoke<PingResult>("bridge_ping");
+      noteAnswer(number, null);
     } catch (error) {
-      const failure = toBridgeFailure(error);
-      if (isServiceFailure(failure)) {
-        serviceFailure = failure;
+      const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
+      if (next !== health) {
+        health = next;
         renderNotice();
       }
     }
