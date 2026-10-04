@@ -78,6 +78,15 @@ npx --prefix ui tauri build --config src-tauri/tauri.release.conf.json --no-bund
 
 `bridge-build` rebuilds `.venv` on the exact CPython release bridges embed (`packaging/release-python-version`, 3.12.15, which needs a uv that knows it: 0.12.23 in CI) with the locked `packaging` dependency group (PyInstaller) and keeps all PyInstaller state under `packaging/.pyinstaller/` (removed by `clean`); `setup` removes the group again. It writes the bridge's third-party license notices and refuses a frozen bridge that still names a build-machine path. `release-deb` runs the strict smoke (it fails unless the checkout and the build Python are verifiably hidden), builds the Rust binary with `--remap-path-prefix` so it does not name the build machine's directories either, checks the package content and modes, and writes `dist/python-bridge.inventory.tsv` (SHA-256, size and mode of every bridge file) and `dist/SHA256SUMS`. Only Linux (Debian/Ubuntu) has been built, installed and launched so far: the release `.deb` was installed and launched on Ubuntu 22.04 with the checkout, the `.venv` and the system Python unavailable, but public distribution is blocked by open license items (see `docs/PACKAGING_LICENSES.md` and `DEVELOPMENT_PLAN.md`, Phase 7).
 
+Android (spike, `DEVELOPMENT_PLAN.md` Phase 7b; needs the Android SDK, NDK 27, JDK 17 and the `aarch64-linux-android` Rust target, with `ANDROID_HOME`/`NDK_HOME` set):
+
+```bash
+python3 scripts/dev.py android-python   # pure-Python wheels the app embeds, hash-checked against uv.lock, in dist/android-python/
+python3 scripts/dev.py android-apk      # both, then a debug arm64 APK: src-tauri/gen/android/app/build/outputs/apk/universal/debug/
+```
+
+The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for testing only.
+
 ## Repository layout
 
 ```text
@@ -86,8 +95,10 @@ src/control_tv/ports.py    CastTransport and TvControl interfaces
 src/control_tv/service.py  ControlService: validation and sent-versus-confirmed verification
 src/control_tv/adapters/   focused external-library adapters (PyChromecast)
 src/control_tv/bridge.py   stdio JSON bridge exposing ControlService to the Tauri shell
+src/control_tv/embedded.py the same bridge called in-process by the Android app
 tests/                     deterministic unit tests (in-memory fake TV, fake clock)
 src-tauri/                 Tauri 2 application shell (Rust); no Cast/control logic
+src-tauri/gen/android/     Android project (Gradle, Chaquopy, Kotlin bridge plugin)
 ui/                        frontend (vanilla TypeScript + Vite); src/model.ts, src/playback.ts, src/sound.ts and src/interaction.ts hold the tested state, control, wording and slider-settling logic
 scripts/dev.py             development, cleanup and disk-usage commands
 assets/                    project assets
