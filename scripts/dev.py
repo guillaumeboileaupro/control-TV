@@ -14,6 +14,8 @@ Commands:
   check        lint, typecheck, test and depcheck (the Python quality gate)
   rust-check   cargo fmt --check, clippy -D warnings and cargo test (src-tauri/)
   ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
+  bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
+  bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -22,7 +24,8 @@ Commands:
 is pinned to the committed lockfile; every other Python command only needs the resulting
 `.venv` and otherwise uses the standard library only. `rust-check` needs `cargo`
 (https://rustup.rs/); `ui-check` needs `npm` and `ui/node_modules` (run `npm install`
-in `ui/` first) - neither is installed or invoked by this script.
+in `ui/` first) - neither is installed or invoked by this script. `bridge-build` adds the
+locked `packaging` dependency group (PyInstaller) to `.venv`; `setup` removes it again.
 
 Cleanup only ever deletes paths from the fixed allowlist below, resolved inside the
 repository. Shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) are never touched.
@@ -43,7 +46,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Directories scanned for Python bytecode caches. `.venv` is deliberately not listed.
-PYCACHE_SCAN_DIRS = ("src", "tests", "scripts")
+PYCACHE_SCAN_DIRS = ("src", "tests", "scripts", "packaging")
 # Directories scanned (one level deep) for packaging metadata such as `*.egg-info`.
 EGG_INFO_SCAN_DIRS = (".", "src")
 
@@ -403,6 +406,20 @@ def cmd_ui_check(root: Path) -> int:
     return 0
 
 
+def _run_bridge_packaging(root: Path, action: str) -> int:
+    return _run(root, [str(root / "packaging" / "build_bridge.py"), action])
+
+
+def cmd_bridge_build(root: Path) -> int:
+    """Freeze the bridge with the locked PyInstaller, entirely inside the repository."""
+    code = _run_uv(root, ["sync", "--locked", "--group", "packaging"])
+    return code or _run_bridge_packaging(root, "build")
+
+
+def cmd_bridge_smoke(root: Path) -> int:
+    return _run_bridge_packaging(root, "smoke")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -418,6 +435,8 @@ def build_parser() -> argparse.ArgumentParser:
         "version-check",
         "rust-check",
         "ui-check",
+        "bridge-build",
+        "bridge-smoke",
         "disk-usage",
     )
     for name in names:
@@ -445,6 +464,8 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "version-check": cmd_version_check,
         "rust-check": cmd_rust_check,
         "ui-check": cmd_ui_check,
+        "bridge-build": cmd_bridge_build,
+        "bridge-smoke": cmd_bridge_smoke,
         "disk-usage": cmd_disk_usage,
     }
     return handlers[command](root)

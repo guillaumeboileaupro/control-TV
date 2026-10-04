@@ -42,6 +42,11 @@ strict = true
 files = ["src", "tests", "scripts", "packaging"]
 mypy_path = "src"
 
+[[tool.mypy.overrides]]
+# PyInstaller ships no type information and is installed only by `dev.py bridge-build`.
+module = ["PyInstaller", "PyInstaller.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 # Python sources only: recent ruff releases also format Markdown and TOML by default.
 include = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py", "packaging/**/*.py"]
