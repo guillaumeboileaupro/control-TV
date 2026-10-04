@@ -534,6 +534,15 @@ describe("status wording", () => {
     assert.equal(description.note, null);
   });
 
+  test("a reported volume of zero and an explicit unmute are values, not missing ones", () => {
+    const receiver = { ...FULL_STATUS.receiver!, volumeLevel: 0, muted: false };
+    const description = describeStatus({ ...FULL_STATUS, receiver }, at);
+
+    assert.equal(description.volumeText, "Volume 0%");
+    assert.equal(description.muted, false);
+    assert.equal(description.mutedText, "Not muted");
+  });
+
   test("a connected device without a receiver block says so field by field", () => {
     const description = describeStatus({ ...FULL_STATUS, receiver: null, media: null }, at);
 

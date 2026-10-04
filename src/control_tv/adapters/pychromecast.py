@@ -216,16 +216,47 @@ _VOLUME_CONTROL_TYPES = {
 }
 
 
+def _reported_volume(reply: dict[str, object] | None) -> dict[str, object]:
+    """The `status.volume` object of a raw receiver status reply, or an empty one."""
+    status = reply.get("status") if isinstance(reply, dict) else None
+    volume = status.get("volume") if isinstance(status, dict) else None
+    return volume if isinstance(volume, dict) else {}
+
+
 def _reported_volume_control_type(reply: dict[str, object] | None) -> VolumeControlType | None:
     """The volume control type exactly as the receiver status reply reports it.
 
     Read from the raw reply because PyChromecast's `CastStatus` substitutes "attenuation"
     when the receiver omits `controlType`; an omitted or unrecognized value is unknown.
     """
-    status = reply.get("status") if isinstance(reply, dict) else None
-    volume = status.get("volume") if isinstance(status, dict) else None
-    kind = volume.get("controlType") if isinstance(volume, dict) else None
+    kind = _reported_volume(reply).get("controlType")
     return _VOLUME_CONTROL_TYPES.get(kind) if isinstance(kind, str) else None
+
+
+def _reported_volume_level(reply: dict[str, object] | None) -> float | None:
+    """The volume level exactly as the receiver status reply reports it.
+
+    PyChromecast's `CastStatus` substitutes 1.0 when the receiver omits `level`, which would
+    show a full volume nobody reported and could confirm a request for 100%. An omitted or
+    null level, a boolean, a non-number and a number outside 0-1 (or not finite) are unknown.
+    """
+    level = _reported_volume(reply).get("level")
+    if isinstance(level, bool) or not isinstance(level, int | float):
+        return None
+    if not (0 <= level <= 1):  # also false for NaN
+        return None
+    return float(level)
+
+
+def _reported_muted(reply: dict[str, object] | None) -> bool | None:
+    """The mute state exactly as the receiver status reply reports it.
+
+    PyChromecast's `CastStatus` substitutes False when the receiver omits `muted`, which
+    would show "not muted" nobody reported and could confirm an unmute. Anything but an
+    explicit JSON boolean is unknown.
+    """
+    muted = _reported_volume(reply).get("muted")
+    return muted if isinstance(muted, bool) else None
 
 
 class PyChromecastTransport:
@@ -334,8 +365,8 @@ class PyChromecastTransport:
             receiver=ReceiverStatus(
                 app_id=receiver.app_id if receiver is not None else None,
                 app_name=receiver.display_name if receiver is not None else None,
-                volume_level=receiver.volume_level if receiver is not None else None,
-                muted=receiver.volume_muted if receiver is not None else None,
+                volume_level=_reported_volume_level(receiver_reply),
+                muted=_reported_muted(receiver_reply),
                 standby=receiver.is_stand_by if receiver is not None else None,
                 volume_control_type=_reported_volume_control_type(receiver_reply),
             ),

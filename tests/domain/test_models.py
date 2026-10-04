@@ -84,10 +84,30 @@ def test_receiver_accepts_volume_within_bounds(level: float) -> None:
     assert ReceiverStatus(volume_level=level).volume_level == level
 
 
-@pytest.mark.parametrize("level", [-0.01, 1.01])
-def test_receiver_rejects_volume_out_of_bounds(level: float) -> None:
-    with pytest.raises(InvalidArgumentError):
-        ReceiverStatus(volume_level=level)
+@pytest.mark.parametrize(
+    "level",
+    [-0.01, 1.01, float("nan"), float("inf"), True, False, "0.5"],
+    ids=["below", "above", "nan", "infinite", "true", "false", "string"],
+)
+def test_receiver_rejects_a_volume_that_is_not_a_level(level: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="volume level must be a number"):
+        ReceiverStatus(volume_level=level)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("level", [0, 1])
+def test_receiver_accepts_the_integer_bounds_as_levels(level: int) -> None:
+    assert ReceiverStatus(volume_level=level).volume_level == level
+
+
+@pytest.mark.parametrize("muted", [None, True, False])
+def test_receiver_accepts_a_known_or_unknown_mute_state(muted: bool | None) -> None:
+    assert ReceiverStatus(muted=muted).muted is muted
+
+
+@pytest.mark.parametrize("muted", [0, 1, "false", "true", 0.0, [], {}])
+def test_receiver_rejects_a_mute_state_that_is_not_a_boolean(muted: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="muted must be a boolean"):
+        ReceiverStatus(muted=muted)  # type: ignore[arg-type]
 
 
 def test_receiver_reports_unknown_as_none_not_false() -> None:

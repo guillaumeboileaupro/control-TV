@@ -64,8 +64,9 @@ class FakeReceiverController:
         self.error: Exception | None = None
         self.updates = 0
         self.launched: list[str] = []
-        # The raw receiver status reply this receiver answers with.
-        self.reply: dict[str, object] = {}
+        # The raw receiver status reply this receiver answers with; by default the same volume
+        # and mute state as `FakeCast.status`, as a receiver's reply and its parsed status agree.
+        self.reply: dict[str, object] = {"status": {"volume": {"level": 0.4, "muted": False}}}
         self._clock = clock
         self._consumes = consumes
 
@@ -2191,3 +2192,191 @@ def test_the_volume_control_type_comes_only_from_the_raw_receiver_reply(
 
     assert receiver is not None
     assert receiver.volume_control_type is expected
+
+
+# --- Volume level and mute state (read from the raw receiver reply) -------------------------
+
+
+def defaults_cached_cast(volume: object) -> FakeCast:
+    """A device whose parsed `CastStatus` holds PyChromecast's defaults for an omitted volume
+    (level 1.0, not muted), answering with a raw reply whose `status.volume` is `volume`."""
+    cast_device = FakeCast()
+    cast_device.status.volume_level = 1.0
+    cast_device.status.volume_muted = False
+    cast_device.receiver_controller.reply = {"status": {"volume": volume}}
+    return cast_device
+
+
+@pytest.mark.parametrize(
+    ("volume", "expected"),
+    [
+        pytest.param({"level": 0}, 0.0, id="zero"),
+        pytest.param({"level": 1}, 1.0, id="one"),
+        pytest.param({"level": 0.0}, 0.0, id="zero-float"),
+        pytest.param({"level": 1.0}, 1.0, id="one-float"),
+        pytest.param({"level": 0.47}, 0.47, id="within"),
+        pytest.param({"muted": True}, None, id="absent"),
+        pytest.param({"level": None}, None, id="null"),
+        pytest.param({"level": True}, None, id="true"),
+        pytest.param({"level": False}, None, id="false"),
+        pytest.param({"level": "0.5"}, None, id="string"),
+        pytest.param({"level": -0.1}, None, id="below"),
+        pytest.param({"level": 1.5}, None, id="above"),
+        pytest.param({"level": 10**400}, None, id="huge-integer"),
+        pytest.param({"level": float("nan")}, None, id="nan"),
+        pytest.param({"level": float("inf")}, None, id="infinite"),
+        pytest.param({"level": [0.5]}, None, id="list"),
+        pytest.param("x", None, id="volume-not-an-object"),
+    ],
+)
+def test_the_volume_level_comes_only_from_the_raw_receiver_reply(
+    volume: object, expected: float | None
+) -> None:
+    """PyChromecast substitutes 1.0 when `level` is omitted: that default, or any invalid
+    value, must reach the domain as unknown, never as a level the receiver reported."""
+    transport, _ = make_transport(defaults_cached_cast(volume))
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.volume_level == expected
+    assert receiver.volume_level is None or type(receiver.volume_level) is float
+
+
+@pytest.mark.parametrize(
+    ("volume", "expected"),
+    [
+        pytest.param({"muted": True}, True, id="true"),
+        pytest.param({"muted": False}, False, id="false"),
+        pytest.param({"level": 0.5}, None, id="absent"),
+        pytest.param({"muted": None}, None, id="null"),
+        pytest.param({"muted": 0}, None, id="zero"),
+        pytest.param({"muted": 1}, None, id="one"),
+        pytest.param({"muted": "false"}, None, id="string"),
+        pytest.param({"muted": {}}, None, id="object"),
+        pytest.param("x", None, id="volume-not-an-object"),
+    ],
+)
+def test_the_mute_state_comes_only_from_the_raw_receiver_reply(
+    volume: object, expected: bool | None
+) -> None:
+    """PyChromecast substitutes False when `muted` is omitted: only an explicit JSON boolean
+    is a reported mute state."""
+    transport, _ = make_transport(defaults_cached_cast(volume))
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.muted is expected
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [{}, {"status": "x"}, {"status": {}}, None],
+    ids=["no-status", "status-not-an-object", "no-volume", "no-reply"],
+)
+def test_a_reply_without_a_volume_object_reports_neither_level_nor_mute(
+    reply: dict[str, object] | None,
+) -> None:
+    cast_device = defaults_cached_cast({})
+    cast_device.receiver_controller.reply = reply  # type: ignore[assignment]
+    transport, _ = make_transport(cast_device)
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert receiver.volume_level is None
+    assert receiver.muted is None
+    assert receiver.volume_control_type is None
+
+
+def test_level_and_mute_follow_the_fresh_reply_not_the_cached_status() -> None:
+    """The cached `CastStatus` may describe an older broadcast; only the reply to this
+    read's own request counts."""
+    cast_device = FakeCast()
+    cast_device.status.volume_level = 0.9
+    cast_device.status.volume_muted = True
+    cast_device.receiver_controller.reply = {"status": {"volume": {"level": 0.2, "muted": False}}}
+    transport, _ = make_transport(cast_device)
+
+    receiver = transport.get_status(DEVICE_ID, timeout=5.0).receiver
+
+    assert receiver is not None
+    assert (receiver.volume_level, receiver.muted) == (0.2, False)
+
+
+@pytest.mark.parametrize(
+    ("volume", "confirmation"),
+    [
+        pytest.param({"muted": False}, Confirmation.UNCONFIRMED, id="level-absent"),
+        pytest.param({"level": None, "muted": False}, Confirmation.UNCONFIRMED, id="level-null"),
+        pytest.param({"level": True, "muted": False}, Confirmation.UNCONFIRMED, id="level-true"),
+        pytest.param({"level": 1, "muted": False}, Confirmation.CONFIRMED, id="level-one"),
+    ],
+)
+def test_a_full_volume_is_confirmed_only_when_the_receiver_reports_it(
+    volume: dict[str, object], confirmation: Confirmation
+) -> None:
+    """Before the fix, an omitted level read as PyChromecast's 1.0 and confirmed a 100% request
+    the receiver never reported."""
+    cast_device = defaults_cached_cast(volume)
+    transport, _ = make_transport(cast_device)
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.set_volume(DEVICE_ID, 1.0)
+
+    assert result.confirmation is confirmation
+    assert [level for level, _ in cast_device.volume_calls] == [1.0]
+    if confirmation is Confirmation.UNCONFIRMED:
+        assert "volume level was not reported" in (result.detail or "")
+        assert result.observed is not None and result.observed.receiver is not None
+        assert result.observed.receiver.volume_level is None
+
+
+@pytest.mark.parametrize(
+    ("volume", "confirmation"),
+    [
+        pytest.param({"level": 0.4}, Confirmation.UNCONFIRMED, id="muted-absent"),
+        pytest.param({"level": 0.4, "muted": None}, Confirmation.UNCONFIRMED, id="muted-null"),
+        pytest.param({"level": 0.4, "muted": 0}, Confirmation.UNCONFIRMED, id="muted-zero"),
+        pytest.param({"level": 0.4, "muted": False}, Confirmation.CONFIRMED, id="muted-false"),
+    ],
+)
+def test_an_unmute_is_confirmed_only_when_the_receiver_reports_not_muted(
+    volume: dict[str, object], confirmation: Confirmation
+) -> None:
+    """Before the fix, an omitted mute state read as PyChromecast's False and confirmed an
+    unmute the receiver never reported."""
+    cast_device = defaults_cached_cast(volume)
+    transport, _ = make_transport(cast_device)
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.set_muted(DEVICE_ID, False)
+
+    assert result.confirmation is confirmation
+    assert [muted for muted, _ in cast_device.mute_calls] == [False]
+    if confirmation is Confirmation.UNCONFIRMED:
+        assert "mute state was not reported" in (result.detail or "")
+
+
+def test_an_explicit_mute_is_confirmed_by_an_explicit_true() -> None:
+    cast_device = defaults_cached_cast({"level": 0.4, "muted": True})
+    transport, _ = make_transport(cast_device)
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.set_muted(DEVICE_ID, True)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert [muted for muted, _ in cast_device.mute_calls] == [True]
+
+
+def test_a_zero_volume_is_a_reported_level_that_confirms_silence() -> None:
+    cast_device = defaults_cached_cast({"level": 0, "muted": False})
+    transport, _ = make_transport(cast_device)
+    service = ControlService(transport, confirm_timeout=0.3, poll_interval=0.05)
+
+    result = service.set_volume(DEVICE_ID, 0.0)
+
+    assert result.confirmation is Confirmation.CONFIRMED
+    assert result.observed is not None and result.observed.receiver is not None
+    assert result.observed.receiver.volume_level == 0.0
