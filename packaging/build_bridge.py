@@ -5,9 +5,12 @@ Run with the development environment's interpreter after `uv sync --locked --gro
 (`python3 scripts/dev.py bridge-build` and `bridge-smoke` do both):
 
   build  freeze `packaging/bridge_entry.py` with PyInstaller (`--onedir`) into
-         `dist/python-bridge/`, then refuse the result if it still names a build-machine path
+         `dist/python-bridge/` with its third-party license notices under `licenses/`, refuse
+         the result if it still names a build-machine path, and write a deterministic
+         inventory (SHA-256, size, mode, path) to `dist/python-bridge.inventory.tsv`
   smoke  copy `dist/python-bridge/` outside the repository and talk to it with an empty
-         environment: `ping`, a `get_status` that needs no network, then end of input
+         environment: `ping` (which must report this checkout's version), a `get_status` that
+         needs no network, then end of input
 
 All PyInstaller state (configuration, cache, work and staging directories) stays under
 `packaging/.pyinstaller/`. The build never passes `--clean`, so no shared or global cache is
@@ -16,14 +19,18 @@ ever touched.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +42,12 @@ STAGING_DIR = PYINSTALLER_ROOT / "dist"
 SANITIZED_DIR = PYINSTALLER_ROOT / "sanitized"
 ENTRY_POINT = PACKAGING_ROOT / "bridge_entry.py"
 OUTPUT_DIR = REPO_ROOT / "dist" / "python-bridge"
+INVENTORY = REPO_ROOT / "dist" / "python-bridge.inventory.tsv"
+VERSION_FILE = REPO_ROOT / "src" / "control_tv" / "__init__.py"
 NAME = "control-tv-bridge"
+LICENSES_DIR = "licenses"
+NOTICES_FILE = "THIRD_PARTY_NOTICES.txt"
+LICENSE_FILE_HINTS = ("LICEN", "COPYING", "NOTICE", "AUTHORS")
 
 # Collected only because PyInstaller's setuptools hook pulls them in; the bridge imports none of
 # them (132 of 525 frozen modules before they were excluded).
@@ -54,9 +66,42 @@ SMOKE_REQUESTS = (
 )
 SMOKE_TIMEOUT_SECONDS = 30
 
+# Libraries python-build-standalone links statically into the bundled `libpython` (identified
+# from the interpreter's built-in modules and version strings). uv's Python install ships no
+# license text for them, so the notices name them and say their texts are still missing.
+STATICALLY_LINKED_INTO_LIBPYTHON = (
+    "OpenSSL (Apache-2.0)",
+    "SQLite (public domain)",
+    "zlib (Zlib)",
+    "libedit (BSD-3-Clause)",
+    "libffi (MIT)",
+    "xz/liblzma (0BSD)",
+    "bzip2 (bzip2-1.0.6)",
+    "ncurses/terminfo (X11)",
+    "mpdecimal (BSD-2-Clause)",
+    "expat (MIT)",
+    "util-linux libuuid (BSD-3-Clause)",
+    "HACL* (MIT or Apache-2.0)",
+)
+
+# Debian packages whose shared libraries PyInstaller copies from the build system, with the
+# copyright file that carries their license (GPL-3.0 with the GCC Runtime Library Exception).
+SYSTEM_RUNTIME_COPYRIGHTS = {
+    "libstdc++.so.6": Path("/usr/share/doc/libstdc++6/copyright"),
+    "libgcc_s.so.1": Path("/usr/share/doc/libgcc-s1/copyright"),
+}
+
 
 def executable_name(windows: bool = os.name == "nt") -> str:
     return f"{NAME}.exe" if windows else NAME
+
+
+def project_version(version_file: Path = VERSION_FILE) -> str:
+    """The version this checkout declares in `control_tv.__version__`."""
+    match = re.search(r'^__version__ = "([^"]+)"$', version_file.read_text(encoding="utf-8"), re.M)
+    if match is None:
+        raise RuntimeError(f"{version_file} declares no __version__")
+    return match.group(1)
 
 
 def venv_python(root: Path = REPO_ROOT) -> Path:
@@ -181,6 +226,162 @@ def find_build_paths(root: Path, needles: Iterable[str]) -> list[str]:
     return found
 
 
+def frozen_top_level_names(bundle: Path) -> set[str]:
+    """Top-level module and package names frozen in the bundle (archive and `_internal/`)."""
+    names: set[str] = set()
+    internal = bundle / "_internal"
+    if internal.is_dir():
+        names |= {entry.name.split(".")[0] for entry in internal.iterdir()}
+    for name, _ in _pyz_members(bundle / executable_name()):
+        names.add(name.split(".")[0])
+    return names
+
+
+def _pyz_members(executable: Path) -> Iterable[tuple[str, bytes]]:
+    for name, data in _archive_members(executable):
+        if name.startswith("PYZ:"):
+            yield name[len("PYZ:") :], data
+
+
+def frozen_distributions(
+    bundle: Path, packages: Mapping[str, list[str]] | None = None
+) -> list[importlib.metadata.Distribution]:
+    """Installed distributions with at least one top-level name frozen in `bundle`."""
+    owners = importlib.metadata.packages_distributions() if packages is None else packages
+    names = sorted({d for top in frozen_top_level_names(bundle) for d in owners.get(top, [])})
+    return [importlib.metadata.distribution(name) for name in names]
+
+
+def _license_files(distribution: importlib.metadata.Distribution) -> list[Path]:
+    files = distribution.files or []
+    found = [
+        Path(str(distribution.locate_file(f)))
+        for f in files
+        if any(hint in f.name.upper() for hint in LICENSE_FILE_HINTS)
+    ]
+    return sorted(found, key=lambda path: path.name)
+
+
+def _declared_license(distribution: importlib.metadata.Distribution) -> str:
+    metadata = distribution.metadata
+    expression = metadata.get("License-Expression")
+    if expression:
+        return str(expression)
+    declared = (metadata.get("License") or "").strip().splitlines()
+    if declared and len(declared[0]) <= 80:
+        return declared[0]
+    classifiers = [
+        c.split(" :: ")[-1] for c in metadata.get_all("Classifier") or [] if "License" in c
+    ]
+    return ", ".join(classifiers) or "see the license files"
+
+
+def write_python_notices(
+    bundle: Path,
+    distributions: Sequence[importlib.metadata.Distribution],
+    cpython_license: Path,
+    python_version: str,
+    pyinstaller: importlib.metadata.Distribution | None,
+) -> Path:
+    """Copy every license text the bundle needs under `licenses/` and summarize them."""
+    root = bundle / LICENSES_DIR
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir()
+    lines = [
+        "Third-party software in the control-TV Python bridge",
+        "=" * 52,
+        "",
+        "This directory holds the license texts of the software frozen into the bridge.",
+        "It is an engineering inventory, not a legal review.",
+        "",
+    ]
+
+    def section(title: str, license_name: str, sources: Sequence[Path], folder: str) -> None:
+        destination = root / folder
+        destination.mkdir()
+        copied = []
+        for source in sources:
+            shutil.copyfile(source, destination / source.name)
+            copied.append(f"{folder}/{source.name}")
+        lines.extend([f"{title}", f"  License: {license_name}"])
+        lines.extend(f"  Text: {name}" for name in copied)
+        if not copied:
+            lines.append("  Text: MISSING")
+        lines.append("")
+
+    section(
+        f"CPython {python_version} (libpython, standard library)",
+        "PSF-2.0 (Python Software Foundation License)",
+        [cpython_license],
+        f"CPython-{python_version}",
+    )
+    lines.append("Libraries statically linked into libpython by python-build-standalone:")
+    lines.extend(f"  - {name}" for name in STATICALLY_LINKED_INTO_LIBPYTHON)
+    lines.extend(["  Texts: MISSING (not shipped by the uv Python install; still to collect)", ""])
+    if pyinstaller is not None:
+        section(
+            f"PyInstaller {pyinstaller.version} bootloader",
+            "GPL-2.0-or-later with the PyInstaller bootloader exception",
+            _license_files(pyinstaller),
+            f"PyInstaller-{pyinstaller.version}",
+        )
+    for library, copyright_file in SYSTEM_RUNTIME_COPYRIGHTS.items():
+        if (bundle / "_internal" / library).exists():
+            section(
+                f"{library} (copied from the build system)",
+                "GPL-3.0-or-later with the GCC Runtime Library Exception",
+                [copyright_file] if copyright_file.is_file() else [],
+                library,
+            )
+    for distribution in distributions:
+        name, version = distribution.metadata["Name"], distribution.version
+        section(
+            f"{name} {version}",
+            _declared_license(distribution),
+            _license_files(distribution),
+            f"{name}-{version}",
+        )
+    notices = root / NOTICES_FILE
+    notices.write_text("\n".join(lines), encoding="utf-8")
+    return notices
+
+
+def inventory_lines(root: Path) -> list[str]:
+    """One line per file or link under `root`: SHA-256, size, octal mode and relative path."""
+    lines = ["# sha256\tsize\tmode\tpath"]
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            lines.append(f"-\t-\tlink\t{relative} -> {os.readlink(path)}")
+        elif path.is_file():
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            mode = stat.S_IMODE(path.stat().st_mode)
+            lines.append(f"{digest}\t{path.stat().st_size}\t{mode:04o}\t{relative}")
+    return lines
+
+
+def write_inventory(root: Path, destination: Path) -> Path:
+    executable = root / executable_name()
+    if os.name != "nt" and not os.access(executable, os.X_OK):
+        raise RuntimeError(f"{executable} is not executable")
+    destination.write_text("\n".join(inventory_lines(root)) + "\n", encoding="utf-8")
+    return destination
+
+
+def write_bundle_notices(bundle: Path, prefix: str) -> Path:
+    """The notices of this build: its interpreter, PyInstaller and the frozen distributions."""
+    python_version = ".".join(map(str, sys.version_info[:3]))
+    stdlib = Path(prefix) / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}"
+    return write_python_notices(
+        bundle,
+        frozen_distributions(bundle),
+        stdlib / "LICENSE.txt",
+        python_version,
+        importlib.metadata.distribution("pyinstaller"),
+    )
+
+
 def build() -> Path:
     python = venv_python()
     if not python.is_file():
@@ -208,6 +409,7 @@ def build() -> Path:
     built = STAGING_DIR / NAME
     if not (built / executable_name()).is_file():
         raise RuntimeError(f"PyInstaller did not produce {built / executable_name()}")
+    write_bundle_notices(built, prefix)
     leaks = find_build_paths(built, [str(REPO_ROOT), str(Path.home()), prefix])
     if leaks:
         raise RuntimeError("the frozen bridge names build-machine paths:\n  " + "\n  ".join(leaks))
@@ -215,10 +417,11 @@ def build() -> Path:
     OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)
     _remove_generated(OUTPUT_DIR)
     shutil.copytree(built, OUTPUT_DIR, symlinks=True)
+    write_inventory(OUTPUT_DIR, INVENTORY)
     return OUTPUT_DIR
 
 
-def check_smoke_output(stdout: str) -> None:
+def check_smoke_output(stdout: str, version: str) -> None:
     """The frozen bridge answered both smoke requests exactly as the shared layer defines."""
     responses = [json.loads(line) for line in stdout.splitlines() if line.strip()]
     if len(responses) != len(SMOKE_REQUESTS):
@@ -226,6 +429,10 @@ def check_smoke_output(stdout: str) -> None:
     ping, status = responses
     if ping.get("id") != 1 or ping.get("result", {}).get("status") != "ready":
         raise RuntimeError(f"unexpected ping response: {ping}")
+    if ping["result"].get("controlTvVersion") != version:
+        raise RuntimeError(
+            f"the frozen bridge reports {ping['result']}, expected version {version}"
+        )
     if status.get("id") != 2 or status.get("error", {}).get("code") != "device_not_found":
         raise RuntimeError(f"unexpected get_status response: {status}")
 
@@ -274,9 +481,13 @@ def smoke(source: Path = OUTPUT_DIR) -> str:
         raise RuntimeError(
             f"the frozen bridge exited with {completed.returncode}: {completed.stderr.strip()}"
         )
-    check_smoke_output(completed.stdout)
+    version = project_version()
+    check_smoke_output(completed.stdout, version)
     isolation = "checkout and build Python hidden" if wrapper else "no namespace isolation"
-    return f"frozen bridge answered outside the checkout ({isolation}) and exited on end of input"
+    return (
+        f"frozen bridge {version} answered outside the checkout ({isolation}) "
+        "and exited on end of input"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

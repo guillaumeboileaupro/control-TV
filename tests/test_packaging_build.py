@@ -47,6 +47,7 @@ def project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         "STAGING_DIR": pyinstaller / "dist",
         "SANITIZED_DIR": pyinstaller / "sanitized",
         "OUTPUT_DIR": root / "dist" / "python-bridge",
+        "INVENTORY": root / "dist" / "python-bridge.inventory.tsv",
     }.items():
         monkeypatch.setattr(build, name, value)
     python = root / ".venv" / "bin" / "python"
@@ -73,10 +74,19 @@ def fake_pyinstaller(
         calls.append({"command": command, **kwargs})
         built = build.STAGING_DIR / build.NAME
         built.mkdir(parents=True)
-        (built / build.executable_name()).write_bytes(content)
+        executable = built / build.executable_name()
+        executable.write_bytes(content)
+        executable.chmod(0o755)
         return subprocess.CompletedProcess(command, 0)
 
+    def notices(bundle: Path, prefix: str) -> Path:
+        notices = bundle / "licenses" / "THIRD_PARTY_NOTICES.txt"
+        notices.parent.mkdir()
+        notices.write_text("notices", encoding="utf-8")
+        return notices
+
     monkeypatch.setattr(build.subprocess, "run", run)
+    monkeypatch.setattr(build, "write_bundle_notices", notices)
     return calls
 
 
@@ -211,6 +221,13 @@ def test_build_freezes_into_dist_with_the_sanitized_module_on_the_search_path(
 
     assert output == project / "dist" / "python-bridge"
     assert (output / build.executable_name()).read_bytes() == b"frozen"
+    assert (output / "licenses" / "THIRD_PARTY_NOTICES.txt").is_file()
+    inventory = [line.split("\t") for line in build.INVENTORY.read_text().splitlines()[1:]]
+    assert [entry[3] for entry in inventory] == [
+        "control-tv-bridge",
+        "licenses/THIRD_PARTY_NOTICES.txt",
+    ]
+    assert inventory[0][2] == "0755"
     [call] = calls
     assert call["cwd"] == project
     assert call["env"]["PYINSTALLER_CONFIG_DIR"] == str(build.CONFIG_DIR)
@@ -259,7 +276,12 @@ NOT_FOUND = {"id": 2, "ok": False, "error": {"code": "device_not_found", "messag
 
 
 def test_the_expected_smoke_answers_are_accepted() -> None:
-    build.check_smoke_output(json.dumps(PING) + "\n" + json.dumps(NOT_FOUND) + "\n")
+    build.check_smoke_output(json.dumps(PING) + "\n" + json.dumps(NOT_FOUND) + "\n", "0.1.0")
+
+
+def test_a_frozen_bridge_reporting_another_version_is_refused() -> None:
+    with pytest.raises(RuntimeError, match=r"expected version 0\.2\.0"):
+        build.check_smoke_output(json.dumps(PING) + "\n" + json.dumps(NOT_FOUND) + "\n", "0.2.0")
 
 
 @pytest.mark.parametrize(
@@ -274,7 +296,7 @@ def test_the_expected_smoke_answers_are_accepted() -> None:
 )
 def test_unexpected_smoke_answers_are_refused(answers: list[dict[str, Any]]) -> None:
     with pytest.raises(RuntimeError):
-        build.check_smoke_output("".join(json.dumps(a) + "\n" for a in answers))
+        build.check_smoke_output("".join(json.dumps(a) + "\n" for a in answers), "0.1.0")
 
 
 def fake_frozen_bridge(project: Path, script: str) -> Path:
@@ -306,10 +328,12 @@ def test_smoke_runs_a_copy_outside_the_repository_with_an_empty_environment(
         return Path(real_copytree(source, destination, **kwargs))
 
     monkeypatch.setattr(build.shutil, "copytree", copytree)
+    monkeypatch.setattr(build, "project_version", lambda: "0.1.0")
 
     message = build.smoke(output)
 
-    assert "outside the checkout" in message and "no namespace isolation" in message
+    assert "frozen bridge 0.1.0 answered outside the checkout" in message
+    assert "no namespace isolation" in message
     assert not Path(seen["destination"]).is_relative_to(project)
     assert not Path(seen["destination"]).exists()  # the copy is removed afterwards
 
@@ -364,3 +388,124 @@ def test_a_failed_action_is_reported_without_a_traceback(
 ) -> None:
     assert build.main(["smoke"]) == 1
     assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_the_project_version_is_read_from_the_package(tmp_path: Path) -> None:
+    init = tmp_path / "__init__.py"
+    init.write_text('"""Doc."""\n\n__version__ = "0.1.0"\n', encoding="utf-8")
+
+    assert build.project_version(init) == "0.1.0"
+    assert build.project_version() == build.project_version(ROOT / "src/control_tv/__init__.py")
+
+
+def test_a_package_without_a_version_is_refused(tmp_path: Path) -> None:
+    init = tmp_path / "__init__.py"
+    init.write_text('"""Doc."""\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="declares no __version__"):
+        build.project_version(init)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes and symlinks")
+def test_the_inventory_is_sorted_and_records_hash_size_mode_and_links(tmp_path: Path) -> None:
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "lib.so").write_bytes(b"abc")
+    (tmp_path / "b" / "lib.so").chmod(0o755)
+    (tmp_path / "a.txt").write_bytes(b"")
+    (tmp_path / "a.txt").chmod(0o644)
+    (tmp_path / "link").symlink_to("b/lib.so")
+
+    lines = build.inventory_lines(tmp_path)
+
+    assert lines == [
+        "# sha256\tsize\tmode\tpath",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\t0\t0644\ta.txt",
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\t3\t0755\tb/lib.so",
+        "-\t-\tlink\tlink -> b/lib.so",
+    ]
+    assert build.inventory_lines(tmp_path) == lines
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable bit")
+def test_an_inventory_is_refused_when_the_bridge_is_not_executable(tmp_path: Path) -> None:
+    (tmp_path / build.executable_name()).write_bytes(b"frozen")
+    (tmp_path / build.executable_name()).chmod(0o644)
+
+    with pytest.raises(RuntimeError, match="is not executable"):
+        build.write_inventory(tmp_path, tmp_path.parent / "inventory.tsv")
+
+
+class FakeDistribution:
+    """Just what the notices read from an installed distribution."""
+
+    def __init__(self, root: Path, name: str, version: str, metadata: dict[str, str]) -> None:
+        self.root = root / f"{name}.dist-info"
+        self.root.mkdir(parents=True)
+        (self.root / "LICENSE").write_text(f"{name} license", encoding="utf-8")
+        (self.root / "METADATA").write_text("meta", encoding="utf-8")
+        self.version = version
+        self.metadata = _Metadata({"Name": name, **metadata})
+        self.files = [_File("LICENSE", self.root), _File("METADATA", self.root)]
+
+    def locate_file(self, path: Any) -> Path:
+        return Path(str(path))
+
+
+class _File:
+    def __init__(self, name: str, root: Path) -> None:
+        self.name = name
+        self.path = root / name
+
+    def __str__(self) -> str:
+        return str(self.path)
+
+
+class _Metadata(dict[str, str]):
+    def get_all(self, key: str) -> list[str] | None:
+        value = self.get(key)
+        return [value] if value else None
+
+
+def test_the_notices_copy_every_license_text_and_name_what_is_missing(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    (bundle / "_internal").mkdir(parents=True)
+    (bundle / "_internal" / "libstdc++.so.6").write_bytes(b"lib")
+    cpython = tmp_path / "LICENSE.txt"
+    cpython.write_text("PSF", encoding="utf-8")
+    zeroconf = FakeDistribution(
+        tmp_path, "zeroconf", "0.151.3", {"License-Expression": "LGPL-2.1-or-later"}
+    )
+    certifi = FakeDistribution(tmp_path, "certifi", "2026.7.22", {"License": "MPL-2.0"})
+    pyinstaller = FakeDistribution(tmp_path, "pyinstaller", "6.22.3", {})
+
+    notices = build.write_python_notices(
+        bundle,
+        [certifi, zeroconf],
+        cpython,
+        "3.12.13",
+        pyinstaller,
+    )
+
+    text = notices.read_text(encoding="utf-8")
+    licenses = bundle / "licenses"
+    assert (licenses / "CPython-3.12.13" / "LICENSE.txt").read_text() == "PSF"
+    assert (licenses / "zeroconf-0.151.3" / "LICENSE").read_text() == "zeroconf license"
+    assert (licenses / "certifi-2026.7.22" / "LICENSE").is_file()
+    assert (licenses / "PyInstaller-6.22.3" / "LICENSE").is_file()
+    assert not (licenses / "certifi-2026.7.22" / "METADATA").exists()
+    assert "zeroconf 0.151.3\n  License: LGPL-2.1-or-later" in text
+    assert "certifi 2026.7.22\n  License: MPL-2.0" in text
+    assert "OpenSSL (Apache-2.0)" in text and "Texts: MISSING" in text
+    assert "libstdc++.so.6 (copied from the build system)" in text
+    assert "libgcc_s.so.1" not in text  # not in this bundle
+    assert "not a legal review" in text
+
+
+def test_frozen_distributions_follow_the_frozen_top_level_names(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    (bundle / "_internal" / "certifi").mkdir(parents=True)
+    (bundle / "_internal" / "libpython3.12.so.1.0").write_bytes(b"")
+
+    found = build.frozen_distributions(bundle, {"certifi": ["certifi"], "pytest": ["pytest"]})
+
+    assert [d.metadata["Name"] for d in found] == ["certifi"]
