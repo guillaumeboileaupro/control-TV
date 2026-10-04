@@ -140,10 +140,17 @@ class ReceiverStatus:
             f"invalid volume control type: {self.volume_control_type!r}",
         )
         if self.volume_level is not None:
+            # A boolean is never a level, and NaN fails the range check.
             _require(
-                0.0 <= self.volume_level <= 1.0,
-                f"volume level must be within 0.0-1.0: {self.volume_level}",
+                isinstance(self.volume_level, int | float)
+                and not isinstance(self.volume_level, bool)
+                and 0.0 <= self.volume_level <= 1.0,
+                f"volume level must be a number within 0.0-1.0: {self.volume_level!r}",
             )
+        _require(
+            self.muted is None or isinstance(self.muted, bool),
+            f"muted must be a boolean or None: {self.muted!r}",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
