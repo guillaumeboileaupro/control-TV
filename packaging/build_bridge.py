@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Build and smoke-test the frozen Python bridge that release packages ship.
 
-Run with the development environment's interpreter after `uv sync --locked --group packaging`
-(`python3 scripts/dev.py bridge-build` and `bridge-smoke` do both):
+Run with the development environment's interpreter after
+`uv sync --locked --group packaging --python <release version>` (`python3 scripts/dev.py
+bridge-build` and `bridge-smoke` do both). Releases embed exactly the CPython version in
+`packaging/release-python-version`; the build refuses any other interpreter.
 
   build  freeze `packaging/bridge_entry.py` with PyInstaller (`--onedir`) into
          `dist/python-bridge/` with its third-party license notices under `licenses/`, refuse
@@ -10,7 +12,10 @@ Run with the development environment's interpreter after `uv sync --locked --gro
          inventory (SHA-256, size, mode, path) to `dist/python-bridge.inventory.tsv`
   smoke  copy `dist/python-bridge/` outside the repository and talk to it with an empty
          environment: `ping` (which must report this checkout's version), a `get_status` that
-         needs no network, then end of input
+         needs no network, then end of input. With `--strict` (releases, CI) it runs inside a
+         Linux user/mount namespace in which the checkout and the build Python are empty, and
+         fails when that isolation cannot be set up or verified; without it, the isolation is
+         used when available and the result says whether it was
 
 All PyInstaller state (configuration, cache, work and staging directories) stays under
 `packaging/.pyinstaller/`. The build never passes `--clean`, so no shared or global cache is
@@ -30,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +49,7 @@ ENTRY_POINT = PACKAGING_ROOT / "bridge_entry.py"
 OUTPUT_DIR = REPO_ROOT / "dist" / "python-bridge"
 INVENTORY = REPO_ROOT / "dist" / "python-bridge.inventory.tsv"
 VERSION_FILE = REPO_ROOT / "src" / "control_tv" / "__init__.py"
+RELEASE_PYTHON_FILE = PACKAGING_ROOT / "release-python-version"
 NAME = "control-tv-bridge"
 LICENSES_DIR = "licenses"
 NOTICES_FILE = "THIRD_PARTY_NOTICES.txt"
@@ -104,6 +110,14 @@ def project_version(version_file: Path = VERSION_FILE) -> str:
     return match.group(1)
 
 
+def release_python_version(path: Path = RELEASE_PYTHON_FILE) -> str:
+    """The exact CPython version (major.minor.patch) release bridges embed."""
+    version = path.read_text(encoding="utf-8").strip()
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise RuntimeError(f"{path} must hold one exact CPython version, not {version!r}")
+    return version
+
+
 def venv_python(root: Path = REPO_ROOT) -> Path:
     scripts = "Scripts" if os.name == "nt" else "bin"
     executable = "python.exe" if os.name == "nt" else "python"
@@ -130,7 +144,8 @@ def build_python_facts(python: Path) -> dict[str, str | None]:
         "name = get() if get else None\n"
         "spec = importlib.util.find_spec(name) if name else None\n"
         "print(json.dumps({'prefix': sys.base_prefix, 'name': name if spec else None,"
-        " 'origin': spec.origin if spec else None}))\n"
+        " 'origin': spec.origin if spec else None,"
+        " 'version': '.'.join(map(str, sys.version_info[:3]))}))\n"
     )
     completed = subprocess.run(
         [str(python), "-c", script], capture_output=True, text=True, check=True
@@ -185,44 +200,86 @@ def pyinstaller_environment(base: dict[str, str]) -> dict[str, str]:
     return environment
 
 
-def _archive_members(path: Path) -> Iterable[tuple[str, bytes]]:
-    """Every member of a zip or PyInstaller archive at `path`, decompressed; none otherwise."""
-    if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as archive:
-            for name in archive.namelist():
-                yield name, archive.read(name)
-        return
+def _zip_members(path: Path) -> Iterator[tuple[str, bytes]]:
+    with zipfile.ZipFile(path) as archive:
+        for name in archive.namelist():
+            yield name, archive.read(name)
+
+
+def pyinstaller_members(executable: Path) -> Iterator[tuple[str, bytes]]:
+    """Every member of the PyInstaller archive in `executable`, its PYZ modules included.
+
+    Fail-closed: an executable that cannot be opened as a PyInstaller archive, a member that
+    cannot be extracted, a missing PYZ, or a PYZ entry without data (other than a namespace
+    package, which has no code) raises instead of being skipped, so a partly inspected
+    archive can never pass a path scan or yield an incomplete license inventory.
+    """
     try:
         from PyInstaller.archive.readers import CArchiveReader
+        from PyInstaller.loader.pyimod01_archive import PYZ_ITEM_NSPKG
 
-        carchive = CArchiveReader(str(path))
-    except Exception:
-        return
+        carchive = CArchiveReader(str(executable))
+    except Exception as error:
+        raise RuntimeError(
+            f"{executable} cannot be read as a PyInstaller archive: {error}"
+        ) from error
     for name in carchive.toc:
         try:
-            yield name, carchive.extract(name)
-        except Exception:
-            continue
-    if "PYZ.pyz" in carchive.toc:
+            data = carchive.extract(name)
+        except Exception as error:
+            raise RuntimeError(f"cannot extract {name!r} from {executable}: {error}") from error
+        if data is None:
+            raise RuntimeError(f"{name!r} in {executable} has no data")
+        yield name, data
+    if "PYZ.pyz" not in carchive.toc:
+        raise RuntimeError(f"{executable} has no PYZ archive")
+    try:
         pyz = carchive.open_embedded_archive("PYZ.pyz")
-        for name in pyz.toc:
+    except Exception as error:
+        raise RuntimeError(f"cannot open the PYZ archive of {executable}: {error}") from error
+    for name, entry in pyz.toc.items():
+        try:
             data = pyz.extract(name, raw=True)
-            if data is not None:
-                yield f"PYZ:{name}", data
+        except Exception as error:
+            raise RuntimeError(f"cannot extract PYZ module {name!r}: {error}") from error
+        if data is None:
+            if entry[0] == PYZ_ITEM_NSPKG:
+                continue
+            raise RuntimeError(f"PYZ module {name!r} in {executable} has no data")
+        yield f"PYZ:{name}", data
 
 
-def find_build_paths(root: Path, needles: Iterable[str]) -> list[str]:
-    """Where a build-machine path still appears in `root`, inside archives included."""
+def find_build_paths(
+    root: Path, needles: Iterable[str], pyinstaller_executables: Iterable[Path] = ()
+) -> list[str]:
+    """Where a build-machine path still appears in `root`, inside archives included.
+
+    Every file is scanned raw and, when it is a zip, member by member. The PyInstaller
+    executables named in `pyinstaller_executables` must exist and are scanned member by
+    member through `pyinstaller_members`, which fails instead of skipping anything. Members
+    are read one at a time, never all held at once.
+    """
     patterns = [needle.encode() for needle in needles if needle]
+    expected = {path.resolve() for path in pyinstaller_executables}
+    for path in expected:
+        if not path.is_file():
+            raise RuntimeError(f"the PyInstaller executable {path} is missing")
     found: list[str] = []
+
+    def check(where: str, data: bytes) -> None:
+        found.extend(f"{where}: {p.decode()}" for p in patterns if p in data)
+
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
-        blobs = [(relative, path.read_bytes())]
-        blobs += [(f"{relative}!{name}", data) for name, data in _archive_members(path)]
-        for where, data in blobs:
-            found += [f"{where}: {p.decode()}" for p in patterns if p in data]
+        check(relative, path.read_bytes())
+        if path.resolve() in expected:
+            for name, data in pyinstaller_members(path):
+                check(f"{relative}!{name}", data)
+        elif zipfile.is_zipfile(path):
+            for name, data in _zip_members(path):
+                check(f"{relative}!{name}", data)
     return found
 
 
@@ -238,7 +295,7 @@ def frozen_top_level_names(bundle: Path) -> set[str]:
 
 
 def _pyz_members(executable: Path) -> Iterable[tuple[str, bytes]]:
-    for name, data in _archive_members(executable):
+    for name, data in pyinstaller_members(executable):
         if name.startswith("PYZ:"):
             yield name[len("PYZ:") :], data
 
@@ -347,9 +404,10 @@ def write_python_notices(
     return notices
 
 
-def inventory_lines(root: Path) -> list[str]:
+def inventory_lines(root: Path, title: str | None = None) -> list[str]:
     """One line per file or link under `root`: SHA-256, size, octal mode and relative path."""
-    lines = ["# sha256\tsize\tmode\tpath"]
+    lines = [f"# {title}"] if title else []
+    lines.append("# sha256\tsize\tmode\tpath")
     for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix()
         if path.is_symlink():
@@ -361,11 +419,11 @@ def inventory_lines(root: Path) -> list[str]:
     return lines
 
 
-def write_inventory(root: Path, destination: Path) -> Path:
+def write_inventory(root: Path, destination: Path, title: str | None = None) -> Path:
     executable = root / executable_name()
     if os.name != "nt" and not os.access(executable, os.X_OK):
         raise RuntimeError(f"{executable} is not executable")
-    destination.write_text("\n".join(inventory_lines(root)) + "\n", encoding="utf-8")
+    destination.write_text("\n".join(inventory_lines(root, title)) + "\n", encoding="utf-8")
     return destination
 
 
@@ -382,6 +440,10 @@ def write_bundle_notices(bundle: Path, prefix: str) -> Path:
     )
 
 
+def pyinstaller_version() -> str:
+    return importlib.metadata.version("pyinstaller")
+
+
 def build() -> Path:
     python = venv_python()
     if not python.is_file():
@@ -393,6 +455,12 @@ def build() -> Path:
     _remove_generated(SANITIZED_DIR)
 
     facts = build_python_facts(python)
+    release = release_python_version()
+    if facts.get("version") != release:
+        raise RuntimeError(
+            f"the build environment runs CPython {facts.get('version')}, but releases embed "
+            f"{release}; run `python3 scripts/dev.py bridge-build`"
+        )
     prefix = facts["prefix"] or ""
     extra_paths: list[Path] = []
     if facts["name"] and facts["origin"]:
@@ -410,14 +478,21 @@ def build() -> Path:
     if not (built / executable_name()).is_file():
         raise RuntimeError(f"PyInstaller did not produce {built / executable_name()}")
     write_bundle_notices(built, prefix)
-    leaks = find_build_paths(built, [str(REPO_ROOT), str(Path.home()), prefix])
+    leaks = find_build_paths(
+        built, [str(REPO_ROOT), str(Path.home()), prefix], [built / executable_name()]
+    )
     if leaks:
         raise RuntimeError("the frozen bridge names build-machine paths:\n  " + "\n  ".join(leaks))
 
     OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)
     _remove_generated(OUTPUT_DIR)
     shutil.copytree(built, OUTPUT_DIR, symlinks=True)
-    write_inventory(OUTPUT_DIR, INVENTORY)
+    pyinstaller = pyinstaller_version()
+    write_inventory(
+        OUTPUT_DIR,
+        INVENTORY,
+        f"{NAME} {project_version()}, CPython {release}, PyInstaller {pyinstaller}",
+    )
     return OUTPUT_DIR
 
 
@@ -437,11 +512,16 @@ def check_smoke_output(stdout: str, version: str) -> None:
         raise RuntimeError(f"unexpected get_status response: {status}")
 
 
+ISOLATION_FAILED = 97
+
+
 def isolation_wrapper(hidden: Sequence[Path]) -> list[str] | None:
     """A Linux user/mount namespace in which `hidden` directories look empty, if available.
 
-    Proves the bridge needs neither the checkout nor the build interpreter; returns None where
-    unprivileged namespaces are unavailable, so the smoke still runs, without that proof.
+    Proves the bridge needs neither the checkout nor the build interpreter: each directory is
+    covered by an empty mount, then checked to be empty from inside the namespace (exit
+    `ISOLATION_FAILED` otherwise) before the bridge starts. Returns None where unprivileged
+    namespaces are unavailable.
     """
     unshare, mount = shutil.which("unshare"), shutil.which("mount")
     if sys.platform != "linux" or unshare is None or mount is None:
@@ -451,25 +531,38 @@ def isolation_wrapper(hidden: Sequence[Path]) -> list[str] | None:
     )
     if probe.returncode != 0:
         return None
-    mounts = " && ".join(f"{mount} -t tmpfs none '{path}'" for path in hidden if path.is_dir())
-    script = f'{mounts} && exec "$@"' if mounts else 'exec "$@"'
+    directories = [path for path in hidden if path.is_dir()]
+    steps = [f"{mount} -t tmpfs none '{path}'" for path in directories]
+    # Shell built-ins only: the bridge environment has no PATH. A visible entry, hidden or
+    # not, means the isolation did not take effect.
+    steps += [
+        f"for entry in '{path}'/* '{path}'/.[!.]*; do "
+        f'[ -e "$entry" ] && exit {ISOLATION_FAILED}; done; true'
+        for path in directories
+    ]
+    script = " && ".join([*steps, 'exec "$@"'])
     shell = shutil.which("sh") or "/bin/sh"
     return [unshare, "--user", "--map-root-user", "--mount", shell, "-c", script, "sh"]
 
 
-def smoke(source: Path = OUTPUT_DIR) -> str:
+def smoke(source: Path = OUTPUT_DIR, *, strict: bool = False) -> str:
     executable = source / executable_name()
     if not executable.is_file():
         raise RuntimeError(f"{executable} is missing; run `python3 scripts/dev.py bridge-build`")
     requests = "".join(json.dumps(request) + "\n" for request in SMOKE_REQUESTS)
     prefix = build_python_facts(venv_python())["prefix"]
+    hidden = [REPO_ROOT] + ([Path(prefix)] if prefix else [])
+    wrapper = isolation_wrapper(hidden)
+    if wrapper is None and strict:
+        raise RuntimeError(
+            "the strict smoke needs a Linux user/mount namespace (unshare) to hide the "
+            "checkout and the build Python, and none could be created"
+        )
     with tempfile.TemporaryDirectory(prefix="control-tv-bridge-smoke-") as scratch:
         copy = Path(scratch) / "python-bridge"
         shutil.copytree(source, copy, symlinks=True)
-        hidden = [REPO_ROOT] + ([Path(prefix)] if prefix else [])
-        wrapper = isolation_wrapper(hidden) or []
         completed = subprocess.run(
-            [*wrapper, str(copy / executable_name())],
+            [*(wrapper or []), str(copy / executable_name())],
             input=requests,
             capture_output=True,
             text=True,
@@ -477,13 +570,18 @@ def smoke(source: Path = OUTPUT_DIR) -> str:
             env={"PATH": os.devnull},
             timeout=SMOKE_TIMEOUT_SECONDS,
         )
+    if wrapper is not None and completed.returncode == ISOLATION_FAILED:
+        raise RuntimeError("the checkout or the build Python was still visible in the namespace")
     if completed.returncode != 0:
         raise RuntimeError(
             f"the frozen bridge exited with {completed.returncode}: {completed.stderr.strip()}"
         )
     version = project_version()
     check_smoke_output(completed.stdout, version)
-    isolation = "checkout and build Python hidden" if wrapper else "no namespace isolation"
+    if wrapper is None:
+        isolation = "no namespace isolation"
+    else:
+        isolation = "isolated: " + ", ".join(f"{path} empty" for path in hidden if path.is_dir())
     return (
         f"frozen bridge {version} answered outside the checkout ({isolation}) "
         "and exited on end of input"
@@ -492,11 +590,11 @@ def smoke(source: Path = OUTPUT_DIR) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args not in (["build"], ["smoke"]):
-        print("usage: build_bridge.py build|smoke", file=sys.stderr)
+    if args not in (["build"], ["smoke"], ["smoke", "--strict"]):
+        print("usage: build_bridge.py build | smoke [--strict]", file=sys.stderr)
         return 2
     try:
-        print(build() if args == ["build"] else smoke())
+        print(build() if args == ["build"] else smoke(strict="--strict" in args))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

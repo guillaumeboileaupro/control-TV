@@ -272,7 +272,8 @@ def release() -> Path:
     with tempfile.TemporaryDirectory(prefix="control-tv-deb-") as scratch:
         subprocess.run(["dpkg-deb", "-x", str(deb), scratch], check=True)
         needles = [str(REPO_ROOT), str(Path.home()), str(cargo_home()), str(rustup_home())]
-        leaks = bridge.find_build_paths(Path(scratch), needles)
+        installed_bridge = Path(scratch) / INSTALL_ROOT / "python-bridge" / bridge.NAME
+        leaks = bridge.find_build_paths(Path(scratch), needles, [installed_bridge])
     if leaks:
         raise RuntimeError("the package names build-machine paths:\n  " + "\n  ".join(leaks))
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import stat
 import subprocess
 import sys
@@ -67,8 +69,19 @@ def fake_pyinstaller(
     monkeypatch.setattr(
         build,
         "build_python_facts",
-        lambda python: facts or {"prefix": "/opt/build-python", "name": None, "origin": None},
+        lambda python: (
+            facts
+            or {
+                "prefix": "/opt/build-python",
+                "name": None,
+                "origin": None,
+                "version": build.release_python_version(),
+            }
+        ),
     )
+    # The fake executable is not a PyInstaller archive; the archive scan is tested on its own.
+    monkeypatch.setattr(build, "pyinstaller_members", lambda executable: iter(()))
+    monkeypatch.setattr(build, "pyinstaller_version", lambda: "6.22.3")
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append({"command": command, **kwargs})
@@ -191,20 +204,159 @@ def test_a_clean_tree_has_no_build_paths(tmp_path: Path) -> None:
     assert build.find_build_paths(tmp_path, ["/home/builder"]) == []
 
 
-def test_the_real_frozen_archive_reader_is_used_for_pyinstaller_executables(
-    tmp_path: Path,
-) -> None:
-    pytest.importorskip("PyInstaller")
-    from PyInstaller.archive.writers import CArchiveWriter
+def require_pyinstaller() -> None:
+    """Skip without PyInstaller, except where it must be present (the release CI job)."""
+    if os.environ.get("CONTROL_TV_REQUIRE_PYINSTALLER") == "1":
+        import PyInstaller  # noqa: F401
+    else:
+        pytest.importorskip("PyInstaller")
 
+
+def frozen_executable(
+    directory: Path,
+    modules: dict[str, str],
+    *,
+    namespaces: tuple[str, ...] = ("google",),
+    with_pyz: bool = True,
+) -> Path:
+    """A real PyInstaller archive: a PKG holding an entry script and a PYZ of `modules`."""
+    from PyInstaller.archive.writers import CArchiveWriter, ZlibArchiveWriter
+
+    sources = directory / "sources"
+    sources.mkdir(parents=True)
+    entries: list[tuple[str, str | None, str]] = []
+    code = {}
+    for name, text in modules.items():
+        source = sources / f"{name}.py"
+        source.write_text(text, encoding="utf-8")
+        code[name] = compile(text, str(source), "exec")
+        entries.append((name, str(source), "PYMODULE"))
+    entries += [(name, None, "PYMODULE") for name in namespaces]
+    pyz = sources / "PYZ.pyz"
+    ZlibArchiveWriter(str(pyz), entries, code)
+    entry = sources / "bridge_entry.py"
+    entry.write_text("main()\n", encoding="utf-8")
+    members = [("bridge_entry", str(entry), True, "s")]
+    if with_pyz:
+        members.append(("PYZ.pyz", str(pyz), False, "z"))
+    bundle = directory / "bundle"
+    bundle.mkdir()
+    executable = bundle / "control-tv-bridge"
+    CArchiveWriter(str(executable), members, "")
+    return executable
+
+
+def test_a_clean_frozen_archive_passes_the_scan_with_every_member_read(tmp_path: Path) -> None:
+    require_pyinstaller()
+    executable = frozen_executable(tmp_path, {"zeroconf": "X = 1\n", "certifi": "Y = 2\n"})
+
+    names = [name for name, _ in build.pyinstaller_members(executable)]
+
+    assert names == ["bridge_entry", "PYZ.pyz", "PYZ:zeroconf", "PYZ:certifi"]
+    assert build.find_build_paths(executable.parent, ["/srv/checkout"], [executable]) == []
+
+
+def test_a_build_path_inside_a_frozen_module_is_found(tmp_path: Path) -> None:
+    require_pyinstaller()
+    executable = frozen_executable(tmp_path, {"leaky": "PREFIX = '/srv/checkout/src'\n"})
+
+    found = build.find_build_paths(executable.parent, ["/srv/checkout"], [executable])
+
+    assert found == ["control-tv-bridge!PYZ:leaky: /srv/checkout"]
+
+
+def test_an_executable_that_is_not_a_pyinstaller_archive_fails_the_scan(tmp_path: Path) -> None:
+    require_pyinstaller()
     executable = tmp_path / "control-tv-bridge"
-    source = tmp_path / "payload.txt"
-    source.write_bytes(b"compiled from /srv/checkout/src")
-    CArchiveWriter(str(executable), [("payload.txt", str(source), True, "x")], "")
+    executable.write_bytes(b"\x7fELF but no archive")
 
-    found = build.find_build_paths(tmp_path, ["/srv/checkout"])
+    with pytest.raises(RuntimeError, match="cannot be read as a PyInstaller archive"):
+        build.find_build_paths(tmp_path, ["/srv/checkout"], [executable])
 
-    assert any(hit.startswith("control-tv-bridge!payload.txt") for hit in found), found
+
+def test_a_missing_expected_executable_fails_the_scan(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match=r"PyInstaller executable .* is missing"):
+        build.find_build_paths(tmp_path, ["/srv/checkout"], [tmp_path / "control-tv-bridge"])
+
+
+def test_a_member_that_cannot_be_extracted_fails_the_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_pyinstaller()
+    from PyInstaller.archive.readers import CArchiveReader
+
+    executable = frozen_executable(tmp_path, {"zeroconf": "X = 1\n"})
+    real_extract = CArchiveReader.extract
+
+    def extract(self: Any, name: str) -> Any:
+        if name == "bridge_entry":
+            raise ValueError("corrupt member")
+        return real_extract(self, name)
+
+    monkeypatch.setattr(CArchiveReader, "extract", extract)
+
+    with pytest.raises(RuntimeError, match="cannot extract 'bridge_entry'"):
+        build.find_build_paths(executable.parent, ["/srv/checkout"], [executable])
+
+
+def test_a_partly_readable_pyz_fails_even_when_the_readable_part_is_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_pyinstaller()
+    from PyInstaller.loader.pyimod01_archive import ZlibArchiveReader
+
+    # The unreadable module is the one that names the build path: skipping it would pass.
+    executable = frozen_executable(
+        tmp_path, {"clean": "X = 1\n", "leaky": "PREFIX = '/srv/checkout/src'\n"}
+    )
+    real_extract = ZlibArchiveReader.extract
+
+    def extract(self: Any, name: str, raw: bool = False) -> Any:
+        if name == "leaky":
+            raise OSError("truncated module")
+        return real_extract(self, name, raw=raw)
+
+    monkeypatch.setattr(ZlibArchiveReader, "extract", extract)
+
+    with pytest.raises(RuntimeError, match="cannot extract PYZ module 'leaky'"):
+        build.find_build_paths(executable.parent, ["/srv/checkout"], [executable])
+
+
+def test_a_pyz_module_without_data_fails_but_a_namespace_package_does_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_pyinstaller()
+    from PyInstaller.loader.pyimod01_archive import ZlibArchiveReader
+
+    executable = frozen_executable(tmp_path, {"zeroconf": "X = 1\n"}, namespaces=("google",))
+    assert "PYZ:google" not in [name for name, _ in build.pyinstaller_members(executable)]
+    real_extract = ZlibArchiveReader.extract
+
+    def extract(self: Any, name: str, raw: bool = False) -> Any:
+        return None if name == "zeroconf" else real_extract(self, name, raw=raw)
+
+    monkeypatch.setattr(ZlibArchiveReader, "extract", extract)
+
+    with pytest.raises(RuntimeError, match=r"PYZ module 'zeroconf' .* has no data"):
+        list(build.pyinstaller_members(executable))
+
+
+def test_an_archive_without_its_pyz_fails_the_scan(tmp_path: Path) -> None:
+    require_pyinstaller()
+    executable = frozen_executable(tmp_path, {"zeroconf": "X = 1\n"}, with_pyz=False)
+
+    with pytest.raises(RuntimeError, match="has no PYZ archive"):
+        build.find_build_paths(executable.parent, ["/srv/checkout"], [executable])
+
+
+def test_the_license_inventory_fails_with_the_archive_it_cannot_read(tmp_path: Path) -> None:
+    require_pyinstaller()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "control-tv-bridge").write_bytes(b"not an archive")
+
+    with pytest.raises(RuntimeError, match="cannot be read as a PyInstaller archive"):
+        build.frozen_top_level_names(bundle)
 
 
 def test_build_freezes_into_dist_with_the_sanitized_module_on_the_search_path(
@@ -214,7 +366,12 @@ def test_build_freezes_into_dist_with_the_sanitized_module_on_the_search_path(
     origin.write_text("build_time_vars = {'prefix': '/opt/build-python'}\n", encoding="utf-8")
     calls = fake_pyinstaller(
         monkeypatch,
-        facts={"prefix": "/opt/build-python", "name": "_sysconfigdata_x", "origin": str(origin)},
+        facts={
+            "prefix": "/opt/build-python",
+            "name": "_sysconfigdata_x",
+            "origin": str(origin),
+            "version": build.release_python_version(),
+        },
     )
 
     output = build.build()
@@ -222,7 +379,12 @@ def test_build_freezes_into_dist_with_the_sanitized_module_on_the_search_path(
     assert output == project / "dist" / "python-bridge"
     assert (output / build.executable_name()).read_bytes() == b"frozen"
     assert (output / "licenses" / "THIRD_PARTY_NOTICES.txt").is_file()
-    inventory = [line.split("\t") for line in build.INVENTORY.read_text().splitlines()[1:]]
+    lines = build.INVENTORY.read_text().splitlines()
+    assert lines[0] == (
+        f"# control-tv-bridge {build.project_version()}, "
+        f"CPython {build.release_python_version()}, PyInstaller 6.22.3"
+    )
+    inventory = [line.split("\t") for line in lines if not line.startswith("#")]
     assert [entry[3] for entry in inventory] == [
         "control-tv-bridge",
         "licenses/THIRD_PARTY_NOTICES.txt",
@@ -375,7 +537,12 @@ def test_the_isolation_hides_each_directory_with_an_empty_mount(
     assert wrapper is not None
     assert wrapper[:4] == ["/usr/bin/unshare", "--user", "--map-root-user", "--mount"]
     script = wrapper[wrapper.index("-c") + 1]
-    assert script == f"/usr/bin/mount -t tmpfs none '{tmp_path}' && exec \"$@\""
+    assert script == (
+        f"/usr/bin/mount -t tmpfs none '{tmp_path}' && "
+        f"for entry in '{tmp_path}'/* '{tmp_path}'/.[!.]*; do "
+        f'[ -e "$entry" ] && exit {build.ISOLATION_FAILED}; done; true && '
+        'exec "$@"'
+    )
 
 
 def test_an_unknown_action_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -482,13 +649,14 @@ def test_the_notices_copy_every_license_text_and_name_what_is_missing(tmp_path: 
         bundle,
         [certifi, zeroconf],
         cpython,
-        "3.12.13",
+        build.release_python_version(),
         pyinstaller,
     )
 
     text = notices.read_text(encoding="utf-8")
     licenses = bundle / "licenses"
-    assert (licenses / "CPython-3.12.13" / "LICENSE.txt").read_text() == "PSF"
+    cpython_dir = f"CPython-{build.release_python_version()}"
+    assert (licenses / cpython_dir / "LICENSE.txt").read_text() == "PSF"
     assert (licenses / "zeroconf-0.151.3" / "LICENSE").read_text() == "zeroconf license"
     assert (licenses / "certifi-2026.7.22" / "LICENSE").is_file()
     assert (licenses / "PyInstaller-6.22.3" / "LICENSE").is_file()
@@ -501,11 +669,103 @@ def test_the_notices_copy_every_license_text_and_name_what_is_missing(tmp_path: 
     assert "not a legal review" in text
 
 
-def test_frozen_distributions_follow_the_frozen_top_level_names(tmp_path: Path) -> None:
+def test_frozen_distributions_follow_the_frozen_top_level_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     bundle = tmp_path / "bundle"
     (bundle / "_internal" / "certifi").mkdir(parents=True)
     (bundle / "_internal" / "libpython3.12.so.1.0").write_bytes(b"")
+    monkeypatch.setattr(
+        build, "pyinstaller_members", lambda executable: iter([("PYZ:certifi.core", b"")])
+    )
 
     found = build.frozen_distributions(bundle, {"certifi": ["certifi"], "pytest": ["pytest"]})
 
     assert [d.metadata["Name"] for d in found] == ["certifi"]
+
+
+def test_the_release_python_is_one_exact_version() -> None:
+    version = build.release_python_version()
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
+    assert version == (ROOT / "packaging" / "release-python-version").read_text().strip()
+
+
+@pytest.mark.parametrize("content", ["3.12", "3.12.x", "", "3.12.15\n3.12.13"])
+def test_a_release_python_that_is_not_one_exact_version_is_refused(
+    tmp_path: Path, content: str
+) -> None:
+    pin = tmp_path / "release-python-version"
+    pin.write_text(content, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="must hold one exact CPython version"):
+        build.release_python_version(pin)
+
+
+def test_the_build_refuses_any_other_cpython_than_the_release_one(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = fake_pyinstaller(
+        monkeypatch,
+        facts={"prefix": "/opt/build-python", "name": None, "origin": None, "version": "3.12.13"},
+    )
+
+    with pytest.raises(RuntimeError, match=r"runs CPython 3\.12\.13, but releases embed"):
+        build.build()
+
+    assert calls == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake bridge is a POSIX shell script")
+def test_the_strict_smoke_fails_when_no_isolation_can_be_set_up(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = fake_frozen_bridge(
+        project,
+        f"while read -r line; do :; done\necho '{json.dumps(PING)}'\n"
+        f"echo '{json.dumps(NOT_FOUND)}'\n",
+    )
+    monkeypatch.setattr(build, "build_python_facts", lambda python: {"prefix": None})
+    monkeypatch.setattr(build, "isolation_wrapper", lambda hidden: None)
+    monkeypatch.setattr(build, "project_version", lambda: "0.1.0")
+
+    with pytest.raises(RuntimeError, match="strict smoke needs a Linux user/mount namespace"):
+        build.smoke(output, strict=True)
+    assert "no namespace isolation" in build.smoke(output)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake bridge is a POSIX shell script")
+def test_a_namespace_that_still_shows_a_hidden_directory_fails_the_smoke(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = fake_frozen_bridge(project, "exit 0\n")
+    monkeypatch.setattr(build, "build_python_facts", lambda python: {"prefix": None})
+    # Stands for the namespace's own check finding the checkout still visible.
+    wrapper = ["/bin/sh", "-c", f"exit {build.ISOLATION_FAILED}", "sh"]
+    monkeypatch.setattr(build, "isolation_wrapper", lambda hidden: wrapper)
+
+    with pytest.raises(RuntimeError, match="still visible in the namespace"):
+        build.smoke(output, strict=True)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux user and mount namespaces")
+def test_the_namespace_check_detects_a_directory_left_visible(tmp_path: Path) -> None:
+    """The real check, run without the mounts: a visible entry exits with ISOLATION_FAILED."""
+    (tmp_path / ".hidden-file").write_text("x", encoding="utf-8")
+    wrapper = build.isolation_wrapper([tmp_path])
+    if wrapper is None:
+        pytest.skip("unprivileged user namespaces are not available here")
+    script = wrapper[wrapper.index("-c") + 1]
+    checks_only = script.split(" && ", 1)[1]
+
+    visible = subprocess.run(["/bin/sh", "-c", checks_only, "sh", "true"], check=False)
+    (tmp_path / ".hidden-file").unlink()
+    empty = subprocess.run(["/bin/sh", "-c", checks_only, "sh", "true"], check=False)
+
+    assert visible.returncode == build.ISOLATION_FAILED
+    assert empty.returncode == 0
+
+
+def test_the_strict_flag_is_the_only_smoke_option(capsys: pytest.CaptureFixture[str]) -> None:
+    assert build.main(["smoke", "--lax"]) == 2
+    assert "smoke [--strict]" in capsys.readouterr().err
