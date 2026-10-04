@@ -259,6 +259,18 @@ def _reported_muted(reply: dict[str, object] | None) -> bool | None:
     return muted if isinstance(muted, bool) else None
 
 
+def _reported_standby(reply: dict[str, object] | None) -> bool | None:
+    """The standby state exactly as the receiver status reply reports it (`status.isStandBy`).
+
+    PyChromecast's `CastStatus` substitutes True when a video device (cast type "cast") omits
+    `isStandBy`, which would show a standby nobody reported. Anything but an explicit JSON
+    boolean is unknown.
+    """
+    status = reply.get("status") if isinstance(reply, dict) else None
+    standby = status.get("isStandBy") if isinstance(status, dict) else None
+    return standby if isinstance(standby, bool) else None
+
+
 class PyChromecastTransport:
     """Translate PyChromecast devices, state and failures into the shared domain."""
 
@@ -367,7 +379,7 @@ class PyChromecastTransport:
                 app_name=receiver.display_name if receiver is not None else None,
                 volume_level=_reported_volume_level(receiver_reply),
                 muted=_reported_muted(receiver_reply),
-                standby=receiver.is_stand_by if receiver is not None else None,
+                standby=_reported_standby(receiver_reply),
                 volume_control_type=_reported_volume_control_type(receiver_reply),
             ),
             media=media,

@@ -139,6 +139,10 @@ class ReceiverStatus:
             or isinstance(self.volume_control_type, VolumeControlType),
             f"invalid volume control type: {self.volume_control_type!r}",
         )
+        _require(
+            self.standby is None or isinstance(self.standby, bool),
+            f"standby must be a boolean or None: {self.standby!r}",
+        )
         if self.volume_level is not None:
             # A boolean is never a level, and NaN fails the range check.
             _require(
