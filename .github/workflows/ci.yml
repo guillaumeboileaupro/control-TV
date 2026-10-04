@@ -28,6 +28,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          # Pinned: uv decides which CPython patch it installs, and release bridges embed
+          # exactly packaging/release-python-version.
+          version: "0.12.23"
           enable-cache: true
 
       # scripts/dev.py is the single source of truth for these commands: local
@@ -85,6 +88,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          # Pinned: uv decides which CPython patch it installs, and release bridges embed
+          # exactly packaging/release-python-version.
+          version: "0.12.23"
           enable-cache: true
 
       # The Python environment is needed too: `cargo test` spawns the real
@@ -146,6 +152,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          # Pinned: uv decides which CPython patch it installs, and release bridges embed
+          # exactly packaging/release-python-version.
+          version: "0.12.23"
           enable-cache: true
 
       - name: Install the locked, reproducible Python environment
@@ -159,11 +168,20 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --release -- -D warnings
 
-      # Freeze the bridge, smoke it outside the checkout, build the release .deb with
-      # remapped build paths, scan the package for build-machine paths, check its content
-      # and modes, and write the bridge inventory and dist/SHA256SUMS.
+      # Freeze the bridge on the release CPython, smoke it outside the checkout in a namespace
+      # where the checkout and the build Python are verified empty (the job fails if that
+      # isolation cannot be set up), build the release .deb with remapped build paths, scan
+      # the package (fail-closed on the frozen archive), check its content and modes, and
+      # write the bridge inventory and dist/SHA256SUMS.
       - name: Build, smoke and package the Linux release
         run: python3 scripts/dev.py release-deb
+
+      # The archive-scanner regressions need PyInstaller, which only this job installs: here
+      # they must run, not skip.
+      - name: Run the packaging tests with PyInstaller required
+        env:
+          CONTROL_TV_REQUIRE_PYINSTALLER: "1"
+        run: .venv/bin/python -m pytest -q -rs tests/test_packaging_build.py tests/test_release_linux.py
 
       # Installs the package on this runner and pings the installed bridge directly, with an
       # empty environment from outside the checkout. It does not launch the application.

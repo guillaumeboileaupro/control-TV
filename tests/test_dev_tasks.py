@@ -568,10 +568,11 @@ def test_bridge_build_syncs_the_packaging_group_then_freezes(
         return 0
 
     monkeypatch.setattr(dev, "_run", fake_run)
+    _write(repo / "packaging" / "release-python-version", "3.12.15\n")
 
     assert dev.main(["bridge-build"], root=repo) == 0
 
-    assert log.read_text().splitlines() == ["sync --locked --group packaging"]
+    assert log.read_text().splitlines() == ["sync --locked --group packaging --python 3.12.15"]
     assert calls == [[str(repo / "packaging" / "build_bridge.py"), "build"]]
 
 
@@ -579,6 +580,7 @@ def test_bridge_build_does_not_freeze_when_the_sync_fails(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[list[str]] = []
+    _write(repo / "packaging" / "release-python-version", "3.12.15\n")
 
     def record(root: Path, args: Sequence[str]) -> int:
         calls.append(list(args))
@@ -623,11 +625,16 @@ def test_release_deb_builds_and_smokes_the_bridge_before_the_package(
         return 0
 
     monkeypatch.setattr(dev, "cmd_bridge_build", step("bridge-build"))
-    monkeypatch.setattr(dev, "cmd_bridge_smoke", step("bridge-smoke"))
+    monkeypatch.setattr(dev, "cmd_bridge_smoke", step("informative-smoke"))
     monkeypatch.setattr(dev, "_run", record)
 
     assert dev.main(["release-deb"], root=repo) == 0
-    assert steps == ["bridge-build", "bridge-smoke", str(repo / "packaging" / "release_linux.py")]
+    # The release runs the strict smoke, never the informative one that may skip isolation.
+    assert steps == [
+        "bridge-build",
+        f"{repo / 'packaging' / 'build_bridge.py'} smoke --strict",
+        str(repo / "packaging" / "release_linux.py"),
+    ]
 
 
 def test_release_deb_stops_when_the_smoke_fails(
@@ -635,13 +642,12 @@ def test_release_deb_stops_when_the_smoke_fails(
 ) -> None:
     released: list[Sequence[str]] = []
     monkeypatch.setattr(dev, "cmd_bridge_build", lambda root: 0)
-    monkeypatch.setattr(dev, "cmd_bridge_smoke", lambda root: 1)
 
     def record(root: Path, args: Sequence[str]) -> int:
         released.append(args)
-        return 0
+        return 1 if "--strict" in args else 0
 
     monkeypatch.setattr(dev, "_run", record)
 
     assert dev.main(["release-deb"], root=repo) == 1
-    assert released == []
+    assert [list(args)[1:] for args in released] == [["smoke", "--strict"]]

@@ -16,7 +16,8 @@ Commands:
   ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
-  release-deb  bridge-build, bridge-smoke, then the release .deb, its notices and dist/SHA256SUMS
+  release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
+               dist/SHA256SUMS
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -25,8 +26,10 @@ Commands:
 is pinned to the committed lockfile; every other Python command only needs the resulting
 `.venv` and otherwise uses the standard library only. `rust-check` needs `cargo`
 (https://rustup.rs/); `ui-check` needs `npm` and `ui/node_modules` (run `npm install`
-in `ui/` first) - neither is installed or invoked by this script. `bridge-build` adds the
-locked `packaging` dependency group (PyInstaller) to `.venv`; `setup` removes it again.
+in `ui/` first) - neither is installed or invoked by this script. `bridge-build` rebuilds
+`.venv` on the exact CPython release bridges embed (`packaging/release-python-version`, which
+needs a uv that knows that version) with the locked `packaging` group (PyInstaller); `setup`
+removes the group again.
 
 Cleanup only ever deletes paths from the fixed allowlist below, resolved inside the
 repository. Shared caches (Cargo, Gradle, Android SDK/NDK, pip, uv) are never touched.
@@ -407,27 +410,33 @@ def cmd_ui_check(root: Path) -> int:
     return 0
 
 
-def _run_bridge_packaging(root: Path, action: str) -> int:
-    return _run(root, [str(root / "packaging" / "build_bridge.py"), action])
+def _run_bridge_packaging(root: Path, *action: str) -> int:
+    return _run(root, [str(root / "packaging" / "build_bridge.py"), *action])
+
+
+def release_python_version(root: Path) -> str:
+    """The exact CPython version release bridges embed (`packaging/release-python-version`)."""
+    return (root / "packaging" / "release-python-version").read_text(encoding="utf-8").strip()
 
 
 def cmd_bridge_build(root: Path) -> int:
-    """Freeze the bridge with the locked PyInstaller, entirely inside the repository."""
-    code = _run_uv(root, ["sync", "--locked", "--group", "packaging"])
+    """Freeze the bridge with the locked PyInstaller and the release CPython, in the repo."""
+    version = release_python_version(root)
+    code = _run_uv(root, ["sync", "--locked", "--group", "packaging", "--python", version])
     return code or _run_bridge_packaging(root, "build")
 
 
 def cmd_bridge_smoke(root: Path) -> int:
+    """Informative local smoke: isolated when the system allows it, and says whether it was."""
     return _run_bridge_packaging(root, "smoke")
 
 
 def cmd_release_deb(root: Path) -> int:
     """The Linux release package, built only around a frozen bridge that passed its smoke."""
-    for step in (cmd_bridge_build, cmd_bridge_smoke):
-        code = step(root)
-        if code != 0:
-            return code
-    return _run(root, [str(root / "packaging" / "release_linux.py")])
+    code = cmd_bridge_build(root)
+    # A release requires the isolated smoke: no isolation is a failure, never a fallback.
+    code = code or _run_bridge_packaging(root, "smoke", "--strict")
+    return code or _run(root, [str(root / "packaging" / "release_linux.py")])
 
 
 def build_parser() -> argparse.ArgumentParser:
