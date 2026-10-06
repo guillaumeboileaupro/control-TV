@@ -38,13 +38,13 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import anyio
+from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
 import control_tv
 from control_tv.bridge import INTERNAL_ERROR_CODE, dispatch
 from control_tv.service import ControlService
-from mcp import types
 
 LOGGER = logging.getLogger("control_tv.mcp")
 
