@@ -59,7 +59,7 @@ CastTransport -> PyChromecastTransport (the only module that imports pychromecas
 
 ## Android (candidate architecture / spike)
 
-Owner decision of 2026-10-04, **a candidate architecture under a spike** until it is validated on a real phone (`DEVELOPMENT_PLAN.md`, Phase 7b); it becomes the validated Android MVP architecture only then.
+Owner decision of 2026-10-04, **a candidate architecture under a spike** until it is validated on a real phone (`DEVELOPMENT_PLAN.md`, Phase 7b); it becomes the validated Android MVP architecture only then. Partial real-device evidence (2026-10-06, one physical arm64 phone, PR #30 not merged): the APK installed and launched, the embedded CPython started, the multicast lock was held and the app discovered receivers on the real local network, with no Cast control command sent. The explicit `control_tv` import and ping evidence is still pending, so the architecture stays a candidate.
 
 ```text
 ui/ (same TypeScript UI, Android WebView)
@@ -78,6 +78,7 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 - **Runtime:** CPython 3.12 from Chaquopy 17.0.0, `arm64-v8a` only, `minSdk` 24. The embedded packages are the control layer's locked runtime dependencies as pure-Python wheels, hash-checked against `uv.lock` and installed offline (`packaging/android_python.py`); protobuf uses its pure-Python implementation and zeroconf is built without its optional Cython extensions. The APK carries its own Python: it does not use the checkout, a `.venv` or a host Python.
 - **Threads:** Tauri delivers plugin commands on the Android main thread; the plugin runs Python on its own single worker thread, so the shared layer stays single-flight as on the desktop and the window never blocks on a discovery or a command.
 - **Discovery:** the app holds Wi-Fi's multicast lock while in the foreground (mDNS replies are otherwise often filtered) and releases it in the background.
+- **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
 - **Limitation:** Python lives in the app process, so the desktop recovery (kill and relaunch the bridge process, PR #29) has no equivalent; a request stuck in Python leaves later requests `bridge_busy` until the app restarts.
 
 ## Planned native integrations
