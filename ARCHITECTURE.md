@@ -100,7 +100,7 @@ Media/service resolution is a separate concern from low-level Cast transport whe
 
 MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application.
 
-## MCP server (Phase 6; validated by automated tests only)
+## MCP server (Phase 6; automated tests, and read-only with a real MCP client)
 
 ```text
 MCP client (Codex CLI, Claude Desktop, ...) launches the server as a subprocess

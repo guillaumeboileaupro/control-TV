@@ -31,7 +31,7 @@ Critical path:
 - [x] **E. Autonomous `.deb` really installed and validated** on Ubuntu 22.04 without the checkout, the `.venv` or a system Python (PR #26 content): installed, the GUI application launched, its bundled bridge pinged through it, purged (local, commit `fba82cc`, whose code is what PR #26 merged); the `linux-release` CI job installs the package, pings the installed bridge directly and purges it on every run (no GUI). Not a published release: the Debian/Ubuntu target stays open in Phase 7 while the license blockers remain.
 - [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
 - [x] **H. Android APK MVP (Phase 7b), complete at its defined level:** PR #30 merged into `main` (`3bcb516`, 2026-10-06). On a physical arm64 phone the spike gates A-H all passed (install, launch, embedded CPython, `control_tv` imported and its ping answered `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`, multicast lock held, real discovery), and with the APK of `a2ff3bb` the owner saw the Control-TV launcher icon and the page clear of the status and navigation bars. Further Android hardware validation is separate work and stays open (Phase 7b, "Android hardware validation still open"): receiver status, the control commands, display cutout and rotation, broader responsive and touch use.
-- [ ] **J. MCP control-TV adapter (Phase 6):** the current priority; a local stdio MCP server is implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (not merged, not validated with a real client or device); see Phase 6.
+- [ ] **J. MCP control-TV adapter (Phase 6):** the current priority; a local stdio MCP server is implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (not merged); validated read-only with a real MCP client (Codex CLI) against the real local network on 2026-10-06, no control command sent; see Phase 6.
 - [ ] **I. Android home-screen widget (Phase 7b):** after the MCP adapter.
 - [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
 - [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
@@ -283,7 +283,7 @@ Exit criteria:
 
 ## Phase 6 - MCP adapter
 
-Critical-path item J, the current priority (owner decision 2026-10-06). Implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (from `main` `3bcb516`), **not merged**; nothing here is on `main` yet, and nothing was run with a real MCP client or a real device.
+Critical-path item J, the current priority (owner decision 2026-10-06). Implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (from `main` `3bcb516`), **not merged**; nothing here is on `main` yet. Validated with a real MCP client read-only (discovery and one status, below); no control command has been sent through MCP.
 
 Transport decision (verified 2026-10-06 against the sources below; recheck before relying on them later):
 - the MCP specification (revisions 2025-06-18 and 2026-07-28) defines two standard transports, stdio and Streamable HTTP, and says clients SHOULD support stdio whenever possible; a local Streamable HTTP server must validate `Origin`, bind to localhost and should authenticate;
@@ -313,7 +313,8 @@ Limitations and findings:
 - [ ] the MCP process has its own `ControlService` and discovery cache, separate from the window's bridge: a `deviceId` must be discovered in the MCP process first (`device_not_found` otherwise), and both processes can talk to the same receiver;
 - [ ] the shared error contract stays coarser than delivery: `device_unavailable` and `command_rejected` mix failures before and after a write, so MCP reports both as `unknown`; a finer adapter taxonomy is possible later but not part of PR #31;
 - [ ] not packaged: the release `.deb` and the Android app do not contain the MCP server; it runs from a development checkout;
-- [ ] real-client validation (Codex CLI listing the tools and reading a status) and real-device validation (read-only discovery and status through MCP, then commands one at a time) are not done; commands only with the owner's explicit go-ahead.
+- [ ] **real MCP client, read-only (2026-10-06, head `786e428`, recorded separately from the automated tests; checked when PR #31 merges):** the documented entry point `.venv/bin/python -m control_tv.mcp_server`, started over stdio. Protocol: the MCP SDK's reference stdio client (`mcp` 1.30.0) completed `initialize` (server `control-tv` 0.1.0, protocol `2025-11-25`) and `tools/list`: exactly the eight tools, with closed input schemas, read-only and idempotent hints only on `discover_devices` and `get_status`. Real client: Codex CLI 0.153.0 (`codex exec`, read-only sandbox, ephemeral session, the server configured only through per-run overrides with `enabled_tools = ["discover_devices", "get_status"]`, so the command tools were never offered to the model) called `discover_devices` (3 receivers found on the real local network, each with `id`, `friendlyName`, `kind`, `modelName` only) and then `get_status` once for the first discovered device (connected; receiver fields reported; no media session at that moment, so `contentId` filtering on live media was not exercised by this run, only by the automated tests). Privacy checks on both results: no IP address, host, port, `contentId`, path, traceback or `Errno`. The server's own log shows exactly one `tools/list` and two tool calls (`discover_devices: ok`, `get_status: ok`); Codex's event log shows only those two MCP calls and no shell or other tool use. **Zero control commands were sent.** Device names, ids and the status reached Codex's model, as documented. No device data is recorded here;
+- [ ] commands through MCP against a real receiver (one at a time, `play`/`pause`/`stop`/`seek`/`set_volume`/`set_muted`): not done; only with the owner's explicit go-ahead.
 
 Deliverables:
 - [ ] small typed MCP tool surface over shared control/domain capabilities (implemented on the branch, not merged);
@@ -327,7 +328,7 @@ Exit criteria:
 - [ ] tool/schema tests are separated from real-device validation (on the branch; real-device validation not done);
 - [ ] MCP lifecycle/state interactions are explicit and testable (on the branch).
 
-Next actions: review and merge PR #31 (owner decision); configure Codex CLI with the stdio server and validate `list_tools`, then read-only discovery and status against a real receiver (owner go-ahead); fix the window's delivery wording ("Known open items"); then the Android widget (item I).
+Next actions: review and merge PR #31 (owner decision); commands through MCP against a real receiver only with an explicit go-ahead; fix the window's delivery wording ("Known open items"); then the Android widget (item I).
 
 ## Phase 7 - Cross-platform packaging
 
