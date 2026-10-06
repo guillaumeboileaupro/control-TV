@@ -28,7 +28,7 @@ The UI and the MCP adapter are thin. Device discovery, validation and state belo
 Prerequisite: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). `uv` resolves and pins every dependency (including its own managed Python) into `uv.lock`, so `setup` reproduces the exact same `.venv` on Linux, Windows and macOS. Only Linux has been exercised so far.
 
 ```bash
-python3 scripts/dev.py setup        # create .venv from uv.lock (uv sync --locked)
+python3 scripts/dev.py setup        # create .venv from uv.lock, with the MCP extra (uv sync --locked --extra mcp)
 python3 scripts/dev.py lock         # regenerate uv.lock after changing a dependency
 python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest, dependency check
 python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
@@ -88,7 +88,7 @@ python3 packaging/android_icon.py       # after a logo change: regenerate the la
 
 The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for personal sideloading (`adb install`); there is no Google Play publication objective.
 
-MCP server (`DEVELOPMENT_PLAN.md` Phase 6): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency (`control-tv[mcp]`, the official MCP Python SDK). The client starts it; for Codex, in `~/.codex/config.toml`:
+MCP server (`DEVELOPMENT_PLAN.md` Phase 6): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency for development (`uv sync --locked --extra mcp`: `control-tv[mcp]`, the official MCP Python SDK `mcp==1.30.0`). The SDK stays optional at run time: the frozen desktop bridge (`bridge-build`) and the Android app (`android-python`) are built from their own environments without it. The client starts it; for Codex, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.control-tv]
@@ -96,7 +96,7 @@ command = "/path/to/control-TV/.venv/bin/python"
 args = ["-m", "control_tv.mcp_server"]
 ```
 
-Tools: `discover_devices`, `get_status`, `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`, addressed by the stable `deviceId` from `discover_devices`. Every call goes through the same `bridge.dispatch` and `ControlService` as the window, one at a time and never retried; a command answer keeps "sent" apart from "confirmed", and an ambiguous delivery (`timeout`) says the command may have reached the TV and must not be resent automatically. Device names, ids and media titles are visible to the client and its model; addresses, media content ids and error details are not returned. ChatGPT web cannot start a local stdio server (see Phase 6 for the open options); the server listens on no network port.
+Tools: `discover_devices`, `get_status`, `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`, addressed by the stable `deviceId` from `discover_devices`. Every call goes through the same `bridge.dispatch` and `ControlService` as the window, one at a time and never retried; a command answer keeps "sent" apart from "confirmed", and a failed command says it was not sent only when the shared layer proves it; otherwise (`timeout`, `device_unavailable`, `command_rejected`, `internal_error`) it says the command may or may not have reached the TV and must not be resent automatically. Device names, ids and media titles are visible to the client and its model; addresses, media content ids and error details are not returned. ChatGPT web cannot start a local stdio server (see Phase 6 for the open options); the server listens on no network port.
 
 ## Repository layout
 
