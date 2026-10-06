@@ -17,6 +17,7 @@ from typing import Any
 
 import anyio
 import pytest
+from mcp import ClientSession, types
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -30,7 +31,6 @@ from control_tv.domain import (
 from control_tv.mcp_server import COMMAND_TOOLS, READ_TOOLS, TOOLS, ControlTvTools, build_server
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, MOVIE_URL, FakeClock, FakeTransport
-from mcp import ClientSession, types
 
 ROOT = Path(__file__).resolve().parents[2]
 ID = str(DEVICE_ID)
@@ -208,12 +208,12 @@ def test_a_delivery_timeout_is_ambiguous_and_never_resent(
         (
             DeviceUnavailableError(f"device uuid-1 is unavailable: [Errno 113] {SECRET_HOST}"),
             "device_unavailable",
-            "not_sent",
+            "unknown",
         ),
         (
             CommandRejectedError(f"device uuid-1 rejected pause: {SECRET_HOST}"),
             "command_rejected",
-            "sent",
+            "unknown",
         ),
     ],
 )
@@ -230,6 +230,8 @@ def test_command_errors_keep_their_code_and_delivery_without_leaking_details(
 
     body = structured(result)
     assert (body["error"]["code"], body["delivery"]) == (code, delivery)
+    assert "may or may not have reached the TV" in text(result)
+    assert "Do not resend" in text(result)
     assert SECRET_HOST not in everything(result) and "Errno" not in everything(result)
     assert transport.attempted() == ["pause"]
 
