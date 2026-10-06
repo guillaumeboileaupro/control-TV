@@ -317,7 +317,7 @@ Deliverables:
 - [ ] package the required Python runtime/components appropriately for each target (Linux: the frozen bridge, PR #26; Windows and Android open);
 - [ ] icons/metadata/version consistency;
 - [ ] reproducible release commands (Linux: `dev.py release-deb`, PR #26; Windows and Android open);
-- [ ] CI builds where useful (Linux: `linux-release`, PR #26; Windows and Android open);
+- [ ] CI builds where useful (Linux: `linux-release`, PR #26; Android: the `android` job of PR #30, not merged; Windows open);
 - [ ] documented signing/sideloading status (Android: personal sideloading only, no Play Store; the APK is debug-signed today).
 
 Exit criteria:
@@ -404,8 +404,8 @@ Critical path (owner order of 2026-10-06): the Android APK MVP (item H, PR #30) 
 Architecture (owner decision 2026-10-04, **candidate until the spike passes on a real phone**, partly observed there on 2026-10-06; see `ARCHITECTURE.md`, "Android"):
 - [x] decision recorded: Tauri 2 Android shell + CPython embedded through Chaquopy 17.0.0 (Python 3.12) + the unchanged `control_tv` package (`bridge.handle_line`, `ControlService`, `PyChromecastTransport`) + zeroconf discovery; one authoritative control engine shared with the desktop bridge;
 - [x] target: `arm64-v8a` phones only (Chaquopy's Python 3.12 has no 32-bit ARM or x86 build; the Tauri `arm`/`x86`/`x86_64` flavors are disabled), `minSdk` 24, `targetSdk` 36, application id `io.github.guillaumeboileaupro.controltv`;
-- [x] embedded Python packages: the control layer's locked runtime dependencies only, as pure-Python wheels hash-checked against `uv.lock` (`dev.py android-python`), installed by Chaquopy offline (`--no-index`); protobuf runs its pure-Python implementation; zeroconf, which publishes no pure wheel, is built from its locked sdist without its optional Cython extensions and retagged `py3-none-any` (checked free of compiled modules);
-- [x] in-process bridge: a Kotlin `ControlBridgePlugin` runs `control_tv.embedded.handle(line)` on one worker thread (never on the Android main thread), once per request, never retried; the Rust shell keeps the PR #23 claim and timeouts around each call (`bridge_busy` not sent, `bridge_timeout`/`bridge_transport` ambiguous, no replay); `backend_unavailable` only when Python could not start;
+- [x] embedded Python packages: the control layer's locked runtime dependencies only, as pure-Python wheels hash-checked against `uv.lock` (`dev.py android-python`), installed by Chaquopy offline (`--no-index`); protobuf runs its pure-Python implementation; zeroconf, which publishes no pure wheel, is built from its locked sdist without its optional Cython extensions and retagged `py3-none-any` (checked free of compiled modules). Since the Codex review of `aad8979` (P2-2) the two wheels built locally (zeroconf, control-tv) are built offline (`pip wheel --isolated --no-index --no-deps --no-build-isolation --no-cache-dir`) with build backends locked in the `android` group (setuptools 84.0.0, poetry-core 2.5.0; checked against `uv.lock` before building) and a fixed `SOURCE_DATE_EPOCH`; the only network access is the hash-checked `uv sync --locked --group android` and the hash-checked download of the locked files. Measured: two consecutive preparations on the same machine gave byte-identical wheels; reproducibility across machines or toolchains is not measured;
+- [x] in-process bridge: a Kotlin `ControlBridgePlugin` runs `control_tv.embedded.handle(line)` on one worker thread (never on the Android main thread), once per request, never retried; the Rust shell keeps the PR #23 claim and timeouts around each call (`bridge_busy` not sent, `bridge_timeout`/`bridge_transport` ambiguous, no replay). `backend_unavailable` (certainly not sent) covers every failure before `handle` is entered: Python not starting and, since the Codex review of `aad8979` (P2-1), `control_tv.embedded` failing to import (`EmbeddedHandler`); a failure while or after `handle` runs stays the ambiguous `bridge_transport`;
 - [x] multicast lock (`CHANGE_WIFI_MULTICAST_STATE`) held while the app is in the foreground, released in the background; `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` declared;
 - [x] startup diagnostic (PR #30, after the first phone run): once, when the plugin loads, the bridge worker runs `control_tv.embedded.startup_diagnostic()`, which sends a `ping` through the same `handle` path and logs one line under the logcat tag `control-tv` (`python 3.12.x; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`, or the error code only on failure). It names versions only (no device, address, identifier or media), never touches the network or a Cast device and is never retried; tested in Python (3) and Kotlin (2), not yet run on a phone.
 
@@ -420,16 +420,24 @@ Fallback if the spike fails (decided before the result, not applied): stop and r
 STOP conditions of the spike: Chaquopy cannot embed the dependencies; `control_tv` does not import; pychromecast/zeroconf incompatible; protobuf blocks; multicast prevents discovery; the APK depends on an external runtime; a large rewrite of the Cast engine becomes necessary. None was hit while building (2026-10-04) nor on the physical phone (2026-10-06): the embedded runtime started, zeroconf discovery worked through the multicast lock and protobuf did not block discovery. Whether `control_tv` imports is shown indirectly by that discovery but stays open until the startup diagnostic is seen on the phone.
 
 Android validation checklist (spike, PR #30, branch `feat/android-apk-spike`, draft, not merged; a box is checked only for what was really observed; a build is not an installation, an emulator is not a phone). Phone results come from one physical arm64 Android phone (not an emulator), within the spike scope (`arm64-v8a`, `minSdk` 24), observed by the owner on 2026-10-06 with the APK built from `9ee916c` (SHA-256 `0122796e...c1417`):
-- [x] APK built: debug, arm64-v8a, `minSdk` 24, version 0.1.0 (versionCode 1000), debug-signed, locally with `python3 scripts/dev.py android-apk` (no CI); no checkout, `.venv` or host Python inside it: Python comes from Chaquopy's assets and the embedded packages are the 11 wheels above;
+- [x] APK built: debug, arm64-v8a, `minSdk` 24, version 0.1.0 (versionCode 1000), debug-signed, locally with `python3 scripts/dev.py android-apk` (also built by the `android` CI job added on PR #30, see Phase 8); no checkout, `.venv` or host Python inside it: Python comes from Chaquopy's assets and the embedded packages are the 11 wheels above;
 - [x] installed on a real phone (`adb install`);
 - [x] application launched and rendered on the phone;
 - [x] embedded CPython 3.12 started (logcat: the Chaquopy libraries and `libpython3.12.so` loaded);
-- [ ] `control_tv` imported: not shown explicitly (the APK run on 2026-10-06 had no diagnostic yet); needs the startup diagnostic line in logcat from the APK built at `3790ffd` or later (SHA-256 `ac9cb9b7...988ee6` for the build of 2026-10-06);
+- [ ] `control_tv` imported: not shown explicitly (the APK run on 2026-10-06 had no diagnostic yet); needs the startup diagnostic line in logcat from an APK built at `3790ffd` or later; the current one, with the P2-1 fix, is the local build of 2026-10-06 with SHA-256 `33fc0aa3...e764f`;
 - [ ] ping answered with `controlTvVersion` 0.1.0: same, pending the diagnostic line;
 - [x] MulticastLock held while in the foreground (logcat: `multicast lock acquired (held=true)`);
 - [x] real discovery: the app's discovery action listed the TVs of the real local network; no receiver name, address or identifier is recorded here or in the repository;
 - [ ] real status of a receiver (not attempted);
 - [ ] real Play / Pause / Stop / Seek / Volume / Mute: not part of the spike; **no Cast control command was sent** during this validation.
+
+Codex review of `aad8979` (2026-10-06) and its disposition (PR #30, not merged):
+- [x] **P2-1 (fixed):** a failure to import `control_tv.embedded` after Python started was reported as the ambiguous `bridge_transport`; it is now `backend_unavailable` (not sent). Kotlin tests: start failure, import failure, failure inside `handle` (still ambiguous, `handle` run once), normal relay, and the relay reporting an unavailable bridge once;
+- [x] **P2-2 (fixed, with the measured limit above):** isolated `uv build` could resolve build backends from the network at build time; the builds are now offline with locked backends;
+- [ ] **P2-3 (job added, result pending CI):** Android CI job `android`, see Phase 8; it does not replace physical-phone validation and does not exercise E/F;
+- [x] **P3-1 (fixed):** the README no longer says Android is untouched or has no build;
+- [x] **P3-2 (fixed):** the whitespace and end-of-file issues reported by `git diff --check` in three generated Gradle/Kotlin files;
+- [ ] **P3-3 (open):** the CPython prefix warnings below, kept as a finding (cause not established).
 
 Findings of the phone run:
 - [ ] CPython logged `Could not find platform independent libraries <prefix>` and `Could not find platform dependent libraries <exec_prefix>` at startup; they did not prevent the start or the discovery, but their cause (Chaquopy's embedded `sys.prefix` layout) is not understood yet and stays tracked;
@@ -474,7 +482,7 @@ Home-screen widget (decided 2026-09-26):
 - [x] verify Python/Tauri integration (`cargo test` in that job spawns the real `control_tv.bridge` process and pings it);
 - [x] add Linux build checks (the job above);
 - [ ] add Windows build checks;
-- [ ] add Android build checks (the spike builds the APK locally only; no CI job yet);
+- [ ] add Android build checks: job `android` added on PR #30 (not merged): Android clippy, `android-apk` (wheel preparation and the arm64 debug APK), the Kotlin JVM tests, the APK SHA-256 and a 7-day build artifact; build-level evidence only, no device or emulator; see PR #30's CI for its result;
 - [x] keep CI build success distinct from real Chromecast/TV hardware validation (this CI job never touches a Cast device; it built/packaged/pinged the bridge process only).
 
 ### Continuous delivery and packaging
@@ -487,7 +495,7 @@ Home-screen widget (decided 2026-09-26):
 - [x] upload the packaged artifacts (`linux-release`, kept 14 days);
 - [ ] build and test the Windows sidecar and application natively in CI;
 - [ ] build the Windows installer/application artifact;
-- [ ] build the Android APK;
+- [ ] build the Android APK (the `android` job of PR #30 builds the debug arm64 APK; a personal release-signed APK is not built);
 - [ ] retain controlled build artifacts from release workflows;
 - [ ] apply consistent artifact versioning;
 - [ ] generate checksums for release artifacts;
