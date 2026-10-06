@@ -22,9 +22,6 @@ class HandleArgs {
     lateinit var line: String
 }
 
-/** Thrown when the embedded Python runtime cannot start: no request reached the bridge. */
-class PythonUnavailable(cause: Throwable) : Exception("embedded Python failed to start: $cause", cause)
-
 /**
  * The Android side of the control bridge: one request line in, one response line out,
  * answered by the shared Python control layer embedded in the app (`control_tv.embedded`),
@@ -43,20 +40,18 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
         ),
     )
 
-    private val relay = BridgeRelay(handler = { line ->
-        embedded().callAttr("handle", line).toString()
-    })
+    private val relay = BridgeRelay(handler = EmbeddedHandler(load = {
+        val embedded = embedded()
+        val handle: (String) -> String = { line -> embedded.callAttr("handle", line).toString() }
+        handle
+    }))
 
+    /** Starts Python if needed and imports `control_tv.embedded`; nothing is sent here. */
     private fun embedded(): PyObject {
-        val python = try {
-            if (!Python.isStarted()) {
-                Python.start(AndroidPlatform(activity.applicationContext))
-            }
-            Python.getInstance()
-        } catch (error: Throwable) {
-            throw PythonUnavailable(error)
+        if (!Python.isStarted()) {
+            Python.start(AndroidPlatform(activity.applicationContext))
         }
-        return python.getModule("control_tv.embedded")
+        return Python.getInstance().getModule("control_tv.embedded")
     }
 
     override fun load(webView: WebView) {
@@ -96,7 +91,7 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
             args.line,
             onResponse = { response -> invoke.resolve(JSObject().put("line", response)) },
             onFailure = { error ->
-                val code = if (error is PythonUnavailable) "backend_unavailable" else "bridge_transport"
+                val code = rejectionCode(error)
                 Log.e(TAG, "bridge request failed ($code)", error)
                 invoke.reject(error.message ?: error.toString(), code)
             },
