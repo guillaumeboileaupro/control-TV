@@ -34,7 +34,7 @@ GUI and MCP must use the same authoritative control/domain behavior. Do not crea
 
 ## Current implementation
 
-What exists in the code today (the MCP adapter and the tray do not exist yet; Android is a spike, see "Android" below):
+What exists in the code today (the tray does not exist yet; Android: see "Android"; MCP: see "MCP server"):
 
 ```text
 ui/ (vanilla TypeScript + Vite)
@@ -59,7 +59,7 @@ CastTransport -> PyChromecastTransport (the only module that imports pychromecas
 
 ## Android (spike validated on a physical phone)
 
-Owner decision of 2026-10-04, explored as a spike (`DEVELOPMENT_PLAN.md`, Phase 7b). On one physical arm64 phone (2026-10-06, PR #30 not merged) the spike passed all its gates: the APK installed and launched, the embedded CPython 3.12 started, `control_tv` imported and answered its ping (0.1.0), the multicast lock was held and the app discovered receivers on the real local network, with no Cast control command sent. It is the architecture the Android APK MVP is built on; receiver status and control commands are not yet validated on Android, and the MVP is not complete until they are.
+Owner decision of 2026-10-04, explored as a spike (`DEVELOPMENT_PLAN.md`, Phase 7b). On one physical arm64 phone (2026-10-06; PR #30, merged into `main` `3bcb516`) the spike passed all its gates: the APK installed and launched, the embedded CPython 3.12 started, `control_tv` imported and answered its ping (0.1.0), the multicast lock was held and the app discovered receivers on the real local network, with no Cast control command sent. It is the architecture the Android APK MVP is built on; receiver status and control commands are not yet validated on Android, and the MVP is not complete until they are.
 
 ```text
 ui/ (same TypeScript UI, Android WebView)
@@ -87,7 +87,6 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
 - **Android home-screen widget (Phase 7b):** after the MCP adapter, over the same embedded control layer (see "Android").
-- **MCP adapter (Phase 6, next after the Android APK MVP):** planned as a separate local stdio process (`python -m control_tv.mcp_server`) holding its own `ControlService` over the same `PyChromecastTransport`, and calling the same `control_tv.bridge.dispatch` as the window's bridge, so validation, confirmation and the no-retry rule stay in one place; it does not depend on Tauri, Rust or the UI. UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
 
 ## Chromecast capabilities
 
@@ -100,6 +99,23 @@ Media/service resolution is a separate concern from low-level Cast transport whe
 ## MCP and AI independence
 
 MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application.
+
+## MCP server (Phase 6; validated by automated tests only)
+
+```text
+MCP client (Codex CLI, Claude Desktop, ...) launches the server as a subprocess
+   |  MCP over stdio (JSON-RPC on stdin/stdout; logs on stderr)
+   v
+control_tv.mcp_server (Python, optional extra control-tv[mcp], official SDK mcp==1.30.0)
+   |  one tool call at a time; privacy filtering; delivery wording
+   v
+control_tv.bridge.dispatch -> ControlService -> PyChromecastTransport (the window's own path)
+```
+
+- **One engine:** every tool is the same-named bridge method run through `bridge.dispatch`, so the MCP server has exactly the window's validation, confirmation, media-identity guards, shared deadline and error codes; the SDK's schema check is disabled so the shared layer stays the only validator. The server owns its own `ControlService` and discovery cache (a separate process from the window's bridge). It does not depend on Tauri, Rust, the Android plugin or the UI, and neither the bridge, the frozen desktop bridge nor the Android app contains it.
+- **Transport:** local stdio only (spawned by the client; no port, no network listener). ChatGPT web cannot launch a local stdio server; reaching it from ChatGPT (OpenAI's outbound Secure MCP Tunnel or a public HTTPS endpoint) is an open owner decision. The tools take no transport-specific input, so another binding can be added without changing them.
+- **Outcomes:** a sent command keeps `confirmation` (`confirmed` / `unconfirmed` / `not_checked`); an error carries its code and a `delivery` of `not_sent`, `sent` (`command_rejected`) or `unknown` (`timeout`, `internal_error`), worded "do not resend automatically; call get_status". Nothing is retried. Calls are serialized; a cancelled call that already started completes, so its command may have been sent.
+- **Privacy:** no device address, no media `contentId`, quoted values hidden in command details, fixed error messages per code (except `invalid_argument`), no exception text; device names, ids and media titles are visible to the client and its model. UI-only protections such as the volume raise limit do not apply to MCP (open owner decision).
 
 ## Cross-platform targets
 
