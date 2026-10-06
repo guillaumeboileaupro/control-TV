@@ -74,3 +74,40 @@ def test_the_embedded_runtime_uses_protobufs_pure_python_implementation() -> Non
     )
 
     assert completed.stdout.strip() == "python"
+
+
+def test_the_startup_diagnostic_proves_the_import_and_the_ping() -> None:
+    line = embedded.startup_diagnostic()
+
+    assert f"control_tv {control_tv.__version__} imported" in line
+    assert line.endswith(f"embedded ping ok, controlTvVersion={control_tv.__version__}")
+    assert line.startswith("python 3.")
+
+
+def test_the_startup_diagnostic_never_touches_the_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from control_tv.adapters import PyChromecastTransport
+
+    def no_network(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the diagnostic must not discover or contact a device")
+
+    monkeypatch.setattr(PyChromecastTransport, "discover", no_network)
+
+    assert "embedded ping ok" in embedded.startup_diagnostic()
+
+
+def test_a_failed_startup_ping_is_reported_with_its_code_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing(line: str) -> str:
+        return json.dumps(
+            {"id": 0, "ok": False, "error": {"code": "internal_error", "message": "detail"}}
+        )
+
+    monkeypatch.setattr(embedded, "handle", failing)
+
+    line = embedded.startup_diagnostic()
+
+    assert line.endswith("embedded ping failed (internal_error)")
+    assert "detail" not in line

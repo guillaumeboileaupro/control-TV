@@ -11,6 +11,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
@@ -43,6 +44,10 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
     )
 
     private val relay = BridgeRelay(handler = { line ->
+        embedded().callAttr("handle", line).toString()
+    })
+
+    private fun embedded(): PyObject {
         val python = try {
             if (!Python.isStarted()) {
                 Python.start(AndroidPlatform(activity.applicationContext))
@@ -51,11 +56,18 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
         } catch (error: Throwable) {
             throw PythonUnavailable(error)
         }
-        python.getModule("control_tv.embedded").callAttr("handle", line).toString()
-    })
+        return python.getModule("control_tv.embedded")
+    }
 
     override fun load(webView: WebView) {
         holdMulticast()
+        // Once, on the bridge worker before any request: proves in logcat that the embedded
+        // Python imports control_tv and answers a ping. Versions only, no device data, no
+        // Cast message; never retried.
+        relay.execute(
+            task = { Log.i(TAG, embedded().callAttr("startup_diagnostic").toString()) },
+            onFailure = { error -> Log.e(TAG, "embedded Python startup diagnostic failed", error) },
+        )
     }
 
     override fun onResume() {

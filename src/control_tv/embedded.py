@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 
+import control_tv
 from control_tv.bridge import handle_line
 from control_tv.service import ControlService
 
@@ -37,3 +39,18 @@ def _service() -> ControlService:
 def handle(line: str) -> str:
     """Run one request line against the process-wide service; return one response line."""
     return json.dumps(handle_line(_service(), line))
+
+
+def startup_diagnostic() -> str:
+    """One log line proving the embedded runtime works, written by the Android app at start.
+
+    It runs a `ping` through `handle`, the path every request takes, and names only the
+    Python and control-TV versions: no device, address, identifier or media. `ping` never
+    touches the network, so no Cast message is sent.
+    """
+    response = json.loads(handle(json.dumps({"id": 0, "method": "ping", "params": {}})))
+    imported = f"python {platform.python_version()}; control_tv {control_tv.__version__} imported"
+    if not response.get("ok"):
+        return f"{imported}; embedded ping failed ({response['error']['code']})"
+    version = response["result"]["controlTvVersion"]
+    return f"{imported}; embedded ping ok, controlTvVersion={version}"

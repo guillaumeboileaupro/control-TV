@@ -27,6 +27,16 @@ class BridgeRelay(
         }
     }
 
+    /**
+     * Runs [task] once on the same worker, after the requests already submitted and before
+     * later ones. A failing task is reported by [onFailure] and does not stop the worker.
+     */
+    fun execute(task: () -> Unit, onFailure: (Throwable) -> Unit) {
+        worker.execute {
+            runCatching(task).onFailure(onFailure)
+        }
+    }
+
     fun shutdown() {
         worker.shutdown()
     }

@@ -70,4 +70,34 @@ class BridgeRelayTest {
         assertEquals(0, responses.get())
         relay.shutdown()
     }
+
+    @Test
+    fun aStartupTaskRunsOnceOnTheWorkerBeforeLaterRequests() {
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        val done = CountDownLatch(1)
+        val relay = BridgeRelay(handler = { line -> order.add(line); line })
+
+        relay.execute(task = { order.add("diagnostic") }, onFailure = {})
+        relay.submit("ping", onResponse = { done.countDown() }, onFailure = { done.countDown() })
+
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("diagnostic", "ping"), order)
+        relay.shutdown()
+    }
+
+    @Test
+    fun aFailingStartupTaskIsReportedOnceAndRequestsStillRun() {
+        val failures = AtomicInteger(0)
+        val handled = AtomicInteger(0)
+        val done = CountDownLatch(1)
+        val relay = BridgeRelay(handler = { line -> handled.incrementAndGet(); line })
+
+        relay.execute(task = { throw IllegalStateException("no Python") }, onFailure = { failures.incrementAndGet() })
+        relay.submit("ping", onResponse = { done.countDown() }, onFailure = { done.countDown() })
+
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertEquals(1, failures.get())
+        assertEquals(1, handled.get())
+        relay.shutdown()
+    }
 }
