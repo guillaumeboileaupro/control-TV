@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a lightweight standalone Chromecast / Google TV controller for Android, Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
+Build a lightweight standalone Chromecast / Google TV controller for Android (personal use, sideloaded APK: no Google Play publication objective), Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
 
 Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule" at the end): **automation-validated** means deterministic tests, CI, or the real application driven against a fake TV / fake transport; **real-hardware validated** means the behavior was observed on a real Chromecast/Google TV or on the real target platform, with the evidence recorded. A checked implementation line never implies the matching hardware line.
 
@@ -19,18 +19,24 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 ## Current state and critical path
 
-State of `main` at `eba73f5` (merge of PR #26, 2026-10-04; it contains PR #24 `f65b553`, PR #27 `409ff94`, PR #28 `4eef244` and the PR #26 packaging work). Only merged work is described as part of `main`; an open pull request is listed here as in progress and its items stay `[ ]` until it is merged. Open and not merged: PR #29 (bridge recovery, branch `fix/bridge-recovery`, rebased on `eba73f5`). PR #25 (an earlier synchronization of this plan) was closed without merging; its content was carried by PR #26. CI on `main` `eba73f5`: push run `37211384282`, all three jobs green, `linux-release` included.
+State of `main` at `1c71530` (merge of PR #29, 2026-10-04; it contains everything listed below, including PR #26 `eba73f5`). Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android spike (PR #30, draft, branch `feat/android-apk-spike`, see Phase 7b). PR #25 (an earlier synchronization of this plan) was closed without merging; its content was carried by PR #26.
 
-Core completion, in order (the critical path):
+Product priority (owner decision, 2026-10-06, replacing the order of 2026-10-04): **1. finish the Android APK MVP (PR #30) -> 2. MCP control-TV adapter (high priority, immediately after #30) -> 3. Android home-screen widget -> 4. Linux tray and secondary improvements -> 5. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
+
+Critical path:
 - [x] **A. Bridge requests never sent after their timeout (PR #23, merged):** see "Bridge request claim" under the Tauri shell status.
 - [x] **B. Stop by session end, fixed-volume refusal and one application version (PR #24, merged, automation-validated):** see the Stop, "Volume control type" and "One application version" entries; Stop, volume and mute are still not validated on real hardware.
 - [x] **C. Receiver volume, mute and standby defaults (PR #27 and PR #28, merged, automation-validated):** see the two "Receiver ... default(s)" entries under "Known open items"; not validated on real hardware.
 - [x] **D. Autonomous Python bridge sidecar and Tauri packaging for Linux (PR #26, merged, automation-validated and installed locally):** frozen bridge on CPython 3.12.15, release-only resolution of the bundled bridge, strict isolated smoke, release `.deb` with remapped build paths, fail-closed scans, inventory, checksums, notices and the `linux-release` CI job; public distribution still waits for the license blockers (Phase 7).
 - [x] **E. Autonomous `.deb` really installed and validated** on Ubuntu 22.04 without the checkout, the `.venv` or a system Python (PR #26 content): installed, the GUI application launched, its bundled bridge pinged through it, purged (local, commit `fba82cc`, whose code is what PR #26 merged); the `linux-release` CI job installs the package, pings the installed bridge directly and purges it on every run (no GUI). Not a published release: the Debian/Ubuntu target stays open in Phase 7 while the license blockers remain.
-- [ ] **F. Windows packaging and validation** (Phase 7).
-- [ ] **G. Bridge recovery (P3, PR #29 open, not merged):** replace a stuck or dead Python bridge process for later requests; nothing of it is on `main`; see "Known open items".
+- [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
+- [ ] **H. Android APK MVP (Phase 7b):** spike in progress (PR #30, draft, branch `feat/android-apk-spike`, not merged). On a physical arm64 phone (2026-10-06) the debug APK installed, launched, started its embedded CPython, held the multicast lock and discovered receivers on the real local network; with the instrumented APK, logcat showed `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`. The spike gates A-H all passed on the phone (see the Phase 7b checklist), and with the APK of `a2ff3bb` the owner saw the Control-TV launcher icon and the page clear of the status and navigation bars. Still open before the MVP: receiver status and the control commands on Android (each only with an explicit go-ahead).
+- [ ] **J. MCP control-TV adapter (Phase 6):** high priority, immediately after PR #30; not started (implementation plan in Phase 6).
+- [ ] **I. Android home-screen widget (Phase 7b):** after the MCP adapter.
+- [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
+- [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
 
-Complementary development, only after the core above unless the owner reprioritizes: the system tray (Phase 4b), Android and its widget (Phase 7b), the MCP adapter (Phase 6) and media/service resolution (Phase 5). These phases are kept; they are not part of core completion.
+Complementary development, after the items above unless the owner reprioritizes: media/service resolution (Phase 5).
 
 ## Phase 0 - Repository and development discipline
 
@@ -115,17 +121,17 @@ Exit criteria:
   - That Seek shows that a future `CONFIRMED` means "the receiver reported the expected state", never a guarantee of the physical effect.
   - Stop, volume and mute were never sent to real hardware.
   - No physical playback-validation checkbox is completed: a command is validated only when its physical effect and a `CONFIRMED` result for identified media are both recorded.
-- [ ] Windows and Android are not built, installed or launched; nothing here validates them.
+- [ ] Windows is not built, installed or launched (postponed). Android: the spike's debug arm64 APK passed its gates A-H on a physical phone, including `control_tv` imported and its ping answered (Phase 7b, PR #30, not merged); receiver status and the control commands are not validated on Android.
 - [x] **Distributable Python runtime (PR #26, merged):** the development-only `resolve_python()` is replaced by the debug/release resolution of `BridgeProgram`; a release build starts only the bundled frozen bridge, with no fallback to another Python (Phase 7).
 
 ## Known open items (audit of 2026-09-26)
 
-First verified in the code on 2026-09-26 and kept current since (last synchronized with `main` `eba73f5`). Unchecked items are not fixed on `main`; a checked item was fixed afterwards and says where. None of them is a hardware finding.
+First verified in the code on 2026-09-26 and kept current since (last synchronized with `main` `1c71530`). Unchecked items are not fixed on `main`; a checked item was fixed afterwards and says where. None of them is a hardware finding.
 
 - [x] **Receiver volume and mute defaults (PR #27, merged, automation-validated; not validated on real hardware):** PyChromecast's `CastStatus` substitutes `volume.level` 1.0 and `volume.muted` False when the receiver omits them, and `ReceiverStatus.volume_level`/`muted` previously came from `CastStatus`. Before PR #27 an omitted level therefore read as 100% and an omitted mute state as "not muted", and both could confirm a request nobody saw (`set_volume(1.0)`, `set_muted(False)`); a boolean level read as 0 or 100%, and an out-of-range, non-finite or non-numeric level failed the whole status read. The merged implementation reads both from the same fresh receiver status reply as `volume_control_type`: a level is an explicit JSON number within 0-1 (0 and 1 included, returned as a float), anything else (absent, null, boolean, string, out of range, NaN, infinite, a non-object `volume`, no reply) is unknown; the mute state is an explicit JSON boolean, anything else (absent, null, 0/1, string) is unknown. `ReceiverStatus` itself refuses a boolean or non-finite level and a non-boolean mute state. Unknown values reach the bridge as `null` and the UI as "Volume not reported" / "Mute state not reported" with no control. Confirmation: an unknown level or mute state is never a match, so these requests stay `UNCONFIRMED`; one command is sent, nothing is retried or replayed, the shared deadline and the fixed-volume pre-read are unchanged, and play, pause, stop and seek are untouched. Tests: adapter matrix over the raw reply with PyChromecast's defaults cached, service-plus-adapter confirmation for 1.0, 0.0, mute and unmute, domain validation, a UI test for 0% and "Not muted"; three mutations (cached values, boolean level, domain mute check) are each caught. Real hardware: not validated (no command sent).
 - [x] **Receiver standby default (PR #28, merged, automation-validated; not validated on real hardware):** the Cast receiver status carries standby as `status.isStandBy`. PyChromecast 14.0.10 (`ReceiverController._parse_status`) substitutes True when it is omitted on a video device (cast type "cast"; None for audio devices and groups), and `ReceiverStatus.standby` came from that parsed `CastStatus` before PR #28. A video receiver that omitted `isStandBy` could therefore be shown with an "In standby" fact in the window (`renderFacts`, shown only for `standby === true`), and a non-boolean value reached the bridge unchecked. No other effect: `ControlService`, the confirmations, availability and every control decision ignore standby, so no false `CONFIRMED` or wrong command can come from it. PR #28 reads it from the same fresh receiver status reply as volume, mute and the volume control type: an explicit JSON boolean is kept, anything else (absent, null, 0/1, string, object, list, a non-object status, no reply) is unknown, whatever PyChromecast's parsed status holds; `ReceiverStatus` refuses a non-boolean standby. The bridge already sends `null` and the window then shows nothing. Tests: PyChromecast's own default demonstrated, an adapter matrix against a cached True, False and None, domain validation; two mutations (cached value, domain check) are caught. Whether real receivers omit `isStandBy` is not observed (no private capture holds a receiver status), and nothing was sent to hardware. `isActiveInput` is not used by control-TV.
-- [ ] **Bridge recovery (P3, critical-path item G; PR #29 open, not merged):** on `main` there is no mechanism to restart a stuck or dead Python bridge. A bridge that stays stuck on one request makes every later request end as `bridge_busy` (not sent) until the application restarts. Each request abandoned behind it keeps one blocking-pool thread waiting for the bridge lock until that lock is released, and a request already `STARTED` keeps its worker blocked on the reply read. A `bridge_busy` returned by the worker itself (it lost the claim after acquiring the lock) is never seen by the caller, whose timeout already returned. Confirmed as the remaining limits by the PR #23 review. The window's startup "background service isn't available" notice is also never cleared on `main`.
-- [ ] **Bridge recovery on PR #29 (branch `fix/bridge-recovery`, rebased on `main` `eba73f5`, automation-validated, not merged):** the process is replaced, never a request. `BridgeSlot` keeps the launcher, which resolves the PR #26 `BridgeProgram` on every launch (a release build can only start its bundled bridge, debug the `.venv`), and `PythonBridge::spawn` builds the command from that program, in its own process group on Unix. A still-pending request that finds the process exited starts a new one before anything is written; a `bridge_transport` failure or a poisoned lock retires (kills and reaps) the process; a request that times out after its claim kills the process it was written to (`written_to`), which frees the stuck worker; one launch at a time, under the bridge lock. The #23 claim is unchanged: `bridge_busy` still means not sent, `bridge_timeout` and `bridge_transport` maybe delivered; no retry, replay or double send. The window's startup notice ends once a request started after it was recorded is answered by the service (a result or a service error); `backend_unavailable`, `bridge_transport`, `bridge_timeout`, `bridge_busy` and unexpected errors never end it, nor does a late answer to an earlier request, and each request's own outcome is shown as it was. Tests on the rebased branch: Rust 60 (9 recovery: died before a request, died during one, broken pipe, timeout after the claim, abandoned request never written, concurrent requests after a crash, poisoned lock, start failing then succeeding, start failing), UI 271 (8 for the notice), Python 1116, `release-deb` (strict smoke, fail-closed scans) and the release binary starting its bundled bridge in its own process group. Open: on Windows only the direct child process is killed (no Job Object or process-group equivalent yet), so a descendant holding the pipes can survive; Windows recovery is not validated in CI; a crash loop starts one process per request (no back-off).
+- [x] **Bridge recovery (P3, critical-path item G; fixed by PR #29, merged in `1c71530`):** before PR #29, on `main` there was no mechanism to restart a stuck or dead Python bridge. A bridge that stays stuck on one request makes every later request end as `bridge_busy` (not sent) until the application restarts. Each request abandoned behind it keeps one blocking-pool thread waiting for the bridge lock until that lock is released, and a request already `STARTED` keeps its worker blocked on the reply read. A `bridge_busy` returned by the worker itself (it lost the claim after acquiring the lock) is never seen by the caller, whose timeout already returned. Confirmed as the remaining limits by the PR #23 review. The window's startup "background service isn't available" notice is also never cleared on `main`.
+- [x] **Bridge recovery (PR #29, merged in `1c71530`, automation-validated):** the process is replaced, never a request. `BridgeSlot` keeps the launcher, which resolves the PR #26 `BridgeProgram` on every launch (a release build can only start its bundled bridge, debug the `.venv`), and `PythonBridge::spawn` builds the command from that program, in its own process group on Unix. A still-pending request that finds the process exited starts a new one before anything is written; a `bridge_transport` failure or a poisoned lock retires (kills and reaps) the process; a request that times out after its claim kills the process it was written to (`written_to`), which frees the stuck worker; one launch at a time, under the bridge lock. The #23 claim is unchanged: `bridge_busy` still means not sent, `bridge_timeout` and `bridge_transport` maybe delivered; no retry, replay or double send. The window's startup notice ends once a request started after it was recorded is answered by the service (a result or a service error); `backend_unavailable`, `bridge_transport`, `bridge_timeout`, `bridge_busy` and unexpected errors never end it, nor does a late answer to an earlier request, and each request's own outcome is shown as it was. Tests on the merged branch: Rust 60 (9 recovery: died before a request, died during one, broken pipe, timeout after the claim, abandoned request never written, concurrent requests after a crash, poisoned lock, start failing then succeeding, start failing), UI 271 (8 for the notice), Python 1116, `release-deb` (strict smoke, fail-closed scans) and the release binary starting its bundled bridge in its own process group. Open: on Windows only the direct child process is killed (no Job Object or process-group equivalent yet), so a descendant holding the pipes can survive; Windows recovery is not validated in CI; a crash loop starts one process per request (no back-off).
 - [ ] **Tauri content security policy:** `tauri.conf.json` sets `"csp": null` (with `withGlobalTauri: true`); define a restrictive CSP before a release.
 - [x] **Bridge overflow handling (PR #20, fixed and automation-validated):** a JSON integer too large for a float in `seek.positionSeconds` or `discover_devices.timeoutSeconds` returned `internal_error`; the bridge now forwards the number and `ControlService` answers `invalid_argument` before any status read or transport call.
 - [x] **Boolean and number inputs at the service (PR #20, fixed and automation-validated):** `ControlService` itself now accepts only a real, finite number (never a bool, a string or an integer too large for a float) for the discovery timeout, the seek position and the volume level, and only a real bool for `set_muted`; anything else is `invalid_argument` before any status read or transport call, so every caller (GUI bridge, a future MCP adapter) inherits the same contract. No maximum seek position is imposed: the domain defines none, so a large finite position is the receiver's to judge.
@@ -229,7 +235,7 @@ Deliverables:
 - [x] volume/mute controls implemented, automation-validated and exercised in the real application against a fake TV, including the 10-point raise limit per gesture;
 - [ ] volume/mute validated on a real Chromecast (waits for the playback-command physical validation and an explicit go-ahead; no real-hardware result is recorded);
 - [x] clear unavailable/error states for the control-backend boundary itself (bridge process unavailable, discovery failure are both surfaced in the UI as plain text; status-read failures - device unavailable, timeout, unknown device, backend unavailable or not responding - are told apart by error code; playback-command outcomes - not confirmed, refused, unreachable, timed out (delivery ambiguous), busy (nothing sent, PR #23), backend unavailable - are worded in plain language and never shown as success);
-- [ ] responsive desktop/Android layout (fluid single-column layout with 44px touch targets and controls up to 56px; no horizontal overflow from 320px to 1280px across the status states and the playback-control states in a browser harness with a fake backend, and observed in the real window between 480px and 900px; nothing was run on Android or with a touch screen);
+- [ ] responsive desktop/Android layout (fluid single-column layout with 44px touch targets and controls up to 56px; no horizontal overflow from 320px to 1280px across the status states and the playback-control states in a browser harness with a fake backend, and observed in the real window between 480px and 900px; the Android spike's app rendered on one physical phone (2026-10-06), where its top was under the status bar; fixed on PR #30 by applying the window insets, and with the APK of `a2ff3bb` the page was seen clear of the status and navigation bars; display-cutout and rotation behaviour were not observed separately on the phone, and the layout and touch use were not otherwise reviewed there);
 - [x] choose JavaScript/TypeScript and any UI tooling from concrete implementation needs (vanilla TypeScript + Vite: no frontend framework is justified yet by a single-page skeleton).
 
 Exit criteria:
@@ -238,7 +244,7 @@ Exit criteria:
 
 ## Phase 4b - Desktop native integration
 
-Complementary development: starts after core completion (see "Current state and critical path") unless the owner reprioritizes.
+Critical-path item K (owner order of 2026-10-06): after the MCP adapter and the Android widget.
 
 A system tray / status indicator gives quick access to the essential controls without the main window. Decided during the UI review of 2026-09-26; not started. The tray is a second view over the same chain as the window (Tauri -> Python bridge -> `ControlService`), never a second control engine.
 
@@ -262,7 +268,7 @@ Exit criteria:
 
 ## Phase 5 - Media and service resolution
 
-Complementary development: starts after core completion (see "Current state and critical path") unless the owner reprioritizes.
+Complementary development: after the critical-path items (see "Current state and critical path") unless the owner reprioritizes.
 
 Deliverables:
 - [ ] resolver boundary separate from Cast transport;
@@ -276,7 +282,16 @@ Exit criteria:
 
 ## Phase 6 - MCP adapter
 
-Complementary development: starts after core completion (see "Current state and critical path") unless the owner reprioritizes.
+Critical-path item J: high priority, the next tranche after PR #30 (owner decision 2026-10-06). Not started.
+
+Proposed MVP (2026-10-06, from the code at `aad8979`; a plan, nothing implemented):
+- a local **stdio** MCP server, `python -m control_tv.mcp_server` (`src/control_tv/mcp_server.py`), with the official MCP Python SDK pinned in an optional dependency group, so neither the Linux bridge nor the Android APK embeds it; a network transport (Streamable HTTP, bound to localhost, with authentication if exposed beyond it) is a later step, decided separately;
+- one process-wide `ControlService(PyChromecastTransport())`, and every tool goes through `control_tv.bridge.dispatch`: the same parameter validation, `ControlService` calls and JSON shapes as the window, so no Cast, validation, confirmation or retry logic exists in the adapter;
+- eight tools: `discover_devices`, `get_status` (read-only) and `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`, all addressed by the stable `deviceId`;
+- tool calls serialized on one worker (the core is single-flight), never retried or replayed; a delivery `timeout` is reported as ambiguous ("may or may not have arrived; check with get_status, do not resend"), and a command result keeps `sent` and `confirmation` (`confirmed` / `unconfirmed` / `not_checked`) distinct, never worded as success unless `confirmed`;
+- privacy: no `host`/`port` in tool output, `internal_error` returned without exception text (details only in the local stderr log), no logging of media URLs or content ids;
+- open owner decisions: whether the 10-point volume raise limit (UI-only today) applies to MCP, and whether `contentId` is exposed to the assistant;
+- not part of the MVP: `load_media` (not exposed anywhere yet), Android-hosted MCP, a network transport, packaging the server in the `.deb`.
 
 Deliverables:
 - [ ] small typed MCP tool surface over shared control/domain capabilities;
@@ -302,8 +317,8 @@ Deliverables:
 - [ ] package the required Python runtime/components appropriately for each target (Linux: the frozen bridge, PR #26; Windows and Android open);
 - [ ] icons/metadata/version consistency;
 - [ ] reproducible release commands (Linux: `dev.py release-deb`, PR #26; Windows and Android open);
-- [ ] CI builds where useful (Linux: `linux-release`, PR #26; Windows and Android open);
-- [ ] documented signing/sideloading status.
+- [ ] CI builds where useful (Linux: `linux-release`, PR #26; Android: the `android` job of PR #30, not merged; Windows open);
+- [ ] documented signing/sideloading status (Android: personal sideloading only, no Play Store; the APK is debug-signed today).
 
 Exit criteria:
 - [ ] package build and installation/launch validation are tracked separately;
@@ -361,16 +376,16 @@ The Debian/Ubuntu target in "Targets" stays open: no release is published, and p
 
 ### Windows desktop (critical-path item F)
 
-Not started. The release resolution already names `control-tv-bridge.exe` (unit-tested only).
+Postponed by product decision (2026-10-04): not developed until the owner puts it back on the critical path. Not started. The release resolution already names `control-tv-bridge.exe` (unit-tested only).
 - [ ] sidecar built natively on Windows (PyInstaller cannot cross-build);
 - [ ] application `.exe`;
 - [ ] installer format decided (MSI or NSIS) and built;
 - [ ] installation, launch, bridge ping through the installed application and uninstallation on Windows;
 - [ ] build-path scan, inventory and checksums on Windows;
 - [ ] no dependency on a checkout or a developer Python;
-- [ ] bridge recovery stops the whole process tree on Windows and is validated there (PR #29, not merged, kills only the direct child on Windows: no Job Object or process-group equivalent yet, so a descendant holding the pipes can survive; not covered by CI).
+- [ ] bridge recovery stops the whole process tree on Windows and is validated there (PR #29, merged, kills only the direct child on Windows: no Job Object or process-group equivalent yet, so a descendant holding the pipes can survive; not covered by CI).
 
-Android stays separate (Phase 7b) and is not started.
+Android: see Phase 7b (spike gates passed on a physical phone; PR #30 not merged).
 
 ### Third-party licenses of the packaged runtime
 
@@ -384,15 +399,55 @@ Engineering inventory in `docs/PACKAGING_LICENSES.md`; the package ships `python
 
 ## Phase 7b - Android application and home-screen widget
 
-Complementary development: starts after core completion (see "Current state and critical path") unless the owner reprioritizes.
+Critical path (owner order of 2026-10-06): the Android APK MVP (item H, PR #30) first; the widget (item I) after the MCP adapter (item J). Android is personal and sideloaded only (`adb install` or a sideloaded APK signed with a personal key): no Google Play publication, Play Console, store listing or store metadata is planned.
 
-Runs after the Android application/APK target of Phase 7. Not started.
+Architecture (owner decision 2026-10-04; **the spike passed its gates A-H on a physical phone on 2026-10-06**, PR #30 not merged; see `ARCHITECTURE.md`, "Android"):
+- [x] decision recorded: Tauri 2 Android shell + CPython embedded through Chaquopy 17.0.0 (Python 3.12) + the unchanged `control_tv` package (`bridge.handle_line`, `ControlService`, `PyChromecastTransport`) + zeroconf discovery; one authoritative control engine shared with the desktop bridge;
+- [x] target: `arm64-v8a` phones only (Chaquopy's Python 3.12 has no 32-bit ARM or x86 build; the Tauri `arm`/`x86`/`x86_64` flavors are disabled), `minSdk` 24, `targetSdk` 36, application id `io.github.guillaumeboileaupro.controltv`;
+- [x] embedded Python packages: the control layer's locked runtime dependencies only, as pure-Python wheels hash-checked against `uv.lock` (`dev.py android-python`), installed by Chaquopy offline (`--no-index`); protobuf runs its pure-Python implementation; zeroconf, which publishes no pure wheel, is built from its locked sdist without its optional Cython extensions and retagged `py3-none-any` (checked free of compiled modules). Since the Codex review of `aad8979` (P2-2) the two wheels built locally (zeroconf, control-tv) are built offline (`pip wheel --isolated --no-index --no-deps --no-build-isolation --no-cache-dir`) with build backends locked in the `android` group (setuptools 84.0.0, poetry-core 2.5.0; checked against `uv.lock` before building) and a fixed `SOURCE_DATE_EPOCH`; the only network access is the hash-checked `uv sync --locked --group android` and the hash-checked download of the locked files. Measured: two consecutive preparations on the same machine gave byte-identical wheels; reproducibility across machines or toolchains is not measured;
+- [x] in-process bridge: a Kotlin `ControlBridgePlugin` runs `control_tv.embedded.handle(line)` on one worker thread (never on the Android main thread), once per request, never retried; the Rust shell keeps the PR #23 claim and timeouts around each call (`bridge_busy` not sent, `bridge_timeout`/`bridge_transport` ambiguous, no replay). `backend_unavailable` (certainly not sent) covers every failure before `handle` is entered: Python not starting and, since the Codex review of `aad8979` (P2-1), `control_tv.embedded` failing to import (`EmbeddedHandler`); a failure while or after `handle` runs stays the ambiguous `bridge_transport`;
+- [x] multicast lock (`CHANGE_WIFI_MULTICAST_STATE`) held while the app is in the foreground, released in the background; `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` declared;
+- [x] startup diagnostic (PR #30, after the first phone run): once, when the plugin loads, the bridge worker runs `control_tv.embedded.startup_diagnostic()`, which sends a `ping` through the same `handle` path and logs one line under the logcat tag `control-tv` (`python 3.12.x; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`, or the error code only on failure). It names versions only (no device, address, identifier or media), never touches the network or a Cast device and is never retried; tested in Python (3) and Kotlin (2), and seen on the physical phone on 2026-10-06: `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`.
 
-Blocking prerequisite:
-- [ ] **Architecture decision (owner) before any Android work:** how the Python runtime and the shared control core (`ControlService`, the PyChromecast adapter) run on Android, or how Android reuses that core otherwise (for example an embedded Python runtime or another documented option); the decision must keep one authoritative control engine for the window, the tray, MCP and Android, and is recorded in `ARCHITECTURE.md` before implementation.
+Known limitations of this architecture:
+- [ ] **in-process bridge cannot be recovered:** Python runs inside the app process, so the PR #29 recovery (kill and relaunch the bridge process) does not exist on Android; a request stuck in Python keeps the single worker busy and later requests end as `bridge_busy` until the app is restarted;
+- [ ] APK size: the debug APK is about 157 MB, mostly the unstripped debug Rust library (about 128 MB); a release build (stripped, `--remap-path-prefix`, signing) is not done;
+- [ ] the debug Rust library contains Cargo registry source paths of the build machine (debug information, not a runtime dependency); a release build must remap or strip them as `release-deb` does;
+- [ ] third-party licenses of the embedded runtime (Chaquopy's CPython, zeroconf LGPL, the pure wheels) are not inventoried for Android.
+
+Fallback if the spike fails (decided before the result, not applied): stop and report the blocker to the owner; options to evaluate then are a Kotlin-native Cast transport behind the same bridge protocol or a different embedding of Python. No blocker is worked around silently.
+
+STOP conditions of the spike: Chaquopy cannot embed the dependencies; `control_tv` does not import; pychromecast/zeroconf incompatible; protobuf blocks; multicast prevents discovery; the APK depends on an external runtime; a large rewrite of the Cast engine becomes necessary. None was hit while building (2026-10-04) nor on the physical phone (2026-10-06): the embedded runtime started, `control_tv` imported and answered its ping, zeroconf discovery worked through the multicast lock and protobuf did not block it.
+
+Android validation checklist (spike, PR #30, branch `feat/android-apk-spike`, draft, not merged; a box is checked only for what was really observed; a build is not an installation, an emulator is not a phone). Phone results come from one physical arm64 Android phone (not an emulator), within the spike scope (`arm64-v8a`, `minSdk` 24), observed by the owner on 2026-10-06: A-D, G and H with the APK built from `9ee916c` (SHA-256 `0122796e...c1417`), E and F with an instrumented APK of PR #30 (built at `3790ffd` or later):
+- [x] APK built: debug, arm64-v8a, `minSdk` 24, version 0.1.0 (versionCode 1000), debug-signed, locally with `python3 scripts/dev.py android-apk` (also built by the `android` CI job added on PR #30, see Phase 8); no checkout, `.venv` or host Python inside it: Python comes from Chaquopy's assets and the embedded packages are the 11 wheels above;
+- [x] installed on a real phone (`adb install`);
+- [x] application launched and rendered on the phone;
+- [x] embedded CPython 3.12 started (logcat: the Chaquopy libraries and `libpython3.12.so` loaded);
+- [x] `control_tv` imported (logcat, tag `control-tv`: `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`);
+- [x] ping answered with `controlTvVersion` 0.1.0 (same line: the ping went through the same `handle` path as every request);
+- [x] MulticastLock held while in the foreground (logcat: `multicast lock acquired (held=true)`);
+- [x] real discovery: the app's discovery action listed the TVs of the real local network; no receiver name, address or identifier is recorded here or in the repository;
+- [ ] real status of a receiver (not attempted);
+- [ ] real Play / Pause / Stop / Seek / Volume / Mute: not part of the spike; **no Cast control command was sent** during this validation.
+
+Codex review of `aad8979` (2026-10-06) and its disposition (PR #30, not merged):
+- [x] **P2-1 (fixed):** a failure to import `control_tv.embedded` after Python started was reported as the ambiguous `bridge_transport`; it is now `backend_unavailable` (not sent). Kotlin tests: start failure, import failure, failure inside `handle` (still ambiguous, `handle` run once), normal relay, and the relay reporting an unavailable bridge once;
+- [x] **P2-2 (fixed, with the measured limit above):** isolated `uv build` could resolve build backends from the network at build time; the builds are now offline with locked backends;
+- [x] **P2-3 (fixed on PR #30):** Android CI job `android`, green on run `37472885400` (`45b4aaa`), see Phase 8; it does not replace physical-phone validation and does not exercise E/F;
+- [x] **P3-1 (fixed):** the README no longer says Android is untouched or has no build;
+- [x] **P3-2 (fixed):** the whitespace and end-of-file issues reported by `git diff --check` in three generated Gradle/Kotlin files;
+- [ ] **P3-3 (open):** the CPython prefix warnings below, kept as a finding (cause not established).
+
+Findings of the phone run:
+- [x] **Wrong launcher icon (owner, physical phone):** the app showed Tauri's default icon; `tauri android init` had generated default resources and the logo had only been rendered for the desktop targets. Fixed on PR #30 (automation-validated, and the Control-TV icon seen on the phone's launcher with the APK of `a2ff3bb`): `packaging/android_icon.py` generates the icon from `assets/logo.svg` without redrawing it (the logo's single polygon and its gradient, scaled and centred in the adaptive icon's 66dp safe circle): an adaptive icon for API 26+ (`mipmap-anydpi-v26/ic_launcher[_round].xml`, vector foreground `drawable/ic_launcher_foreground.xml`, white background `@color/ic_launcher_background`) and the same composition as PNGs for API 24-25 (`mipmap-<density>/ic_launcher[_round].png`, rendered with Inkscape); the default icon resources are removed. Tests: the logo parsed exactly, the logo inside the safe circle, every point and gradient colour kept, committed resources equal to the generator's output, manifest references;
+- [x] **Content under the status bar (owner, physical phone):** the top of the page was drawn under the Android status bar. Cause: `MainActivity` draws edge to edge (and Android 15+ enforces it for this `targetSdk` 36) but nothing applied the window insets. Fixed on PR #30 (automation-validated, and with the APK of `a2ff3bb` the page seen clear of the status bar and of the navigation bar on the phone; display-cutout and rotation behaviour were not observed separately on the phone): the activity's content container, which holds the WebView, is padded by the insets the system reports (system bars and display cutout, the larger per side; no fixed size), reapplied when they change, and consumed so the page sees no inset and no CSS `env(safe-area-inset-*)` padding can double it; the bars are transparent with dark icons over a white window background matching the light-only page, in night mode too. The desktop layout is unchanged (Android-only native code; no CSS change). Kotlin tests: status and navigation bars, a cutout larger than the status bar, a side cutout in landscape, no inset;
+- [x] **visual validation on the phone (owner, 2026-10-06, APK of `a2ff3bb`, SHA-256 `7f3c6515...3bf9a2`):** PASS for the Control-TV launcher icon, the page clear of the status bar and the page clear of the navigation bar; not covered: display-cutout and rotation behaviour were not observed separately on the phone, and the broader responsive layout and touch use are not fully validated on hardware;
+- [ ] CPython logged `Could not find platform independent libraries <prefix>` and `Could not find platform dependent libraries <exec_prefix>` at startup; they did not prevent the start or the discovery, but their cause (Chaquopy's embedded `sys.prefix` layout) is not understood yet and stays tracked;
+- the in-process bridge does not inherit the desktop PR #29 process kill/relaunch recovery: see "Known limitations" above (not exercised on the phone).
 
 Android application:
-- [ ] the Android application reuses the shared control core as decided above, with no duplicated Cast logic;
+- [ ] the Android application reuses the shared control core as decided above, with no duplicated Cast logic (implemented on the spike branch, not merged; its discovery path ran on a physical phone);
 - [ ] discovery, selection, status and commands validated on a real Android device against a real Chromecast/Google TV, recorded separately from emulator or automated results.
 
 Home-screen widget (decided 2026-09-26):
@@ -430,7 +485,7 @@ Home-screen widget (decided 2026-09-26):
 - [x] verify Python/Tauri integration (`cargo test` in that job spawns the real `control_tv.bridge` process and pings it);
 - [x] add Linux build checks (the job above);
 - [ ] add Windows build checks;
-- [ ] add Android build checks;
+- [ ] add Android build checks: job `android` added on PR #30 (not merged): Android clippy, `android-apk` (wheel preparation and the arm64 debug APK), the Kotlin JVM tests, the APK SHA-256 and a 7-day build artifact; green on PR #30 run `37472885400` (`45b4aaa`, about 6 minutes; the CI APK differs from local builds, APK reproducibility is not claimed); build-level evidence only, no device or emulator; unchecked until merged;
 - [x] keep CI build success distinct from real Chromecast/TV hardware validation (this CI job never touches a Cast device; it built/packaged/pinged the bridge process only).
 
 ### Continuous delivery and packaging
@@ -443,7 +498,7 @@ Home-screen widget (decided 2026-09-26):
 - [x] upload the packaged artifacts (`linux-release`, kept 14 days);
 - [ ] build and test the Windows sidecar and application natively in CI;
 - [ ] build the Windows installer/application artifact;
-- [ ] build the Android APK;
+- [ ] build the Android APK (the `android` job of PR #30 builds the debug arm64 APK; a personal release-signed APK is not built);
 - [ ] retain controlled build artifacts from release workflows;
 - [ ] apply consistent artifact versioning;
 - [ ] generate checksums for release artifacts;

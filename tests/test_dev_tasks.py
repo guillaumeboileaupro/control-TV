@@ -651,3 +651,63 @@ def test_release_deb_stops_when_the_smoke_fails(
 
     assert dev.main(["release-deb"], root=repo) == 1
     assert [list(args)[1:] for args in released] == [["smoke", "--strict"]]
+
+
+def test_android_python_syncs_the_android_group_then_prepares_the_wheels(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "uv-calls.log"
+    _fake_uv(monkeypatch, tmp_path, log)
+    calls: list[list[str]] = []
+
+    def record(root: Path, args: Sequence[str]) -> int:
+        calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr(dev, "_run", record)
+
+    assert dev.main(["android-python"], root=repo) == 0
+    assert log.read_text().splitlines() == ["sync --locked --group android"]
+    assert calls == [[str(repo / "packaging" / "android_python.py")]]
+
+
+def test_android_apk_builds_a_debug_arm64_apk_after_the_wheels(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    steps: list[str] = []
+
+    def prepare(root: Path) -> int:
+        steps.append("android-python")
+        return 0
+
+    monkeypatch.setattr(dev, "cmd_android_python", prepare)
+    monkeypatch.setattr(dev.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def run_in(cwd: Path, root: Path, args: Sequence[str]) -> int:
+        steps.append(" ".join(args))
+        return 0
+
+    monkeypatch.setattr(dev, "_run_in", run_in)
+
+    assert dev.main(["android-apk"], root=repo) == 0
+    assert steps == [
+        "android-python",
+        "npx --prefix ui tauri android build --apk --target aarch64 --debug",
+    ]
+
+
+def test_android_apk_stops_when_the_wheels_cannot_be_prepared(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[Sequence[str]] = []
+    monkeypatch.setattr(dev, "cmd_android_python", lambda root: 1)
+    monkeypatch.setattr(dev.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def run_in(cwd: Path, root: Path, args: Sequence[str]) -> int:
+        built.append(args)
+        return 0
+
+    monkeypatch.setattr(dev, "_run_in", run_in)
+
+    assert dev.main(["android-apk"], root=repo) == 1
+    assert built == []

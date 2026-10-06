@@ -25,6 +25,17 @@ packaging = [
     "pyinstaller==6.22.3",
     "pyinstaller-hooks-contrib==2026.8",
 ]
+# Preparing the Python packages the Android app embeds (`dev.py android-python`). The wheels
+# are built offline with pip (`--no-build-isolation --no-index`), so their build backends are
+# these locked versions, never ones resolved at build time: setuptools (control-tv, and the
+# distutils zeroconf's build script imports) and poetry-core (zeroconf). wheel retags the
+# zeroconf wheel, built without its optional Cython extensions, as pure Python.
+android = [
+    "pip==25.3",
+    "wheel==0.45.1",
+    "poetry-core==2.5.0",
+    "setuptools==84.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

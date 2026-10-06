@@ -214,3 +214,98 @@ jobs:
       - name: Clean disposable build/test output
         if: always()
         run: python3 scripts/dev.py clean
+
+  android:
+    name: Android APK (arm64 debug build and JVM tests)
+    # Build-level evidence only: no device, no emulator, nothing installed or launched.
+    # Real-phone validation is recorded separately (DEVELOPMENT_PLAN.md, Phase 7b).
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: "27.0.12077973"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      # The debug Rust library for aarch64 and the Gradle build need several GiB; drop
+      # preinstalled toolchains this job never uses.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift
+          df -h /
+
+      - name: Install JDK 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # @stable: see the tauri job.
+      - name: Install the Rust stable toolchain with the Android arm64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+          components: clippy
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.23"
+          enable-cache: true
+
+      # The runner's Android SDK has no fixed NDK; install the one the project builds with.
+      - name: Install the Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          {
+            echo "NDK_HOME=$ndk"
+            echo "CC_aarch64_linux_android=$clang"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$clang"
+          } >> "$GITHUB_ENV"
+
+      - name: Install the locked, reproducible Python environment
+        run: python3 scripts/dev.py setup
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Lint the Android build of the Tauri shell crate
+        working-directory: src-tauri
+        run: cargo clippy --target aarch64-linux-android --lib -- -D warnings
+
+      # android-python (pure wheels hash-checked against uv.lock, built offline with the
+      # locked backends), then the debug arm64 APK with the embedded Python.
+      - name: Build the arm64 debug APK
+        run: python3 scripts/dev.py android-apk
+
+      - name: Run the Android JVM unit tests (Kotlin bridge relay, multicast lock)
+        working-directory: src-tauri/gen/android
+        run: ./gradlew --console=plain :app:testArm64DebugUnitTest
+
+      - name: Record the APK checksum
+        run: |
+          apk=src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          stat -c '%s bytes' "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the debug APK (build artifact, not a release)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-tv-android-arm64-debug
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Inspect remaining project-owned generated footprint
+        if: always()
+        run: python3 scripts/dev.py disk-usage
+
+      - name: Clean disposable build/test output
+        if: always()
+        run: python3 scripts/dev.py clean

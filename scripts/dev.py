@@ -18,6 +18,8 @@ Commands:
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
                dist/SHA256SUMS
+  android-python  the hash-checked pure-Python wheels the Android app embeds (dist/android-python/)
+  android-apk     android-python, then a debug arm64 APK (Tauri Android + embedded Python)
   disk-usage   free disk space and size of project-owned generated output
   clean        remove disposable generated output (keeps .venv, ui/node_modules and dist/)
   dist-clean   remove all reproducible project-owned generated output
@@ -87,6 +89,9 @@ TARGETS: tuple[Target, ...] = (
     Target("src-tauri/gen/android/.gradle", CLEAN, "Android project-local Gradle state"),
     Target("src-tauri/gen/android/build", CLEAN, "Android build output"),
     Target("src-tauri/gen/android/app/build", CLEAN, "Android app build output"),
+    Target("src-tauri/gen/android/buildSrc/build", CLEAN, "Android build plugin output"),
+    Target("src-tauri/gen/android/buildSrc/.gradle", CLEAN, "Android build plugin Gradle state"),
+    Target("src-tauri/gen/android/app/src/main/jniLibs", CLEAN, "Android Rust libraries (copied)"),
     Target(".gradle", CLEAN, "project-local Gradle state"),
     Target("ui/dist", CLEAN, "frontend build output"),
     Target(".venv", DIST_CLEAN, "development virtual environment"),
@@ -439,6 +444,21 @@ def cmd_release_deb(root: Path) -> int:
     return code or _run(root, [str(root / "packaging" / "release_linux.py")])
 
 
+def cmd_android_python(root: Path) -> int:
+    """The embedded app's Python packages: pure wheels, hash-checked against uv.lock."""
+    code = _run_uv(root, ["sync", "--locked", "--group", "android"])
+    return code or _run(root, [str(root / "packaging" / "android_python.py")])
+
+
+def cmd_android_apk(root: Path) -> int:
+    """A debug APK for arm64 phones, signed with the debug key (installable for testing)."""
+    if shutil.which("npx") is None:
+        return _missing_tool("npx", "https://nodejs.org/")
+    code = cmd_android_python(root)
+    command = ["npx", "--prefix", "ui", "tauri", "android", "build"]
+    return code or _run_in(root, root, [*command, "--apk", "--target", "aarch64", "--debug"])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev.py", description="control-TV development commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -457,6 +477,8 @@ def build_parser() -> argparse.ArgumentParser:
         "bridge-build",
         "bridge-smoke",
         "release-deb",
+        "android-python",
+        "android-apk",
         "disk-usage",
     )
     for name in names:
@@ -487,6 +509,8 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "bridge-build": cmd_bridge_build,
         "bridge-smoke": cmd_bridge_smoke,
         "release-deb": cmd_release_deb,
+        "android-python": cmd_android_python,
+        "android-apk": cmd_android_apk,
         "disk-usage": cmd_disk_usage,
     }
     return handlers[command](root)

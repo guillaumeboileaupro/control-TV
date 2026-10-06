@@ -61,42 +61,76 @@ const CLAIM_ABANDONED: u8 = 2;
 /// increasing id; nothing today needs concurrent in-flight requests, so this is
 /// deliberately the simplest correct thing, not a protocol limitation.
 struct PythonBridge {
-    /// Dropping `PythonBridge` drops `stdin` first (field order), closing that pipe and
-    /// sending EOF, which is exactly what makes `bridge.py`'s `for line in stdin` loop end
-    /// and the Python process exit on its own - no signal/kill is needed for a clean
-    /// shutdown. A bridge found broken is stopped explicitly instead (`BridgeProcess`).
-    stdin: Mutex<ChildStdin>,
-    stdout: Mutex<BufReader<ChildStdout>>,
+    channel: BridgeChannel,
     next_id: AtomicU64,
     process: Arc<BridgeProcess>,
 }
+
+/// How one request line reaches the shared Python control layer and its response comes back.
+enum BridgeChannel {
+    /// The desktop bridge process's stdin and stdout. Dropping `PythonBridge` drops this
+    /// channel, closing stdin and sending EOF, which is exactly what makes `bridge.py`'s
+    /// `for line in stdin` loop end and the Python process exit on its own - no signal/kill
+    /// is needed for a clean shutdown. A bridge found broken is stopped explicitly instead
+    /// (`BridgeProcess`).
+    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
+    Pipes {
+        stdin: Mutex<ChildStdin>,
+        stdout: Mutex<BufReader<ChildStdout>>,
+    },
+    /// Python embedded in this process (the Android app): one call takes one request line
+    /// and returns one response line, through the same `control_tv.bridge.handle_line`.
+    /// There is no process to stop or replace; the request claim and timeouts still apply.
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    InProcess(InProcessCall),
+}
+
+/// Runs one request line through the embedded Python bridge and returns its response line.
+type InProcessCall = Box<dyn Fn(String) -> Result<String, BridgeFailure> + Send + Sync>;
 
 /// The bridge's operating-system process, shared so that a caller whose request timed out
 /// after it was written can stop it without the bridge lock, which the worker still holds
 /// while it waits for the reply.
 struct BridgeProcess {
-    child: Mutex<Child>,
+    /// `None` for a bridge embedded in this process: nothing to kill or reap.
+    child: Option<Mutex<Child>>,
     /// Set by the first `terminate`; the process group is killed only once, while its
     /// leader is known to be ours.
     terminated: std::sync::atomic::AtomicBool,
 }
 
 impl BridgeProcess {
-    fn lock_child(&self) -> std::sync::MutexGuard<'_, Child> {
-        self.child
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    fn in_process() -> Self {
+        Self {
+            child: None,
+            terminated: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn lock_child(child: &Mutex<Child>) -> std::sync::MutexGuard<'_, Child> {
+        child
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn has_exited(&self) -> bool {
-        !matches!(self.lock_child().try_wait(), Ok(None))
+        match &self.child {
+            Some(child) => !matches!(Self::lock_child(child).try_wait(), Ok(None)),
+            None => false,
+        }
     }
 
     /// Kill the process and everything it started (on Unix, its process group), then reap
     /// it, so no zombie is left behind. With no process left holding its pipes, a worker
-    /// blocked on them sees end of file and returns.
+    /// blocked on them sees end of file and returns. A bridge embedded in this process has
+    /// nothing to stop.
     fn terminate(&self) {
-        let mut child = self.lock_child();
+        let Some(child) = &self.child else {
+            self.terminated.store(true, Ordering::SeqCst);
+            return;
+        };
+        let mut child = Self::lock_child(child);
         if !self.terminated.swap(true, Ordering::SeqCst) {
             #[cfg(unix)]
             if let Ok(group) = i32::try_from(child.id()) {
@@ -143,6 +177,7 @@ impl BridgeFailure {
 /// (`dev.py bridge-build`), which carries its own Python runtime: there is no fallback to a
 /// `.venv`, to `python`/`python3`, to `PATH` or to `PYTHONPATH`, and a missing bundle leaves
 /// the backend unavailable instead of picking up another Python.
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BridgeProgram {
     executable: PathBuf,
@@ -153,9 +188,11 @@ struct BridgeProgram {
 }
 
 /// Python variables that could make the frozen bridge import code other than its own.
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 const PYTHON_ENV_WITHHELD: [&str; 2] = ["PYTHONPATH", "PYTHONHOME"];
 
 #[cfg(any(debug_assertions, test))]
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> BridgeProgram {
     let repo_root = manifest_dir
         .parent()
@@ -173,6 +210,7 @@ fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> 
 }
 
 #[cfg(any(not(debug_assertions), test))]
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 fn packaged_bridge_program(resource_dir: &std::path::Path, windows: bool) -> BridgeProgram {
     let executable = if windows {
         "control-tv-bridge.exe"
@@ -188,6 +226,7 @@ fn packaged_bridge_program(resource_dir: &std::path::Path, windows: bool) -> Bri
 
 /// The bundled bridge under `resource_dir`, or why it cannot be used. Never another Python.
 #[cfg(any(not(debug_assertions), test))]
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 fn packaged_bridge(
     resource_dir: Result<PathBuf, String>,
     windows: bool,
@@ -203,6 +242,7 @@ fn packaged_bridge(
 }
 
 #[cfg(debug_assertions)]
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 fn resolve_bridge_program<R: tauri::Runtime>(
     _app: &tauri::AppHandle<R>,
 ) -> Result<BridgeProgram, String> {
@@ -213,6 +253,7 @@ fn resolve_bridge_program<R: tauri::Runtime>(
 }
 
 #[cfg(not(debug_assertions))]
+#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
 fn resolve_bridge_program<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<BridgeProgram, String> {
@@ -224,6 +265,7 @@ fn resolve_bridge_program<R: tauri::Runtime>(
 }
 
 impl PythonBridge {
+    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
     fn command(program: &BridgeProgram) -> Command {
         let mut command = Command::new(&program.executable);
         // Its own process group, so recovery can stop everything it started.
@@ -242,6 +284,7 @@ impl PythonBridge {
         command
     }
 
+    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
     fn spawn(program: &BridgeProgram) -> Result<Self, String> {
         let mut child = Self::command(program).spawn().map_err(|error| {
             format!(
@@ -260,14 +303,26 @@ impl PythonBridge {
             .ok_or("spawned bridge process has no stdout")?;
 
         Ok(Self {
-            stdin: Mutex::new(stdin),
-            stdout: Mutex::new(BufReader::new(stdout)),
+            channel: BridgeChannel::Pipes {
+                stdin: Mutex::new(stdin),
+                stdout: Mutex::new(BufReader::new(stdout)),
+            },
             next_id: AtomicU64::new(1),
             process: Arc::new(BridgeProcess {
-                child: Mutex::new(child),
+                child: Some(Mutex::new(child)),
                 terminated: std::sync::atomic::AtomicBool::new(false),
             }),
         })
+    }
+
+    /// A bridge to Python embedded in this process (the Android app).
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    fn in_process(call: InProcessCall) -> Self {
+        Self {
+            channel: BridgeChannel::InProcess(call),
+            next_id: AtomicU64::new(1),
+            process: Arc::new(BridgeProcess::in_process()),
+        }
     }
 
     /// Send one `{method, params}` request and return its result, or the bridge's own
@@ -280,9 +335,12 @@ impl PythonBridge {
             BridgeFailure::transport(format!("failed to encode bridge request: {error}"))
         })?;
 
+        let (stdin, stdout) = match &self.channel {
+            BridgeChannel::Pipes { stdin, stdout } => (stdin, stdout),
+            BridgeChannel::InProcess(call) => return parse_response(&call(line)?),
+        };
         {
-            let mut stdin = self
-                .stdin
+            let mut stdin = stdin
                 .lock()
                 .map_err(|_| BridgeFailure::transport("bridge stdin lock poisoned"))?;
             writeln!(stdin, "{line}").map_err(|error| {
@@ -297,8 +355,7 @@ impl PythonBridge {
 
         let mut response_line = String::new();
         {
-            let mut stdout = self
-                .stdout
+            let mut stdout = stdout
                 .lock()
                 .map_err(|_| BridgeFailure::transport("bridge stdout lock poisoned"))?;
             let bytes_read = stdout.read_line(&mut response_line).map_err(|error| {
@@ -714,16 +771,101 @@ async fn bridge_set_muted(
     send_set_muted(state.inner().clone(), &device_id, muted).await
 }
 
+/// The failure of an embedded (Android) bridge call. The Android side rejects with
+/// `backend_unavailable` only when the embedded Python could not start, before any request
+/// reached the shared control layer (certainly not sent); any other rejection may have come
+/// after the request was handled, so it is the ambiguous `bridge_transport`.
+#[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+fn embedded_rejection(code: Option<&str>, message: Option<&str>) -> BridgeFailure {
+    let message = message
+        .unwrap_or("the embedded Python control bridge failed")
+        .to_string();
+    match code {
+        Some(CODE_BACKEND_UNAVAILABLE) => BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, message),
+        _ => BridgeFailure::transport(message),
+    }
+}
+
+/// The Android app: Python is embedded in the app process (Chaquopy) and reached through
+/// the `ControlBridgePlugin` Kotlin plugin, which runs `control_tv.embedded.handle`.
+#[cfg(target_os = "android")]
+mod android {
+    use super::*;
+    use tauri::plugin::{mobile::PluginInvokeError, PluginHandle, TauriPlugin};
+
+    const PLUGIN_PACKAGE: &str = "io.github.guillaumeboileaupro.controltv";
+    const PLUGIN_CLASS: &str = "ControlBridgePlugin";
+
+    #[derive(Serialize)]
+    struct HandleArgs {
+        line: String,
+    }
+
+    #[derive(Deserialize)]
+    struct HandleResponse {
+        line: String,
+    }
+
+    /// The registered Kotlin plugin, shared by every launch of the bridge.
+    pub(super) struct EmbeddedBridge(pub(super) Arc<PluginHandle<tauri::Wry>>);
+
+    pub(super) fn plugin() -> TauriPlugin<tauri::Wry> {
+        tauri::plugin::Builder::new("control-bridge")
+            .setup(|app, api| {
+                let handle = api.register_android_plugin(PLUGIN_PACKAGE, PLUGIN_CLASS)?;
+                app.manage(EmbeddedBridge(Arc::new(handle)));
+                Ok(())
+            })
+            .build()
+    }
+
+    /// One request line to the embedded bridge, on the calling (worker) thread; the Kotlin
+    /// side runs Python off the Android main thread and answers once.
+    pub(super) fn launcher(handle: Arc<PluginHandle<tauri::Wry>>) -> BridgeLauncher {
+        Box::new(move || {
+            let handle = Arc::clone(&handle);
+            Ok(PythonBridge::in_process(Box::new(move |line| {
+                handle
+                    .run_mobile_plugin::<HandleResponse>("handle", HandleArgs { line })
+                    .map(|response| response.line)
+                    .map_err(|error| match error {
+                        PluginInvokeError::InvokeRejected(rejection) => embedded_rejection(
+                            rejection.code.as_deref(),
+                            rejection.message.as_deref(),
+                        ),
+                        other => BridgeFailure::transport(other.to_string()),
+                    })
+            })))
+        })
+    }
+}
+
+/// How this build starts the bridge, the first time and on every recovery.
+#[cfg(not(target_os = "android"))]
+fn bridge_launcher(app: &tauri::App) -> BridgeLauncher {
+    // Every launch resolves the bridge program again: a release build can only ever start
+    // its bundled bridge, never another Python.
+    let handle = app.handle().clone();
+    Box::new(move || {
+        resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
+    })
+}
+
+/// How this build starts the bridge: Python embedded in the Android app.
+#[cfg(target_os = "android")]
+fn bridge_launcher(app: &tauri::App) -> BridgeLauncher {
+    let handle = Arc::clone(&app.state::<android::EmbeddedBridge>().0);
+    android::launcher(handle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin());
+    builder
         .setup(|app| {
-            // Every launch, the first and every recovery, resolves the bridge program again:
-            // a release build can only ever start its bundled bridge, never another Python.
-            let handle = app.handle().clone();
-            let slot = BridgeSlot::new(Box::new(move || {
-                resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
-            }));
+            let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
             Ok(())
         })
@@ -2091,5 +2233,138 @@ while IFS= read -r line; do {ANSWER}; done"#,
         .unwrap_err();
 
         assert_eq!(error.code, CODE_BACKEND_UNAVAILABLE);
+    }
+
+    // --- Embedded bridge (Android): one in-process call per request line -----------------
+
+    /// A slot whose bridge is "embedded": `respond` stands for the Kotlin plugin running
+    /// `control_tv.embedded.handle`. Every request line it receives is recorded.
+    fn embedded_slot(
+        respond: impl Fn(&Value) -> Result<String, BridgeFailure> + Send + Sync + 'static,
+    ) -> (SharedBridgeState, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let respond = Arc::new(respond);
+        let launch_seen = Arc::clone(&seen);
+        let launcher: BridgeLauncher = Box::new(move || {
+            let seen = Arc::clone(&launch_seen);
+            let respond = Arc::clone(&respond);
+            Ok(PythonBridge::in_process(Box::new(move |line| {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                seen.lock()
+                    .unwrap()
+                    .push(request["method"].as_str().unwrap().to_string());
+                respond(&request)
+            })))
+        });
+        (Arc::new(Mutex::new(BridgeSlot::new(launcher))), seen)
+    }
+
+    fn answer(request: &Value, result: Value) -> Result<String, BridgeFailure> {
+        Ok(json!({"id": request["id"], "ok": true, "result": result}).to_string())
+    }
+
+    fn embedded_call(
+        state: &SharedBridgeState,
+        method: &'static str,
+        timeout: Duration,
+    ) -> Result<Value, BridgeFailure> {
+        tauri::async_runtime::block_on(call_bridge(Arc::clone(state), method, json!({}), timeout))
+    }
+
+    #[test]
+    fn an_embedded_call_relays_the_request_line_and_its_response() {
+        let (state, seen) = embedded_slot(|request| {
+            assert_eq!(request["params"], json!({}));
+            answer(
+                request,
+                json!({"status": "ready", "controlTvVersion": "0.1.0"}),
+            )
+        });
+
+        let result = embedded_call(&state, "ping", Duration::from_secs(5)).unwrap();
+
+        assert_eq!(result["controlTvVersion"], "0.1.0");
+        assert_eq!(*seen.lock().unwrap(), ["ping"]);
+    }
+
+    #[test]
+    fn a_failed_embedded_call_is_ambiguous_and_never_repeated() {
+        let (state, seen) = embedded_slot(|request| match request["method"].as_str() {
+            Some("pause") => Err(BridgeFailure::transport("plugin failed after the call")),
+            _ => answer(request, json!({})),
+        });
+
+        let failure = embedded_call(&state, "pause", Duration::from_secs(5)).unwrap_err();
+        embedded_call(&state, "ping", Duration::from_secs(5)).unwrap();
+
+        assert_eq!(failure.code, CODE_BRIDGE_TRANSPORT);
+        assert_eq!(*seen.lock().unwrap(), ["pause", "ping"]);
+    }
+
+    #[test]
+    fn an_embedded_python_that_cannot_start_is_an_unavailable_backend_not_a_transport_failure() {
+        let unavailable = embedded_rejection(Some("backend_unavailable"), Some("no Python"));
+        let other = embedded_rejection(Some("bridge_transport"), None);
+        let uncoded = embedded_rejection(None, Some("boom"));
+
+        assert_eq!(
+            unavailable,
+            BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, "no Python")
+        );
+        assert_eq!(other.code, CODE_BRIDGE_TRANSPORT);
+        assert_eq!(uncoded, BridgeFailure::transport("boom"));
+
+        let (state, _) =
+            embedded_slot(|_| Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, "no Python")));
+        let error = embedded_call(&state, "ping", Duration::from_secs(5)).unwrap_err();
+        assert_eq!(error.code, CODE_BACKEND_UNAVAILABLE);
+    }
+
+    #[test]
+    fn an_embedded_request_abandoned_behind_a_slow_one_is_never_handed_to_python() {
+        let (state, seen) = embedded_slot(|request| {
+            if request["method"] == "slow" {
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            answer(request, json!({}))
+        });
+        let holder_state = Arc::clone(&state);
+        let holder = std::thread::spawn(move || {
+            embedded_call(&holder_state, "slow", Duration::from_secs(5))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+
+        let waiting = embedded_call(&state, "pause", Duration::from_millis(200)).unwrap_err();
+
+        assert_eq!(waiting.code, CODE_BRIDGE_BUSY);
+        holder.join().unwrap().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(*seen.lock().unwrap(), ["slow"]);
+    }
+
+    #[test]
+    fn an_embedded_timeout_after_the_claim_is_ambiguous_and_nothing_is_resent() {
+        let (state, seen) = embedded_slot(|request| {
+            if request["method"] == "slow" {
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            answer(request, json!({}))
+        });
+
+        let failure = embedded_call(&state, "slow", Duration::from_millis(200)).unwrap_err();
+        embedded_call(&state, "ping", Duration::from_secs(5)).unwrap();
+
+        assert_eq!(failure.code, CODE_BRIDGE_TIMEOUT);
+        assert_eq!(*seen.lock().unwrap(), ["slow", "ping"]);
+    }
+
+    #[test]
+    fn an_embedded_bridge_has_no_process_to_stop_or_replace() {
+        let process = BridgeProcess::in_process();
+
+        assert!(!process.has_exited());
+        process.terminate();
+        process.terminate();
+        assert!(!process.has_exited());
     }
 }

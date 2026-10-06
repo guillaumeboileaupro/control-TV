@@ -34,7 +34,7 @@ GUI and MCP must use the same authoritative control/domain behavior. Do not crea
 
 ## Current implementation
 
-What exists in the code today (the MCP adapter, the tray and Android do not exist yet):
+What exists in the code today (the MCP adapter and the tray do not exist yet; Android is a spike, see "Android" below):
 
 ```text
 ui/ (vanilla TypeScript + Vite)
@@ -57,11 +57,37 @@ CastTransport -> PyChromecastTransport (the only module that imports pychromecas
 - **Unknown is not zero:** a field the TV did not report is `null`, never a default value, and the UI shows it as not reported.
 - **Python runtime:** a debug build starts `python -m control_tv.bridge` from the repository `.venv`. A release build starts only the frozen bridge (PyInstaller `--onedir`, its own embedded Python runtime) bundled as the `python-bridge/` Tauri resource, with no fallback to another Python and with `PYTHONPATH`/`PYTHONHOME` withheld; a missing bundle leaves the backend unavailable (`resolve_bridge_program()` in `src-tauri/src/lib.rs`, `packaging/build_bridge.py`). Both run the same `control_tv.bridge` code. Releases embed exactly the CPython in `packaging/release-python-version` (3.12.15), built with uv 0.12.23. The Linux release `.deb` has been installed for real on Ubuntu 22.04: the installed application was launched with the checkout, its `.venv`, uv's Python store and the build CPython hidden and the system `python3` unusable. It was given deliberately poisoned `PYTHONPATH`/`PYTHONHOME` values, which the runtime removes before spawning the bundled bridge: the bridge's environment contained neither variable. The bundled bridge answered the application's `ping` (0.1.0) before the package was purged. The `linux-release` CI job installs the package, pings the installed bridge directly from outside the checkout and purges it; it does not launch the GUI. No Cast device was used for this validation. Windows is not built, and public distribution still waits for open license items (`DEVELOPMENT_PLAN.md`, Phase 7; `docs/PACKAGING_LICENSES.md`).
 
+## Android (spike validated on a physical phone)
+
+Owner decision of 2026-10-04, explored as a spike (`DEVELOPMENT_PLAN.md`, Phase 7b). On one physical arm64 phone (2026-10-06, PR #30 not merged) the spike passed all its gates: the APK installed and launched, the embedded CPython 3.12 started, `control_tv` imported and answered its ping (0.1.0), the multicast lock was held and the app discovered receivers on the real local network, with no Cast control command sent. It is the architecture the Android APK MVP is built on; receiver status and control commands are not yet validated on Android, and the MVP is not complete until they are.
+
+```text
+ui/ (same TypeScript UI, Android WebView)
+   | invoke (same Tauri commands)
+   v
+src-tauri/ (Rust, same call_bridge: claim, timeouts, no replay)
+   | BridgeChannel::InProcess -> run_mobile_plugin("handle", line)
+   v
+ControlBridgePlugin (Kotlin, src-tauri/gen/android): one worker thread, multicast lock
+   | Chaquopy: control_tv.embedded.handle(line)
+   v
+control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPython 3.12 in the app)
+```
+
+- **One engine:** Android runs the same `control_tv` package and the same `handle_line` as the desktop bridge process; only the transport of the request line differs (an in-process call instead of stdio), so no Cast, validation or confirmation logic is duplicated in Kotlin or Rust.
+- **Runtime:** CPython 3.12 from Chaquopy 17.0.0, `arm64-v8a` only, `minSdk` 24. The embedded packages are the control layer's locked runtime dependencies as pure-Python wheels, hash-checked against `uv.lock` and installed offline (`packaging/android_python.py`); protobuf uses its pure-Python implementation and zeroconf is built without its optional Cython extensions. The two wheels built locally (zeroconf, control-tv) are built offline with build backends locked in `uv.lock` (no build dependency is resolved at build time). The APK carries its own Python: it does not use the checkout, a `.venv` or a host Python.
+- **Failure boundary:** a failure before `control_tv.embedded.handle` is entered (Python not starting, `control_tv.embedded` not importing) is `backend_unavailable`, certainly not sent; a failure while or after `handle` runs is the ambiguous `bridge_transport`; nothing is retried (`EmbeddedHandler`).
+- **Threads:** Tauri delivers plugin commands on the Android main thread; the plugin runs Python on its own single worker thread, so the shared layer stays single-flight as on the desktop and the window never blocks on a discovery or a command.
+- **System bars:** the app draws edge to edge; `MainActivity` pads the content container holding the WebView by the window insets the system reports (system bars, display cutout) and consumes them, so the page needs no safe-area CSS and is never padded twice. The launcher icon is generated from `assets/logo.svg` (`packaging/android_icon.py`).
+- **Discovery:** the app holds Wi-Fi's multicast lock while in the foreground (mDNS replies are otherwise often filtered) and releases it in the background.
+- **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
+- **Limitation:** Python lives in the app process, so the desktop recovery (kill and relaunch the bridge process, PR #29) has no equivalent; a request stuck in Python leaves later requests `bridge_busy` until the app restarts.
+
 ## Planned native integrations
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
-- **Android and its home-screen widget (Phase 7b):** requires an owner architecture decision first on how the Python runtime and the shared control core run on Android, or how Android otherwise reuses that core, so that one authoritative control engine remains.
-- **MCP adapter (Phase 6):** calls `TvControl` directly; UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
+- **Android home-screen widget (Phase 7b):** after the MCP adapter, over the same embedded control layer (see "Android").
+- **MCP adapter (Phase 6, next after the Android APK MVP):** planned as a separate local stdio process (`python -m control_tv.mcp_server`) holding its own `ControlService` over the same `PyChromecastTransport`, and calling the same `control_tv.bridge.dispatch` as the window's bridge, so validation, confirmation and the no-retry rule stay in one place; it does not depend on Tauri, Rust or the UI. UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
 
 ## Chromecast capabilities
 
@@ -77,7 +103,7 @@ MCP exposes a small typed tool surface over the same product control capabilitie
 
 ## Cross-platform targets
 
-- Android: APK.
+- Android: APK for personal sideloading (no Google Play publication).
 - Windows: EXE or appropriate Windows installer artifact.
 - Debian/Ubuntu: DEB (the release `.deb` with the frozen bridge is built, installed and launched on Ubuntu 22.04; not yet released).
 
