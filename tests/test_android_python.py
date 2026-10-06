@@ -260,3 +260,16 @@ def test_the_android_group_pins_each_build_backend_to_its_locked_version() -> No
 
     for backend in android.BUILD_BACKENDS:
         assert pins[backend] == locked[backend]
+
+
+def test_the_android_app_never_embeds_the_optional_mcp_server_or_its_dependencies() -> None:
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    project = next(p for p in lock["package"] if p["name"] == "control-tv")
+    embedded = set(android.runtime_packages(lock))
+    mcp_only = set(android.runtime_packages(lock, project="mcp")) - embedded
+
+    # The MCP SDK is an optional extra of control-tv, never one of its runtime dependencies.
+    assert [d["name"] for d in project["optional-dependencies"]["mcp"]] == ["mcp"]
+    assert "mcp" not in {android.normalized(d["name"]) for d in project["dependencies"]}
+    assert "mcp" not in embedded
+    assert {"starlette", "uvicorn", "pydantic"} <= mcp_only

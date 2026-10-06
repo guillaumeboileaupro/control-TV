@@ -264,8 +264,12 @@ def _run_uv(root: Path, args: Sequence[str]) -> int:
 
 
 def cmd_setup(root: Path) -> int:
-    """Create/update .venv to exactly match uv.lock. Fails if the lock is out of date."""
-    return _run_uv(root, ["sync", "--locked"])
+    """Create/update .venv to exactly match uv.lock (with the optional MCP server's extra).
+
+    Fails if the lock is out of date. The packaging and Android commands sync their own
+    exact environments, without the MCP extra.
+    """
+    return _run_uv(root, ["sync", "--locked", "--extra", "mcp"])
 
 
 def cmd_lock(root: Path) -> int:
