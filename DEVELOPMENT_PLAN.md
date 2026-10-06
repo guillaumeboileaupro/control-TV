@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a lightweight standalone Chromecast / Google TV controller for Android, Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
+Build a lightweight standalone Chromecast / Google TV controller for Android (personal use, sideloaded APK: no Google Play publication objective), Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
 
 Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule" at the end): **automation-validated** means deterministic tests, CI, or the real application driven against a fake TV / fake transport; **real-hardware validated** means the behavior was observed on a real Chromecast/Google TV or on the real target platform, with the evidence recorded. A checked implementation line never implies the matching hardware line.
 
@@ -21,7 +21,7 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 State of `main` at `1c71530` (merge of PR #29, 2026-10-04; it contains everything listed below, including PR #26 `eba73f5`). Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android spike (PR #30, draft, branch `feat/android-apk-spike`, see Phase 7b). PR #25 (an earlier synchronization of this plan) was closed without merging; its content was carried by PR #26.
 
-Product priority (owner decision, 2026-10-04): **#29 MERGED -> Android APK MVP -> Android widget**, then the rest. Windows is postponed by product decision: it stays documented (Phase 7, "Windows desktop") with all its open limitations, but it is out of the immediate critical path and not developed until the owner puts it back.
+Product priority (owner decision, 2026-10-06, replacing the order of 2026-10-04): **1. finish the Android APK MVP (PR #30) -> 2. MCP control-TV adapter (high priority, immediately after #30) -> 3. Android home-screen widget -> 4. Linux tray and secondary improvements -> 5. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
 
 Critical path:
 - [x] **A. Bridge requests never sent after their timeout (PR #23, merged):** see "Bridge request claim" under the Tauri shell status.
@@ -31,10 +31,12 @@ Critical path:
 - [x] **E. Autonomous `.deb` really installed and validated** on Ubuntu 22.04 without the checkout, the `.venv` or a system Python (PR #26 content): installed, the GUI application launched, its bundled bridge pinged through it, purged (local, commit `fba82cc`, whose code is what PR #26 merged); the `linux-release` CI job installs the package, pings the installed bridge directly and purges it on every run (no GUI). Not a published release: the Debian/Ubuntu target stays open in Phase 7 while the license blockers remain.
 - [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
 - [ ] **H. Android APK MVP (Phase 7b):** spike in progress (PR #30, draft, branch `feat/android-apk-spike`, not merged). On a physical arm64 phone (2026-10-06) the debug APK installed, launched, started its embedded CPython, held the multicast lock and discovered receivers on the real local network; the explicit `control_tv` import and ping 0.1.0 evidence is still pending (see the Phase 7b checklist).
-- [ ] **I. Android home-screen widget (Phase 7b):** after the APK MVP.
-- [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, out of the immediate critical path; no Windows limitation is lifted by this.
+- [ ] **J. MCP control-TV adapter (Phase 6):** high priority, immediately after PR #30; not started (implementation plan in Phase 6).
+- [ ] **I. Android home-screen widget (Phase 7b):** after the MCP adapter.
+- [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
+- [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
 
-Complementary development, after the critical path above unless the owner reprioritizes: the system tray (Phase 4b), the MCP adapter (Phase 6) and media/service resolution (Phase 5). These phases are kept.
+Complementary development, after the items above unless the owner reprioritizes: media/service resolution (Phase 5).
 
 ## Phase 0 - Repository and development discipline
 
@@ -242,7 +244,7 @@ Exit criteria:
 
 ## Phase 4b - Desktop native integration
 
-Complementary development: starts after the critical path (see "Current state and critical path") unless the owner reprioritizes.
+Critical-path item K (owner order of 2026-10-06): after the MCP adapter and the Android widget.
 
 A system tray / status indicator gives quick access to the essential controls without the main window. Decided during the UI review of 2026-09-26; not started. The tray is a second view over the same chain as the window (Tauri -> Python bridge -> `ControlService`), never a second control engine.
 
@@ -266,7 +268,7 @@ Exit criteria:
 
 ## Phase 5 - Media and service resolution
 
-Complementary development: starts after the critical path (see "Current state and critical path") unless the owner reprioritizes.
+Complementary development: after the critical-path items (see "Current state and critical path") unless the owner reprioritizes.
 
 Deliverables:
 - [ ] resolver boundary separate from Cast transport;
@@ -280,7 +282,16 @@ Exit criteria:
 
 ## Phase 6 - MCP adapter
 
-Complementary development: starts after the critical path (see "Current state and critical path") unless the owner reprioritizes.
+Critical-path item J: high priority, the next tranche after PR #30 (owner decision 2026-10-06). Not started.
+
+Proposed MVP (2026-10-06, from the code at `aad8979`; a plan, nothing implemented):
+- a local **stdio** MCP server, `python -m control_tv.mcp_server` (`src/control_tv/mcp_server.py`), with the official MCP Python SDK pinned in an optional dependency group, so neither the Linux bridge nor the Android APK embeds it; a network transport (Streamable HTTP, bound to localhost, with authentication if exposed beyond it) is a later step, decided separately;
+- one process-wide `ControlService(PyChromecastTransport())`, and every tool goes through `control_tv.bridge.dispatch`: the same parameter validation, `ControlService` calls and JSON shapes as the window, so no Cast, validation, confirmation or retry logic exists in the adapter;
+- eight tools: `discover_devices`, `get_status` (read-only) and `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`, all addressed by the stable `deviceId`;
+- tool calls serialized on one worker (the core is single-flight), never retried or replayed; a delivery `timeout` is reported as ambiguous ("may or may not have arrived; check with get_status, do not resend"), and a command result keeps `sent` and `confirmation` (`confirmed` / `unconfirmed` / `not_checked`) distinct, never worded as success unless `confirmed`;
+- privacy: no `host`/`port` in tool output, `internal_error` returned without exception text (details only in the local stderr log), no logging of media URLs or content ids;
+- open owner decisions: whether the 10-point volume raise limit (UI-only today) applies to MCP, and whether `contentId` is exposed to the assistant;
+- not part of the MVP: `load_media` (not exposed anywhere yet), Android-hosted MCP, a network transport, packaging the server in the `.deb`.
 
 Deliverables:
 - [ ] small typed MCP tool surface over shared control/domain capabilities;
@@ -307,7 +318,7 @@ Deliverables:
 - [ ] icons/metadata/version consistency;
 - [ ] reproducible release commands (Linux: `dev.py release-deb`, PR #26; Windows and Android open);
 - [ ] CI builds where useful (Linux: `linux-release`, PR #26; Windows and Android open);
-- [ ] documented signing/sideloading status.
+- [ ] documented signing/sideloading status (Android: personal sideloading only, no Play Store; the APK is debug-signed today).
 
 Exit criteria:
 - [ ] package build and installation/launch validation are tracked separately;
@@ -388,7 +399,7 @@ Engineering inventory in `docs/PACKAGING_LICENSES.md`; the package ships `python
 
 ## Phase 7b - Android application and home-screen widget
 
-Critical path since 2026-10-04 (owner decision): the Android APK MVP (item H), then the widget (item I).
+Critical path (owner order of 2026-10-06): the Android APK MVP (item H, PR #30) first; the widget (item I) after the MCP adapter (item J). Android is personal and sideloaded only (`adb install` or a sideloaded APK signed with a personal key): no Google Play publication, Play Console, store listing or store metadata is planned.
 
 Architecture (owner decision 2026-10-04, **candidate until the spike passes on a real phone**, partly observed there on 2026-10-06; see `ARCHITECTURE.md`, "Android"):
 - [x] decision recorded: Tauri 2 Android shell + CPython embedded through Chaquopy 17.0.0 (Python 3.12) + the unchanged `control_tv` package (`bridge.handle_line`, `ControlService`, `PyChromecastTransport`) + zeroconf discovery; one authoritative control engine shared with the desktop bridge;
@@ -413,7 +424,7 @@ Android validation checklist (spike, PR #30, branch `feat/android-apk-spike`, dr
 - [x] installed on a real phone (`adb install`);
 - [x] application launched and rendered on the phone;
 - [x] embedded CPython 3.12 started (logcat: the Chaquopy libraries and `libpython3.12.so` loaded);
-- [ ] `control_tv` imported: not shown explicitly; the startup diagnostic was added for this and must be seen in logcat on the phone;
+- [ ] `control_tv` imported: not shown explicitly (the APK run on 2026-10-06 had no diagnostic yet); needs the startup diagnostic line in logcat from the APK built at `3790ffd` or later (SHA-256 `ac9cb9b7...988ee6` for the build of 2026-10-06);
 - [ ] ping answered with `controlTvVersion` 0.1.0: same, pending the diagnostic line;
 - [x] MulticastLock held while in the foreground (logcat: `multicast lock acquired (held=true)`);
 - [x] real discovery: the app's discovery action listed the TVs of the real local network; no receiver name, address or identifier is recorded here or in the repository;

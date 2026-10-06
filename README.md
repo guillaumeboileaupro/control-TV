@@ -85,7 +85,7 @@ python3 scripts/dev.py android-python   # pure-Python wheels the app embeds, has
 python3 scripts/dev.py android-apk      # both, then a debug arm64 APK: src-tauri/gen/android/app/build/outputs/apk/universal/debug/
 ```
 
-The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for testing only.
+The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for personal sideloading (`adb install`); there is no Google Play publication objective.
 
 ## Repository layout
 

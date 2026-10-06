@@ -84,8 +84,8 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 ## Planned native integrations
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
-- **Android home-screen widget (Phase 7b):** after the Android APK MVP, over the same embedded control layer (see "Android").
-- **MCP adapter (Phase 6):** calls `TvControl` directly; UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
+- **Android home-screen widget (Phase 7b):** after the MCP adapter, over the same embedded control layer (see "Android").
+- **MCP adapter (Phase 6, next after the Android APK MVP):** planned as a separate local stdio process (`python -m control_tv.mcp_server`) holding its own `ControlService` over the same `PyChromecastTransport`, and calling the same `control_tv.bridge.dispatch` as the window's bridge, so validation, confirmation and the no-retry rule stay in one place; it does not depend on Tauri, Rust or the UI. UI-only protections such as the volume raise limit do not apply to it and must be decided for MCP separately.
 
 ## Chromecast capabilities
 
@@ -101,7 +101,7 @@ MCP exposes a small typed tool surface over the same product control capabilitie
 
 ## Cross-platform targets
 
-- Android: APK.
+- Android: APK for personal sideloading (no Google Play publication).
 - Windows: EXE or appropriate Windows installer artifact.
 - Debian/Ubuntu: DEB (the release `.deb` with the frozen bridge is built, installed and launched on Ubuntu 22.04; not yet released).
 
