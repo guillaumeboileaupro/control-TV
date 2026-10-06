@@ -12,6 +12,13 @@ dependencies = [
     "PyChromecast>=14.0.10,<15",
 ]
 
+[project.optional-dependencies]
+# The MCP server (`python -m control_tv.mcp_server`). Optional: the desktop bridge and the
+# Android app never install it (see DEVELOPMENT_PLAN.md, Phase 6).
+mcp = [
+    "mcp==1.30.0",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.10",
