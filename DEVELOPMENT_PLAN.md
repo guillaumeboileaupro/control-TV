@@ -434,7 +434,7 @@ Android validation checklist (spike, PR #30, branch `feat/android-apk-spike`, dr
 Codex review of `aad8979` (2026-10-06) and its disposition (PR #30, not merged):
 - [x] **P2-1 (fixed):** a failure to import `control_tv.embedded` after Python started was reported as the ambiguous `bridge_transport`; it is now `backend_unavailable` (not sent). Kotlin tests: start failure, import failure, failure inside `handle` (still ambiguous, `handle` run once), normal relay, and the relay reporting an unavailable bridge once;
 - [x] **P2-2 (fixed, with the measured limit above):** isolated `uv build` could resolve build backends from the network at build time; the builds are now offline with locked backends;
-- [ ] **P2-3 (job added, result pending CI):** Android CI job `android`, see Phase 8; it does not replace physical-phone validation and does not exercise E/F;
+- [x] **P2-3 (fixed on PR #30):** Android CI job `android`, green on run `37472885400` (`45b4aaa`), see Phase 8; it does not replace physical-phone validation and does not exercise E/F;
 - [x] **P3-1 (fixed):** the README no longer says Android is untouched or has no build;
 - [x] **P3-2 (fixed):** the whitespace and end-of-file issues reported by `git diff --check` in three generated Gradle/Kotlin files;
 - [ ] **P3-3 (open):** the CPython prefix warnings below, kept as a finding (cause not established).
@@ -482,7 +482,7 @@ Home-screen widget (decided 2026-09-26):
 - [x] verify Python/Tauri integration (`cargo test` in that job spawns the real `control_tv.bridge` process and pings it);
 - [x] add Linux build checks (the job above);
 - [ ] add Windows build checks;
-- [ ] add Android build checks: job `android` added on PR #30 (not merged): Android clippy, `android-apk` (wheel preparation and the arm64 debug APK), the Kotlin JVM tests, the APK SHA-256 and a 7-day build artifact; build-level evidence only, no device or emulator; see PR #30's CI for its result;
+- [ ] add Android build checks: job `android` added on PR #30 (not merged): Android clippy, `android-apk` (wheel preparation and the arm64 debug APK), the Kotlin JVM tests, the APK SHA-256 and a 7-day build artifact; green on PR #30 run `37472885400` (`45b4aaa`, about 6 minutes; the CI APK differs from local builds, APK reproducibility is not claimed); build-level evidence only, no device or emulator; unchecked until merged;
 - [x] keep CI build success distinct from real Chromecast/TV hardware validation (this CI job never touches a Cast device; it built/packaged/pinged the bridge process only).
 
 ### Continuous delivery and packaging
