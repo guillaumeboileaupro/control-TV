@@ -11,9 +11,13 @@ adapts the bridge's answers for an assistant:
   quoted value in a command's `detail`) are never returned; error messages are fixed per
   code (the bridge's own text can carry library exception text, addresses or ids), except
   `invalid_argument`, whose message is about the caller's own arguments;
-- delivery: a command error says whether the command was not sent, was sent, or may have
-  been sent (`timeout`, `internal_error`); a sent command keeps its `confirmation`, and only
-  `confirmed` is worded as done. Nothing is ever resent: not here, not by the service;
+- delivery: a command error says `not_sent` only when the shared layer proves nothing left
+  (validation, an unknown device, an unsupported operation, ...) and otherwise `unknown`: a
+  `timeout`, `device_unavailable` (an `OSError` while writing to the socket ends there),
+  `command_rejected` (it also covers library errors raised before anything was written) and
+  `internal_error` may or may not have reached the TV. A sent command keeps its
+  `confirmation`, and only `confirmed` is worded as done. Nothing is ever resent: not here,
+  not by the service;
 - one tool call at a time (the shared layer is single-flight). A call cancelled while it
   waits is never run; a call cancelled while it runs completes on its worker thread and its
   answer is lost, so a cancelled command may have been sent (check with `get_status`).
@@ -53,10 +57,17 @@ NOT_SENT = "not_sent"
 SENT = "sent"
 UNKNOWN = "unknown"
 
-# What a failed command means for delivery, per error code. Unlisted codes were not sent.
+# What a failed command means for delivery, per error code: `unknown` unless the shared
+# layer proves nothing was sent. Unlisted codes are refused before any send (validation,
+# unknown device, unsupported operation or media, discovery).
 _COMMAND_DELIVERY = {
-    "command_rejected": SENT,  # delivered; the receiver refused it
     "timeout": UNKNOWN,  # delivery timed out: it may or may not have arrived
+    # The PyChromecast adapter maps an OSError raised while writing to the socket (part of
+    # the command may already be out) to device_unavailable.
+    "device_unavailable": UNKNOWN,
+    # Any other PyChromecast error becomes command_rejected, including ones raised before
+    # anything was written (UnsupportedNamespace): it does not prove the TV received it.
+    "command_rejected": UNKNOWN,
     INTERNAL_ERROR_CODE: UNKNOWN,  # an unexpected failure may have happened after sending
 }
 
@@ -69,14 +80,13 @@ _ERROR_MESSAGES = {
     "unsupported_operation": "The device does not support this operation for its current "
     "media or volume control.",
     "unsupported_media": "The media is not supported.",
-    "command_rejected": "The TV received the command and refused it.",
+    "command_rejected": "The command was refused, by the TV or by the Cast library.",
     "timeout": "The device did not answer in time.",
     INTERNAL_ERROR_CODE: "Unexpected internal error (details are only in the server's local log).",
 }
 
 _DELIVERY_NOTES = {
     NOT_SENT: "Nothing was sent to the TV.",
-    SENT: "The command reached the TV.",
     UNKNOWN: "The command may or may not have reached the TV. Do not resend it "
     "automatically: call get_status to see what the TV reports.",
 }
