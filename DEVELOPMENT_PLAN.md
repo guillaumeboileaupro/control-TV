@@ -19,7 +19,7 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 ## Current state and critical path
 
-State of `main` at `3bcb516` (merge of PR #30, the Android APK MVP, 2026-10-06; it contains everything listed below, including PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `3bcb516`: push run `37486772988`, all four jobs green, `android` included. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the MCP server (branch `feat/mcp-stdio-server`, see Phase 6). PR #25 (an earlier synchronization of this plan) was closed without merging; its content was carried by PR #26.
+State of `main` at `3bcb516` (merge of PR #30, the Android APK MVP, 2026-10-06; it contains everything listed below, including PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `3bcb516`: push run `37486772988`, all four jobs green, `android` included. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the MCP server (PR #31, branch `feat/mcp-stdio-server`, see Phase 6). PR #25 (an earlier synchronization of this plan) was closed without merging; its content was carried by PR #26.
 
 Product priority (owner decision, 2026-10-06, replacing the order of 2026-10-04; PR #30 is merged): **1. MCP control-TV adapter (current priority) -> 2. Android home-screen widget -> 3. Linux tray and secondary improvements -> 4. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
 
@@ -31,7 +31,7 @@ Critical path:
 - [x] **E. Autonomous `.deb` really installed and validated** on Ubuntu 22.04 without the checkout, the `.venv` or a system Python (PR #26 content): installed, the GUI application launched, its bundled bridge pinged through it, purged (local, commit `fba82cc`, whose code is what PR #26 merged); the `linux-release` CI job installs the package, pings the installed bridge directly and purges it on every run (no GUI). Not a published release: the Debian/Ubuntu target stays open in Phase 7 while the license blockers remain.
 - [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
 - [ ] **H. Android APK MVP (Phase 7b):** PR #30 merged into `main` (`3bcb516`, 2026-10-06). On a physical arm64 phone (2026-10-06) the debug APK installed, launched, started its embedded CPython, held the multicast lock and discovered receivers on the real local network; with the instrumented APK, logcat showed `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`. The spike gates A-H all passed on the phone (see the Phase 7b checklist), and with the APK of `a2ff3bb` the owner saw the Control-TV launcher icon and the page clear of the status and navigation bars. Still open before the MVP: receiver status and the control commands on Android (each only with an explicit go-ahead).
-- [ ] **J. MCP control-TV adapter (Phase 6):** the current priority; a local stdio MCP server is implemented and automation-validated on branch `feat/mcp-stdio-server` (not merged, not validated with a real client or device); see Phase 6.
+- [ ] **J. MCP control-TV adapter (Phase 6):** the current priority; a local stdio MCP server is implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (not merged, not validated with a real client or device); see Phase 6.
 - [ ] **I. Android home-screen widget (Phase 7b):** after the MCP adapter.
 - [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
 - [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
@@ -282,7 +282,7 @@ Exit criteria:
 
 ## Phase 6 - MCP adapter
 
-Critical-path item J, the current priority (owner decision 2026-10-06). Implemented and automation-validated on branch `feat/mcp-stdio-server` (from `main` `3bcb516`), **not merged**; nothing here is on `main` yet, and nothing was run with a real MCP client or a real device.
+Critical-path item J, the current priority (owner decision 2026-10-06). Implemented and automation-validated on PR #31, branch `feat/mcp-stdio-server` (from `main` `3bcb516`), **not merged**; nothing here is on `main` yet, and nothing was run with a real MCP client or a real device.
 
 Transport decision (verified 2026-10-06 against the sources below; recheck before relying on them later):
 - the MCP specification (revisions 2025-06-18 and 2026-07-28) defines two standard transports, stdio and Streamable HTTP, and says clients SHOULD support stdio whenever possible; a local Streamable HTTP server must validate `Origin`, bind to localhost and should authenticate;
@@ -324,7 +324,7 @@ Exit criteria:
 - [ ] tool/schema tests are separated from real-device validation (on the branch; real-device validation not done);
 - [ ] MCP lifecycle/state interactions are explicit and testable (on the branch).
 
-Next actions: review and merge the MCP pull request; configure Codex CLI with the stdio server and validate `list_tools`, then read-only discovery and status against a real receiver (owner go-ahead); decide the open product decisions above; then the Android widget (item I).
+Next actions: review and merge PR #31; configure Codex CLI with the stdio server and validate `list_tools`, then read-only discovery and status against a real receiver (owner go-ahead); decide the open product decisions above; then the Android widget (item I).
 
 ## Phase 7 - Cross-platform packaging
 
