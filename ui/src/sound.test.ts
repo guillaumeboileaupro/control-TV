@@ -536,7 +536,7 @@ describe("what a command's answer changes", () => {
     }
   });
 
-  test("a command that was not sent leaves the reported state alone and returns the controls", () => {
+  test("a failed sound command leaves the reported state alone and returns the controls", () => {
     const { state, requestId } = pendingVolume(55);
 
     const next = finishCommand(state, requestId, {
