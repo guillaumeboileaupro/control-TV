@@ -18,4 +18,7 @@
     <color name="widget_line">#FFDFE4EA</color>
     <color name="widget_accent">#FF1760FF</color>
     <color name="widget_accent_tint">#FFEEF3FF</color>
+    <color name="widget_hover">#FFF3F5F8</color>
+    <!-- The widget's TV picker: a light scrim behind its panel (no blur, no shadow). -->
+    <color name="picker_scrim">#52000000</color>
 </resources>

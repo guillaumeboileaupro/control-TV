@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One TV of the picker, like a device row of the window: icon, name and model, and for
+     the current TV an accent tint, a semibold name and a check. At least 56dp tall. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/picker_row_bg"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="56dp"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
+
+    <ImageView
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_picker_tv" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:importantForAccessibility="no"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/picker_row_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="@color/widget_text"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/picker_row_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_muted"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/picker_row_check"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_marginStart="12dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_picker_check"
+        android:visibility="gone" />
+</LinearLayout>

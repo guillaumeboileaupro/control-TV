@@ -14,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src-tauri" / "gen" / "android" / "app" / "src" / "main"
 KOTLIN = APP / "java" / "io" / "github" / "guillaumeboileaupro" / "controltv"
 ANDROID = "{http://schemas.android.com/apk/res/android}"
-PICKER_SOURCES = [KOTLIN / "TvPicker.kt", KOTLIN / "WidgetTvPickerActivity.kt"]
+PICKER_SOURCES = [
+    KOTLIN / "TvPicker.kt",
+    KOTLIN / "PickerScreen.kt",
+    KOTLIN / "WidgetTvPickerActivity.kt",
+]
 COMMANDS = {"play", "pause", "stop", "seek", "set_volume", "set_muted", "load_media"}
 
 
