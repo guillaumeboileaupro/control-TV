@@ -1,7 +1,15 @@
 package io.github.guillaumeboileaupro.controltv
 
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+
+/** No answer within the caller's bound: the request may still run and be delivered. */
+class BridgeCallTimeout(timeoutMillis: Long) :
+    Exception("no bridge answer within $timeoutMillis ms; the request may still be running")
 
 /**
  * Runs bridge requests off the Android main thread, one at a time, in arrival order.
@@ -34,6 +42,24 @@ class BridgeRelay(
     fun execute(task: () -> Unit, onFailure: (Throwable) -> Unit) {
         worker.execute {
             runCatching(task).onFailure(onFailure)
+        }
+    }
+
+    /**
+     * Runs [line] once on the worker and waits for its answer, for a caller already off the
+     * main thread (the home-screen widget's background job). The handler's own failure is
+     * rethrown unchanged ([PythonUnavailable] stays "not sent"); no answer within
+     * [timeoutMillis] is [BridgeCallTimeout], and the request is neither cancelled nor resent.
+     */
+    fun call(line: String, timeoutMillis: Long): String {
+        val answer = CompletableFuture<String>()
+        submit(line, onResponse = { answer.complete(it) }, onFailure = { answer.completeExceptionally(it) })
+        return try {
+            answer.get(timeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (error: ExecutionException) {
+            throw error.cause ?: error
+        } catch (error: TimeoutException) {
+            throw BridgeCallTimeout(timeoutMillis)
         }
     }
 

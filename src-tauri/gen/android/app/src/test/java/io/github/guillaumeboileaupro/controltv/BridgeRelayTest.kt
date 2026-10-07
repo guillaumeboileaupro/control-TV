@@ -100,4 +100,44 @@ class BridgeRelayTest {
         assertEquals(1, handled.get())
         relay.shutdown()
     }
+
+    @Test
+    fun aBlockingCallReturnsTheAnswerFromTheSameSingleWorker() {
+        val relay = BridgeRelay(handler = { line -> "answer to $line" })
+
+        assertEquals("answer to ping", relay.call("ping", 5_000))
+        relay.shutdown()
+    }
+
+    @Test
+    fun aBlockingCallRethrowsAnUnavailablePythonUnchanged() {
+        val relay = BridgeRelay(handler = EmbeddedHandler(load = { throw IllegalStateException("no Python") }))
+
+        val error = runCatching { relay.call("pause", 5_000) }.exceptionOrNull()
+
+        assertTrue(error is PythonUnavailable)
+        relay.shutdown()
+    }
+
+    @Test
+    fun aBlockingCallThatTimesOutIsNeitherCancelledNorResent() {
+        val calls = AtomicInteger(0)
+        val release = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val relay = BridgeRelay(handler = { line ->
+            calls.incrementAndGet()
+            release.await(5, TimeUnit.SECONDS)
+            finished.countDown()
+            line
+        })
+
+        val error = runCatching { relay.call("stop", 100) }.exceptionOrNull()
+        release.countDown()
+
+        assertTrue(error is BridgeCallTimeout)
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertEquals(1, calls.get())
+        relay.shutdown()
+    }
 }
