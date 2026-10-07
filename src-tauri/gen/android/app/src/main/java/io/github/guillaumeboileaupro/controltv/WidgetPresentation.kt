@@ -13,7 +13,13 @@ object WidgetPresentation {
     const val CHOOSE_TV = "Open control-TV and choose a TV."
     const val WORKING = "Working…"
 
+    const val NO_TV_CHOSEN = "No TV chosen yet. Open control-TV and choose one."
+
     fun noSelection(): WidgetView = WidgetView(title = APP_NAME, line = CHOOSE_TV)
+
+    /** After a tap with no TV chosen: worded differently from the first drawing, so the tap
+     *  visibly did something. */
+    fun noSelectionAfterTap(): WidgetView = WidgetView(title = APP_NAME, line = NO_TV_CHOSEN)
 
     fun busy(previous: WidgetView?, selection: Selection): WidgetView =
         (previous ?: WidgetView(title(selection), "")).copy(title = title(selection), line = WORKING, busy = true)

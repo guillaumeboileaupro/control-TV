@@ -111,6 +111,8 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject("not a device id", "invalid_argument")
             return
         }
+        // No device id, name or network value in the log.
+        Log.i(TAG, "widget TV chosen in the app (changed=$changed)")
         if (changed) ControlTvWidget.renderAll(activity.applicationContext)
         invoke.resolve()
     }

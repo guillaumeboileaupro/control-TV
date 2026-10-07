@@ -18,13 +18,16 @@ class WidgetBoundaryTest {
     private val store = MemoryWidgetStore().apply { selected = SELECTED }
     private val clock = AtomicLong(1_000_000L)
     private val queued = mutableListOf<TapSpec>()
+    private val logs = mutableListOf<String>()
+    private var renders = 0
     private var tokens = 0
     private val handler = WidgetTapHandler(
         store = store,
         now = { clock.get() },
         newToken = { "token-${++tokens}" },
         enqueue = { queued += it },
-        render = {},
+        render = { renders++ },
+        log = { logs += it },
     )
 
     private fun tvBridge() = FakeBridge { method, _ ->
@@ -87,7 +90,7 @@ class WidgetBoundaryTest {
         assertTrue(handler.handle("MUTE", token))
 
         assertEquals(emptyList<TapSpec>(), queued)
-        assertEquals(WidgetPresentation.CHOOSE_TV, store.lastView?.line)
+        assertEquals(WidgetPresentation.NO_TV_CHOSEN, store.lastView?.line)
     }
 
     // --- The job: WorkManager re-execution, busy window, late taps -------------------------
@@ -203,5 +206,82 @@ class WidgetBoundaryTest {
 
         assertEquals(WidgetOutcome.NoSelection, outcome)
         assertEquals(emptyList<String>(), bridge.methods)
+    }
+
+    // --- Physical-phone regression (dcb6588): nothing may be silent ------------------------
+
+    @Test
+    fun aTapWithAStaleTokenRedrawsTheWidgetSoTheNextTapWorks() {
+        store.armedToken { "token-0" }
+
+        assertFalse(handler.handle("REFRESH", "token-left-on-the-launcher"))
+
+        assertEquals(1, renders)
+        assertEquals(emptyList<TapSpec>(), queued)
+        // The redrawn buttons carry the armed token: the next tap is accepted.
+        assertTrue(handler.handle("REFRESH", store.armedToken { error("already armed") }))
+        assertEquals(1, queued.size)
+    }
+
+    @Test
+    fun aTapWithNoTvChosenVisiblyChangesTheWidget() {
+        store.selected = null
+        val token = store.armedToken { "token-0" }
+        val before = WidgetPresentation.noSelection()
+
+        handler.handle("REFRESH", token)
+
+        assertEquals(WidgetPresentation.NO_TV_CHOSEN, store.lastView?.line)
+        assertTrue(store.lastView != before)
+        assertEquals(emptyList<TapSpec>(), queued)
+    }
+
+    @Test
+    fun aRefreshTapIsLoggedAtEachBoundaryAndStaysReadOnly() {
+        val bridge = tvBridge()
+        val relay = BridgeRelay(bridge)
+        val token = store.armedToken { "token-0" }
+
+        handler.handle("REFRESH", token)
+        val outcome = WidgetJob(store, relay, clock::get) { logs += it }.run(queued.single())
+
+        assertTrue(outcome is WidgetOutcome.Status)
+        assertEquals(listOf("get_status"), bridge.methods)
+        val expected = listOf(
+            "widget tap received: REFRESH",
+            "widget tap accepted: REFRESH",
+            "widget job enqueued: REFRESH",
+            "widget transaction admitted: REFRESH",
+            "widget transaction completed: REFRESH -> Status",
+        )
+        assertEquals(expected, logs)
+        relay.shutdown()
+    }
+
+    @Test
+    fun theLogsNeverCarryATokenADeviceIdOrAnAddress() {
+        val relay = BridgeRelay(tvBridge())
+        val token = store.armedToken { "token-0" }
+
+        handler.handle("STOP", "stale-token-value")
+        handler.handle("STOP", token)
+        WidgetJob(store, relay, clock::get) { logs += it }.run(queued.single())
+        handler.handle("REBOOT", "x")
+
+        for (line in logs) {
+            for (secret in listOf(token, "stale-token-value", TV, "192.168", "Living room")) {
+                assertFalse("\"$line\" contains a private value", line.contains(secret))
+            }
+        }
+        relay.shutdown()
+    }
+
+    @Test
+    fun aBusyOrLateTransactionIsLoggedWithoutDetail() {
+        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get() - WidgetActionRunner.MAX_TAP_AGE_MILLIS - 1)
+
+        WidgetJob(store, BridgeRelay(tvBridge()), clock::get) { logs += it }.run(tap)
+
+        assertEquals(listOf("widget transaction: tap expired before it started (STOP)"), logs)
     }
 }

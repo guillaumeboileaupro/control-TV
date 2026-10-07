@@ -15,12 +15,21 @@ class WidgetJob(
     private val store: WidgetStore,
     private val bridge: TransactionRunner,
     private val now: () -> Long,
+    private val log: (String) -> Unit = {},
 ) {
     fun run(tap: TapSpec): WidgetOutcome {
-        val selection = store.selection() ?: return WidgetOutcome.NoSelection
+        val selection = store.selection()
+        if (selection == null) {
+            log("widget transaction: no TV chosen")
+            return WidgetOutcome.NoSelection
+        }
         val age = { now() - tap.tappedAtMillis }
-        if (age() !in 0..WidgetActionRunner.MAX_TAP_AGE_MILLIS) return WidgetOutcome.Expired
+        if (age() !in 0..WidgetActionRunner.MAX_TAP_AGE_MILLIS) {
+            log("widget transaction: tap expired before it started (${tap.action.name})")
+            return WidgetOutcome.Expired
+        }
         val result = bridge.tryTransaction(TRANSACTION_TIMEOUT_MILLIS) { transaction ->
+            log("widget transaction admitted: ${tap.action.name}")
             WidgetActionRunner(transaction::call, TapGuard(store)).run(
                 tap.action,
                 selection,
@@ -29,7 +38,7 @@ class WidgetJob(
                 mayCommand = { transaction.stillWanted && age() in 0..WidgetActionRunner.MAX_TAP_AGE_MILLIS },
             )
         }
-        return when (result) {
+        val outcome = when (result) {
             is TransactionResult.Done -> result.value
             TransactionResult.Busy -> WidgetOutcome.Busy
             TransactionResult.NotStarted -> WidgetOutcome.Expired
@@ -37,6 +46,15 @@ class WidgetJob(
             // have been handed over.
             TransactionResult.TimedOutAfterStart -> WidgetOutcome.MaybeSent("command")
         }
+        log("widget transaction ${describe(result)}: ${tap.action.name} -> ${outcome::class.simpleName}")
+        return outcome
+    }
+
+    private fun describe(result: TransactionResult<*>): String = when (result) {
+        is TransactionResult.Done -> "completed"
+        TransactionResult.Busy -> "busy, not admitted"
+        TransactionResult.NotStarted -> "not started in time, withdrawn"
+        TransactionResult.TimedOutAfterStart -> "timed out after it started"
     }
 
     companion object {
