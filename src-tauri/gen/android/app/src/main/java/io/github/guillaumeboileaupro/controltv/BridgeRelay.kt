@@ -95,16 +95,15 @@ class BridgeRelay(
         }
         try {
             worker.execute {
+                var outcome: Result<T>? = null
                 try {
-                    if (state.compareAndSet(PENDING, STARTED)) {
-                        runCatching { body(transaction) }.fold(
-                            { answer.complete(it) },
-                            { answer.completeExceptionally(it) },
-                        )
-                    }
+                    if (state.compareAndSet(PENDING, STARTED)) outcome = runCatching { body(transaction) }
                 } finally {
+                    // Released before the caller sees the answer: once a transaction has
+                    // answered, the worker is free for the next one.
                     pending.decrementAndGet()
                 }
+                outcome?.fold({ answer.complete(it) }, { answer.completeExceptionally(it) })
             }
         } catch (error: RejectedExecutionException) {
             pending.decrementAndGet()

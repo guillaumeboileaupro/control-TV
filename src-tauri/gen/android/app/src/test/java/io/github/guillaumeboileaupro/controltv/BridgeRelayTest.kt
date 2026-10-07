@@ -217,4 +217,15 @@ class BridgeRelayTest {
         assertTrue(error is PythonUnavailable)
         relay.shutdown()
     }
+
+    @Test
+    fun aTransactionThatHasAnsweredLeavesTheWorkerFreeForTheNextOne() {
+        val relay = BridgeRelay(handler = { line -> line })
+
+        repeat(200) { index ->
+            val result = relay.tryTransaction(5_000) { tx -> tx.call("tap $index") }
+            assertEquals("transaction $index", TransactionResult.Done("tap $index"), result)
+        }
+        relay.shutdown()
+    }
 }
