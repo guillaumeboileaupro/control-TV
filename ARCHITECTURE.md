@@ -68,16 +68,19 @@ ui/ (same TypeScript UI, Android WebView)
 src-tauri/ (Rust, same call_bridge: claim, timeouts, no replay)
    | BridgeChannel::InProcess -> run_mobile_plugin("handle", line)
    v
-ControlBridgePlugin (Kotlin, src-tauri/gen/android): one worker thread, multicast lock
-   | Chaquopy: control_tv.embedded.handle(line)
-   v
+ControlBridgePlugin (Kotlin, src-tauri/gen/android): multicast lock     home-screen widget tap
+   |                                                                   | WidgetTapReceiver -> one WorkManager job
+   +---------------> EmbeddedBridge: one relay, one worker thread <----+ (WidgetActionWorker, WidgetActionRunner)
+                        | Chaquopy: control_tv.embedded.handle(line)
+                        v
 control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPython 3.12 in the app)
 ```
 
 - **One engine:** Android runs the same `control_tv` package and the same `handle_line` as the desktop bridge process; only the transport of the request line differs (an in-process call instead of stdio), so no Cast, validation or confirmation logic is duplicated in Kotlin or Rust.
 - **Runtime:** CPython 3.12 from Chaquopy 17.0.0, `arm64-v8a` only, `minSdk` 24. The embedded packages are the control layer's locked runtime dependencies as pure-Python wheels, hash-checked against `uv.lock` and installed offline (`packaging/android_python.py`); protobuf uses its pure-Python implementation and zeroconf is built without its optional Cython extensions. The two wheels built locally (zeroconf, control-tv) are built offline with build backends locked in `uv.lock` (no build dependency is resolved at build time). The APK carries its own Python: it does not use the checkout, a `.venv` or a host Python.
 - **Failure boundary:** a failure before `control_tv.embedded.handle` is entered (Python not starting, `control_tv.embedded` not importing) is `backend_unavailable`, certainly not sent; a failure while or after `handle` runs is the ambiguous `bridge_transport`; nothing is retried (`EmbeddedHandler`).
-- **Threads:** Tauri delivers plugin commands on the Android main thread; the plugin runs Python on its own single worker thread, so the shared layer stays single-flight as on the desktop and the window never blocks on a discovery or a command.
+- **Threads:** Tauri delivers plugin commands on the Android main thread; Python runs on one worker thread for the whole process (`EmbeddedBridge`), shared by the window and the home-screen widget, so the shared layer stays single-flight as on the desktop and the window never blocks on a discovery or a command.
+- **Home-screen widget (Phase 7b):** a tap reaches the same `control_tv.embedded.handle` request lines as the window, without Tauri or the window (Chaquopy starts Python from the application context). The exported widget provider only draws; taps go to a non-exported receiver that queues one unique WorkManager job (a tap while one runs is ignored), never retried. The job reads the status first and sends at most one command chosen from the observed state (Play/Pause the opposite of the reported playback, Mute the opposite of the reported mute state, Volume -/+ 10 points from the reported level, the window's raise limit); a tap id stored durably before the send keeps a re-run after a process death from sending twice, and a job starting more than 60 s after its tap sends nothing. The TV it controls is the one the window last used successfully (recorded from the window's own bridge traffic, never chosen by the widget); with none, or one no longer found, nothing is sent.
 - **System bars:** the app draws edge to edge; `MainActivity` pads the content container holding the WebView by the window insets the system reports (system bars, display cutout) and consumes them, so the page needs no safe-area CSS and is never padded twice. The launcher icon is generated from `assets/logo.svg` (`packaging/android_icon.py`).
 - **Discovery:** the app holds Wi-Fi's multicast lock while in the foreground (mDNS replies are otherwise often filtered) and releases it in the background.
 - **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
@@ -86,7 +89,6 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 ## Planned native integrations
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
-- **Android home-screen widget (Phase 7b):** after the MCP adapter, over the same embedded control layer (see "Android").
 
 ## Chromecast capabilities
 

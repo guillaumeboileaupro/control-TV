@@ -88,6 +88,8 @@ python3 packaging/android_icon.py       # after a logo change: regenerate the la
 
 The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for personal sideloading (`adb install`); there is no Google Play publication objective.
 
+Home-screen widget: long-press the home screen, choose Widgets, then control-TV (4 x 2 cells, resizable). It controls the TV last used in the app: open control-TV and select a TV first. Each tap reads the TV's state, then sends at most one command (Play/Pause, Stop, Mute, Volume -/+ by 10 points); ↻ only reads the state. It never retries a command: when it cannot tell whether a command arrived, it says so and ↻ checks.
+
 MCP server (`DEVELOPMENT_PLAN.md` Phase 6): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency for development (`uv sync --locked --extra mcp`: `control-tv[mcp]`, the official MCP Python SDK `mcp==1.30.0`). The SDK stays optional at run time: the frozen desktop bridge (`bridge-build`) and the Android app (`android-python`) are built from their own environments without it. The client starts it; for Codex, in `~/.codex/config.toml`:
 
 ```toml
