@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A light dialog over the home screen, like the widget it belongs to. -->
+    <style name="Theme.ControlTvPicker" parent="Theme.MaterialComponents.Light.Dialog">
+        <item name="colorPrimary">@color/widget_accent</item>
+        <item name="colorAccent">@color/widget_accent</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
+    </style>
+</resources>

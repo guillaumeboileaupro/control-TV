@@ -13,4 +13,17 @@
     <string name="widget_mute_unmute">Mute or unmute</string>
     <string name="widget_refresh">Check the TV</string>
     <string name="widget_open">Open control-TV</string>
+    <string name="widget_choose_tv">Choose a TV</string>
+    <string name="picker_title">Choose a TV</string>
+    <string name="picker_searching">Looking for TVs on this network…</string>
+    <string name="picker_choose">Tap the TV the widget should control.</string>
+    <string name="picker_chosen_missing">Your current TV wasn\'t found. It stays chosen until you pick another one.</string>
+    <string name="picker_none">No TV found on this network.</string>
+    <string name="picker_busy">control-TV is busy with the app. Try again in a moment.</string>
+    <string name="picker_unavailable">control-TV couldn\'t start.</string>
+    <string name="picker_failed">Couldn\'t look for TVs.</string>
+    <string name="picker_retry">Search again</string>
+    <string name="picker_cancel">Cancel</string>
+    <string name="picker_unnamed">Unnamed TV</string>
+    <string name="picker_current">%1$s (current)</string>
 </resources>

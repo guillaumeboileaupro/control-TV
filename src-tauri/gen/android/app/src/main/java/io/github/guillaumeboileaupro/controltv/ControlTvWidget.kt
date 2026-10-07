@@ -48,7 +48,9 @@ class ControlTvWidget : AppWidgetProvider() {
             val mute = WidgetIcons.mute(view.muted)
             views.setImageViewResource(R.id.widget_mute, mute.drawable)
             views.setContentDescription(R.id.widget_mute, context.getString(mute.description))
-            views.setOnClickPendingIntent(R.id.widget_header, openApp(context))
+            views.setOnClickPendingIntent(R.id.widget_logo, openApp(context))
+            // The TV name and state open the widget's own TV picker (no main app needed).
+            views.setOnClickPendingIntent(R.id.widget_header, openPicker(context))
             // Every drawing arms one token; each button's intent carries it (see WidgetTapHandler).
             val token = store.armedToken { UUID.randomUUID().toString() }
             for ((id, action) in BUTTONS) views.setOnClickPendingIntent(id, tap(context, action, token))
@@ -75,6 +77,18 @@ class ControlTvWidget : AppWidgetProvider() {
                 .putExtra(WidgetTapReceiver.EXTRA_TOKEN, token)
             return PendingIntent.getBroadcast(context, action.ordinal, intent, PendingIntent.FLAG_IMMUTABLE)
         }
+
+        /** The activity the widget's TV name opens: its own picker, never the main app. */
+        val PICKER: Class<*> = WidgetTvPickerActivity::class.java
+
+        // Explicit and immutable; the picker is not exported, so only this pending intent opens it.
+        private fun openPicker(context: Context): PendingIntent =
+            PendingIntent.getActivity(
+                context,
+                1,
+                Intent(context, PICKER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
 
         private fun openApp(context: Context): PendingIntent =
             PendingIntent.getActivity(

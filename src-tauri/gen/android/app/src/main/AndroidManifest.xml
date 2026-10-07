@@ -45,6 +45,16 @@
         <receiver
             android:name=".WidgetTapReceiver"
             android:exported="false" />
+        <!-- The widget's own TV picker: opened only by the widget (not exported), in its own
+             task so it never brings up or replaces the main app. -->
+        <activity
+            android:name=".WidgetTvPickerActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="@string/picker_title"
+            android:launchMode="singleTask"
+            android:taskAffinity=".widgetpicker"
+            android:theme="@style/Theme.ControlTvPicker" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

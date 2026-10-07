@@ -19,7 +19,7 @@ class WidgetPresentationTest {
         val view = WidgetPresentation.present(WidgetOutcome.NoSelection, null)
 
         assertEquals("control-TV", view.title)
-        assertEquals("Open control-TV and choose a TV.", view.line)
+        assertEquals("Tap here to choose a TV.", view.line)
     }
 
     @Test

@@ -10,10 +10,10 @@ import kotlin.math.roundToInt
 object WidgetPresentation {
     const val APP_NAME = "control-TV"
     const val UNNAMED_TV = "Your TV"
-    const val CHOOSE_TV = "Open control-TV and choose a TV."
+    const val CHOOSE_TV = "Tap here to choose a TV."
     const val WORKING = "Working…"
 
-    const val NO_TV_CHOSEN = "No TV chosen yet. Open control-TV and choose one."
+    const val NO_TV_CHOSEN = "No TV chosen yet. Tap here to choose one."
 
     fun noSelection(): WidgetView = WidgetView(title = APP_NAME, line = CHOOSE_TV)
 
