@@ -15,49 +15,74 @@ class SelectionRecorderTest {
             .put("params", JSONObject().apply { deviceId?.let { put("deviceId", it) } }).toString()
 
     @Test
-    fun theWindowsStatusReadOfADiscoveredTvSelectsItWithItsName() {
-        recorder.observe(request("discover_devices"), devicesAnswer(TV, OTHER_TV))
+    fun anExplicitChoiceIsTheTargetAtOnceEvenWhenItsFirstStatusReadFails() {
+        recorder.select(TV, "Living room")
 
-        val changed = recorder.observe(request("get_status", TV), statusAnswer())
+        assertTrue(recorder.select(OTHER_TV, "Kitchen"))
+        // The window's first read of the new TV fails: the target stays the chosen TV.
+        recorder.observe(request("get_status", OTHER_TV), errorAnswer("device_unavailable"))
 
-        assertTrue(changed)
-        assertEquals(Selection(TV, "TV $TV"), store.selected)
+        assertEquals(Selection(OTHER_TV, "Kitchen"), store.selected)
     }
 
     @Test
-    fun aSuccessfulCommandAlsoSelectsItsTv() {
-        recorder.observe(request("discover_devices"), devicesAnswer(TV, OTHER_TV))
+    fun statusReadsAndCommandsNeverChangeTheTarget() {
+        recorder.select(OTHER_TV, "Kitchen")
 
-        recorder.observe(request("set_volume", OTHER_TV), commandAnswer("set_volume", "confirmed"))
+        recorder.observe(request("get_status", TV), statusAnswer())
+        recorder.observe(request("pause", TV), commandAnswer("pause", "confirmed"))
+        recorder.observe(request("set_volume", TV), commandAnswer("set_volume", "confirmed"))
 
         assertEquals(OTHER_TV, store.selected?.deviceId)
     }
 
     @Test
-    fun aFailedRequestNeverChangesTheSelection() {
-        store.selected = SELECTED
+    fun discoveryOnlyRefreshesTheChosenTvsNameNeverPicksOne() {
+        recorder.observe(request("discover_devices"), devicesAnswer(TV, OTHER_TV))
+        assertEquals(null, store.selected)
 
-        for (code in listOf("device_unavailable", "device_not_found", "timeout")) {
-            assertFalse(recorder.observe(request("get_status", OTHER_TV), errorAnswer(code)))
-        }
-        assertEquals(SELECTED, store.selected)
+        recorder.select(TV, "")
+        val renamed = recorder.observe(request("discover_devices"), devicesAnswer(OTHER_TV, TV))
+
+        assertTrue(renamed)
+        assertEquals(Selection(TV, "TV $TV"), store.selected)
     }
 
     @Test
-    fun theSameTvReadAgainIsNotAChangeAndKeepsItsName() {
-        store.selected = SELECTED
+    fun aDiscoveryWithoutTheChosenTvKeepsItsIdAndNeverFallsBackToAnother() {
+        recorder.select(TV, "Living room")
 
-        assertFalse(recorder.observe(request("get_status", TV), statusAnswer()))
-        assertEquals(SELECTED, store.selected)
+        assertFalse(recorder.observe(request("discover_devices"), devicesAnswer(OTHER_TV)))
+
+        assertEquals(Selection(TV, "Living room"), store.selected)
     }
 
     @Test
-    fun malformedOrUnrelatedTrafficIsIgnoredWithoutFailing() {
-        store.selected = SELECTED
+    fun choosingTheSameTvAgainIsNoChangeAndABlankIdIsRefused() {
+        recorder.select(TV, "Living room")
+
+        assertFalse(recorder.select(TV, "Living room"))
+        assertTrue(runCatching { recorder.select(" ", "x") }.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(Selection(TV, "Living room"), store.selected)
+    }
+
+    @Test
+    fun choosingATvSendsNothingToAnyTv() {
+        // SelectionRecorder has no bridge at all; the bridge the widget would use stays idle.
+        val bridge = FakeBridge { _, _ -> error("no request expected") }
+
+        recorder.select(TV, "Living room")
+        recorder.select(OTHER_TV, "Kitchen")
+
+        assertEquals(emptyList<String>(), bridge.methods)
+    }
+
+    @Test
+    fun malformedTrafficIsIgnoredWithoutFailing() {
+        recorder.select(TV, "Living room")
 
         assertFalse(recorder.observe("not json", statusAnswer()))
-        assertFalse(recorder.observe(request("ping"), statusAnswer()))
-        assertFalse(recorder.observe(request("get_status"), statusAnswer()))
-        assertEquals(SELECTED, store.selected)
+        assertFalse(recorder.observe(request("discover_devices"), errorAnswer("discovery_failed")))
+        assertEquals(Selection(TV, "Living room"), store.selected)
     }
 }

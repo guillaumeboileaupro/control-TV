@@ -24,6 +24,7 @@ object WidgetPresentation {
         return when (outcome) {
             WidgetOutcome.NoSelection -> noSelection()
             WidgetOutcome.Expired -> WidgetView(title, "That tap waited too long. Nothing was sent.")
+            WidgetOutcome.Busy -> WidgetView(title, "control-TV was busy. Nothing was sent. Tap again.")
             WidgetOutcome.NotFound -> WidgetView(title, "TV not found on this network. Nothing was sent.")
             WidgetOutcome.Unavailable -> WidgetView(title, "control-TV couldn't start. Nothing was sent.")
             WidgetOutcome.StatusUnreadable -> WidgetView(title, "Couldn't reach the TV. Nothing was sent.")
@@ -43,6 +44,7 @@ object WidgetPresentation {
                     playing = outcome.observed?.let(::isPlaying),
                     muted = outcome.observed?.muted,
                 )
+                // Not checked: nothing reported, so no state is shown (neutral icons).
                 else -> WidgetView(title, "Sent. Tap ↻ to check.")
             }
         }

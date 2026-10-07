@@ -6,7 +6,9 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.RemoteViews
+import java.util.UUID
 
 /**
  * The home-screen widget. It only draws the last known view (no network, no Python) and
@@ -40,24 +42,16 @@ class ControlTvWidget : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.widget_control_tv)
             views.setTextViewText(R.id.widget_title, view.title)
             views.setTextViewText(R.id.widget_line, view.line)
-            views.setImageViewResource(
-                R.id.widget_play_pause,
-                if (view.playing == true) R.drawable.ic_widget_pause else R.drawable.ic_widget_play,
-            )
-            views.setContentDescription(
-                R.id.widget_play_pause,
-                context.getString(if (view.playing == true) R.string.widget_pause else R.string.widget_play),
-            )
-            views.setImageViewResource(
-                R.id.widget_mute,
-                if (view.muted == true) R.drawable.ic_widget_volume_off else R.drawable.ic_widget_volume,
-            )
-            views.setContentDescription(
-                R.id.widget_mute,
-                context.getString(if (view.muted == true) R.string.widget_unmute else R.string.widget_mute),
-            )
+            val playPause = WidgetIcons.playPause(view.playing)
+            views.setImageViewResource(R.id.widget_play_pause, playPause.drawable)
+            views.setContentDescription(R.id.widget_play_pause, context.getString(playPause.description))
+            val mute = WidgetIcons.mute(view.muted)
+            views.setImageViewResource(R.id.widget_mute, mute.drawable)
+            views.setContentDescription(R.id.widget_mute, context.getString(mute.description))
             views.setOnClickPendingIntent(R.id.widget_header, openApp(context))
-            for ((id, action) in BUTTONS) views.setOnClickPendingIntent(id, tap(context, action))
+            // Every drawing arms one token; each button's intent carries it (see WidgetTapHandler).
+            val token = store.armedToken { UUID.randomUUID().toString() }
+            for ((id, action) in BUTTONS) views.setOnClickPendingIntent(id, tap(context, action, token))
             manager.updateAppWidget(ids, views)
         }
 
@@ -70,16 +64,16 @@ class ControlTvWidget : AppWidgetProvider() {
             R.id.widget_refresh to WidgetAction.REFRESH,
         )
 
-        private fun tap(context: Context, action: WidgetAction): PendingIntent {
+        // Explicit and immutable. The token is part of the intent's data, so each token gets
+        // its own pending intent: an intent already handed out keeps its token for good (an
+        // updated one would let a stale delivery carry a fresh token).
+        private fun tap(context: Context, action: WidgetAction, token: String): PendingIntent {
             val intent = Intent(context, WidgetTapReceiver::class.java)
                 .setAction(WidgetTapReceiver.ACTION_TAP)
+                .setData(Uri.parse("controltv-widget://tap/${action.name}/$token"))
                 .putExtra(WidgetTapReceiver.EXTRA_ACTION, action.name)
-            return PendingIntent.getBroadcast(
-                context,
-                action.ordinal,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+                .putExtra(WidgetTapReceiver.EXTRA_TOKEN, token)
+            return PendingIntent.getBroadcast(context, action.ordinal, intent, PendingIntent.FLAG_IMMUTABLE)
         }
 
         private fun openApp(context: Context): PendingIntent =

@@ -17,6 +17,7 @@ import {
   recordServiceFailure,
   refreshStatus,
   selectDevice,
+  chosenDevice,
   startDiscovery,
   toBridgeFailure,
   type AppState,
@@ -661,6 +662,12 @@ function start(elements: Elements): void {
   function onSelect(deviceId: string): void {
     const next = selectDevice(state, deviceId);
     update(next.state);
+    const chosen = chosenDevice(next);
+    if (chosen !== null) {
+      // The explicit choice becomes the home-screen widget's TV (Android only; nothing is
+      // sent to any TV). A failure to store it never affects the window.
+      void invoke("remember_selection", chosen).catch(() => undefined);
+    }
     if (next.request !== null) {
       // The chosen device is now the row you see; collapse the list and keep focus nearby.
       elements.picker.open = false;

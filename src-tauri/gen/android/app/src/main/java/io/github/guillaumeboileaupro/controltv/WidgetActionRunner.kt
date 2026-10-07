@@ -21,6 +21,7 @@ data class TvState(
 sealed interface WidgetOutcome {
     object NoSelection : WidgetOutcome
     object Expired : WidgetOutcome
+    object Busy : WidgetOutcome
     object NotFound : WidgetOutcome
     object Unavailable : WidgetOutcome
     object StatusUnreadable : WidgetOutcome
@@ -62,9 +63,17 @@ class WidgetActionRunner(
     /**
      * [tapAgeMillis]: how long ago the tap happened. A job that starts too late (Android can
      * hold a queued job back, and reschedules it after a reboot) does nothing at all, so a
-     * command never arrives long after the tap that asked for it.
+     * command never arrives long after the tap that asked for it. [mayCommand] is asked again
+     * immediately before the command is claimed (the tap may have aged during the reads, or
+     * its caller stopped waiting): false means no command at all.
      */
-    fun run(action: WidgetAction, selection: Selection?, tapId: String, tapAgeMillis: Long = 0): WidgetOutcome {
+    fun run(
+        action: WidgetAction,
+        selection: Selection?,
+        tapId: String,
+        tapAgeMillis: Long = 0,
+        mayCommand: () -> Boolean = { true },
+    ): WidgetOutcome {
         if (selection == null) return WidgetOutcome.NoSelection
         if (tapAgeMillis !in 0..MAX_TAP_AGE_MILLIS) return WidgetOutcome.Expired
         val state = when (val read = readStatus(selection.deviceId)) {
@@ -76,6 +85,7 @@ class WidgetActionRunner(
             is Choice.Send -> choice
             is Choice.Skip -> return WidgetOutcome.NoCommand(choice.reason, state)
         }
+        if (!mayCommand()) return WidgetOutcome.Expired
         // Claimed durably before the send: a re-run of this tap never sends a second time.
         if (!guard.claim(tapId)) return WidgetOutcome.MaybeSent(command.method)
         val params = JSONObject(command.params).put("deviceId", selection.deviceId)

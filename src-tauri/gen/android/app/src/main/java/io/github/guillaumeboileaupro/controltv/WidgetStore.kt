@@ -33,6 +33,15 @@ interface WidgetStore {
 
     /** Must be durable before it returns: a process death right after it keeps the claim. */
     fun saveClaimedTap(tapId: String)
+
+    /** The token the widget's buttons carry now (one per drawing); armed if none yet. */
+    fun armedToken(newToken: () -> String): String
+
+    /**
+     * Consumes [token] if it is the armed one, arming [next] instead, atomically and durably:
+     * the same widget interaction delivered twice carries the same token and is accepted once.
+     */
+    fun consumeToken(token: String, next: String): Boolean
 }
 
 class PreferencesWidgetStore(context: Context) : WidgetStore {
@@ -86,6 +95,22 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
     override fun saveClaimedTap(tapId: String) {
         // commit(), not apply(): written to disk before the command is handed to the bridge.
         check(prefs.edit().putString("claimed_tap", tapId).commit()) { "could not record the widget tap" }
+    }
+
+    override fun armedToken(newToken: () -> String): String = synchronized(LOCK) {
+        prefs.getString("armed_token", null) ?: newToken().also {
+            check(prefs.edit().putString("armed_token", it).commit()) { "could not arm the widget" }
+        }
+    }
+
+    override fun consumeToken(token: String, next: String): Boolean = synchronized(LOCK) {
+        if (prefs.getString("armed_token", null) != token) return false
+        check(prefs.edit().putString("armed_token", next).commit()) { "could not record the widget tap" }
+        true
+    }
+
+    private companion object {
+        val LOCK = Any()
     }
 
     private fun optionalBoolean(key: String): Boolean? = prefs.getString(key, null)?.toBooleanStrictOrNull()

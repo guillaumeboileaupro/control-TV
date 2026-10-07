@@ -226,7 +226,7 @@ class WidgetActionRunnerTest {
             { errorAnswer("device_unavailable") },
             { errorAnswer("command_rejected") },
             { errorAnswer("internal_error") },
-            { throw BridgeCallTimeout(45_000) },
+            { throw java.util.concurrent.TimeoutException("no answer in time") },
             { throw IllegalStateException("bridge broke after the request") },
         )
         for ((index, failure) in failures.withIndex()) {
@@ -317,5 +317,25 @@ class WidgetActionRunnerTest {
         runner(bridge).run(WidgetAction.STOP, SELECTED, "tap", tapAgeMillis = WidgetActionRunner.MAX_TAP_AGE_MILLIS)
 
         assertEquals(listOf("get_status", "stop"), bridge.methods)
+    }
+
+    @Test
+    fun aCommandIsNotClaimedWhenTheCheckJustBeforeItFails() {
+        val bridge = tv()
+
+        val outcome = runner(bridge).run(WidgetAction.STOP, SELECTED, "tap", mayCommand = { false })
+
+        assertEquals(WidgetOutcome.Expired, outcome)
+        assertEquals(listOf("get_status"), bridge.methods)
+        assertEquals(null, store.claimed)
+    }
+
+    @Test
+    fun refreshNeverAsksToClaimACommand() {
+        val bridge = tv()
+
+        runner(bridge).run(WidgetAction.REFRESH, SELECTED, "tap", mayCommand = { error("not asked") })
+
+        assertEquals(listOf("get_status"), bridge.methods)
     }
 }

@@ -25,6 +25,7 @@ import {
   serviceAnswered,
   refreshStatus,
   selectDevice,
+  chosenDevice,
   startDiscovery,
   toBridgeFailure,
   type AppState,
@@ -67,6 +68,20 @@ const FULL_STATUS: DeviceStatus = {
 const at = (iso: string): string => `at ${iso}`;
 
 describe("selection", () => {
+  test("the TV just chosen is handed on by stable id with its name, even before any read", () => {
+    const next = selectDevice(discovered(device("a", "Kitchen"), device("b", "Living room")), "b");
+
+    assert.deepEqual(chosenDevice(next), { deviceId: "b", name: "Living room" });
+  });
+
+  test("a choice the window did not accept hands nothing on", () => {
+    const state = discovered(device("a"), device("b"));
+    const busy = selectDevice(state, "a").state;
+
+    assert.equal(chosenDevice(selectDevice(state, "nope")), null);
+    assert.equal(chosenDevice(selectDevice(busy, "b")), null);
+  });
+
   test("starts with no selection and nothing to refresh", () => {
     const state = initialState();
 

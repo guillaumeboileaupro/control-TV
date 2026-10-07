@@ -19,6 +19,12 @@ class HandleArgs {
     lateinit var line: String
 }
 
+@InvokeArg
+class SelectionArgs {
+    lateinit var deviceId: String
+    var name: String = ""
+}
+
 /**
  * The Android side of the control bridge: one request line in, one response line out,
  * answered by the shared Python control layer embedded in the app (`control_tv.embedded`),
@@ -77,7 +83,7 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
         relay.submit(
             args.line,
             onResponse = { response ->
-                // The window's own successful requests define the TV the widget controls.
+                // The window's discoveries refresh the widget's TV names (never its target).
                 if (SelectionRecorder(widgetStore).observe(args.line, response)) {
                     ControlTvWidget.renderAll(activity.applicationContext)
                 }
@@ -89,6 +95,24 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.reject(error.message ?: error.toString(), code)
             },
         )
+    }
+
+    /**
+     * Called by the window when the person explicitly chooses a TV: the widget's target
+     * becomes that stable device id at once, before and whatever its first status read gives.
+     * It only writes the app's private preferences; nothing reaches the bridge or any TV.
+     */
+    @Command
+    fun rememberSelection(invoke: Invoke) {
+        val args = invoke.parseArgs(SelectionArgs::class.java)
+        val changed = try {
+            SelectionRecorder(widgetStore).select(args.deviceId, args.name)
+        } catch (error: IllegalArgumentException) {
+            invoke.reject("not a device id", "invalid_argument")
+            return
+        }
+        if (changed) ControlTvWidget.renderAll(activity.applicationContext)
+        invoke.resolve()
     }
 }
 

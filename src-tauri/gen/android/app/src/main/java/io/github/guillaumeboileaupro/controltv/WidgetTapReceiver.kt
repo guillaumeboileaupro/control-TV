@@ -11,31 +11,31 @@ import java.util.UUID
 
 /**
  * Receives the widget's button taps (not exported: only this app's own pending intents reach
- * it). It does no network work itself: with no TV selected it says so and stops; otherwise it
- * queues one background job for the tap. The job is unique and kept: a tap arriving while
- * another one is still being handled is ignored, never queued, so taps cannot pile up into
- * a burst of commands.
+ * it) and hands them to [WidgetTapHandler], which accepts each widget interaction once. It
+ * does no network work itself. An accepted tap with a TV selected becomes one background job,
+ * as unique work kept while another tap's job is pending or running (WorkManager drops the
+ * newer one), so taps cannot pile up into a burst of commands.
  */
 class WidgetTapReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_TAP) return
-        val action = intent.getStringExtra(EXTRA_ACTION)
-            ?.let { name -> WidgetAction.entries.firstOrNull { it.name == name } } ?: return
-        val store = PreferencesWidgetStore(context)
-        val selection = store.selection()
-        if (selection == null) {
-            store.saveView(WidgetPresentation.noSelection())
-            ControlTvWidget.renderAll(context)
-            return
-        }
-        store.saveView(WidgetPresentation.busy(store.view(), selection))
-        ControlTvWidget.renderAll(context)
+        val handler = WidgetTapHandler(
+            store = PreferencesWidgetStore(context),
+            now = System::currentTimeMillis,
+            newToken = { UUID.randomUUID().toString() },
+            enqueue = { tap -> enqueue(context, tap) },
+            render = { ControlTvWidget.renderAll(context) },
+        )
+        handler.handle(intent.getStringExtra(EXTRA_ACTION), intent.getStringExtra(EXTRA_TOKEN))
+    }
+
+    private fun enqueue(context: Context, tap: TapSpec) {
         val work = OneTimeWorkRequestBuilder<WidgetActionWorker>()
             .setInputData(
                 workDataOf(
-                    WidgetActionWorker.KEY_ACTION to action.name,
-                    WidgetActionWorker.KEY_TAP to UUID.randomUUID().toString(),
-                    WidgetActionWorker.KEY_TAPPED_AT to System.currentTimeMillis(),
+                    WidgetActionWorker.KEY_ACTION to tap.action.name,
+                    WidgetActionWorker.KEY_TAP to tap.tapId,
+                    WidgetActionWorker.KEY_TAPPED_AT to tap.tappedAtMillis,
                 ),
             )
             .build()
@@ -45,6 +45,7 @@ class WidgetTapReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_TAP = "io.github.guillaumeboileaupro.controltv.WIDGET_TAP"
         const val EXTRA_ACTION = "action"
+        const val EXTRA_TOKEN = "token"
         const val UNIQUE_WORK = "control-tv-widget-tap"
     }
 }

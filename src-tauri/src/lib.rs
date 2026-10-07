@@ -806,6 +806,26 @@ mod android {
         line: String,
     }
 
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SelectionArgs {
+        device_id: String,
+        name: String,
+    }
+
+    /// Stores the window's explicit choice of TV for the home-screen widget (Kotlin plugin,
+    /// app-private preferences). Blocking: call it off the main thread.
+    pub(super) fn remember_selection(
+        handle: &PluginHandle<tauri::Wry>,
+        device_id: String,
+        name: String,
+    ) -> Result<(), String> {
+        handle
+            .run_mobile_plugin::<Value>("rememberSelection", SelectionArgs { device_id, name })
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     /// The registered Kotlin plugin, shared by every launch of the bridge.
     pub(super) struct EmbeddedBridge(pub(super) Arc<PluginHandle<tauri::Wry>>);
 
@@ -838,6 +858,32 @@ mod android {
             })))
         })
     }
+}
+
+/// The window's explicit choice of a TV, remembered for the Android home-screen widget as
+/// its target. It never reaches the bridge or any TV. Async with the plugin call on a
+/// blocking worker: the Kotlin plugin runs on the Android main thread.
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn remember_selection(
+    app: tauri::AppHandle,
+    device_id: String,
+    name: String,
+) -> Result<(), String> {
+    let handle = Arc::clone(&app.state::<android::EmbeddedBridge>().0);
+    tauri::async_runtime::spawn_blocking(move || {
+        android::remember_selection(&handle, device_id, name)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// On the desktop there is no home-screen widget: the choice is accepted and nothing stored.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn remember_selection(device_id: String, name: String) -> Result<(), String> {
+    let _ = (device_id, name);
+    Ok(())
 }
 
 /// How this build starts the bridge, the first time and on every recovery.
@@ -878,7 +924,8 @@ pub fn run() {
             bridge_stop,
             bridge_seek,
             bridge_set_volume,
-            bridge_set_muted
+            bridge_set_muted,
+            remember_selection
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -887,6 +934,20 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembering_a_selection_on_the_desktop_stores_nothing_and_sends_nothing() {
+        let (state, seen) = embedded_slot(|request| answer(request, json!({})));
+
+        let result = tauri::async_runtime::block_on(remember_selection(
+            "device-b".to_string(),
+            "Living room".to_string(),
+        ));
+
+        assert_eq!(result, Ok(()));
+        assert!(seen.lock().unwrap().is_empty());
+        drop(state);
+    }
 
     #[test]
     fn parses_a_successful_response() {

@@ -9,6 +9,8 @@
     <string name="widget_unmute">Unmute</string>
     <string name="widget_volume_down">Volume down</string>
     <string name="widget_volume_up">Volume up</string>
+    <string name="widget_play_pause">Play or pause</string>
+    <string name="widget_mute_unmute">Mute or unmute</string>
     <string name="widget_refresh">Check the TV</string>
     <string name="widget_open">Open control-TV</string>
 </resources>

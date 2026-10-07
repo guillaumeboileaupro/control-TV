@@ -307,6 +307,20 @@ export function selectDevice(
   return beginStatusRead(state, device);
 }
 
+// The TV the person just chose, as the Android home-screen widget keeps it: its stable id
+// (the target) and its name (display only). Null when the choice was not accepted. Keeping
+// it sends nothing to any TV.
+export function chosenDevice(selection: {
+  state: AppState;
+  request: StatusRequest | null;
+}): { deviceId: string; name: string } | null {
+  const chosen = selection.state.selected;
+  if (selection.request === null || chosen === null) {
+    return null;
+  }
+  return { deviceId: chosen.id, name: chosen.friendlyName };
+}
+
 export function refreshStatus(state: AppState): {
   state: AppState;
   request: StatusRequest | null;

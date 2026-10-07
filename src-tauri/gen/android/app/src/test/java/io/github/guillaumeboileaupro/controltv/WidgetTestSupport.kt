@@ -9,6 +9,7 @@ class MemoryWidgetStore : WidgetStore {
     var knownNames: Map<String, String> = emptyMap()
     var lastView: WidgetView? = null
     var claimed: String? = null
+    var armed: String? = null
 
     override fun selection() = selected
     override fun saveSelection(selection: Selection) { selected = selection }
@@ -18,6 +19,13 @@ class MemoryWidgetStore : WidgetStore {
     override fun saveView(view: WidgetView) { lastView = view }
     override fun claimedTap() = claimed
     override fun saveClaimedTap(tapId: String) { claimed = tapId }
+    override fun armedToken(newToken: () -> String): String = armed ?: newToken().also { armed = it }
+    @Synchronized
+    override fun consumeToken(token: String, next: String): Boolean {
+        if (armed != token) return false
+        armed = next
+        return true
+    }
 }
 
 /** A scripted shared layer: answers bridge request lines by method and records each one. */
