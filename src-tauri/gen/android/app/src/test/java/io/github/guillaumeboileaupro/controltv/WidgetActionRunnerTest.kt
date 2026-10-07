@@ -288,13 +288,14 @@ class WidgetActionRunnerTest {
     }
 
     @Test
-    fun theGuardRemembersOnlyTheLastClaimedTap() {
+    fun theGuardKeepsEveryClaimedTapNotOnlyTheLast() {
         val guard = TapGuard(store)
 
         assertTrue(guard.claim("a"))
         assertEquals(false, guard.claim("a"))
         assertTrue(guard.claim("b"))
-        assertEquals("b", store.claimed)
+        assertEquals(false, guard.claim("a"))
+        assertEquals(setOf("a", "b"), ClaimedTaps.parse(store.claimed)!!.keys)
     }
 
     @Test

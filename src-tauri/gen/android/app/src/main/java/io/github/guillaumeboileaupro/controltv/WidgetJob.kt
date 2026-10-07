@@ -30,7 +30,7 @@ class WidgetJob(
         }
         val result = bridge.tryTransaction(TRANSACTION_TIMEOUT_MILLIS) { transaction ->
             log("widget transaction admitted: ${tap.action.name}")
-            WidgetActionRunner(transaction::call, TapGuard(store)).run(
+            WidgetActionRunner(transaction::call, TapGuard(store, now)).run(
                 tap.action,
                 selection,
                 tap.tapId,

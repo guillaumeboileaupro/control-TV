@@ -28,11 +28,13 @@ interface WidgetStore {
     fun view(): WidgetView?
     fun saveView(view: WidgetView)
 
-    /** The tap whose command was already handed to the bridge (see [TapGuard]). */
-    fun claimedTap(): String?
-
-    /** Must be durable before it returns: a process death right after it keeps the claim. */
-    fun saveClaimedTap(tapId: String)
+    /**
+     * Replaces the record of claimed taps ([ClaimedTaps]) with what [update] returns for the
+     * stored one, atomically (no other claim in between) and durably (on disk before it
+     * returns, so a process death right after it keeps the claim). [update] returning null
+     * leaves the record unchanged and makes this return false.
+     */
+    fun updateClaimedTaps(update: (String?) -> String?): Boolean
 
     /** The token the widget's buttons carry now (one per drawing); armed if none yet. */
     fun armedToken(newToken: () -> String): String
@@ -90,11 +92,16 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
             .apply()
     }
 
-    override fun claimedTap(): String? = prefs.getString("claimed_tap", null)
-
-    override fun saveClaimedTap(tapId: String) {
+    override fun updateClaimedTaps(update: (String?) -> String?): Boolean = synchronized(LOCK) {
+        // An update from a version that kept only the last claimed tap: that tap stays claimed.
+        val stored = prefs.getString("claimed_taps", null)
+            ?: prefs.getString("claimed_tap", null)?.let { ClaimedTaps.claim(null, it, System.currentTimeMillis()) }
+        val next = update(stored) ?: return false
         // commit(), not apply(): written to disk before the command is handed to the bridge.
-        check(prefs.edit().putString("claimed_tap", tapId).commit()) { "could not record the widget tap" }
+        check(prefs.edit().putString("claimed_taps", next).remove("claimed_tap").commit()) {
+            "could not record the widget tap"
+        }
+        true
     }
 
     override fun armedToken(newToken: () -> String): String = synchronized(LOCK) {

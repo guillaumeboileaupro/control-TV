@@ -17,8 +17,12 @@ class MemoryWidgetStore : WidgetStore {
     override fun saveNames(names: Map<String, String>) { knownNames = names }
     override fun view() = lastView
     override fun saveView(view: WidgetView) { lastView = view }
-    override fun claimedTap() = claimed
-    override fun saveClaimedTap(tapId: String) { claimed = tapId }
+    /** The stored record of claimed taps ([ClaimedTaps]); null while no tap was claimed. */
+    @Synchronized
+    override fun updateClaimedTaps(update: (String?) -> String?): Boolean {
+        claimed = update(claimed) ?: return false
+        return true
+    }
     override fun armedToken(newToken: () -> String): String = armed ?: newToken().also { armed = it }
     @Synchronized
     override fun consumeToken(token: String, next: String): Boolean {

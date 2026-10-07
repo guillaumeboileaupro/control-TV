@@ -34,14 +34,13 @@ sealed interface WidgetOutcome {
 
 /**
  * Durable "this tap's command was already handed to the bridge". The widget's background job
- * can be run again by Android after a process death; a tap claimed once never sends again.
+ * can be run again by Android after a process death, possibly after newer taps ran: every
+ * claimed tap is kept ([ClaimedTaps]) for ten times its lifetime, so a tap claimed once is
+ * never claimed again while it could still run. The check and the insertion are one atomic,
+ * durable store update.
  */
-class TapGuard(private val store: WidgetStore) {
-    fun claim(tapId: String): Boolean {
-        if (store.claimedTap() == tapId) return false
-        store.saveClaimedTap(tapId)
-        return true
-    }
+class TapGuard(private val store: WidgetStore, private val now: () -> Long = System::currentTimeMillis) {
+    fun claim(tapId: String): Boolean = store.updateClaimedTaps { ClaimedTaps.claim(it, tapId, now()) }
 }
 
 /**
