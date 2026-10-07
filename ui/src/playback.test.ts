@@ -406,7 +406,7 @@ describe("command outcomes", () => {
     assert.equal(line?.tone, "warning");
   });
 
-  test("a command that was not sent keeps the status and reports its code", () => {
+  test("a failed command keeps the status and reports its code", () => {
     const { state, requestId } = pendingPause();
     const failure = { code: "command_rejected", message: "no session" };
 
@@ -564,9 +564,9 @@ describe("feedback while a command runs", () => {
 
 describe("failure wording", () => {
   const cases: [string, string, "check" | "discover"][] = [
-    ["device_unavailable", "Can't reach this device", "check"],
+    ["device_unavailable", "Lost contact with this device", "check"],
     ["device_not_found", "This device needs to be found again", "discover"],
-    ["command_rejected", "The TV refused the command", "check"],
+    ["command_rejected", "The command was refused", "check"],
     ["timeout", "The TV didn't answer in time", "check"],
     ["backend_unavailable", "The app's background service isn't available", "check"],
     ["bridge_timeout", "The app's background service stopped answering", "check"],
@@ -593,13 +593,48 @@ describe("failure wording", () => {
     }
   });
 
+  test("a lost connection or a refusal never claims the command was or was not delivered", () => {
+    // device_unavailable can follow a socket write that failed after the command started to
+    // leave; command_rejected also covers a refusal by the Cast library before anything left.
+    for (const code of ["device_unavailable", "command_rejected"]) {
+      for (const command of ["play", "pause", "stop", "seek", "set_volume", "set_muted"] as const) {
+        const description = describeCommandFailure(command, { code, message: "m" });
+
+        assert.match(description.hint, /may or may not have reached it/, `${code} ${command}`);
+        assert.match(description.hint, /Check the current state before sending it again/);
+        assert.doesNotMatch(
+          `${description.title} ${description.hint}`,
+          /wasn't sent|was not sent|received the command|TV refused/i,
+          `${code} ${command}`,
+        );
+        assert.equal(description.recovery, "check");
+      }
+    }
+  });
+
+  test("a lost connection or a refusal leaves no command pending and resends nothing", () => {
+    for (const code of ["device_unavailable", "command_rejected"]) {
+      const { state, requestId } = pendingPause();
+
+      const next = finishCommand(state, requestId, { ok: false, failure: { code, message: "m" } });
+
+      assert.deepEqual(next.command, {
+        kind: "failed",
+        command: "pause",
+        failure: { code, message: "m" },
+      });
+      assert.deepEqual(next.status, state.status);
+      assert.equal(describeCommandFeedback(next).failure?.recovery, "check");
+      // The same answer arriving again changes nothing: no second command is started.
+      assert.deepEqual(
+        finishCommand(next, requestId, { ok: false, failure: { code, message: "m" } }),
+        next,
+      );
+    }
+  });
+
   test("a command that was certainly not sent says so", () => {
-    for (const code of [
-      "device_unavailable",
-      "device_not_found",
-      "backend_unavailable",
-      "bridge_busy",
-    ]) {
+    for (const code of ["device_not_found", "backend_unavailable", "bridge_busy"]) {
       assert.match(describeCommandFailure("play", { code, message: "m" }).hint, /wasn't sent/);
     }
   });
@@ -660,7 +695,7 @@ describe("failure wording", () => {
 
     const feedback = describeCommandFeedback(next);
 
-    assert.equal(feedback.failure?.title, "The TV refused the command");
+    assert.equal(feedback.failure?.title, "The command was refused");
     assert.deepEqual(feedback.lines, []);
   });
 });
