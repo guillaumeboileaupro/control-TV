@@ -62,8 +62,26 @@ def test_the_picker_only_asks_the_shared_layer_to_discover_and_never_sends_a_com
 
 
 def test_the_widget_name_opens_the_picker_and_the_logo_opens_the_app() -> None:
+    # The full routing is checked against the real ids and layout by WidgetRoutingTest (JVM).
     widget = (KOTLIN / "ControlTvWidget.kt").read_text(encoding="utf-8")
 
-    assert "setOnClickPendingIntent(R.id.widget_header, openPicker(context))" in widget
-    assert "setOnClickPendingIntent(R.id.widget_logo, openApp(context))" in widget
+    assert "R.id.widget_header to WidgetClick.Open(\n                PICKER," in widget
+    assert "R.id.widget_logo to WidgetClick.Open(MainActivity::class.java," in widget
+    assert "R.id.widget_refresh to WidgetClick.Tap(WidgetAction.REFRESH)" in widget
     assert "WidgetTvPickerActivity::class.java" in widget
+
+
+def test_an_app_update_redraws_the_widget_with_the_new_resources() -> None:
+    # Resource ids move whenever a resource is added; a widget drawn by the previous version
+    # then names a blank layout and views whose taps reach nothing (the 2f0c274 phone failure).
+    provider = component("receiver", ".ControlTvWidget")
+    actions = {a.get(f"{ANDROID}name") for a in provider.iter("action")}
+    widget = (KOTLIN / "ControlTvWidget.kt").read_text(encoding="utf-8")
+    main = (KOTLIN / "MainActivity.kt").read_text(encoding="utf-8")
+
+    assert actions == {
+        "android.appwidget.action.APPWIDGET_UPDATE",
+        "android.intent.action.MY_PACKAGE_REPLACED",
+    }
+    assert "action == Intent.ACTION_MY_PACKAGE_REPLACED" in widget
+    assert "ControlTvWidget.renderAll(applicationContext)" in main

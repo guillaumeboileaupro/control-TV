@@ -31,12 +31,14 @@
 
         <!-- Home-screen widget. The provider is exported because the launcher drives widget
              updates; it only draws. Button taps go to the non-exported tap receiver, so no
-             other app can trigger a command. -->
+             other app can trigger a command. MY_PACKAGE_REPLACED (sent only by the system, to
+             this app, after it is updated) redraws the widget with the new resources. -->
         <receiver
             android:name=".ControlTvWidget"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
