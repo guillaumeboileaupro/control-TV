@@ -19,7 +19,7 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 ## Current state and critical path
 
-State of `main` at `ded6e9c` (merge of PR #32, the desktop delivery wording fix, 2026-10-07; it contains everything listed below, including PR #31 `499bfb2`, PR #30 `3bcb516`, PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `ded6e9c`: push run `37590130462`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android home-screen widget (branch `feat/android-home-widget`, see Phase 7b).
+State of `main` at `ded6e9c` (merge of PR #32, the desktop delivery wording fix, 2026-10-07; it contains everything listed below, including PR #31 `499bfb2`, PR #30 `3bcb516`, PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `ded6e9c`: push run `37590130462`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android home-screen widget (PR #33, branch `feat/android-home-widget`, see Phase 7b).
 
 Product priority (owner decision, 2026-10-06, replacing the order of 2026-10-04; PR #30 and PR #31 are merged): **1. MCP control-TV adapter (done: PR #31) -> 2. Android home-screen widget (the current major tranche) -> 3. Linux tray and secondary improvements -> 4. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
 
@@ -32,7 +32,7 @@ Critical path:
 - [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
 - [x] **H. Android APK MVP (Phase 7b), complete at its defined level:** PR #30 merged into `main` (`3bcb516`, 2026-10-06). On a physical arm64 phone the spike gates A-H all passed (install, launch, embedded CPython, `control_tv` imported and its ping answered `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`, multicast lock held, real discovery), and with the APK of `a2ff3bb` the owner saw the Control-TV launcher icon and the page clear of the status and navigation bars. Further Android hardware validation is separate work and stays open (Phase 7b, "Android hardware validation still open"): receiver status, the control commands, display cutout and rotation, broader responsive and touch use.
 - [x] **J. MCP control-TV adapter (Phase 6), complete at its defined level:** PR #31 merged into `main` (`499bfb2`, 2026-10-07): a local stdio MCP server over the shared control layer, automation-validated and validated read-only with a real MCP client (Codex CLI) on the real local network, no control command sent. MCP commands against a real receiver stay open (Phase 6).
-- [ ] **I. Android home-screen widget (Phase 7b):** the current major tranche: implemented and automation-validated on branch `feat/android-home-widget` (not merged; not yet seen on the phone, no real TV command sent); see Phase 7b, "Home-screen widget".
+- [ ] **I. Android home-screen widget (Phase 7b):** the current major tranche: implemented and automation-validated on PR #33, branch `feat/android-home-widget` (not merged; not yet seen on the phone, no real TV command sent); see Phase 7b, "Home-screen widget".
 - [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
 - [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
 
@@ -481,7 +481,7 @@ Android application:
 - [x] the Android application reuses the shared control core as decided above, with no duplicated Cast logic (on `main` since PR #30; its discovery path ran on a physical phone);
 - [ ] discovery, selection, status and commands validated on a real Android device against a real Chromecast/Google TV, recorded separately from emulator or automated results.
 
-Home-screen widget (decided 2026-09-26; implemented on branch `feat/android-home-widget`, not merged; every item below stays unchecked until it is merged):
+Home-screen widget (decided 2026-09-26; implemented on PR #33, branch `feat/android-home-widget`, not merged; every item below stays unchecked until it is merged):
 
 Architecture and lifecycle (2026-10-07):
 - one shared engine: a widget tap goes through the app's one embedded bridge (`EmbeddedBridge`: one relay, one worker thread for the whole process, now shared by the window's Tauri plugin and the widget) to the same `control_tv.embedded.handle` request lines as the window (`get_status`, `discover_devices`, then one command), so `bridge.handle_line` -> `ControlService` -> `PyChromecastTransport` decide everything; no Cast stack, validation or confirmation logic in Kotlin, and no Python, Rust or web UI change. The widget path needs neither Tauri nor the window: Chaquopy starts Python from the application context when the process was started by a tap;
