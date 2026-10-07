@@ -464,7 +464,10 @@ const MAYBE_SENT =
   "The command may or may not have reached it. Check the current state before sending it again.";
 
 // A failed command, worded for the person using the remote. Where the command might still have
-// been delivered (a timeout), it says so and never offers to resend on its own.
+// been delivered, it says so and never offers to resend on its own: a timeout, and also
+// `device_unavailable` (a socket write can fail after the command started to leave) and
+// `command_rejected` (it also covers a refusal by the Cast library before anything was sent),
+// whose delivery the control layer cannot tell.
 export function describeCommandFailure(
   command: CommandName,
   failure: BridgeFailure,
@@ -473,8 +476,8 @@ export function describeCommandFailure(
   switch (failure.code) {
     case "device_unavailable":
       return {
-        title: "Can't reach this device",
-        hint: "The command wasn't sent. Make sure it is on and connected to the same network.",
+        title: "Lost contact with this device",
+        hint: `${MAYBE_SENT} Make sure it is on and connected to the same network.`,
         recovery: "check",
         technical,
       };
@@ -487,11 +490,11 @@ export function describeCommandFailure(
       };
     case "command_rejected":
       return {
-        title: "The TV refused the command",
+        title: "The command was refused",
         hint:
           command === "set_volume" || command === "set_muted"
-            ? "It received the command but didn't accept it."
-            : "It received the command but didn't accept it, for example because this media can't do that right now.",
+            ? `The TV or the connection to it refused it. ${MAYBE_SENT}`
+            : `The TV or the connection to it refused it, for example because this media can't do that right now. ${MAYBE_SENT}`,
         recovery: "check",
         technical,
       };

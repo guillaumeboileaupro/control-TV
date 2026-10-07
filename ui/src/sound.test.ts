@@ -548,13 +548,13 @@ describe("what a command's answer changes", () => {
     assert.equal(next.command.kind, "failed");
     assert.deepEqual(describeSound(next).volume, { value: 45, observed: 45, phase: "observed" });
     assert.equal(describeSound(next).busy, false);
-    assert.equal(describeCommandFeedback(next).failure?.title, "Can't reach this device");
+    assert.equal(describeCommandFeedback(next).failure?.title, "Lost contact with this device");
   });
 
   test("every way a sound command can fail is told apart, in plain words", () => {
     const expected: [string, string, string][] = [
-      ["device_unavailable", "Can't reach this device", "wasn't sent"],
-      ["command_rejected", "The TV refused the command", "didn't accept"],
+      ["device_unavailable", "Lost contact with this device", "may or may not"],
+      ["command_rejected", "The command was refused", "may or may not"],
       ["unsupported_operation", "The TV can't do that", "wasn't sent"],
       ["timeout", "The TV didn't answer in time", "may or may not"],
       ["bridge_timeout", "The app's background service stopped answering", "may or may not"],
@@ -584,6 +584,20 @@ describe("what a command's answer changes", () => {
       });
 
       assert.doesNotMatch(`${rejected.hint} ${unsupported.title}`, /media/i);
+    }
+  });
+
+  test("a lost connection or a refusal never offers to resend on its own", () => {
+    for (const code of ["device_unavailable", "command_rejected"]) {
+      const { state, requestId } = pendingMute();
+
+      const next = finishCommand(state, requestId, { ok: false, failure: { code, message: "m" } });
+
+      const failure = describeCommandFeedback(next).failure;
+      assert.equal(failure?.recovery, "check", code);
+      assert.match(failure?.hint ?? "", /Check the current state before sending it again/, code);
+      assert.equal(next.command.kind, "failed", code);
+      assert.equal(describeSound(next).mute?.action, "Mute", code);
     }
   });
 
