@@ -29,6 +29,23 @@
             </intent-filter>
         </activity>
 
+        <!-- Home-screen widget. The provider is exported because the launcher drives widget
+             updates; it only draws. Button taps go to the non-exported tap receiver, so no
+             other app can trigger a command. -->
+        <receiver
+            android:name=".ControlTvWidget"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/control_tv_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".WidgetTapReceiver"
+            android:exported="false" />
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

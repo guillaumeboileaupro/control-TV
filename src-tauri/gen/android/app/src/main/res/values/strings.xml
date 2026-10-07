@@ -1,4 +1,14 @@
 <resources>
     <string name="app_name">"control-tv"</string>
     <string name="main_activity_title">"control-tv"</string>
+    <string name="widget_description">Play, pause, stop and volume for the TV chosen in control-TV.</string>
+    <string name="widget_play">Play</string>
+    <string name="widget_pause">Pause</string>
+    <string name="widget_stop">Stop</string>
+    <string name="widget_mute">Mute</string>
+    <string name="widget_unmute">Unmute</string>
+    <string name="widget_volume_down">Volume down</string>
+    <string name="widget_volume_up">Volume up</string>
+    <string name="widget_refresh">Check the TV</string>
+    <string name="widget_open">Open control-TV</string>
 </resources>

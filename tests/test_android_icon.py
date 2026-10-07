@@ -115,3 +115,22 @@ def test_generation_writes_every_resource_and_removes_the_default_icon(
     assert ("mipmap-mdpi/ic_launcher_round.png", 48) in rendered
     assert len(rendered) == 2 * len(icon.LEGACY_SIZES)
     assert not (tmp_path / "scratch").exists()
+
+
+def test_the_widget_logo_is_the_logo_cropped_to_its_extent_never_scaled() -> None:
+    logo = icon.parse_logo(LOGO_SVG)
+
+    xml = icon.widget_logo_xml(logo)
+
+    xs = [x for sub in logo.points for x, _ in sub]
+    ys = [y for sub in logo.points for _, y in sub]
+    assert f'android:viewportWidth="{icon._number(max(xs) - min(xs))}"' in xml
+    assert f'android:viewportHeight="{icon._number(max(ys) - min(ys))}"' in xml
+    data = re.search(r'android:pathData="([^"]+)"', xml).group(1)  # type: ignore[union-attr]
+    first_x, first_y = logo.points[0][0]
+    assert data.startswith(
+        f"M {icon._number(first_x - min(xs))} {icon._number(first_y - min(ys))} "
+    )
+    for _offset, colour in logo.stops:
+        assert f'android:color="#FF{colour[1:]}"' in xml
+    assert (RES / "drawable" / "ic_widget_logo.xml").read_text() == xml

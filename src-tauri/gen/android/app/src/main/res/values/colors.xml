@@ -11,4 +11,11 @@
     <color name="window_background">#FFFFFFFF</color>
     <!-- Adaptive launcher icon background behind the control-TV logo. -->
     <color name="ic_launcher_background">#FFFFFFFF</color>
+    <!-- Home-screen widget: the window's palette (ui/src/styles.css). -->
+    <color name="widget_background">#FFFFFFFF</color>
+    <color name="widget_text">#FF1D2733</color>
+    <color name="widget_muted">#FF5A6672</color>
+    <color name="widget_line">#FFDFE4EA</color>
+    <color name="widget_accent">#FF1760FF</color>
+    <color name="widget_accent_tint">#FFEEF3FF</color>
 </resources>
