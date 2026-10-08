@@ -52,10 +52,16 @@ class TapGuard(private val store: WidgetStore, private val now: () -> Long = Sys
  * Reads come first and may be repeated (a read sends nothing). Then at most one command is
  * sent, once: whatever happens to it, nothing is retried, and an answer that does not prove
  * the outcome stays ambiguous ([WidgetOutcome.MaybeSent]).
+ *
+ * [log] gets, for a command, what the TV reported before it, the exact value requested and
+ * how the shared layer answered (confirmed, unconfirmed, not checked, refused or unknown):
+ * enough to tell a command the TV ignored from one it was never asked for. Never a device id,
+ * name, address or media title.
  */
 class WidgetActionRunner(
     private val bridge: (String) -> String,
     private val guard: TapGuard,
+    private val log: (String) -> Unit = {},
 ) {
     private var nextId = 1
 
@@ -87,21 +93,37 @@ class WidgetActionRunner(
         if (!mayCommand()) return WidgetOutcome.Expired
         // Claimed durably before the send: a re-run of this tap never sends a second time.
         if (!guard.claim(tapId)) return WidgetOutcome.MaybeSent(command.method)
+        val requested = command.params.entries.joinToString(" ") { "${it.key}=${it.value}" }
+        log("widget command: ${command.method} $requested".trimEnd() + " (TV reported ${reported(state)})")
         val params = JSONObject(command.params).put("deviceId", selection.deviceId)
         val response = try {
             JSONObject(bridge(request(command.method, params)))
         } catch (error: PythonUnavailable) {
+            log("widget command result: ${command.method} -> not sent (control-TV unavailable)")
             return WidgetOutcome.NotSent("backend_unavailable")
         } catch (error: Exception) {
+            log("widget command result: ${command.method} -> no answer, may have been sent")
             return WidgetOutcome.MaybeSent(command.method)
         }
         if (!response.optBoolean("ok", false)) {
             val code = response.optJSONObject("error")?.optString("code").orEmpty()
-            return if (code in NOT_SENT_CODES) WidgetOutcome.NotSent(code) else WidgetOutcome.MaybeSent(command.method)
+            val sent = code !in NOT_SENT_CODES
+            log("widget command result: ${command.method} -> ${if (sent) "may have been sent" else "not sent"} ($code)")
+            return if (sent) WidgetOutcome.MaybeSent(command.method) else WidgetOutcome.NotSent(code)
         }
         val result = response.getJSONObject("result").getJSONObject("result")
         val observed = result.optJSONObject("observed")?.let(::parseState)
-        return WidgetOutcome.Sent(command.method, result.getString("confirmation"), observed)
+        val confirmation = result.getString("confirmation")
+        val after = observed?.let { " (TV then reported ${reported(it)})" } ?: ""
+        log("widget command result: ${command.method} -> sent, $confirmation$after")
+        return WidgetOutcome.Sent(command.method, confirmation, observed)
+    }
+
+    /** The reported state a command was chosen from or checked against; no media title. */
+    private fun reported(state: TvState): String {
+        if (!state.connected) return "not connected"
+        val volume = if (state.volumeFixed) "fixed" else state.volumeLevel?.let { "$it" } ?: "unknown"
+        return "playback=${state.playback ?: "none"} muted=${state.muted ?: "unknown"} volume=$volume"
     }
 
     private sealed interface StatusRead {
