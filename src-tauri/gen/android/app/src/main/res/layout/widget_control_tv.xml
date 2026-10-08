@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- control-TV home-screen widget: the chosen TV and its state, then one row of controls. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <!-- The logo opens the app; the TV name and state open the widget's TV picker. -->
+        <ImageView
+            android:id="@+id/widget_logo"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/widget_open"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_logo" />
+
+        <LinearLayout
+            android:id="@+id/widget_header"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:contentDescription="@string/widget_choose_tv"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/widget_text"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/widget_line"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="@color/widget_muted"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/widget_refresh"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/widget_button"
+            android:contentDescription="@string/widget_refresh"
+            android:src="@drawable/ic_widget_refresh" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/widget_play_pause"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_play"
+            android:src="@drawable/ic_widget_play" />
+
+        <ImageButton
+            android:id="@+id/widget_stop"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_stop"
+            android:src="@drawable/ic_widget_stop" />
+
+        <ImageButton
+            android:id="@+id/widget_mute"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_mute"
+            android:src="@drawable/ic_widget_volume" />
+
+        <ImageButton
+            android:id="@+id/widget_volume_down"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_volume_down"
+            android:src="@drawable/ic_widget_volume_down" />
+
+        <ImageButton
+            android:id="@+id/widget_volume_up"
+            style="@style/ControlTvWidgetButton"
+            android:layout_marginEnd="0dp"
+            android:contentDescription="@string/widget_volume_up"
+            android:src="@drawable/ic_widget_volume_up" />
+    </LinearLayout>
+</LinearLayout>

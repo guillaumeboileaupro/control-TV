@@ -15,5 +15,8 @@ class MainActivity : TauriActivity() {
     )
     super.onCreate(savedInstanceState)
     keepContentClearOfSystemBars(findViewById(android.R.id.content))
+    // Should a launcher withhold the update broadcast, opening the app still redraws a widget
+    // left over from the previous version (see ControlTvWidget.redrawsAfter).
+    ControlTvWidget.renderAll(applicationContext)
   }
 }
