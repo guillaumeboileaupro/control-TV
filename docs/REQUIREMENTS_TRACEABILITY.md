@@ -40,8 +40,8 @@ A command outcome is reported at the highest level actually established, never h
 |---|---|---|
 | Not sent | refused before any send (`invalid_argument`, `device_not_found`, `unsupported_operation`, ...) | shared service |
 | Unknown | may or may not have reached the TV (`timeout`, `device_unavailable`, `command_rejected`, `internal_error`) | shared service |
-| Sent | the receiver answered the command | shared service (`ok`, `confirmation` = `unconfirmed` or `not_checked`) |
-| Receiver-confirmed | the receiver then reported the requested state, for the same identified media where media is involved | shared service (`confirmation` = `confirmed`) |
+| Sent | the transport call returned with no delivery error mapped; this does not say the receiver answered, acted or confirmed anything | shared service (`ok`, `confirmation` = `unconfirmed` or `not_checked`) |
+| Receiver-confirmed | a later status read from the receiver reported the requested state, for the same identified media where media is involved; the only level based on a receiver report | shared service (`confirmation` = `confirmed`) |
 | Physical effect observed | a person saw or heard the effect on the TV | hardware validation record only |
 
 Receiver-confirmed is not physical: a Cast receiver can report a state that the TV's picture or sound does not show (Seek on 2026-09-29; mute with a fixed volume on the PR #33 phone tests). Volume and mute are tracked per endpoint: the **Cast logical** volume and mute of the receiver versus the **audible** output of the TV or sound bar. With `volume_control_type=fixed`, the Cast volume does not control the TV's sound, and a Cast mute may only set the receiver's own flag.
@@ -54,7 +54,7 @@ Statuses: **active**, **rewritten** (kept with the corrected scope), **supersede
 
 | ID | Requirement | Status | Exists today | Automated validation | Real-hardware evidence | Missing | Proposed PR |
 |---|---|---|---|---|---|---|---|
-| R1 | ChatGPT voice (and text) -> control-TV tools -> shared service -> TV, without needless confirmation dialogue | active | Local stdio MCP server, 8 Cast tools (PR #31) | 48 MCP tests | A real MCP client (Codex CLI), read-only: discovery and one status; no command through MCP; ChatGPT not connected | A transport the ChatGPT app can reach (G1), its security review, proof that ChatGPT voice mode calls the tools, tool annotations that let a command run in one call where the platform allows, tools for R4, R7-R12 | P4 (and the tools of P3, P6-P8) |
+| R1 | ChatGPT voice (and text) -> control-TV tools -> shared service -> TV, without needless confirmation dialogue | active | Local stdio MCP server, 8 Cast tools (PR #31) | 48 MCP tests | A real MCP client (Codex CLI), read-only: discovery and one status; no command through MCP; ChatGPT not connected | Proof that ChatGPT voice mode calls the tools (G1, tested first), a transport the ChatGPT app can reach, its security review, tool annotations that let a command run in one call where the platform allows, tools for R4, R7-R12 | S0, then P4 (and the tools of P3, P6-P8) |
 | R2 | In-app voice (microphone, speech-to-text, intent) | **superseded** | - | - | - | not requested | none |
 | R3 | Content resolution for a request made in ChatGPT (backend/MCP only; ChatGPT may already supply a provider link or identifier) | rewritten | Nothing | - | - | A resolver boundary that turns a provider reference (and, only if decided, a backend search) into a target the TV can play; provider restrictions (G2) | P3 |
 | R4 | Launch the requested content ON THE TV, verify the observed playback, never replay on ambiguity | rewritten | `ControlService.load_media(URL)` with URL-bound confirmation; not exposed anywhere | service and adapter tests | none; a YouTube session reported an empty `contentId`, so play/pause on it cannot be receiver-confirmed by design | MCP exposure, a provider launch (e.g. the Cast YouTube receiver), a verification rule for receivers that report no content id | P3 |
@@ -95,12 +95,12 @@ Facts only; none is turned into a validation it does not support. Device names, 
 
 ## Feasibility gates
 
-Each is verified on the owner's actual platform or hardware before the work that depends on it is promised:
+Each is verified on the owner's actual platform or hardware before the work that depends on it is promised; G1 comes first, because it decides the central path:
 
 - **G1, ChatGPT reach:** whether the owner's ChatGPT app, in voice mode, can call custom MCP tools; which transport it accepts (remote HTTPS endpoint, OpenAI's Secure MCP Tunnel), the credentials it needs, the fact that traffic transits OpenAI, and whether command tools can run without an extra confirmation step.
 - **G2, content provider:** the official YouTube Data API (quota, key, terms) or a provider link supplied by ChatGPT; what the Cast YouTube receiver reports after a launch, and whether any observable state can confirm the requested video.
 - **G3, the owner's TVs and audio path:** model and platform of each TV (Google TV/Android TV, a Cast dongle on HDMI, a vendor platform), TV speakers or sound bar, HDMI-CEC, and which control endpoints actually exist (for example a paired Android TV remote protocol or a vendor API).
-- **G4, power:** power on from off and standby per endpoint (CEC through a Cast launch, a remote-protocol power key, Wake-on-LAN, vendor API).
+- **G4, power and audible sound:** power on from off, standby and audible volume per endpoint (HDMI-CEC, which a Cast launch can trigger on some setups, a remote-protocol key, Wake-on-LAN, a vendor API); Cast offers no universal or guaranteed path to either.
 - **G5, applications:** whether any available endpoint lists installed applications; otherwise only a launchable catalog, said as such.
 - **G6, licenses:** of any new library, under control-TV's GPL-3.0 and for Android packaging.
 
@@ -111,10 +111,11 @@ Small, independent, one shared engine; each synchronizes `DEVELOPMENT_PLAN.md`. 
 | PR | Scope | Depends on | Acceptance |
 |---|---|---|---|
 | D0 | This documentation reconciliation | owner review, Codex review | scope, matrix and plan reconciled; no item marked done; history kept |
+| S0 | **First, gate G1:** read-only ChatGPT feasibility test, right after D0 and before substantial P3 work: only read-only tools offered through a temporary transport the owner authorizes, called from ChatGPT text then voice mode | D0, owner authorization of the transport | ChatGPT voice observed calling a control-TV tool (or the failure recorded); no TV command |
 | P1 | Capability and evidence model: per-device capabilities (endpoint, Cast volume type, supported operations), the evidence levels and the Cast-logical/audible distinction in tool answers and GUI wording | - | a fixed-volume receiver is never presented as controlling the TV's sound; tests; no new command path |
 | P2 | Desktop hardware validation tranche, one command at a time | owner go-ahead per command | each command recorded at the levels above |
-| P3 | Content on the TV from tools: expose `load_media` and a provider launch (e.g. YouTube by identifier or link) as MCP tools, behind a resolver boundary; verification of observed playback | G2 | nothing confirmed without observed evidence; one send, no replay; no GUI search or player |
-| P4 | ChatGPT reach: the transport and security review of G1, then a read-only tool called from ChatGPT text, then voice | G1, owner decision | ChatGPT voice observed calling a control-TV tool before any claim |
+| P3 | Content on the TV from tools: expose `load_media` and a provider launch (e.g. YouTube by identifier or link) as MCP tools, behind a resolver boundary; verification of observed playback | G2, and S0's result before substantial work | nothing confirmed without observed evidence; one send, no replay; no GUI search or player |
+| P4 | ChatGPT reach for real: the transport and its security review, then the command tools | S0, owner decision | commands from ChatGPT only with the owner's go-ahead, one at a time |
 | S1 | Read-only feasibility spike on the owner's hardware for G3-G5 | owner go-ahead | each TV's endpoints and capabilities recorded; no command without go-ahead |
 | P5 | One non-Cast endpoint adapter proven by S1 (pairing, secret storage) behind the shared service | S1, G6 | capability-detected per device; Cast-only devices report unsupported |
 | P6 | Power on/off and audible volume/mute in service, bridge, MCP and GUI | P1, P5 | hardware matrix per device; nothing claimed beyond what was observed |
@@ -126,4 +127,11 @@ The Android widget (PR #33), the Linux tray and Windows stay separate items of t
 
 ## Estimates
 
-Not reconciled (owner, 2026-10-08). The phase-1 estimates (Claude: core desktop 4-6 weeks, full roadmap 9-14 weeks; Codex: 8-14 and 24-40 person-weeks) used different assumptions and both included the in-app voice and search work superseded above. Estimates are to be given per PR, as focused effort and elapsed time separately, once G1-G5 are answered. The remaining desktop work for the original product is not zero.
+Corrected-scope baseline (Codex, adopted after the review of PR #35, 2026-10-08), in **focused effort** (person-weeks of engineering work, reviews included):
+
+- **Core Linux desktop: 5-9 person-weeks.** The capability and evidence model, the read-only ChatGPT feasibility test and then ChatGPT reach, content started on the TV from tools (YouTube first), the desktop hardware validation, the TV endpoint feasibility and, for one TV family, the window's power, audible sound, navigation and applications.
+- **Corrected full roadmap: 14-24 person-weeks.** The core, plus Android GUI parity, the completion of the Android widget (PR #33), the Linux tray and release hardening (personal APK signing, license blockers).
+
+Assumptions: one TV family; YouTube as the first provider; no Windows and no Play Store; ChatGPT voice mode proven able to call control-TV's tools (gate G1). The gates are uncertainty modifiers: if G1 fails, the central ChatGPT path needs another route and the estimate is revisited; a TV without a usable endpoint for power, audible sound or applications (G3-G5) shrinks that work to reporting "unsupported" rather than adding it; another TV family or provider adds work.
+
+**Elapsed time is not the same as effort and is not estimated as a fixed figure:** it also depends on review rounds, the owner's go-aheads for every hardware command, the availability of the TVs and the phone for physical tests, platform access for ChatGPT (credentials, transport), and how much two agents work in parallel. It is expected to exceed the focused effort. The phase-1 ranges of both audits are superseded: they included in-app voice and search work that is not requested. Per-PR estimates follow once the gates are answered.
