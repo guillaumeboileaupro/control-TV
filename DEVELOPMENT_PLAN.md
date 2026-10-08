@@ -935,3 +935,194 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 **Suivi initial :** étude de faisabilité 0 %, clavier Ubuntu 0 %, clavier Android 0 %, édition/validation 0 %, validation matérielle 0 %. **Estimation : à établir après investigation technique** (nouvelle exigence non comprise explicitement dans l'enveloppe initiale 3–5 h de gestion des applications TV). Réévaluer le budget de phase 2 et le total **40–80 h** si nécessaire, sans inventer de durée. Reporter par sous-tâche avancement, estimation, temps réellement passé, temps restant et blocages.
 
 **Priorité :** phase 2, après validation des deux contrôleurs autonomes ; MCP et ChatGPT Voice restent reportés.
+
+
+### 12. Checklist exhaustive par phase — critères d'acceptation (2026-10-08)
+
+**Document de pilotage :** ces cases représentent des preuves vérifiables, pas des intentions. `[x]` signifie que le critère indiqué a effectivement été démontré au niveau de preuve précisé. `[ ]` signifie « non démontré dans le présent suivi », **pas** nécessairement « fonctionnalité absente ». Chaque sous-tâche doit être suivie avec avancement fonctionnel (%), estimation, temps restant réévalué, preuve et blocage. Le temps historique cumulé ne doit pas encombrer les bilans destinés au propriétaire. **Aucune fusion sans accord explicite ; aucune commande à la TV sans accord explicite.**
+
+#### Décision Claude — PR #38 (revue indépendante communiquée par le propriétaire)
+
+- [x] Revue indépendante effectuée au commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`.
+- [x] Verdict technique : **APPROVED**, aucun P0/P1/P2 ; sept améliorations P3 facultatives.
+- [x] Indépendance des deux `ControlService`, simulateur TV partagé, lecture d'état, concurrence, changement de session et livraison ambiguë revus.
+- [x] Quatre corrections P2 vérifiées : barrière d'entrelacement, zéro/une réception, `send_attempts`, scénario C6 documenté.
+- [x] Vérification locale rapportée : 1207 tests réussis / 8 ignorés, couverture Python 98,02 % ; 17 tests ciblés ; stress concurrence sans échec. CI du commit : 1206 réussis / 9 ignorés, 4/4 jobs verts. **Ces résultats proviennent du rapport Claude, non d'une nouvelle exécution ici.**
+- [x] Protocole R1–R4 jugé prêt pour exécution **après autorisation**.
+- [ ] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min).
+- [ ] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min).
+- [ ] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min).
+- [ ] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min).
+- [ ] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min).
+- [ ] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min).
+- [ ] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min).
+- [ ] Obtenir autorisation du propriétaire avant toute fusion PR #38.
+- [ ] Fusionner PR #38 uniquement si autorisé, puis vérifier CI sur la branche cible.
+
+**Note :** les sept P3 représentent ≈67 min si tous retenus, **sans obligation de les effectuer avant les essais matériels** ; P3-1/P3-2 sont recommandés avant une éventuelle fusion. La PR #33 reste non fusionnable à cause de conflits documentaires ; #36 demeure suspendue.
+
+#### PHASE 1 — Autonomie Ubuntu/Android et convergence (enveloppe 14–28 h)
+
+**1A — Architecture, périmètre et sécurité**
+- [x] Moteur Python partagé `ControlService` existant ; indépendance des deux instances vérifiée par revue de PR #38 et simulateur.
+- [ ] Vérifier sur les binaires installés qu'Ubuntu et Android démarrent séparément, sans serveur permanent ni dépendance l'un à l'autre.
+- [ ] Vérifier l'absence de dépendance MCP/Voice/API payante dans le chemin critique.
+- [ ] Vérifier le comportement hors réseau, Wi-Fi perdu, Wi-Fi rétabli et TV indisponible.
+- [ ] Vérifier que chaque client conserve son propre cycle de découverte, sélection et rafraîchissement.
+- [ ] Documenter modèle TV, versions OS, version APK/.deb, réseau, branche/commit et prérequis d'autorisation.
+
+**1B — PR #38 et préparation de validation**
+- [x] Contrat simulé de convergence implémenté et revu.
+- [x] Protocole R1–R4 préparé et approuvé techniquement par Claude.
+- [ ] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés).
+- [ ] Obtenir l'autorisation explicite du propriétaire pour R1–R4, même en lecture seule.
+- [ ] Installer/ouvrir les deux clients et consigner les preuves séparément.
+- [ ] **R1** : Ubuntu découvre la TV sans Android ; Android découvre la même TV sans Ubuntu ; comparer identifiant stable.
+- [ ] **R2** : lire l'état initial indépendamment depuis les deux interfaces ; relever TV, application, session, lecture, mute, volume, heure et erreurs si exposés.
+- [ ] **R3** : propriétaire modifie l'état via télécommande physique ou autre émetteur ; chaque client relit puis converge sans commande control-TV.
+- [ ] **R4** : répéter les rafraîchissements simultanés ; vérifier stabilité, absence de changement visible/audible et absence d'envoi de commande par conception, sans inférer une preuve réseau non instrumentée.
+- [ ] Pour chaque test R1–R4, enregistrer PASS/FAIL/NOT RUN, horodatage, capture/log, version et motif d'échec.
+- [ ] Si erreur de lecture, distinguer échec confirmé et test non exécutable ; consigner le code/message sans exposer de secrets.
+
+**1C — Fiabilisation des deux plateformes**
+- [ ] Ubuntu : démarrage, fermeture, reconnexion, découverte répétée, sélection TV, rafraîchissement manuel et erreurs compréhensibles.
+- [ ] Android : démarrage, permissions réseau/multicast, découverte, sélection, rafraîchissement, passage arrière-plan/avant-plan.
+- [ ] Android : tester interruption/reprise réseau, veille, restrictions batterie et recréation de processus.
+- [ ] Ubuntu + Android : même TV sélectionnée et états réconciliés après modification externe.
+- [ ] Ubuntu + Android : état obsolète, déconnexion et reconnexion sans commande automatiquement rejouée.
+- [ ] Corriger et retester chaque anomalie réelle avec preuve de non-régression.
+- [ ] **Critère de sortie phase 1** : les deux applications installées découvrent et surveillent simultanément la même TV sans serveur permanent, avec preuves R1–R4.
+
+**1D — PR #33 (widget Android), indépendante de la PR #38**
+- [x] Analyse Codex effectuée ; architecture compatible par inspection, **CHANGES REQUESTED**.
+- [ ] Résoudre conflits `DEVELOPMENT_PLAN.md` et `README.md`, relire `ARCHITECTURE.md` sans écraser le plan actuel.
+- [ ] Corriger la documentation Mute : receiver-confirmed mais `volume_control_type=fixed` et aucun effet sonore physique observé.
+- [ ] Vérifier qu'aucune ancienne priorité MCP/Voice n'est réintroduite.
+- [ ] Relancer 4 jobs CI sur le HEAD résolu ; vérifier le diff final.
+- [ ] Vérifier widget, picker, refresh, choix TV, redessin, arrêt/recréation du processus et restrictions batterie.
+- [ ] Vérifier les commandes widget sur TV réelle **après autorisation** ; distinguer widget de l'application Android principale.
+- [ ] Aucune fusion PR #33 sans autorisation explicite.
+
+#### PHASE 2 — Télécommande complète et commandes réelles (enveloppe initiale 16–32 h, **à réestimer**)
+
+**2A — Lecture et transport multimédia**
+- [ ] Lire l'application active, l'état de lecture, la session média et les capacités réellement exposées.
+- [ ] Lecture/reprise, pause, stop : vérifier depuis Ubuntu puis Android sur TV réelle.
+- [ ] Contrôles précédant/suivant, seek et position si pris en charge ; indiquer clairement les commandes indisponibles.
+- [ ] Vérifier état et confirmation après chaque commande, sans supposer que l'envoi garantit l'effet.
+- [ ] Vérifier changement de contenu/session pendant une commande, y compris C6.
+- [ ] Tester absence de session média, contenu non compatible, délai d'attente et perte réseau.
+
+**2B — Navigation dans la TV**
+- [ ] Évaluer protocole réel pour Home, Retour, Haut, Bas, Gauche, Droite, OK/Entrée et Menu si disponibles.
+- [ ] Proposer ces boutons dans les deux interfaces, avec retour utilisateur et erreurs explicites.
+- [ ] Vérifier sur l'écran d'accueil Google TV et dans plusieurs applications.
+- [ ] Tester commandes répétées, maintien éventuel et navigation lorsque la TV n'accepte pas la commande.
+- [ ] Documenter les limitations selon le modèle TV et les autorisations/appairages nécessaires.
+
+**2C — Volume et son physique**
+- [ ] Lire le volume logique Cast, mute et `volume_control_type`.
+- [ ] Tester Volume +/− et Mute/Unmute depuis Ubuntu et Android.
+- [ ] Séparer **confirmation receiver** et **variation sonore audible** ; ne pas cocher la seconde sur seule réponse Cast.
+- [ ] Tester récepteur à volume fixe et, si disponible, récepteur à volume ajustable.
+- [ ] Évaluer un mécanisme alternatif de contrôle du son TV si Cast ne commande pas le volume physique.
+- [ ] Afficher un message clair lorsque la TV confirme une commande logique sans changement sonore.
+
+**2D — Alimentation**
+- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole).
+- [ ] Tester veille depuis Ubuntu, puis Android ; confirmer l'effet sur TV réelle.
+- [ ] Tester réveil depuis Ubuntu, puis Android ; confirmer le retour du contrôle.
+- [ ] Tester TV éteinte, veille réseau, TV inaccessible et erreur/timeout.
+- [ ] Documenter les limitations et éviter d'afficher un succès non confirmé.
+
+**2E — APPLICATIONS INSTALLÉES SUR LA TV : découverte ET lancement (exigence propriétaire)**
+- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents.
+- [ ] Définir les permissions, appairages et restrictions nécessaires ; proposer une solution viable sans serveur permanent.
+- [ ] Récupérer identifiant/package, nom affiché, icône si disponible et statut lançable.
+- [ ] Afficher la liste dans **Ubuntu** avec recherche/tri et état de chargement/erreur.
+- [ ] Afficher la liste dans **Android** avec recherche/tri et état de chargement/erreur.
+- [ ] Rafraîchir après installation/désinstallation et changement de TV.
+- [ ] Lancer une application installée **depuis Ubuntu**, confirmer l'ouverture sur TV réelle.
+- [ ] Lancer une application installée **depuis Android**, confirmer l'ouverture sur TV réelle.
+- [ ] Tester YouTube, Netflix, Spotify ou autres applications **réellement présentes**, sans supposer qu'elles sont installées.
+- [ ] Tester application absente, non lançable, TV déconnectée et refus d'autorisation.
+- [ ] Vérifier que les deux interfaces voient l'application active après lancement par l'autre.
+- [ ] **Critère de sortie : liste issue de la TV + lancement effectif depuis chacune des deux applications**, ou limite matérielle précisément documentée et décision du propriétaire sur une alternative.
+
+**2F — CLAVIER DISTANT : remplir un champ de saisie TV (exigence propriétaire)**
+- [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant.
+- [ ] Vérifier appairage, authentification, permissions, chiffrement et compatibilité selon TV.
+- [ ] Ajouter dans **Ubuntu** une zone de saisie utilisant le clavier physique du PC.
+- [ ] Ajouter dans **Android** une zone de saisie utilisant le clavier virtuel du téléphone.
+- [ ] Envoyer texte simple vers le champ TV actif ; vérifier caractères affichés.
+- [ ] Tester espaces, accents, apostrophes, chiffres, ponctuation et caractères Unicode.
+- [ ] Tester effacement/Backspace, Entrée/OK et, si possible, déplacement du curseur.
+- [ ] Tester recherche système Google TV, recherche YouTube et champs d'autres applications compatibles.
+- [ ] Vérifier comportement si aucun champ n'est actif, si la TV refuse le texte ou si le focus change.
+- [ ] Éviter les doubles envois après timeout, reconnexion ou changement de session.
+- [ ] Prévoir des retours utilisateur clairs ; ne pas journaliser mots de passe ou textes sensibles.
+- [ ] Tester les deux clients ouverts en même temps et les changements de focus.
+- [ ] **Critère de sortie : texte réellement saisi depuis Ubuntu ET Android dans un champ TV**, avec limites par application documentées.
+
+**2G — Concurrence et robustesse des commandes**
+- [ ] Valider scénarios C1–C7 sur TV réelle **uniquement après autorisation explicite**.
+- [ ] Tester commandes Ubuntu/Android alternées et simultanées.
+- [ ] Distinguer commande acceptée, rejetée, confirmée, non confirmée et livraison ambiguë.
+- [ ] Garantir l'absence de rejeu automatique d'une commande ambiguë.
+- [ ] Tester session changée entre prélecture, envoi et confirmation ; vérifier garde de session.
+- [ ] Tester perte/reprise du réseau pendant la commande et rafraîchissement ultérieur.
+- [ ] Vérifier convergence de l'état affiché sur les deux interfaces après les actions.
+- [ ] Traiter séparément l'interprétation des réponses Cast d'erreur corrélées (anomalie P2 signalée dans l'analyse PR #33).
+- [ ] Conserver les preuves de réception réseau/receiver si l'on prétend démontrer zéro ou une livraison réelle.
+
+**Attention budget :** la découverte/lancement des applications installées et le clavier distant ont été précisés/ajoutés par le propriétaire après l'estimation initiale. Les **16–32 h** de phase 2 et **40–80 h** globales restent une **ancienne référence à réévaluer après les deux études de faisabilité**. Ne pas inventer une nouvelle estimation avant analyse des protocoles.
+
+#### PHASE 3 — Qualité, packaging et livraison (enveloppe initiale 10–20 h)
+
+**3A — Tests et qualité**
+- [ ] Exécuter tests Python, typage, lint/format et couverture ; conserver résultats et écarts.
+- [ ] Exécuter tests Rust/Tauri, TypeScript/UI et tests JVM Kotlin.
+- [ ] Ajouter tests déterministes des nouvelles commandes, applications installées et clavier distant.
+- [ ] Tester les erreurs et les cas limites, y compris réseau instable et commandes concurrentes.
+- [ ] Examiner la couverture Kotlin et les besoins de tests Android instrumentés ; ne pas présenter 98,02 % Python comme couverture Kotlin.
+- [ ] Relancer tous les workflows CI sur le HEAD réellement destiné à livraison.
+- [ ] Ne pas confondre tests simulés, builds réussis et fonctionnement sur matériel.
+
+**3B — Campagne matérielle finale**
+- [ ] Installer les versions finales sur un PC Ubuntu et un téléphone Android.
+- [ ] Valider R1–R4 sur les deux appareils.
+- [ ] Valider les commandes C1–C7 autorisées.
+- [ ] Valider lecture, navigation, volume audible, veille/réveil et leurs limitations.
+- [ ] Valider **liste et lancement des applications installées** depuis Ubuntu ET Android.
+- [ ] Valider **clavier distant et saisie réelle** depuis Ubuntu ET Android.
+- [ ] Valider fonctionnement simultané, interruption Wi-Fi, reprise et changement de TV.
+- [ ] Documenter PASS/FAIL/NOT RUN par scénario avec version, matériel, preuves et anomalies.
+
+**3C — Packaging et installation**
+- [ ] Produire un `.deb` Ubuntu installable, vérifier dépendances et lancement hors environnement développeur.
+- [ ] Produire un `.apk` Android installable, vérifier permissions, démarrage, fonctionnement arrière-plan et mise à jour.
+- [ ] Vérifier installations propres, mises à jour, désinstallation et conservation/suppression contrôlée des paramètres.
+- [ ] Vérifier les signatures, checksums et artefacts de livraison.
+- [ ] Tester interface, tailles d'écran, messages d'erreur, accessibilité de base et navigation.
+- [ ] Vérifier absence de secrets, identifiants TV ou données sensibles dans logs et artefacts.
+
+**3D — Documentation et décision finale**
+- [ ] Documenter installation Ubuntu, installation Android et connexion à la TV.
+- [ ] Documenter boutons, applications installées, lancement, clavier distant et limitations par modèle.
+- [ ] Documenter dépannage Wi-Fi, découverte, volume fixe, autorisations et erreurs.
+- [ ] Tenir `DEVELOPMENT_PLAN.md`, issue #37 et preuves de tests à jour.
+- [ ] Présenter une matrice finale « Ubuntu / Android / matériel réel / preuve ».
+- [ ] Signaler explicitement les critères non validés et demander une décision du propriétaire ; ne jamais les cocher par déduction.
+- [ ] Demander l'autorisation du propriétaire pour chaque fusion restante.
+- [ ] **Critère de sortie phase 3 : deux applications réellement installables, autonomes, utilisables en parallèle et validées sur TV réelle**, avec les fonctions exigées ou exceptions acceptées explicitement.
+
+#### Tableau de pilotage à maintenir après CHAQUE itération
+
+| Lot | Avancement vérifié | Estimation restante de référence | Prochaine preuve |
+|---|---|---|---|
+| Phase 1 : autonomie/convergence | Tests simulés + revue Claude terminés ; R1–R4 matériel **0 %** | 14–28 h, à réviser | Autorisation + R1–R4 |
+| Phase 2 : commandes/applications/clavier | Validation matérielle complète **non démontrée** ; applications et clavier à étudier | 16–32 h **provisoires, potentiellement sous-estimées** | Faisabilité protocoles + campagne autorisée |
+| Phase 3 : livraison | CI/builds existants ; validation finale non démontrée | 10–20 h, à réviser | Installations et tests finaux |
+| **Total restant de référence** | **Pas de pourcentage global inventé** | **40–80 h, sous réserve de réestimation** | Décisions après tests matériels |
+
+Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, temps réellement consacré si disponible, temps restant réévalué, budget consommé %, preuve, blocage**. Dans le résumé utilisateur, privilégier avancement, reste à faire et risques ; ne pas afficher le cumul historique d'heures déjà passées sans demande.
