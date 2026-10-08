@@ -890,3 +890,25 @@ Règles :
 **Validation du widget sur téléphone déjà constatée :** installation, placement, refresh, picker autonome, changement de TV et redessin après mise à jour. **Non démontré :** commandes du widget sur TV réelle, mort/recréation de processus, restrictions batterie, multi-appareils Android, fonctionnement simultané avec Ubuntu, volume physique. Les tests Kotlin n'ont pas de couverture chiffrée et la CI n'exécute pas de test instrumenté Android.
 
 **Suite :** revue indépendante de PR #38 (30–60 min), puis R1–R4 après autorisation. La correction de PR #33 nécessite une autorisation de modifier sa branche ; aucun merge sans accord explicite. Le budget projet 40–80 h reste une enveloppe provisoire, à réviser après validation matérielle ; éviter le double comptage des sous-tâches.
+
+
+### 10. Applications installées sur Google TV — exigence de livraison
+
+**Exigence explicite du propriétaire :** les deux applications autonomes **Ubuntu et Android** doivent permettre de **voir les applications installées sur la Google TV et de les lancer directement depuis control-TV**. Cette exigence précise et étend la ligne « Détection et gestion des applications TV » de la phase 2 ; elle constitue un **critère de livraison**, pas une option ou un travail MCP/Voice.
+
+#### Critères d'acceptation
+
+- [ ] Identifier, dans les limites techniques vérifiées, les applications réellement installées sur la télévision ciblée, en distinguant une liste découverte d'un catalogue d'applications Cast connues.
+- [ ] Présenter la liste dans **l'interface Ubuntu et l'interface Android** ; afficher nom et icône si disponibles, avec repli explicite.
+- [ ] Sélectionner une application et **la lancer sur la télévision depuis Ubuntu**.
+- [ ] Sélectionner une application et **la lancer sur la télévision depuis Android**.
+- [ ] Actualiser la liste après ajout ou suppression d'applications, ou documenter précisément les limites de détection.
+- [ ] Gérer les applications non lançables, absentes ou non compatibles avec une erreur explicite, sans prétendre à une réussite.
+- [ ] Vérifier le comportement lorsque les deux télécommandes sont ouvertes en parallèle et la synchronisation de l'application active.
+- [ ] Valider chaque comportement sur **une Google TV réelle**, avec autorisation explicite avant toute commande de lancement.
+
+**Risque technique à investiguer en premier :** Cast/pychromecast ne garantit ni l'énumération exhaustive des applications Android TV installées, ni le lancement arbitraire de leurs packages. Étudier les méthodes compatibles avec le modèle de TV (par exemple intégrations réseau disponibles), leurs prérequis et leur sécurité. Ne pas présenter un catalogue Cast statique comme la liste des applications installées. Ne pas promettre de contrôle universel avant preuve matérielle.
+
+**Estimation actuelle :** l'enveloppe provisoire **3–5 h** de la ligne « Détection et gestion des applications TV » doit être **réévaluée** après étude de faisabilité, car elle pourrait ne pas couvrir la découverte et le lancement réels sur les deux plateformes. **Avancement matériel confirmé : 0 %**. Le budget de phase 2 **16–32 h** et le budget global **40–80 h** restent provisoires, sous réserve de cette étude. Suivre les tâches de faisabilité, liste Ubuntu, liste Android, lancement Ubuntu, lancement Android, rafraîchissement, concurrence et validation matérielle séparément avec avancement et temps restant.
+
+**Priorité :** fonctionnalité essentielle de la phase 2, après validation de la convergence des deux applications, sans MCP/Voice.
