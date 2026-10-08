@@ -1126,3 +1126,17 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 | **Total restant de référence** | **Pas de pourcentage global inventé** | **40–80 h, sous réserve de réestimation** | Décisions après tests matériels |
 
 Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, temps réellement consacré si disponible, temps restant réévalué, budget consommé %, preuve, blocage**. Dans le résumé utilisateur, privilégier avancement, reste à faire et risques ; ne pas afficher le cumul historique d'heures déjà passées sans demande.
+
+
+### 12. Checklists exhaustives et revue indépendante PR #38
+
+**Document de suivi détaillé et critères de sortie par phase : [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).** Ce fichier comprend **238 cases de suivi** couvrant gouvernance, autonomie et convergence, R1–R4, commandes TV, volume audible, veille/réveil, **liste et lancement des applications réellement installées**, **clavier distant pour remplir les champs TV depuis Ubuntu et Android**, concurrence C1–C7, widget #33, CI, packaging, documentation et critères bloquants de livraison. Les critères matériels ne peuvent être cochés sur la base de simulations.
+
+#### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
+
+- **PR #38 APPROVED techniquement** au commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. **Aucune fusion autorisée ni réalisée.**
+- Aucun P0/P1/P2 ; **sept P3 facultatifs** : (1) traçabilité « 16 » → « 17 tests » (~2 min), (2) description PR obsolète (~5 min), (3) test session modifiée entre prélecture et envoi (~15 min), (4) reformulation de la preuve R4 (~10 min), (5) clarification action externe R3 (~5 min), (6) critères PASS/FAIL/NOT RUN et erreur de lecture R1–R4 (~10 min), (7) vérification des confirmations contre l'historique d'état simulé (~20 min).
+- Revue des 17 cas de test et des quatre corrections P2 : **conforme**. Tests locaux rapportés : 1207 réussis, 8 ignorés, couverture 98,02 %. CI de référence : 1206 réussis, 9 ignorés, 4/4 jobs verts. Stabilité et tests de mutation rapportés comme satisfaisants.
+- **R1–R4 prêts à exécuter après autorisation**, avec clarifications P3-4/5/6 recommandées ; tests matériels **0 % exécuté**.
+- **Étape recommandée :** décider si les P3 documentaires rapides sont souhaitées, obtenir l'accord du propriétaire pour la fusion éventuelle et l'exécution réelle de R1–R4. Aucun envoi de commande à la TV par control-TV avant autorisation.
+- **Budgets provisoires inchangés :** phase 1 14–28 h ; phase 2 16–32 h ; phase 3 10–20 h ; total 40–80 h. Les exigences « applications installées + lancement » et « clavier distant » sont désormais explicitement **bloquantes pour la livraison** et peuvent nécessiter une réestimation technique. Le temps historique cumulé n'est pas un indicateur de synthèse prioritaire.
