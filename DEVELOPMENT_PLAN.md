@@ -686,3 +686,65 @@ A slice whose `DEVELOPMENT_PLAN.md` is not synchronized is INCOMPLETE.
 Every actionable development item uses a Markdown checkbox. `[x]` means the work and relevant validation are complete; future work remains `[ ]`. Update this plan continuously in the same iteration that changes project state, including newly discovered work, review findings and blockers. Do not defer plan synchronization until the end of an iteration.
 
 A deliverable or exit criterion whose wording refers to real hardware, a real device or a real platform is checked `[x]` only after that validation actually ran on that hardware/platform, with the evidence recorded in the handoff. Passing automated tests against a fake/simulated transport, fake TV, fake clock or emulator is real, valuable engineering progress, but it is never by itself sufficient to check such an item; simulated validation is never substituted for or presented as hardware validation. When a deliverable bundles implementation with hardware validation (for example "receiver/media state synchronization"), split it in this file into two lines - one for the implementation, checked once it is built and covered by deterministic tests, and one for real-device validation, checked only once that validation actually happened - rather than checking the combined line early.
+
+
+## Active execution plan and per-task time tracking (owner decision, 2026-10-08)
+
+This section records the owner's **current priority and mandatory reporting format**. It supersedes earlier priority statements above where they conflict; historical voice/MCP plans remain for traceability but are **deferred indefinitely** until the owner explicitly reactivates them. Do not treat a historical checkbox as evidence of real-TV behavior.
+
+### Current product and delivery scope
+
+- Deliver **two autonomous apps**, Debian/Ubuntu and Android, able to run **at the same time against the same Chromecast/Google TV**, each with independent discovery and state reads, without an always-on server or paid AI API.
+- Prioritize hardware evidence for discovery, status convergence and actual commands, including playback, navigation, installed apps, power and **audible** volume where supported. Distinguish Cast logical volume from actual sound; distinguish simulated tests from real-device evidence.
+- ChatGPT Voice and MCP are deferred. PR #36 stays open but paused; PR #33 (Android home-screen widget) stays independent; PR #38 (dual-controller convergence) is the immediate review priority.
+- **No merge without the owner's explicit authorization. No real-TV command without explicit authorization.** Read-only R1–R4 hardware execution also requires owner authorization and independent review of PR #38. Do not modify PRs #33/#36 as a side effect of #38.
+
+### Mandatory progress reporting — EACH task, not only each phase or PR
+
+Every Claude/Codex prompt, development report, and progress update MUST include a row for **every active task** with:
+
+| Task | Functional completion (%) | Estimated effort | Actual elapsed effort | Estimated effort remaining | Budget consumed (%) | Evidence / blocker |
+|---|---:|---:|---:|---:|---:|---|
+| Example only | 25% | 4 h | 2 h | 3 h revised | 50% | 1/4 acceptance criteria verified |
+
+Rules:
+1. **Functional completion** is the proportion of independently verifiable acceptance criteria satisfied, not elapsed time divided by estimate. Mark unknown as **not measured**, not a fabricated percentage. For a task with no confirmed criteria, report **0% confirmed**.
+2. **Budget consumed** = actual effort / baseline estimate × 100%; when the estimate is a range, report a range or choose and identify a documented baseline. It may exceed 100%.
+3. Record **actual effort per task**, not just a combined session total; when only a session total is known, say **not broken down** and do not invent task-level times.
+4. **Remaining effort** is a new forecast based on unresolved criteria and risks, not automatically estimated minus elapsed. Record overruns, scope changes and reasons.
+5. Show subtotals for each PR and phase, plus overall **actual known effort**, **estimated remaining effort**, and changes since the previous report. Avoid double-counting work across phases and PRs.
+6. Label evidence clearly: implemented, CI-validated, independently reviewed, real-hardware validated, or not tested. A completed documentation/test-preparation task does not complete its hardware test.
+7. Keep these columns and percentages in every prompt sent to Claude or Codex and in each subsequent progress report.
+
+### Working baseline (2026-10-08; update after each task)
+
+| Work item | Functional completion | Estimated effort | Actual known effort | Next gate |
+|---|---:|---:|---:|---|
+| PR #38 initial convergence tests | 100% implemented; independent review pending | 12–24 h initial estimate | ~6 h | Claude independent review |
+| PR #38 four P2 fixes and CI | 100% implemented; independent review pending | 4–7.5 h estimated | ~16 min total, **not broken down by P2 task** | Claude review, no merge without authorization |
+| R1–R4 hardware protocol preparation | 100% | 70–100 min | ~25 min | Hardware execution after approval |
+| PR #38 independent review | 0% confirmed | 30–60 min | 0 | Claude |
+| R1–R4 real Ubuntu + Android tests | 0% | 25–45 min, excluding anomaly diagnosis | 0 | Owner authorizes read-only test after review |
+| PR #33 conflict/compatibility analysis | 0% confirmed | 1–2 h | Not reported | Analyze without merge; fixes if needed ~2–5 h |
+| PR #36 MCP / ChatGPT Voice | Paused; percentage not applicable | Not scheduled | Not reported | Owner explicitly reactivates |
+
+**Known reported effort on recent work: ~6 h 41 min** (~6 h initial PR #38, ~16 min fixes, ~25 min protocol preparation). This is **not** a full historical project timesheet.
+
+### Remaining delivery phases (planning ranges, not measured completion percentages)
+
+| Phase | Scope | Estimated remaining |
+|---|---|---:|
+| 1 | Ubuntu/Android autonomy, PR #38 review, R1–R4, anomaly diagnosis and platform stabilization | 14–28 h |
+| 2 | Real-device playback, navigation, power, audible volume, installed apps, concurrent commands | 16–32 h |
+| 3 | Regression, hardware acceptance, stabilization, .deb/.apk packaging and delivery | 10–20 h |
+| **Total issue #37** | **Remaining planning budget; revise after hardware results** | **40–80 h** |
+
+Phase-level ranges are **envelopes**, not additive to separately listed PR/review tasks without checking overlap. Feature-level forecasts within each phase must be refined as evidence becomes available.
+
+### Next actions in order
+
+1. Codex may analyze PR #33 conflicts/compatibility independently (1–2 h), without merging or changing the paused PR #36.
+2. Claude independently reviews PR #38 at commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac` (30–60 min); fixes must be separately tracked if requested.
+3. After owner authorization, execute read-only R1–R4 on Ubuntu and Android (25–45 min); record pass/fail/non-conclusive **per test**, and do not send TV control commands.
+4. Resolve real-device issues and validate command scenarios C1–C7 **only with explicit authorization**.
+5. Complete hardware-dependent controls, regression, packaging and delivery. Keep PR #33 independent and PR #36 paused unless the owner changes priority.
