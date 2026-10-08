@@ -912,3 +912,26 @@ Règles :
 **Estimation actuelle :** l'enveloppe provisoire **3–5 h** de la ligne « Détection et gestion des applications TV » doit être **réévaluée** après étude de faisabilité, car elle pourrait ne pas couvrir la découverte et le lancement réels sur les deux plateformes. **Avancement matériel confirmé : 0 %**. Le budget de phase 2 **16–32 h** et le budget global **40–80 h** restent provisoires, sous réserve de cette étude. Suivre les tâches de faisabilité, liste Ubuntu, liste Android, lancement Ubuntu, lancement Android, rafraîchissement, concurrence et validation matérielle séparément avec avancement et temps restant.
 
 **Priorité :** fonctionnalité essentielle de la phase 2, après validation de la convergence des deux applications, sans MCP/Voice.
+
+
+### 11. Clavier distant et saisie de texte sur la Google TV
+
+**Exigence explicite du propriétaire :** les applications **Ubuntu et Android** doivent proposer un **clavier distant** pour remplir les champs de saisie affichés sur la Google TV (recherche, formulaires et champs compatibles). C'est un critère de livraison de la phase 2, distinct des commandes de navigation et du lancement des applications installées.
+
+#### Critères d'acceptation
+
+- [ ] Depuis Ubuntu, saisir du texte dans un champ de saisie TV actif à partir du clavier physique ou d'un champ de saisie dans control-TV.
+- [ ] Depuis Android, saisir du texte dans un champ TV actif à partir du clavier du téléphone.
+- [ ] Gérer l'effacement (Backspace), la validation (Entrée/OK) et, si techniquement pris en charge, le déplacement du curseur.
+- [ ] Vérifier la saisie dans la recherche système Google TV et dans des champs d'applications représentatives ; identifier et signaler les applications ou champs non compatibles.
+- [ ] Fournir un retour d'erreur clair lorsqu'aucun champ compatible n'est actif ou que la TV refuse la saisie.
+- [ ] Préserver l'autonomie des deux applications et la convergence des états lorsqu'elles sont ouvertes simultanément.
+- [ ] Valider sur télévision réelle, **uniquement après autorisation explicite d'envoyer des commandes**.
+
+#### Faisabilité et contraintes
+
+Google Cast / pychromecast ne fournit pas nécessairement de mécanisme générique de saisie dans les champs des applications Android TV. Étudier les protocoles de télécommande et les interfaces de saisie réellement accessibles sur le modèle de TV (appairage éventuel, permissions, compatibilité, sécurité). Ne pas promettre une saisie universelle sans validation ; distinguer les champs effectivement pris en charge des champs impossibles à contrôler.
+
+**Suivi initial :** étude de faisabilité 0 %, clavier Ubuntu 0 %, clavier Android 0 %, édition/validation 0 %, validation matérielle 0 %. **Estimation : à établir après investigation technique** (nouvelle exigence non comprise explicitement dans l'enveloppe initiale 3–5 h de gestion des applications TV). Réévaluer le budget de phase 2 et le total **40–80 h** si nécessaire, sans inventer de durée. Reporter par sous-tâche avancement, estimation, temps réellement passé, temps restant et blocages.
+
+**Priorité :** phase 2, après validation des deux contrôleurs autonomes ; MCP et ChatGPT Voice restent reportés.
