@@ -503,7 +503,7 @@ def test_the_desktop_bridge_and_the_android_entry_point_never_import_the_mcp_sdk
     assert completed.stdout.strip() == "[]"
 
 
-def test_the_mcp_module_is_the_only_one_importing_the_sdk() -> None:
+def test_only_the_mcp_modules_import_the_sdk() -> None:
     importers = [
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / "src" / "control_tv").rglob("*.py")
@@ -513,5 +513,5 @@ def test_the_mcp_module_is_the_only_one_importing_the_sdk() -> None:
         )
     ]
 
-    assert importers == ["src/control_tv/mcp_server.py"]
+    assert sorted(importers) == ["src/control_tv/mcp_diagnostic.py", "src/control_tv/mcp_server.py"]
     assert mcp_server.SERVER_NAME == "control-tv"
