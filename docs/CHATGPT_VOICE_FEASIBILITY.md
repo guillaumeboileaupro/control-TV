@@ -14,6 +14,15 @@ Question (issue #34, `DEVELOPMENT_PLAN.md` item O): can **native ChatGPT Voice**
 | A custom MCP tool invoked from native Voice | Not stated anywhere in the material reviewed; OpenAI Support (2026-09-14, community forum) said "Desktop Voice in Work/Codex can use supported connected tools", without saying whether custom MCP servers count; community reports (May to September 2026) found connected tools unavailable in voice on the web and Android | **indeterminate until demonstrated** |
 | A local stdio MCP server without public inbound exposure | Supported through Secure MCP Tunnel | compatible under conditions |
 
+Per surface (what may be expected before the experiment):
+
+| Surface | Mode | Status | Test |
+|---|---|---|---|
+| ChatGPT on the web (Linux browser) | text | custom MCP servers documented, under conditions (plan, workspace, developer mode or plugin settings) | A |
+| ChatGPT Android app | text | **not supported** for custom MCP apps according to the cited help article ("web only"); not a success path, a failure there is not a tunnel or setup problem | recorded only |
+| ChatGPT on the web or Android | voice | **not demonstrated**: native ChatGPT Voice is documented only in the desktop app, and community reports (May to September 2026) found connected tools unavailable in voice there | recorded only |
+| ChatGPT desktop app (macOS, Windows) | native Voice | **to be verified separately**: Voice is documented there, a custom MCP tool invoked from it is not | C |
+
 Consequences for the owner's equipment: the Linux desktop has no ChatGPT desktop app, so it can run test A (text, ChatGPT on the web) but not test C (native Voice); test C needs a macOS or Windows machine with the ChatGPT desktop app. The Android app is not a documented surface for custom MCP tools; what it offers can be recorded, but it cannot demonstrate native Voice + MCP as documented today.
 
 ## The diagnostic-only server
@@ -33,7 +42,8 @@ Preferred route (Codex's audit): **Secure MCP Tunnel to the diagnostic-only stdi
 
 - `tunnel-client` keeps an outbound-only HTTPS connection to OpenAI, starts the diagnostic server as its stdio child (`--mcp-command`) and relays MCP requests to it. The diagnostic server has no network port; no router port forwarding and no public endpoint exist.
 - Authentication: a tunnel in the owner's OpenAI Platform organization, and a runtime API key restricted to **Tunnels Read + Use** (given to `tunnel-client` through `CONTROL_PLANE_API_KEY`, never an admin key, never on a shared command line, never in this repository, a commit, an issue or a shared log). Tunnel access is organization-level and granted by an organization owner or RBAC administrator.
-- **Local listener of the tunnel client:** `tunnel-client` itself always runs a health/admin server (`/healthz`, `/readyz`, `/metrics`, an embedded UI with log export), by default on `127.0.0.1:8080`, without authentication; its UI and log endpoints answer loopback clients only unless `--allow-remote-ui` is set. It cannot be disabled. For S0: bind it to a Unix socket in a private directory (`--health.unix-socket <private-dir>/tunnel-health.sock`, directory mode 0700) or keep it on loopback, and **never** pass `--allow-remote-ui` or a non-loopback `--health.listen-addr`. So nothing is reachable from the network, but a local, unauthenticated, loopback-or-socket health surface does exist while the test runs.
+- **Two different processes, two different answers.** The diagnostic MCP server opens no port at all (it speaks only over its stdin and stdout to `tunnel-client`). **`tunnel-client` does open a local HTTP server** for administration and diagnostics (`/healthz`, `/readyz`, `/metrics`, an embedded UI with log export), by default on `127.0.0.1:8080`, **without authentication**; its UI and log endpoints answer loopback clients only unless `--allow-remote-ui` is set, and the server cannot be disabled.
+- **Mandatory for S0:** this admin server listens either on a Unix socket in a private directory (`--health.unix-socket <private-dir>/tunnel-health.sock`, directory mode 0700; preferred) or on `127.0.0.1` only (`--health.listen-addr 127.0.0.1:8080`, the default). It is **never** exposed publicly: never `--allow-remote-ui`, never a non-loopback address such as `0.0.0.0` or a LAN address for `--health.listen-addr`, never forwarded by a router or a proxy. So nothing is reachable from the network, but a local, unauthenticated admin surface does exist on this machine while the test runs; stop `tunnel-client` when the test ends.
 - What transits OpenAI: the MCP requests and answers (tool list, the diagnostic call and its fixed answer). The diagnostic answer carries no device, network or personal data. `tunnel-client`'s log export redacts API keys, bearer tokens and URL secrets; its logs are still kept private.
 - A public HTTPS endpoint (developer mode's other route) is not used: it would need TLS, authenticated and authorized access (OAuth), a strict tool allowlist, rate limiting, audit logging and secret rotation, and is out of scope for S0. A home-network MCP port is never exposed.
 
@@ -63,8 +73,7 @@ tunnel-client doctor --profile control-tv-diagnostic --explain
 tunnel-client run --profile control-tv-diagnostic --health.unix-socket <private-dir>/tunnel-health.sock
 ```
 
-Record the tunnel's health (`doctor` result, ready or not) without any secret. Follow the call log with `tail -f <private-dir>/control-tv-diagnostic.log`. In ChatGPT on the web: Plugins (or Settings -> Connectors, depending on the version) -> **Add custom MCP server** -> Connection: **Tunnel** -> select the tunnel (or paste its id); name it "control-TV diagnostic". If a flag above is refused by the installed `tunnel-client` version, record the refusal and keep its default loopback health server.
-
+If the installed version refuses `--health.unix-socket`, use `--health.listen-addr 127.0.0.1:8080` instead and record it; never any other address. Check that the admin server is local only (for example `ss -ltnp | grep tunnel-client` shows `127.0.0.1` or nothing, with the Unix socket). Record the tunnel's health (`doctor` result, ready or not) without any secret. Follow the call log with `tail -f <private-dir>/control-tv-diagnostic.log`. In ChatGPT on the web: Plugins (or Settings -> Connectors, depending on the version) -> **Add custom MCP server** -> Connection: **Tunnel** -> select the tunnel (or paste its id); name it "control-TV diagnostic".
 ### A. ChatGPT text (web)
 
 In a new text chat with the "control-TV diagnostic" server selected, type: *« Use the control-TV diagnostic tool once and report its structured result. »* (or its French equivalent). Capture the visible transcript, the tool shown as selected, its arguments (none), its result, any confirmation prompt, the time, the client and version, and the matching sanitized log line. Check exactly one invocation (one `call #N` line) and no retry.
