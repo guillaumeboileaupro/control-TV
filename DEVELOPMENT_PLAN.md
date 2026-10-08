@@ -688,63 +688,169 @@ Every actionable development item uses a Markdown checkbox. `[x]` means the work
 A deliverable or exit criterion whose wording refers to real hardware, a real device or a real platform is checked `[x]` only after that validation actually ran on that hardware/platform, with the evidence recorded in the handoff. Passing automated tests against a fake/simulated transport, fake TV, fake clock or emulator is real, valuable engineering progress, but it is never by itself sufficient to check such an item; simulated validation is never substituted for or presented as hardware validation. When a deliverable bundles implementation with hardware validation (for example "receiver/media state synchronization"), split it in this file into two lines - one for the implementation, checked once it is built and covered by deterministic tests, and one for real-device validation, checked only once that validation actually happened - rather than checking the combined line early.
 
 
-## Active execution plan and per-task time tracking (owner decision, 2026-10-08)
+## control-TV — Plan complet et suivi du temps (décision du propriétaire, 2026-10-08)
 
-This section records the owner's **current priority and mandatory reporting format**. It supersedes earlier priority statements above where they conflict; historical voice/MCP plans remain for traceability but are **deferred indefinitely** until the owner explicitly reactivates them. Do not treat a historical checkbox as evidence of real-TV behavior.
+**Objectif final : disposer de deux applications autonomes, Ubuntu et Android, capables de contrôler simultanément la même Google TV / Chromecast.**
 
-### Current product and delivery scope
+Les deux applications doivent fonctionner indépendamment, sans serveur permanent, avec une interface utilisable et des commandes fiables.
 
-- Deliver **two autonomous apps**, Debian/Ubuntu and Android, able to run **at the same time against the same Chromecast/Google TV**, each with independent discovery and state reads, without an always-on server or paid AI API.
-- Prioritize hardware evidence for discovery, status convergence and actual commands, including playback, navigation, installed apps, power and **audible** volume where supported. Distinguish Cast logical volume from actual sound; distinguish simulated tests from real-device evidence.
-- ChatGPT Voice and MCP are deferred. PR #36 stays open but paused; PR #33 (Android home-screen widget) stays independent; PR #38 (dual-controller convergence) is the immediate review priority.
-- **No merge without the owner's explicit authorization. No real-TV command without explicit authorization.** Read-only R1–R4 hardware execution also requires owner authorization and independent review of PR #38. Do not modify PRs #33/#36 as a side effect of #38.
+Le développement MCP et ChatGPT Voice est reporté. Nous conservons les PR correspondantes sans les fusionner. Cette priorité actuelle remplace les anciennes priorités vocales/MCP du présent document, conservées uniquement comme historique.
 
-### Mandatory progress reporting — EACH task, not only each phase or PR
+### 1. État général du projet
 
-Every Claude/Codex prompt, development report, and progress update MUST include a row for **every active task** with:
+| Indicateur | Situation |
+|---|---|
+| Dépôt | [control-TV](https://github.com/guillaumeboileaupro/control-TV) |
+| Issue de référence | [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37) |
+| PR ouvertes | #33, #36, #38 |
+| Tests automatisés | 1 206 réussis, 9 ignorés |
+| Couverture | 98,02 % |
+| CI | 4/4 jobs réussis sur la PR #38 |
+| Validation sur matériel réel | À réaliser pour les deux applications en parallèle |
+| **Temps restant estimé** | **40–80 heures** |
 
-| Task | Functional completion (%) | Estimated effort | Actual elapsed effort | Estimated effort remaining | Budget consumed (%) | Evidence / blocker |
+L'estimation de 40–80 heures correspond au travail restant sur l'issue #37. Elle doit évoluer à partir des validations matérielles. Les chiffres CI constituent un instantané du commit de la PR #38 `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`, pas une promesse sur les exécutions futures.
+
+### 2. Phase 1 — Deux applications autonomes
+
+**Objectif :** faire fonctionner Ubuntu et Android sur la même télévision, avec des états cohérents et sans dépendance entre les applications.
+
+| Tâche | Avancement | Temps estimé | Temps passé |
+|---|---|---|---|
+| Architecture de contrôle partagée | Déjà implémentée | Historique non chiffré | Non communiqué |
+| Tests simulés de convergence — PR #38 | 100 % implémentés* | 12–24 h | ≈ 6 h 16, corrections comprises |
+| Préparation des tests matériels R1–R4 | **100 %** | 1 h 10–1 h 40 | **25 min** |
+| Revue indépendante Claude — PR #38 | **0 % confirmé** | 30–60 min | 0 |
+| Tests réels Ubuntu + Android R1–R4 | **0 %** | 25–45 min | 0 |
+| Analyse des anomalies matérielles | **0 %** | 1–2 h | 0 |
+| Fiabilisation Ubuntu | **0 %** | 4–8 h | 0 |
+| Fiabilisation Android | **0 %** | 6–12 h | 0 |
+
+*Implémentation et corrections terminées ; revue indépendante toujours attendue. Le « 100 % » ne signifie pas validé matériellement.
+
+#### Tests R1–R4
+
+| Test | Objectif | Avancement |
+|---|---|---|
+| R1 | Découvrir indépendamment la même TV | 0 % |
+| R2 | Comparer les états initiaux Ubuntu/Android | 0 % |
+| R3 | Vérifier la convergence après un changement externe | 0 % |
+| R4 | Vérifier la stabilité des rafraîchissements successifs | 0 % |
+
+Ces tests sont uniquement en lecture. Le protocole `docs/DUAL_CONTROLLER_VALIDATION.md` exige la revue indépendante de Claude et l'autorisation explicite du propriétaire avant leur exécution. Pendant R3, le propriétaire change lui-même l'état de la TV avec la télécommande physique ou une application émettrice ; control-TV reste en lecture seule.
+
+**Résultat attendu de la phase 1 :** les deux applications découvrent et surveillent correctement la même télévision, même lorsqu'elles fonctionnent simultanément.
+
+### 3. Phase 2 — Commandes et fonctionnalités
+
+**Budget prévisionnel de phase : 16–32 heures.**
+
+Cette phase doit valider le comportement réel des commandes, et pas uniquement leur fonctionnement dans les tests simulés.
+
+| Tâche | Avancement | Temps estimé indicatif | Temps passé |
+|---|---|---|---|
+| Lecture, pause et reprise | 0 % validé matériellement | 2–4 h | Non communiqué |
+| Navigation et commandes disponibles | 0 % validé matériellement | 3–6 h | Non communiqué |
+| Volume, mute et volume réellement audible | 0 % validé matériellement | 3–7 h | Non communiqué |
+| Mise en veille et réveil TV | 0 % validé matériellement | 3–7 h | Non communiqué |
+| Détection et gestion des applications TV | 0 % validé matériellement | 3–5 h | Non communiqué |
+| Robustesse des commandes simultanées | 0 % validé matériellement | 2–3 h | Non communiqué |
+
+Les estimations par fonctionnalité sont provisoires ; certaines commandes peuvent dépendre de capacités non exposées par le protocole Cast et nécessiter une autre solution technique. **Les sommes des fourchettes de chaque fonctionnalité ne constituent pas une nouvelle enveloppe globale : elles peuvent se recouvrir.**
+
+#### Points particulièrement importants
+
+**Volume :** distinguer le volume Cast du volume réellement audible. Si le récepteur déclare un volume fixe, une modification du niveau Cast ne garantit pas une modification sonore.
+
+**Alimentation :** vérifier séparément l'arrêt et le réveil. La disponibilité de ces commandes dépend du téléviseur et de son intégration réseau.
+
+**Concurrence :** si Ubuntu envoie une commande et Android en envoie une autre, les deux applications doivent retrouver l'état réel sans rejouer automatiquement une commande ambiguë. Une tentative peut entraîner zéro ou une réception, jamais une livraison garantie.
+
+Les tests de commandes réelles C1–C7 nécessiteront l'autorisation explicite du propriétaire. C6 exige une fenêtre instrumentée de changement de session entre prélecture et confirmation ; C7 exige une instrumentation des tentatives et, pour établir les livraisons réelles, une capture réseau ou récepteur.
+
+### 4. Phase 3 — Tests, qualité et livraison
+
+**Budget prévisionnel de phase : 10–20 heures.**
+
+| Tâche | Avancement | Temps estimé indicatif | Temps passé |
+|---|---|---|---|
+| Tests de non-régression | À faire après modifications | 2–4 h | Non communiqué |
+| Tests matériels complets | 0 % | 3–6 h | 0 |
+| Stabilisation et corrections finales | 0 % | 2–5 h | 0 |
+| Packaging et installation `.deb` / `.apk` | Builds CI disponibles, validation finale à faire | 2–3 h | Non communiqué |
+| Documentation de livraison | 0 % | 1–2 h | 0 |
+
+Les builds Linux et Android existent déjà. Il reste à vérifier leur installation et leur fonctionnement réel sur les appareils.
+
+**Résultat attendu :** deux applications installables et utilisables quotidiennement.
+
+### 5. Les trois pull requests en attente
+
+| PR | Objet | État | Prochaine action | Temps estimé |
+|---|---|---|---|---|
+| [#38](https://github.com/guillaumeboileaupro/control-TV/pull/38) | Convergence Ubuntu/Android | Corrections terminées, CI verte | Revue Claude | 30–60 min |
+| [#33](https://github.com/guillaumeboileaupro/control-TV/pull/33) | Widget Android | Ouverte | Analyser les conflits et la compatibilité | 1–2 h |
+| [#36](https://github.com/guillaumeboileaupro/control-TV/pull/36) | Faisabilité MCP | Ouverte, reportée | Aucune pour le moment | — |
+
+Pour la #33, si des corrections sont nécessaires, prévoir provisoirement **2–5 heures supplémentaires** après l'analyse.
+
+**Aucune PR ne sera fusionnée sans l'accord explicite du propriétaire.** Le widget #33 reste indépendant ; la #36 reste suspendue.
+
+### 6. Temps déjà consommé et temps restant
+
+#### Temps communiqué pour les derniers travaux
+
+| Travail | Temps passé |
+|---|---|
+| Implémentation initiale PR #38 | ≈ 6 h |
+| Corrections Codex PR #38 | ≈ 16 min |
+| Préparation matérielle R1–R4 | ≈ 25 min |
+| **Total connu** | **≈ 6 h 41** |
+
+Ce total ne représente **pas toutes les heures historiques du projet** : seules les durées explicitement communiquées sont comptabilisées.
+
+#### Prévision globale
+
+| Phase | Temps restant estimé |
+|---|---|
+| Phase 1 — Autonomie et convergence | 14–28 h |
+| Phase 2 — Fonctionnalités réelles | 16–32 h |
+| Phase 3 — Validation et livraison | 10–20 h |
+| **TOTAL** | **40–80 h** |
+
+La répartition reste approximative. Le temps de résolution des problèmes matériels est la principale incertitude. Les budgets de phases sont des **enveloppes** : ne pas additionner à nouveau des sous-tâches déjà incluses.
+
+### 7. Ordre de travail recommandé
+
+1. **Codex analyse la PR #33.** Temps : **1–2 h**. Avancement : **0 % confirmé**. Aucun merge.
+2. **Claude revoit la PR #38** sur le commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. Temps : **30–60 min**. Avancement : **0 % confirmé**.
+3. **Après validation et autorisation : tests matériels R1–R4.** Temps : **25–45 min**. Avancement : **0 %**.
+4. **Corriger les anomalies Ubuntu/Android.** Temps : **10–20 h provisionnelles**. Avancement : **0 %** sur ce lot.
+5. **Tester et compléter les commandes TV.** Temps : **16–32 h**. Avancement matériel : **0 %**.
+6. **Finaliser, tester et livrer les deux applications.** Temps : **10–20 h**. Avancement : à mesurer.
+
+#### Bilan
+
+La base des tests automatisés est solide, mais **le fonctionnement simultané sur une télévision réelle n'a pas encore été démontré**.
+
+La priorité est de **valider la PR #38, exécuter R1–R4 et résoudre les éventuels problèmes matériels** avant de consacrer du temps aux fonctionnalités avancées.
+
+**Budget de référence restant : 40 à 80 heures**, à actualiser après chaque tâche avec son pourcentage d'avancement et son temps réellement consommé.
+
+### 8. Règles obligatoires de suivi — CHAQUE tâche, CHAQUE rapport et CHAQUE prompt Claude/Codex
+
+Le tableau détaillé ci-dessus constitue la **référence complète**. Il ne doit plus être remplacé par un résumé qui omet des tâches ou des durées.
+
+| Tâche | Avancement fonctionnel (%) | Temps estimé | Temps réellement passé | Temps restant réévalué | Budget consommé (%) | Preuve / blocage |
 |---|---:|---:|---:|---:|---:|---|
-| Example only | 25% | 4 h | 2 h | 3 h revised | 50% | 1/4 acceptance criteria verified |
+| Exemple uniquement | 25 % | 4 h | 2 h | 3 h | 50 % | 1 critère d'acceptation vérifié sur 4 |
 
-Rules:
-1. **Functional completion** is the proportion of independently verifiable acceptance criteria satisfied, not elapsed time divided by estimate. Mark unknown as **not measured**, not a fabricated percentage. For a task with no confirmed criteria, report **0% confirmed**.
-2. **Budget consumed** = actual effort / baseline estimate × 100%; when the estimate is a range, report a range or choose and identify a documented baseline. It may exceed 100%.
-3. Record **actual effort per task**, not just a combined session total; when only a session total is known, say **not broken down** and do not invent task-level times.
-4. **Remaining effort** is a new forecast based on unresolved criteria and risks, not automatically estimated minus elapsed. Record overruns, scope changes and reasons.
-5. Show subtotals for each PR and phase, plus overall **actual known effort**, **estimated remaining effort**, and changes since the previous report. Avoid double-counting work across phases and PRs.
-6. Label evidence clearly: implemented, CI-validated, independently reviewed, real-hardware validated, or not tested. A completed documentation/test-preparation task does not complete its hardware test.
-7. Keep these columns and percentages in every prompt sent to Claude or Codex and in each subsequent progress report.
-
-### Working baseline (2026-10-08; update after each task)
-
-| Work item | Functional completion | Estimated effort | Actual known effort | Next gate |
-|---|---:|---:|---:|---|
-| PR #38 initial convergence tests | 100% implemented; independent review pending | 12–24 h initial estimate | ~6 h | Claude independent review |
-| PR #38 four P2 fixes and CI | 100% implemented; independent review pending | 4–7.5 h estimated | ~16 min total, **not broken down by P2 task** | Claude review, no merge without authorization |
-| R1–R4 hardware protocol preparation | 100% | 70–100 min | ~25 min | Hardware execution after approval |
-| PR #38 independent review | 0% confirmed | 30–60 min | 0 | Claude |
-| R1–R4 real Ubuntu + Android tests | 0% | 25–45 min, excluding anomaly diagnosis | 0 | Owner authorizes read-only test after review |
-| PR #33 conflict/compatibility analysis | 0% confirmed | 1–2 h | Not reported | Analyze without merge; fixes if needed ~2–5 h |
-| PR #36 MCP / ChatGPT Voice | Paused; percentage not applicable | Not scheduled | Not reported | Owner explicitly reactivates |
-
-**Known reported effort on recent work: ~6 h 41 min** (~6 h initial PR #38, ~16 min fixes, ~25 min protocol preparation). This is **not** a full historical project timesheet.
-
-### Remaining delivery phases (planning ranges, not measured completion percentages)
-
-| Phase | Scope | Estimated remaining |
-|---|---|---:|
-| 1 | Ubuntu/Android autonomy, PR #38 review, R1–R4, anomaly diagnosis and platform stabilization | 14–28 h |
-| 2 | Real-device playback, navigation, power, audible volume, installed apps, concurrent commands | 16–32 h |
-| 3 | Regression, hardware acceptance, stabilization, .deb/.apk packaging and delivery | 10–20 h |
-| **Total issue #37** | **Remaining planning budget; revise after hardware results** | **40–80 h** |
-
-Phase-level ranges are **envelopes**, not additive to separately listed PR/review tasks without checking overlap. Feature-level forecasts within each phase must be refined as evidence becomes available.
-
-### Next actions in order
-
-1. Codex may analyze PR #33 conflicts/compatibility independently (1–2 h), without merging or changing the paused PR #36.
-2. Claude independently reviews PR #38 at commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac` (30–60 min); fixes must be separately tracked if requested.
-3. After owner authorization, execute read-only R1–R4 on Ubuntu and Android (25–45 min); record pass/fail/non-conclusive **per test**, and do not send TV control commands.
-4. Resolve real-device issues and validate command scenarios C1–C7 **only with explicit authorization**.
-5. Complete hardware-dependent controls, regression, packaging and delivery. Keep PR #33 independent and PR #36 paused unless the owner changes priority.
+Règles :
+1. **Pourcentage par tâche**, y compris celles en cours ; jamais uniquement par PR ou phase. Le pourcentage se calcule sur des critères d'acceptation vérifiés, pas sur le temps écoulé.
+2. **Temps estimé et temps réellement passé par tâche**, plus temps restant et part du budget consommée. Si une durée n'a été communiquée qu'au niveau d'une session, indiquer « non ventilé par tâche » plutôt qu'inventer une répartition.
+3. Si l'avancement réel est inconnu, écrire « non mesuré » ; s'il n'y a aucune preuve de validation, écrire « 0 % confirmé », sans confondre ces deux états.
+4. **Budget consommé** = temps passé / estimation initiale × 100 % ; pour une fourchette, présenter une fourchette de pourcentages ou expliciter la référence utilisée. Le budget peut dépasser 100 %.
+5. **Temps restant** = nouvelle estimation tenant compte des critères non terminés et des risques ; ce n'est pas automatiquement estimation initiale moins temps passé.
+6. Indiquer les écarts, nouvelles anomalies, changements de périmètre, critères de réussite, preuves (implémenté / CI / revue indépendante / matériel réel), et une synthèse par phase/PR/projet **sans double comptage**.
+7. Mettre à jour `DEVELOPMENT_PLAN.md` avec l'avancement à chaque étape importante, dans la même itération. Inclure obligatoirement ce suivi dans **chaque prompt envoyé à Claude ou Codex et dans chaque rapport**.
+8. Aucune action sur la TV réelle sans autorisation explicite ; aucun merge sans autorisation explicite. Ne pas confondre préparation, simulation et validation matérielle.
