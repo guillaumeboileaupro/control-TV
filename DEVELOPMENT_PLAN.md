@@ -2,9 +2,24 @@
 
 ## Goal
 
-Build a lightweight standalone Chromecast / Google TV controller for Android (personal use, sideloaded APK: no Google Play publication objective), Windows and Debian/Ubuntu. Manual control works independently. An MCP adapter exposes the same control capabilities to an external assistant. Python is part of the implementation, with `pychromecast` available for Chromecast discovery/control. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
+Control the TV in two ways that share one engine (scope restored on 2026-10-08, issue #34; see "Product scope" below and `docs/REQUIREMENTS_TRACEABILITY.md`):
+- **by voice, in the existing ChatGPT app:** the owner speaks in ChatGPT's voice mode ("lance-moi ce documentaire sur la TV") and ChatGPT carries the request out through control-TV's tools (MCP) -> the shared control service -> the TV, including starting the requested content **on the TV**;
+- **with control-TV, a standalone graphical TV remote** for Debian/Ubuntu and Android (personal use, sideloaded APK: no Google Play publication objective; Windows postponed): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation. It works without ChatGPT, MCP or any AI API.
+
+Python is part of the implementation, with `pychromecast` for Chromecast discovery/control; other TV endpoints (power, audible sound, navigation, applications) are added behind the same service only where they are proven on the owner's hardware. Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
 
 Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule" at the end): **automation-validated** means deterministic tests, CI, or the real application driven against a fake TV / fake transport; **real-hardware validated** means the behavior was observed on a real Chromecast/Google TV or on the real target platform, with the evidence recorded. A checked implementation line never implies the matching hardware line.
+
+## Product scope (issue #34, owner correction of 2026-10-08)
+
+The original goal, from the 2026-09-24/25 voice discussion, was lost in this file from the first commit, which planned only a Chromecast controller with an optional MCP adapter; its only trace was Phase 5's "natural content targets". The owner's correction of 2026-10-08 on issue #34 is authoritative and supersedes the issue body, its earlier comments and both assistant audits where they conflict. `docs/REQUIREMENTS_TRACEABILITY.md` traces every requirement (R1-R20) to what exists, its automated and real-hardware evidence and what is missing, and records the hardware observations, the feasibility gates (G1-G6) and the proposed pull requests.
+
+- Voice exists only in the ChatGPT app (its voice mode), which calls control-TV's tools; whether ChatGPT's voice mode can call custom MCP tools on the owner's ChatGPT surface is **not established** and is verified before it is promised (gate G1).
+- Content asked for in ChatGPT plays on the TV through tools and a compatible provider or protocol; content resolution and launch are backend/MCP operations only.
+- Evidence levels: not sent, unknown, sent, receiver-confirmed, physical effect observed. Receiver-confirmed is never presented as physical; the Cast logical volume and mute are distinct from the TV's audible output (with `volume_control_type=fixed` the Cast volume does not control the TV's sound).
+- Capabilities are per device and per endpoint and are never assumed for all TVs.
+
+**Not requested** (superseded proposals, not roadmap items): a microphone, speech-to-text engine or local voice assistant in control-TV; a local natural-language intent parser; a search interface or search results in control-TV; a video player in control-TV; ChatGPT connecting directly to the TV.
 
 ## Architecture constraints
 
@@ -19,9 +34,9 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 ## Current state and critical path
 
-State of `main` at `499bfb2` (merge of PR #31, the local stdio MCP server, 2026-10-07; it contains everything listed below, including PR #30 `3bcb516`, PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `499bfb2`: push run `37516389672`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the desktop delivery wording fix (PR #32, branch `fix/desktop-delivery-wording`, see "Known open items").
+State of `main` at `ded6e9c` (merge of PR #32, the desktop delivery wording fix, 2026-10-07; it contains everything listed below, including PR #31 `499bfb2`, PR #30 `3bcb516`, PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `ded6e9c`: push run `37590130462`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android home-screen widget (PR #33, branch `feat/android-home-widget`, open, not to be merged without the owner's authorization) and this roadmap reconciliation (branch `docs/roadmap-reconciliation`).
 
-Product priority (owner decision, 2026-10-06, replacing the order of 2026-10-04; PR #30 and PR #31 are merged): **1. MCP control-TV adapter (done: PR #31) -> 2. Android home-screen widget (the next major feature) -> 3. Linux tray and secondary improvements -> 4. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
+Product priority (owner, issue #34, 2026-10-08): the central acceptance path is a request spoken in ChatGPT's voice mode carried out on the TV through control-TV's tools, and control-TV as a graphical remote for the TV's applications, power, audible sound, playback and navigation. Agreed next steps (owner convergence, 2026-10-08): this documentation reconciliation (item L); the capability and evidence model (M); content launched on the TV from tools (N); ChatGPT reach verified empirically (O); in parallel, read-only feasibility on the owner's TVs for power, audible sound, navigation and applications (P), then those controls (Q). The Android widget (PR #33) stays open and separate. Earlier order (owner decision, 2026-10-06, replacing the order of 2026-10-04; PR #30 and PR #31 are merged), kept as history: **1. MCP control-TV adapter (done: PR #31) -> 2. Android home-screen widget -> 3. Linux tray and secondary improvements -> 4. Windows later.** Android is personal and sideloaded only: there is no Google Play publication objective, so no Play Console, store listing, store metadata or Play-specific release work is planned. Windows is postponed by product decision and is not a current priority: it stays documented (Phase 7, "Windows desktop") with all its open limitations and is not developed until the owner puts it back.
 
 Critical path:
 - [x] **A. Bridge requests never sent after their timeout (PR #23, merged):** see "Bridge request claim" under the Tauri shell status.
@@ -31,12 +46,18 @@ Critical path:
 - [x] **E. Autonomous `.deb` really installed and validated** on Ubuntu 22.04 without the checkout, the `.venv` or a system Python (PR #26 content): installed, the GUI application launched, its bundled bridge pinged through it, purged (local, commit `fba82cc`, whose code is what PR #26 merged); the `linux-release` CI job installs the package, pings the installed bridge directly and purges it on every run (no GUI). Not a published release: the Debian/Ubuntu target stays open in Phase 7 while the license blockers remain.
 - [x] **G. Bridge recovery (PR #29, merged, automation-validated):** see "Bridge recovery" under "Known open items"; the Windows limitation stays open.
 - [x] **H. Android APK MVP (Phase 7b), complete at its defined level:** PR #30 merged into `main` (`3bcb516`, 2026-10-06). On a physical arm64 phone the spike gates A-H all passed (install, launch, embedded CPython, `control_tv` imported and its ping answered `python 3.12.12; control_tv 0.1.0 imported; embedded ping ok, controlTvVersion=0.1.0`, multicast lock held, real discovery), and with the APK of `a2ff3bb` the owner saw the Control-TV launcher icon and the page clear of the status and navigation bars. Further Android hardware validation is separate work and stays open (Phase 7b, "Android hardware validation still open"): receiver status, the control commands, display cutout and rotation, broader responsive and touch use.
-- [x] **J. MCP control-TV adapter (Phase 6), complete at its defined level:** PR #31 merged into `main` (`499bfb2`, 2026-10-07): a local stdio MCP server over the shared control layer, automation-validated and validated read-only with a real MCP client (Codex CLI) on the real local network, no control command sent. MCP commands against a real receiver stay open (Phase 6).
-- [ ] **I. Android home-screen widget (Phase 7b):** the next major feature (the MCP adapter, item J, is done).
-- [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the widget.
+- [x] **J. MCP control-TV adapter (Phase 6), complete at its defined level:** PR #31 merged into `main` (`499bfb2`, 2026-10-07): a local stdio MCP server over the shared control layer, automation-validated and validated read-only with a real MCP client (Codex CLI) on the real local network, no control command sent. MCP commands against a real receiver stay open (Phase 6). This is **not** ChatGPT control: the ChatGPT app cannot start a local stdio server, and ChatGPT's reach (item O) is open.
+- [ ] **I. Android home-screen widget (Phase 7b):** implemented on PR #33 (open, not merged; its phone results are recorded on that branch and summarized in `docs/REQUIREMENTS_TRACEABILITY.md`).
+- [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the items below unless the owner reprioritizes.
+- [ ] **L. Roadmap reconciliation (issue #34, documentation only):** this plan, `README.md`, `ARCHITECTURE.md` and `docs/REQUIREMENTS_TRACEABILITY.md` restored to the original scope; reviewed independently by Codex; merged only with the owner's authorization.
+- [ ] **M. Capability and evidence model (proposed P1):** per-device capabilities and the evidence levels, with the Cast logical volume and mute told apart from the TV's audible output, in tool answers and GUI wording.
+- [ ] **N. Content on the TV from tools (proposed P3, Phase 5):** `load_media` and a provider launch exposed as MCP tools behind a resolver boundary, with observed-playback verification; no search UI or player in control-TV.
+- [ ] **O. ChatGPT reach (proposed P4, Phase 6, gate G1):** a transport the ChatGPT app can use, its security review, then ChatGPT text and voice observed calling a control-TV tool.
+- [ ] **P. TV endpoints feasibility (proposed S1, Phase 5b, gates G3-G5):** read-only identification of each owner TV's platform, audio path and control endpoints.
+- [ ] **Q. Power, audible sound, navigation and applications (proposed P5-P9, Phase 5b):** in the GUI (Linux, then Android) and as tools, per proven capability.
 - [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
 
-Complementary development, after the items above unless the owner reprioritizes: media/service resolution (Phase 5).
+Media/content resolution is no longer complementary: it is item N (Phase 5), limited to backend/MCP operations.
 
 ## Phase 0 - Repository and development discipline
 
@@ -139,13 +160,13 @@ First verified in the code on 2026-09-26 and kept current since (last synchroniz
 - [ ] **Volume confirmation tolerance:** `volume_tolerance` is 0.01, so a receiver that settles on its own volume steps answers `unconfirmed` although it acted; decide after the real-hardware volume validation.
 - [x] **Slider focus return (PR #14 review P2, fixed in `1bed6a9`, automation-validated):** after a command, focus went back to the seek or volume slider even when the user had deliberately moved focus elsewhere during the command; focus is now returned only if no other control was focused meanwhile (`createFocusReturn` in `ui/src/interaction.ts`, 4 new tests, 242 TypeScript tests). Not re-checked in the real window here.
 - [ ] **Assistive-technology slider change:** a value change made with neither pointer nor key events and clamped by the raise limit stays an unsent draft until the next release or refresh (safe, nothing is sent); not tested with a screen reader.
-- [ ] **Load media in the application:** `ControlService.load_media` exists and is tested, but it is not exposed through the bridge, Tauri or the UI, so the application only controls media that is already playing; decide whether the first desktop release needs it (Phase 5 covers content resolution).
+- [ ] **Load media from tools:** `ControlService.load_media` exists and is tested, but it is not exposed through the bridge, MCP, Tauri or the UI. Decided by the owner's scope of 2026-10-08: content is launched on the TV from ChatGPT through MCP tools (item N, Phase 5), not from a search or player in the window; the window launches the TV's applications instead (item Q).
 - [x] **Media status freshness (PR #19, fixed and automation-validated, no real device involved):** `PyChromecastTransport.get_status` refreshed only the receiver status and read the media state from PyChromecast's cached `MediaStatus`. PyChromecast 14.0.10 merges every MEDIA_STATUS into that cache: it ignores an empty status list (a session that ended) and keeps any field a message omits, including the old `content_id`. A status read could therefore report a session that had ended, carry an old content id into a new state or session, and let such inherited data confirm a command (a Stop answered with a partial IDLE status was confirmed). Each status read now asks the receiver for its media status within the same deadline and parses only that reply; a field that reply omits stays unknown instead of taking PyChromecast's default (an omitted `currentTime` is not a position of 0, and an omitted `supportedMediaCommands` is not "seek unsupported"; review of PR #19). The request never launches an application: an application without the media namespace has no media session. No reply within the budget is a timeout, never a cached status; a request that cannot be sent is an unavailable device. Deterministic tests drive PyChromecast's real `MediaController` and `MediaStatus.update`; reverting to the cached read or to the app-launching request makes them fail. Hardware results obtained before this fix, including the recorded Pause, were read through the cached media state.
 - [x] **Structurally invalid media status replies (PR #20, fixed and automation-validated, no real device involved):** the fresh MEDIA_STATUS reply is checked before PyChromecast parses it. A reply that is not shaped like a media status (no status list, an entry that is not an object) fails the read as `device_unavailable`. Inside a well-shaped entry, a field whose value cannot be what the Cast protocol defines (a non-string content id, content type, player state or title; a negative, non-finite, boolean or non-numeric position, duration or playback rate; a command mask that is not a non-negative integer; metadata or a media block that is not an object) is reported as unknown, exactly like an omitted or null field, never as a plausible value (0, false, an empty string) and never as a crash; the same checks apply to media read from `extendedStatus`, and an unmapped media-channel volume that is not an object is ignored. Previously such values crashed the read, surfaced a receiver error as `invalid_argument`, or reached the domain as a number, an infinite duration or a non-string content id that then crashed the service's identity check.
 - [ ] **Status refresh:** the status is read on selection and on demand only; there is no periodic refresh, so the shown position and state can be stale (also needed by the tray, Phase 4b).
 - [x] **One application version (PR #24, merged, automation-validated):** Python (`pyproject.toml`, `control_tv.__version__`), Cargo, `tauri.conf.json`, `ui/package.json` and both `package-lock.json` entries declare 0.1.0; `python3 scripts/dev.py version-check` compares the seven declarations and runs first in `dev.py check`, so CI fails on drift. The frozen bridge built on the packaging branch reports 0.1.0 in `ping` (checked by its smoke). No release is published.
 - [ ] **License metadata:** no package or application manifest declares the project license (GPL-3.0, `LICENSE`), and "only" versus "or later" is not stated; the packaged runtime's third-party licenses are tracked in Phase 7 and `docs/PACKAGING_LICENSES.md`.
-- [ ] **Window wording overclaimed delivery (found 2026-10-06 while fixing the same issue in MCP, PR #31; fixed on PR #32, branch `fix/desktop-delivery-wording`, not merged; automation-validated):** after a command, the window worded `device_unavailable` as "The command wasn't sent" and `command_rejected` as "It received the command but didn't accept it" (`ui/src/playback.ts`), although the shared layer proves neither: the PyChromecast adapter maps an `OSError` raised while writing to the socket to `device_unavailable`, and every other PyChromecast error, including `UnsupportedNamespace` raised before any write, to `command_rejected`. Both now say the command may or may not have reached the TV and to check the current state before sending it again (`device_unavailable`: "Lost contact with this device", plus the network advice; `command_rejected`: "The command was refused", by the TV or the connection to it). Recovery stays Check state (a status read, never a resend); nothing is retried. Only the window's wording changed: the shared transport contract, MCP and Android are unchanged, and no hardware command was sent. Tests: UI 274 (3 new: the wording for both codes and every command, no command left pending or resent, the sound commands), and reverting the `device_unavailable` wording fails 3 of them. A status read failing with `device_unavailable` keeps its own wording ("Try again" is safe for a read).
+- [x] **Window wording overclaimed delivery (found 2026-10-06 while fixing the same issue in MCP, PR #31; fixed by PR #32, merged in `ded6e9c`; automation-validated):** after a command, the window worded `device_unavailable` as "The command wasn't sent" and `command_rejected` as "It received the command but didn't accept it" (`ui/src/playback.ts`), although the shared layer proves neither: the PyChromecast adapter maps an `OSError` raised while writing to the socket to `device_unavailable`, and every other PyChromecast error, including `UnsupportedNamespace` raised before any write, to `command_rejected`. Both now say the command may or may not have reached the TV and to check the current state before sending it again (`device_unavailable`: "Lost contact with this device", plus the network advice; `command_rejected`: "The command was refused", by the TV or the connection to it). Recovery stays Check state (a status read, never a resend); nothing is retried. Only the window's wording changed: the shared transport contract, MCP and Android are unchanged, and no hardware command was sent. Tests: UI 274 (3 new: the wording for both codes and every command, no command left pending or resent, the sound commands), and reverting the `device_unavailable` wording fails 3 of them. A status read failing with `device_unavailable` keeps its own wording ("Try again" is safe for a read).
 - [ ] **Stop wording on real hardware:** see the Stop entry above; a product decision after the real-hardware result.
 
 ## Phase 2 - Cast discovery and connection
@@ -233,14 +254,19 @@ Deliverables:
 - [x] receiver/media state validated on a real device through the UI (read-only, 2026-09-26, after PR #9): the connected state, volume, mute state and "nothing playing" were read and refreshed for two devices (the volume and mute values then came from PyChromecast's parsed status and may have been its defaults; see "Receiver volume and mute defaults"); playing media, playback position and a paused/buffering state were not observed on real hardware because nothing was playing;
 - [x] playback controls (play/pause toggle, stop, seek) implemented, automation-validated and exercised in the real application against a fake TV;
 - [ ] playback controls validated on a real Chromecast (2026-09-29: Pause and Play had a physical effect but stayed `UNCONFIRMED` because the YouTube session reported no usable content id; Seek had no physical effect although the receiver temporarily reported a position compatible with the target; Stop, volume and mute never sent; this criterion remains open);
-- [x] volume/mute controls implemented, automation-validated and exercised in the real application against a fake TV, including the 10-point raise limit per gesture;
+- [x] volume/mute controls implemented, automation-validated and exercised in the real application against a fake TV, including the 10-point raise limit per gesture (these are the Cast receiver's **logical** volume and mute; the TV's audible output is item Q);
 - [ ] volume/mute validated on a real Chromecast (waits for the playback-command physical validation and an explicit go-ahead; no real-hardware result is recorded);
 - [x] clear unavailable/error states for the control-backend boundary itself (bridge process unavailable, discovery failure are both surfaced in the UI as plain text; status-read failures - device unavailable, timeout, unknown device, backend unavailable or not responding - are told apart by error code; playback-command outcomes - not confirmed, refused, unreachable, timed out (delivery ambiguous), busy (nothing sent, PR #23), backend unavailable - are worded in plain language and never shown as success);
 - [ ] responsive desktop/Android layout (fluid single-column layout with 44px touch targets and controls up to 56px; no horizontal overflow from 320px to 1280px across the status states and the playback-control states in a browser harness with a fake backend, and observed in the real window between 480px and 900px; the Android spike's app rendered on one physical phone (2026-10-06), where its top was under the status bar; fixed on PR #30 by applying the window insets, and with the APK of `a2ff3bb` the page was seen clear of the status and navigation bars; display-cutout and rotation behaviour were not observed separately on the phone, and the layout and touch use were not otherwise reviewed there);
 - [x] choose JavaScript/TypeScript and any UI tooling from concrete implementation needs (vanilla TypeScript + Vite: no frontend framework is justified yet by a single-page skeleton).
+- [ ] the Cast volume and mute worded as the receiver's (logical) controls, and a fixed-volume receiver never presented as controlling the TV's sound (item M);
+- [ ] the TV's applications shown and launched on the TV, per capability (item Q, R11-R12);
+- [ ] power on and off, the TV's audible volume and mute, and navigation, per capability (item Q, R7-R10);
+
+Not part of the window (owner, 2026-10-08): a microphone, a voice assistant, a search interface or a video player.
 
 Exit criteria:
-- [ ] application controls a TV manually without ChatGPT or MCP (needs a recorded real-hardware command result);
+- [ ] application controls a TV manually without ChatGPT or MCP (needs a recorded real-hardware command result; with the restored scope this covers the TV's applications, power, audible sound, playback and navigation per capability, items M and Q);
 - [x] frontend presentation remains separated from Cast transport/control logic (verified in the code on 2026-09-26: TypeScript and Rust hold no Cast logic; every command goes through the bridge to `ControlService`, and only the adapter imports PyChromecast).
 
 ## Phase 4b - Desktop native integration
@@ -267,19 +293,44 @@ Exit criteria:
 - [ ] tray installed and exercised on a real GNOME/Linux desktop, recorded separately from automated validation;
 - [ ] tray commands validated on a real Chromecast only after the matching window commands are validated on hardware.
 
-## Phase 5 - Media and service resolution
+## Phase 5 - Content on the TV from ChatGPT requests (resolution and launch)
 
-Complementary development: after the critical-path items (see "Current state and critical path") unless the owner reprioritizes.
+Critical-path item N (owner, 2026-10-08). Purpose: a video or documentary asked for in ChatGPT starts **on the TV**. Resolution and launch are backend/MCP operations only: control-TV has no search interface, search results or video player (owner, 2026-10-08). ChatGPT may already supply a provider link or identifier; a backend search is added only if gate G2 decides it is needed.
 
 Deliverables:
-- [ ] resolver boundary separate from Cast transport;
-- [ ] explicit support for selected content/service sources;
+- [ ] resolver boundary separate from Cast transport (no Cast code in the resolver, no resolver code in the transport);
+- [ ] explicit support for selected content/service sources, with their restrictions (gate G2: official provider API, quota, key and terms, or a link supplied by ChatGPT);
 - [ ] metadata and playable-target validation;
-- [ ] clear unsupported-content behavior.
+- [ ] clear unsupported-content behavior;
+- [ ] `load_media` and a provider launch (for example the Cast YouTube receiver) exposed as MCP tools through the same `bridge.dispatch` and `ControlService` (today `load_media` is not exposed anywhere);
+- [ ] a verification rule for receivers that report no content id (a YouTube session reported an empty `contentId` on 2026-09-29): never receiver-confirmed without observed evidence; one send, no replay.
 
 Exit criteria:
-- [ ] natural content targets convert into explicit Cast actions through the shared control layer;
-- [ ] service-specific resolution remains decoupled from low-level Cast transport.
+- [ ] a content target from a ChatGPT request converts into explicit actions on the TV through the shared control layer;
+- [ ] service-specific resolution remains decoupled from low-level Cast transport;
+- [ ] content launched on a real TV, recorded at each evidence level, with the owner's go-ahead.
+
+## Phase 5b - TV control beyond Cast (power, audible sound, navigation, applications)
+
+Critical-path items P and Q (owner, 2026-10-08; R7-R12 in `docs/REQUIREMENTS_TRACEABILITY.md`). Cast covers playback and the receiver's logical volume and mute only: it has no installed-application inventory and no power or audible-volume control of the TV. Hardware already shows a Cast mute receiver-confirmed with no audible change (`volume_control_type=fixed`, PR #33 phone tests). Every capability is per device and per endpoint and is claimed only where it is observed on the owner's hardware.
+
+Feasibility (gates G3-G5, read-only, owner go-ahead):
+- [ ] each owner TV's platform (Google TV/Android TV, a Cast device on HDMI, a vendor platform), audio path (TV speakers, sound bar, HDMI-CEC) and available control endpoints identified and recorded (no device names or addresses);
+- [ ] power on from off and standby per endpoint (gate G4);
+- [ ] whether any endpoint lists the installed applications (gate G5); otherwise a launchable catalog only, said as such;
+- [ ] licenses of any new library checked (gate G6).
+
+Deliverables (after feasibility):
+- [ ] one non-Cast endpoint adapter behind the shared service (pairing and secret storage where needed), capability-detected per device; Cast-only devices report the operations as unsupported;
+- [ ] power on and off in the service, bridge, MCP and GUI;
+- [ ] the TV's audible volume and mute in the service, bridge, MCP and GUI, distinct from the Cast logical volume and mute;
+- [ ] navigation keys and input sources where available;
+- [ ] the TV's applications listed (installed where an endpoint allows it, otherwise launchable) and launched on the TV from the GUI and MCP;
+- [ ] Linux GUI first, then Android parity.
+
+Exit criteria:
+- [ ] each control recorded per device and endpoint at the evidence levels, physical effect included, with the owner's go-ahead for every command;
+- [ ] no capability claimed for a TV or endpoint where it was not observed.
 
 ## Phase 6 - MCP adapter
 
@@ -328,7 +379,17 @@ Exit criteria:
 - [x] tool/schema tests are separated from real-device validation (the read-only real-client run is recorded separately; real-device commands not done);
 - [x] MCP lifecycle/state interactions are explicit and testable.
 
-Next actions: commands through MCP against a real receiver only with an explicit go-ahead; the Android widget (item I) is the next major feature.
+ChatGPT reach (critical-path item O, owner 2026-10-08; gate G1): the voice path is the ChatGPT app's own voice mode calling control-TV's tools. Not established: whether that voice mode can call custom MCP tools on the owner's ChatGPT surface, which transport it accepts (a remote HTTPS endpoint or OpenAI's Secure MCP Tunnel, with credentials, and traffic transiting OpenAI), and whether a command can run without an extra confirmation step.
+- [ ] a transport the ChatGPT app can use, with its own security review and the owner's decision;
+- [ ] a read-only tool called from ChatGPT text, then from ChatGPT voice mode, observed on the owner's ChatGPT app before any claim;
+- [ ] tools for content on the TV (item N) and, per capability, power, audible sound, navigation and applications (item Q);
+- [ ] commands from ChatGPT against a real TV, one at a time, each with the owner's go-ahead.
+
+Next actions: commands through MCP against a real receiver only with an explicit go-ahead; ChatGPT reach (item O) after the capability model (item M) and content tools (item N).
+
+## Estimates
+
+Not reconciled (owner, 2026-10-08): the phase-1 estimates (Claude: core desktop 4-6 weeks, full roadmap 9-14 weeks; Codex: 8-14 and 24-40 person-weeks) used different assumptions, and both included in-app voice and search work that is not requested. Estimates are to be given per pull request, focused effort and elapsed time separately, once gates G1-G5 are answered. The remaining desktop work for the original product is not zero.
 
 ## Phase 7 - Cross-platform packaging
 

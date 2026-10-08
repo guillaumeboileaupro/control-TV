@@ -1,9 +1,11 @@
 # control-TV
 
-Lightweight cross-platform application for controlling Chromecast / Google TV devices from a standalone interface, with an optional MCP adapter over the same control layer.
+Control the TV by voice from the ChatGPT app, and with a standalone graphical remote, both over one control layer.
 
 ## Goals
 
+- **By voice, in the existing ChatGPT app:** you speak in ChatGPT's voice mode ("lance-moi ce documentaire sur la TV") and ChatGPT carries the request out on the TV through control-TV's tools (MCP), including starting the requested content on the TV. Whether ChatGPT's voice mode can call these tools on your ChatGPT app is not yet established and is to be verified first.
+- **control-TV, a graphical TV remote** (Linux desktop and Android): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation, each where the TV supports it. It has no microphone, voice assistant, search interface or video player.
 - Standalone manual TV control that works without ChatGPT, MCP, an OpenAI API key or any cloud dependency.
 - One authoritative control/domain layer shared by the manual application and the MCP adapter.
 - Python for the Chromecast integration (`pychromecast` where it matches the required Cast capabilities); Rust only for native or performance-sensitive components that justify it.
@@ -21,7 +23,9 @@ MCP client -> MCP adapter ----+   (MCP adapter: local stdio server, python -m co
 
 Today the manual UI is a vanilla TypeScript page in a Tauri 2 window. Its Rust side only forwards requests, on a worker thread with a time bound, to a long-lived Python process (`python -m control_tv.bridge`) that speaks line-delimited JSON over stdin/stdout and calls `ControlService`, which drives the TV through `PyChromecastTransport`. No Cast logic lives in Rust or TypeScript.
 
-The UI and the MCP adapter are thin. Device discovery, validation and state belong to the shared control layer, which reaches the TV through a focused Python Chromecast adapter. A command that was sent is not proof that the TV reached the requested state, so sent and confirmed state are kept distinct. See [ARCHITECTURE.md](ARCHITECTURE.md) for the decisions and [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap.
+The UI and the MCP adapter are thin. Device discovery, validation and state belong to the shared control layer, which reaches the TV through a focused Python Chromecast adapter. A command that was sent is not proof that the TV reached the requested state, and a state the receiver reports is not proof of what you see or hear, so sent, receiver-confirmed and physically observed are kept distinct; the Cast receiver's volume and mute are not always the TV's sound. See [ARCHITECTURE.md](ARCHITECTURE.md) for the decisions, [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap and [docs/REQUIREMENTS_TRACEABILITY.md](docs/REQUIREMENTS_TRACEABILITY.md) for each requirement's status.
+
+Today: Cast playback control and the receiver's volume and mute work from the window and the local MCP server; ChatGPT is not connected yet, and the TV's applications, power, audible sound and navigation are not implemented (they depend on what each TV exposes, to be checked on real hardware).
 
 ## Development
 

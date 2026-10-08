@@ -2,7 +2,12 @@
 
 ## Product shape
 
-control-TV is a lightweight standalone TV controller targeting Android, Windows and Debian/Ubuntu. Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency. ChatGPT control is provided externally through MCP.
+control-TV serves two entry points over one engine (scope restored on 2026-10-08, issue #34; `docs/REQUIREMENTS_TRACEABILITY.md`):
+
+- **ChatGPT's own voice (or text) mode** calls control-TV's tools (MCP), which drive the shared control service, which drives the TV. Content asked for in ChatGPT starts on the TV; its resolution and launch are backend/MCP operations. ChatGPT never talks to the TV directly, and whether its voice mode can call custom MCP tools on the owner's ChatGPT surface is not established until it is observed.
+- **control-TV, a standalone graphical TV remote** (Debian/Ubuntu and Android; Windows postponed): TVs, the TV's applications launched on the TV, power, audible sound, playback and navigation, each per proven capability. It has no microphone, speech-to-text, voice assistant, intent parser, search interface or video player.
+
+Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency.
 
 ## Architecture baseline
 
@@ -15,22 +20,27 @@ No agent may convert an exploratory technology comparison or its own preference 
 ## Functional boundaries
 
 ```text
-Manual UI
-   |
-   v
-Application / Tauri boundary
-   |
-   +------> shared control/domain interface <------ MCP adapter
+control-TV GUI                          ChatGPT app (voice or text)
+   |                                       |  integration / MCP tools
+   v                                       v
+Application / Tauri boundary            MCP adapter
+   |                                       |
+   +------> shared control/domain interface <------+
+                         |
+                         +------> content resolution (backend only; planned)
                          |
                          +------> Python Chromecast integration (`pychromecast` / required modules)
+                         |
+                         +------> other TV endpoints: power, audible sound, navigation, applications
+                         |        (planned, only where proven on real hardware)
                          |
                          +------> Rust/native components where justified
                          |
                          v
-                 Chromecast / Google TV
+                        TV
 ```
 
-GUI and MCP must use the same authoritative control/domain behavior. Do not create two divergent control engines. Technology boundaries must remain explicit and testable.
+GUI and MCP must use the same authoritative control/domain behavior. Do not create two divergent control engines. Technology boundaries must remain explicit and testable. A non-Cast endpoint is an adapter behind the same service, never a second engine.
 
 ## Current implementation
 
@@ -92,13 +102,15 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 
 Develop incrementally around LAN discovery, device identity, connection/status/recovery, media load/play, pause/resume, stop, seek where supported, volume/mute and receiver/media state. A command successfully sent is not proof that the requested TV state was reached; APIs, tests and real-device validation must preserve sent-versus-confirmed state.
 
+Evidence levels: not sent, unknown, sent, receiver-confirmed, physical effect observed (the last only from a person's observation). The Cast volume and mute are the receiver's logical controls: with `volume_control_type=fixed` the Cast volume does not control the TV's sound, and a receiver-confirmed Cast mute was observed with no audible change (PR #33 phone tests). Cast offers no installed-application inventory and no power or audible-volume control of the TV; those need another endpoint per device (`DEVELOPMENT_PLAN.md`, Phase 5b).
+
 ## Media and service resolution
 
-Media/service resolution is a separate concern from low-level Cast transport where practical. Service-specific metadata or URL resolution may use the technology and libraries best suited to the actual service requirement. Do not impose a language ban on this layer.
+Media/service resolution is a separate concern from low-level Cast transport where practical. Service-specific metadata or URL resolution may use the technology and libraries best suited to the actual service requirement. Do not impose a language ban on this layer. Its purpose is to start content asked for in ChatGPT on the TV, through MCP tools; it has no user interface in control-TV (no search screen, results list or player).
 
 ## MCP and AI independence
 
-MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application.
+MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application. Today only a local stdio server exists, which the ChatGPT app cannot start; a transport ChatGPT can use (and its security review) is planned and unproven (`DEVELOPMENT_PLAN.md`, Phase 6, item O).
 
 ## MCP server (Phase 6; automated tests, and read-only with a real MCP client)
 
