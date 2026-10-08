@@ -100,6 +100,8 @@ command = "/path/to/control-TV/.venv/bin/python"
 args = ["-m", "control_tv.mcp_server"]
 ```
 
+A separate diagnostic server, `python -m control_tv.mcp_diagnostic`, has one read-only tool that cannot reach a TV; it is used only to test whether ChatGPT (text, then voice mode) can call control-TV's tools, through OpenAI's Secure MCP Tunnel ([docs/CHATGPT_VOICE_FEASIBILITY.md](docs/CHATGPT_VOICE_FEASIBILITY.md)).
+
 Tools: `discover_devices`, `get_status`, `play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`, addressed by the stable `deviceId` from `discover_devices`. Every call goes through the same `bridge.dispatch` and `ControlService` as the window, one at a time and never retried; a command answer keeps "sent" apart from "confirmed", and a failed command says it was not sent only when the shared layer proves it; otherwise (`timeout`, `device_unavailable`, `command_rejected`, `internal_error`) it says the command may or may not have reached the TV and must not be resent automatically. Device names, ids and media titles are visible to the client and its model; addresses, media content ids and error details are not returned. ChatGPT web cannot start a local stdio server (see Phase 6 for the open options); the server listens on no network port.
 
 ## Repository layout
