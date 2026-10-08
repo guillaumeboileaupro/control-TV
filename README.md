@@ -25,6 +25,8 @@ Today the manual UI is a vanilla TypeScript page in a Tauri 2 window. Its Rust s
 
 The UI and the MCP adapter are thin. Device discovery, validation and state belong to the shared control layer, which reaches the TV through a focused Python Chromecast adapter. A command that was sent is not proof that the TV reached the requested state, and a state the receiver reports is not proof of what you see or hear, so sent, receiver-confirmed and physically observed are kept distinct; the Cast receiver's volume and mute are not always the TV's sound. See [ARCHITECTURE.md](ARCHITECTURE.md) for the decisions, [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap and [docs/REQUIREMENTS_TRACEABILITY.md](docs/REQUIREMENTS_TRACEABILITY.md) for each requirement's status.
 
+Priority (owner, issue #37, 2026-10-08): the standalone Ubuntu and Android remotes, usable in parallel on the same TV; ChatGPT Voice and MCP are postponed.
+
 Today: Cast playback control and the receiver's volume and mute are implemented and automation-validated in the window and the local MCP server. From the window, some commands were sent to a real TV (see the plan); through MCP, only read-only calls were made with a real client, and no MCP control command has been validated on hardware. ChatGPT is not connected yet, and the TV's applications, power, audible sound and navigation are not implemented (they depend on what each TV exposes, to be checked on real hardware).
 
 ## Development

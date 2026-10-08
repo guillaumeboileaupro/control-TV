@@ -93,6 +93,16 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 - **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
 - **Limitation:** Python lives in the app process, so the desktop recovery (kill and relaunch the bridge process, PR #29) has no equivalent; a request stuck in Python leaves later requests `bridge_busy` until the app restarts.
 
+## Several remotes on one TV (issue #37)
+
+The desktop window and the Android app are independent remotes: two processes, each with its own `ControlService`, transport and discovery cache, and no link between them (no cross-device synchronization, no shared server). The TV is the only shared state, and the contract, pinned on a simulated TV shared by two `ControlService` instances (`tests/shared_tv.py`, `tests/test_dual_controller.py`), is:
+
+- each remote discovers the TV itself, and keeps no copy of its state: its next `get_status` reads the TV, so it sees the other remote's effect there, and only there;
+- each command is delivered once, by the remote that sent it, and is never resent, even when its delivery is ambiguous or the other remote changes the TV meanwhile; commands from both remotes race at the TV, and the last one delivered wins;
+- a command is confirmed only from what the TV reports for the same media session: a change made by the other remote during the confirmation (other media, the same content reloaded in a new session, a new session at the same position, its own opposite command) leaves it unconfirmed.
+
+There is no periodic status refresh (`DEVELOPMENT_PLAN.md`, "Status refresh"), so each remote shows the other's change at its next read. The hardware protocol for Ubuntu + Android is `docs/DUAL_CONTROLLER_VALIDATION.md`.
+
 ## Planned native integrations
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
