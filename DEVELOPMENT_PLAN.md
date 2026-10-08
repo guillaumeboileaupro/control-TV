@@ -854,3 +854,39 @@ Règles :
 6. Indiquer les écarts, nouvelles anomalies, changements de périmètre, critères de réussite, preuves (implémenté / CI / revue indépendante / matériel réel), et une synthèse par phase/PR/projet **sans double comptage**.
 7. Mettre à jour `DEVELOPMENT_PLAN.md` avec l'avancement à chaque étape importante, dans la même itération. Inclure obligatoirement ce suivi dans **chaque prompt envoyé à Claude ou Codex et dans chaque rapport**.
 8. Aucune action sur la TV réelle sans autorisation explicite ; aucun merge sans autorisation explicite. Ne pas confondre préparation, simulation et validation matérielle.
+
+
+### 9. Rapport Codex — analyse de la PR #33 (2026-10-08)
+
+**Verdict : CHANGES REQUESTED — ne pas fusionner.** Rapport d'inspection sur la PR #33 HEAD `04a74ef805bbea578784c3943b956d8fcb91d8a5` contre `main` `305d393d441d6136f8da23d443f4c819a807b1a8` (état au moment de l'analyse). L'architecture du widget est compatible par inspection avec les contrôleurs autonomes Ubuntu/Android, sans dépendance MCP ni serveur permanent, mais la PR est `CONFLICTING / DIRTY` ; CI verte uniquement sur l'ancienne base ; fonctionnement parallèle et commandes du widget non validés sur TV réelle.
+
+**Conflits identifiés :** `DEVELOPMENT_PLAN.md` et `README.md` (conflits textuels), `ARCHITECTURE.md` (modifié des deux côtés, relecture nécessaire). Aucun conflit de production Android/Rust/TypeScript identifié par l'inspection. Ne pas écraser le présent plan ou réintroduire l'ancienne priorité MCP/Voice.
+
+**Preuve Mute :** Mute/Unmute receiver-confirmed ; `volume_control_type=fixed` ; **aucun effet sonore physique observé**. Ne pas présenter le volume audible comme validé.
+
+#### Temps réellement passé pour l'analyse (terminée)
+
+| Tâche | Avancement | Estimation | Temps passé | Temps restant | Part du plafond de 120 min |
+|---|---:|---:|---:|---:|---:|
+| Diff et conflits | 100 % | 20–30 min | ~18 min | 0 | 15 % |
+| Architecture Android/Ubuntu | 100 % | 25–35 min | ~22 min | 0 | 18 % |
+| Tests et CI | 100 % | 15–20 min | ~9 min | 0 | 8 % |
+| Risques et plan de corrections | 100 % | 20–30 min | ~8 min | 0 | 7 % |
+| **Total** | **100 %** | **80–115 min** | **~57 min** | **0** | **~48 %** |
+
+#### Correctifs proposés, NON COMMENCÉS
+
+| Priorité | Tâche | Avancement | Estimation | Temps passé | Temps restant |
+|---|---|---:|---:|---:|---:|
+| P1 | Résoudre les conflits Git PR #33 | 0 % | 1–2 h | 0 | 1–2 h |
+| P1 | Réconcilier la documentation et les preuves | 0 % | 1–2 h | 0 | 1–2 h |
+| P1 | Relancer les quatre jobs CI sur HEAD résolu | 0 % | 15–30 min effort humain | 0 | 15–30 min |
+| P2 | Validation simultanée Ubuntu/Android | 0 % | 1–2 h | 0 | 1–2 h |
+| P2 | Interprétation des erreurs Cast (PR partagée séparée) | 0 % | 2–4 h | 0 | 2–4 h |
+| P2 | Campagne matérielle du widget | 0 % | 2–4 h | 0 | 2–4 h |
+| P3 | Tests Android instrumentés / cycle de vie | 0 % | 3–6 h | 0 | 3–6 h |
+| P3 | Mettre à jour la description de la PR | 0 % | 20–40 min | 0 | 20–40 min |
+
+**Validation du widget sur téléphone déjà constatée :** installation, placement, refresh, picker autonome, changement de TV et redessin après mise à jour. **Non démontré :** commandes du widget sur TV réelle, mort/recréation de processus, restrictions batterie, multi-appareils Android, fonctionnement simultané avec Ubuntu, volume physique. Les tests Kotlin n'ont pas de couverture chiffrée et la CI n'exécute pas de test instrumenté Android.
+
+**Suite :** revue indépendante de PR #38 (30–60 min), puis R1–R4 après autorisation. La correction de PR #33 nécessite une autorisation de modifier sa branche ; aucun merge sans accord explicite. Le budget projet 40–80 h reste une enveloppe provisoire, à réviser après validation matérielle ; éviter le double comptage des sous-tâches.
