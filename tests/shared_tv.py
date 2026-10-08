@@ -7,9 +7,12 @@ own a `ControlService` and a PyChromecast transport. Nothing is shared between c
 except the TV itself: no controller can see another's commands, only their effect on the TV.
 
 Faults are per link and model what a real network can do:
+- `fail_before_delivery`: the send is attempted once but fails before the TV receives it;
 - `lose_answer_after_delivery`: the command reaches the TV, then the answer is lost and the
   link raises `OperationTimeoutError` (delivery ambiguous for the caller);
 - `fail_after_delivery`: the same, raising `DeviceUnavailableError`;
+- `before_send`: callables run, one per send attempt, after every pre-command read and before
+  delivery; tests use a barrier here to prove two service calls really overlap;
 - `before_read`: callables run, one per status read, just before the TV is read: the other
   controller acting while this one is confirming its command.
 """
@@ -113,9 +116,12 @@ class TvLink:
 
     tv: SharedTv
     controller: str
+    fail_before_delivery: bool = False
     lose_answer_after_delivery: bool = False
     fail_after_delivery: bool = False
+    before_send: list[Callable[[], object]] = field(default_factory=list)
     before_read: list[Callable[[], object]] = field(default_factory=list)
+    send_attempts: list[str] = field(default_factory=list)
     status_reads: int = 0
     _known: set[DeviceId] = field(default_factory=set)
 
@@ -174,6 +180,13 @@ class TvLink:
         effect: Callable[[], None],
     ) -> None:
         self._require_known(device_id)
+        self.send_attempts.append(command)
+        if self.before_send:
+            self.before_send.pop(0)()
+        if self.fail_before_delivery:
+            raise DeviceUnavailableError(
+                f"lost contact before {command} was delivered", device_id=device_id
+            )
         self.tv.deliver(self.controller, command, args, effect)
         if self.lose_answer_after_delivery:
             raise OperationTimeoutError(f"no answer to {command}", device_id=device_id)

@@ -6,8 +6,8 @@ shared by two such `ControlService` instances (`tests/shared_tv.py`):
 
 1. no controller keeps a copy of the TV's state: its next `get_status` reads the TV, so each
    one sees the other's effect there, and nothing else;
-2. each command is delivered once, by the controller that sent it, and is never resent,
-   even when its delivery is ambiguous or the other controller changes the TV meanwhile;
+2. each command is attempted once, by the controller that sent it, and is never resent;
+   ambiguous delivery means the TV can have received it zero or one time;
 3. a command is confirmed only from what the TV reports, for the same media session: a
    change made by the other controller during the confirmation (a new session, the same
    content reloaded, another state) never confirms it.
@@ -168,15 +168,35 @@ def run_together(*calls: Callable[[], object]) -> list[object]:
     return results
 
 
+def force_send_overlap(*links: TvLink) -> list[str]:
+    """Block inside every link's send until all concurrent calls reached that boundary."""
+    gate = threading.Barrier(len(links))
+    arrivals: list[str] = []
+    lock = threading.Lock()
+
+    def meet(controller_name: str) -> None:
+        with lock:
+            arrivals.append(controller_name)
+        gate.wait(timeout=5)
+
+    for link in links:
+        link.before_send.append(partial(meet, link.controller))
+    return arrivals
+
+
 def test_concurrent_play_and_pause_each_go_once_and_both_then_read_the_last_one() -> None:
     for round_ in range(6):
         tv = SharedTv()
         desktop_link, android_link = tv.link("desktop"), tv.link("android")
         desktop, android = real_time_controller(desktop_link), real_time_controller(android_link)
+        arrivals = force_send_overlap(desktop_link, android_link)
 
         results = run_together(partial(desktop.pause, DEVICE_ID), partial(android.play, DEVICE_ID))
 
         assert all(isinstance(r, CommandResult) for r in results), (round_, results)
+        assert set(arrivals) == {"desktop", "android"}
+        assert desktop_link.send_attempts == ["pause"]
+        assert android_link.send_attempts == ["play"]
         assert tv.received("desktop") == ["pause"]
         assert tv.received("android") == ["play"]
         last = tv.deliveries[-1].command
@@ -195,6 +215,7 @@ def test_concurrent_volume_changes_converge_on_the_last_delivered_level() -> Non
         tv = SharedTv()
         desktop_link, android_link = tv.link("desktop"), tv.link("android")
         desktop, android = real_time_controller(desktop_link), real_time_controller(android_link)
+        arrivals = force_send_overlap(desktop_link, android_link)
 
         results = run_together(
             partial(desktop.set_volume, DEVICE_ID, 0.2),
@@ -202,6 +223,9 @@ def test_concurrent_volume_changes_converge_on_the_last_delivered_level() -> Non
         )
 
         assert all(isinstance(r, CommandResult) for r in results), (round_, results)
+        assert set(arrivals) == {"desktop", "android"}
+        assert desktop_link.send_attempts == ["set_volume"]
+        assert android_link.send_attempts == ["set_volume"]
         assert len(tv.deliveries) == 2
         final = tv.deliveries[-1].args[0]
         assert tv.snapshot().receiver.volume_level == final  # type: ignore[union-attr]
@@ -227,18 +251,19 @@ def test_a_pause_undone_by_the_other_controller_is_unconfirmed_and_never_resent(
     assert tv.received("desktop") == ["pause"]
 
 
-# --- 3. Ambiguous delivery: never replayed ------------------------------------------------
+# --- 3. Ambiguous delivery: attempted once, zero or one reception, never replayed ----------
 
 
 @pytest.mark.parametrize(
-    ("fault", "error"),
+    ("fault", "error", "expected_receptions"),
     [
-        ("lose_answer_after_delivery", OperationTimeoutError),
-        ("fail_after_delivery", DeviceUnavailableError),
+        ("fail_before_delivery", DeviceUnavailableError, 0),
+        ("lose_answer_after_delivery", OperationTimeoutError, 1),
+        ("fail_after_delivery", DeviceUnavailableError, 1),
     ],
 )
-def test_an_ambiguous_command_is_delivered_once_and_both_controllers_then_read_its_effect(
-    fault: str, error: type[Exception]
+def test_an_ambiguous_command_is_attempted_once_and_may_be_received_zero_or_one_time(
+    fault: str, error: type[Exception], expected_receptions: int
 ) -> None:
     tv = SharedTv()
     desktop, desktop_link, android, _ = two_controllers(tv)
@@ -249,13 +274,16 @@ def test_an_ambiguous_command_is_delivered_once_and_both_controllers_then_read_i
     with pytest.raises(error):
         desktop.set_muted(DEVICE_ID, True)
 
-    assert tv.received("desktop") == ["pause", "set_muted"]
+    assert desktop_link.send_attempts == ["pause", "set_muted"]
+    assert len(tv.received("desktop")) == expected_receptions * 2
     for service in (desktop, android, desktop, android):
         status = service.get_status(DEVICE_ID)
-        assert status.media.playback_state is PlaybackState.PAUSED  # type: ignore[union-attr]
-        assert status.receiver.muted is True  # type: ignore[union-attr]
-    # Reads never send anything: the ambiguous commands stay delivered exactly once.
-    assert tv.received() == ["pause", "set_muted"]
+        expected_playback = PlaybackState.PAUSED if expected_receptions else PlaybackState.PLAYING
+        assert status.media.playback_state is expected_playback  # type: ignore[union-attr]
+        assert status.receiver.muted is bool(expected_receptions)  # type: ignore[union-attr]
+    # Status reads do not create another attempt or delivery.
+    assert desktop_link.send_attempts == ["pause", "set_muted"]
+    assert len(tv.received()) == expected_receptions * 2
 
 
 def test_an_ambiguous_command_does_not_block_or_duplicate_the_other_controllers_commands() -> None:

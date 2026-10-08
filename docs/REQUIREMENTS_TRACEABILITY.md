@@ -113,7 +113,7 @@ Small, independent, one shared engine; each synchronizes `DEVELOPMENT_PLAN.md`. 
 
 | PR | Scope | Depends on | Acceptance |
 |---|---|---|---|
-| C1 (issue #37) | Dual-controller state convergence contract: a simulated TV shared by two `ControlService` instances, tests and the hardware protocol | - | both controllers always read the TV's real state; each command delivered once, never replayed; no confirmation from another controller's media session |
+| C1 (issue #37) | Dual-controller state convergence contract: a simulated TV shared by two `ControlService` instances, tests and the hardware protocol | - | both controllers always read the TV's real state; each command attempted once and never replayed, with zero-or-one delivery on an ambiguous failure; no confirmation from another controller's media session |
 | D0 | This documentation reconciliation | owner review, Codex review | scope, matrix and plan reconciled; no item marked done; history kept |
 | S0 | **First, gate G1:** read-only ChatGPT feasibility test, right after D0 and before substantial P3 work: only read-only tools offered through a temporary transport the owner authorizes, called from ChatGPT text then voice mode | D0, owner authorization of the transport | ChatGPT voice observed calling a control-TV tool (or the failure recorded); no TV command |
 | P1 | Capability and evidence model: per-device capabilities (endpoint, Cast volume type, supported operations), the evidence levels and the Cast-logical/audible distinction in tool answers and GUI wording | - | a fixed-volume receiver is never presented as controlling the TV's sound; tests; no new command path |

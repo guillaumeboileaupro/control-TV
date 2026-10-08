@@ -5,7 +5,7 @@ Issue #37, phase 1, item R of `DEVELOPMENT_PLAN.md`. The contract below is pinne
 ## Contract under test
 
 1. Each remote finds the TV itself and keeps no copy of its state: after the other remote acts, its next status read (Refresh status, a new selection, or the confirmation of its own next command) shows what the TV reports now.
-2. Each command is sent once, by the remote that sent it, and is never resent automatically, even when its delivery is uncertain or the other remote changes the TV meanwhile. Commands from both remotes race at the TV; the last one delivered wins.
+2. Each command is attempted once, by the remote that sent it, and is never resent automatically. When delivery is uncertain, the TV may have received it zero or one time. Commands from both remotes race at the TV; the last one actually delivered wins.
 3. A remote says a command is confirmed only from what the TV reports for the same media session; a change made meanwhile by the other remote leaves it unconfirmed.
 
 Not expected: synchronization between the two remotes, a periodic refresh (neither remote refreshes on its own; this is a known open item), or a remote showing the other's change before its own next read.
@@ -39,13 +39,22 @@ Not expected: synchronization between the two remotes, a periodic refresh (neith
 | C2 | Android: Play | Playing, confirmed or "not confirmed" as above, the TV visibly playing | Playing |
 | C3 | Ubuntu: lower the volume a little with the slider (or Mute when the volume is reported fixed) | the reported level or mute state, confirmed or not; whether the sound actually changed is recorded separately (a fixed Cast volume may not change the audible sound) | the same reported level or mute state |
 | C4 | Android: the opposite (raise the volume a little, or Unmute) | as C3 | as C3 |
-| C5 | Both at once: Pause on Ubuntu and Play on Android, pressed together | each remote sent its command once; at least one may say "not confirmed" | after both refresh, both show the TV's actual state (the last command that reached it); record which one won |
-| C6 | While Ubuntu's command is being confirmed, change media on the TV from the sender app (start another video) | Ubuntu's command is not shown as confirmed for the new video | both show the new video after a refresh |
-| C7 | Stop the Wi-Fi of one remote right after pressing a command (only if the owner agrees to try it) | "may or may not have reached the TV", never a resend | after the remote reconnects and both refresh, both show the TV's actual state; the TV received the command at most once |
+| C5 | Both at once: Pause on Ubuntu and Play on Android, pressed together | each remote initiates one command; record each result without inferring delivery count; at least one may say "not confirmed" | after both refresh, both show the TV's actual state (the last command that reached it); record which state won, not an unobservable delivery order |
+| C6 | Instrumented timing test only: begin with a receiver reporting a usable content, media-session and item identity; pause Ubuntu after its pre-command identity read and command dispatch but before its first confirmation read; start another video from the sender app; use an independent read-only receiver trace to prove the new session id is reported; only then release Ubuntu's confirmation read | Ubuntu must not confirm its command from the new session | both show the new session after a refresh; the record contains the ordered instrumentation events and old/new session ids |
+| C7 | Instrumented no-replay test only: enable app-side instrumentation that counts entry into the low-level send operation for this request, then stop Wi-Fi immediately after pressing one command (only with owner agreement) | delivery remains "may or may not have reached the TV"; the instrumentation records exactly one send attempt and no second invocation | after reconnection both refresh and show the actual state; record reception as zero-or-one, never claim how many deliveries occurred unless packet or receiver-side capture can count them |
+
+C6 is **NOT RUN**, not a failure or pass, if the baseline identity is absent, the first
+confirmation read can occur before the session switch, or the ordered events and distinct
+session ids are not captured. Human timing alone cannot validate the media-session guard.
+
+C7 is **NOT RUN for no-replay evidence** without the send-attempt instrumentation. Visible TV
+state and refreshed status may still be recorded as recovery evidence, but identical commands
+are not countable from their final state. App-side instrumentation proves one local send
+attempt; only packet or receiver-side capture can count actual deliveries to the receiver.
 
 ## What to record for each step
 
-Date and time; remote (Ubuntu or Android) and build (commit); action; the acting remote's wording (sent, confirmed, not confirmed, may or may not have reached the TV, refused) and its state shown; what was seen and heard on the TV (physical effect: yes, no, not checked); the other remote's state before and after its refresh; any second command observed on the TV (expected: none). Classify each step as **PASS**, **FAIL** (contract broken: a resend, a remote showing a state the TV did not report after its refresh, a confirmation for another session) or **NOT RUN**.
+Date and time; remote (Ubuntu or Android) and build (commit); action; the acting remote's wording (sent, confirmed, not confirmed, may or may not have reached the TV, refused) and its state shown; what was seen and heard on the TV (physical effect: yes, no, not checked); the other remote's state before and after its refresh; any second command observed on the TV; and, for C6/C7, the required instrumentation records. Classify each step as **PASS**, **FAIL** (contract broken: instrumentation shows a second send attempt, a remote shows a state the TV did not report after refresh, or a confirmation uses another proven session) or **NOT RUN**. Do not infer a send or delivery count from final TV state alone.
 
 ## After the protocol
 
