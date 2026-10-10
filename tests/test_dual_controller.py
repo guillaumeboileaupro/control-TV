@@ -10,7 +10,12 @@ shared by two such `ControlService` instances (`tests/shared_tv.py`):
    ambiguous delivery means the TV can have received it zero or one time;
 3. a command is confirmed only from what the TV reports, for the same media session: a
    change made by the other controller during the confirmation (a new session, the same
-   content reloaded, another state) never confirms it.
+   content reloaded, another state) never confirms it, and every CONFIRMED result rests on a
+   status the TV itself returned, showing the requested state.
+
+Known gap, pinned and recorded as a strict expected failure: a media-session switch between a
+command's pre-command read and its send is not detected before sending, so the command acts
+on the new session (never confirmed, never resent).
 
 No real TV, network or timer is involved, except the concurrency tests, which use real
 threads and a real one-second confirmation window.
@@ -59,6 +64,35 @@ def same_view(a: DeviceStatus, b: DeviceStatus) -> bool:
     return (a.receiver, a.media, a.connection) == (b.receiver, b.media, b.connection)
 
 
+def playback_is(state: PlaybackState) -> Callable[[DeviceStatus], bool]:
+    return lambda status: status.media is not None and status.media.playback_state is state
+
+
+def volume_is(level: float) -> Callable[[DeviceStatus], bool]:
+    return lambda status: status.receiver is not None and status.receiver.volume_level == level
+
+
+def muted_is(muted: bool) -> Callable[[DeviceStatus], bool]:
+    return lambda status: status.receiver is not None and status.receiver.muted is muted
+
+
+def assert_confirmation_backed_by_the_tv(
+    result: CommandResult, link: TvLink, requested: Callable[[DeviceStatus], bool]
+) -> None:
+    """A CONFIRMED result must rest on a status the TV itself returned to this controller.
+
+    Not the controller's own claim: the status it cites is one of the very objects the
+    simulated TV handed to this link, and that status shows the requested state.
+    """
+    if result.confirmation is not Confirmation.CONFIRMED:
+        return
+    assert result.observed is not None, "confirmed without an observed status"
+    assert any(read is result.observed for read in link.observed_reads), (
+        "confirmed from a status the TV never returned to this controller"
+    )
+    assert requested(result.observed), "confirmed from a status without the requested state"
+
+
 # --- 1. Each controller reads the TV, never a copy -----------------------------------------
 
 
@@ -77,18 +111,26 @@ def test_each_controller_must_discover_the_tv_itself() -> None:
 
 def test_one_controllers_command_is_seen_by_the_other_at_its_next_read() -> None:
     tv = SharedTv()
-    desktop, _, android, _ = two_controllers(tv)
+    desktop, desktop_link, android, android_link = two_controllers(tv)
 
-    assert desktop.pause(DEVICE_ID).confirmation is Confirmation.CONFIRMED
+    paused = desktop.pause(DEVICE_ID)
+    assert paused.confirmation is Confirmation.CONFIRMED
+    assert_confirmation_backed_by_the_tv(paused, desktop_link, playback_is(PlaybackState.PAUSED))
     assert android.get_status(DEVICE_ID).media.playback_state is PlaybackState.PAUSED  # type: ignore[union-attr]
 
-    assert android.play(DEVICE_ID).confirmation is Confirmation.CONFIRMED
+    played = android.play(DEVICE_ID)
+    assert played.confirmation is Confirmation.CONFIRMED
+    assert_confirmation_backed_by_the_tv(played, android_link, playback_is(PlaybackState.PLAYING))
     assert desktop.get_status(DEVICE_ID).media.playback_state is PlaybackState.PLAYING  # type: ignore[union-attr]
 
-    assert desktop.set_volume(DEVICE_ID, 0.3).confirmation is Confirmation.CONFIRMED
+    lowered = desktop.set_volume(DEVICE_ID, 0.3)
+    assert lowered.confirmation is Confirmation.CONFIRMED
+    assert_confirmation_backed_by_the_tv(lowered, desktop_link, volume_is(0.3))
     assert android.get_status(DEVICE_ID).receiver.volume_level == 0.3  # type: ignore[union-attr]
 
-    assert android.set_muted(DEVICE_ID, True).confirmation is Confirmation.CONFIRMED
+    muted = android.set_muted(DEVICE_ID, True)
+    assert muted.confirmation is Confirmation.CONFIRMED
+    assert_confirmation_backed_by_the_tv(muted, android_link, muted_is(True))
     assert desktop.get_status(DEVICE_ID).receiver.muted is True  # type: ignore[union-attr]
 
     assert [(d.controller, d.command) for d in tv.deliveries] == [
@@ -117,26 +159,44 @@ def test_a_controller_keeps_no_copy_of_the_tv_state() -> None:
 
 def test_after_any_sequence_of_commands_both_controllers_read_the_tvs_real_state() -> None:
     tv = SharedTv()
-    desktop, _, android, _ = two_controllers(tv)
+    desktop, desktop_link, android, android_link = two_controllers(tv)
     pick = random.Random(37)
-    actions: list[Callable[[ControlService], CommandResult]] = [
-        lambda c: c.play(DEVICE_ID),
-        lambda c: c.pause(DEVICE_ID),
-        lambda c: c.seek(DEVICE_ID, float(pick.randrange(0, 600))),
-        lambda c: c.set_volume(DEVICE_ID, pick.randrange(0, 101) / 100),
-        lambda c: c.set_muted(DEVICE_ID, pick.random() < 0.5),
-    ]
-    sent = 0
+
+    def play(c: ControlService) -> tuple[CommandResult, Callable[[DeviceStatus], bool]]:
+        return c.play(DEVICE_ID), playback_is(PlaybackState.PLAYING)
+
+    def pause(c: ControlService) -> tuple[CommandResult, Callable[[DeviceStatus], bool]]:
+        return c.pause(DEVICE_ID), playback_is(PlaybackState.PAUSED)
+
+    def seek(c: ControlService) -> tuple[CommandResult, Callable[[DeviceStatus], bool]]:
+        target = float(pick.randrange(0, 600))
+        return c.seek(
+            DEVICE_ID, target
+        ), lambda s: s.media is not None and s.media.position_seconds == target
+
+    def volume(c: ControlService) -> tuple[CommandResult, Callable[[DeviceStatus], bool]]:
+        level = pick.randrange(0, 101) / 100
+        return c.set_volume(DEVICE_ID, level), volume_is(level)
+
+    def mute(c: ControlService) -> tuple[CommandResult, Callable[[DeviceStatus], bool]]:
+        muted = pick.random() < 0.5
+        return c.set_muted(DEVICE_ID, muted), muted_is(muted)
+
+    actions = [play, pause, seek, volume, mute]
+    sent = confirmed = 0
 
     for _ in range(60):
-        actor = pick.choice([desktop, android])
-        pick.choice(actions)(actor)
+        actor, link = pick.choice([(desktop, desktop_link), (android, android_link)])
+        result, requested = pick.choice(actions)(actor)
+        assert_confirmation_backed_by_the_tv(result, link, requested)
+        confirmed += result.confirmation is Confirmation.CONFIRMED
         sent += 1
         truth = tv.snapshot()
         assert same_view(desktop.get_status(DEVICE_ID), truth)
         assert same_view(android.get_status(DEVICE_ID), truth)
 
     assert len(tv.deliveries) == sent
+    assert confirmed == sent  # nothing interferes here: every command is confirmed by the TV
 
 
 # --- 2. Concurrent commands from both controllers ------------------------------------------
@@ -206,6 +266,15 @@ def test_concurrent_play_and_pause_each_go_once_and_both_then_read_the_last_one(
         last_result = results[0] if last == "pause" else results[1]
         assert isinstance(last_result, CommandResult)
         assert last_result.confirmation is Confirmation.CONFIRMED
+        # Whichever results claim CONFIRMED (the first one may too, if it read its own
+        # state before the other landed), each rests on a state the TV reported.
+        assert isinstance(results[0], CommandResult) and isinstance(results[1], CommandResult)
+        assert_confirmation_backed_by_the_tv(
+            results[0], desktop_link, playback_is(PlaybackState.PAUSED)
+        )
+        assert_confirmation_backed_by_the_tv(
+            results[1], android_link, playback_is(PlaybackState.PLAYING)
+        )
         for service in (desktop, android):
             assert service.get_status(DEVICE_ID).media.playback_state is expected  # type: ignore[union-attr]
 
@@ -227,6 +296,9 @@ def test_concurrent_volume_changes_converge_on_the_last_delivered_level() -> Non
         assert desktop_link.send_attempts == ["set_volume"]
         assert android_link.send_attempts == ["set_volume"]
         assert len(tv.deliveries) == 2
+        assert isinstance(results[0], CommandResult) and isinstance(results[1], CommandResult)
+        assert_confirmation_backed_by_the_tv(results[0], desktop_link, volume_is(0.2))
+        assert_confirmation_backed_by_the_tv(results[1], android_link, volume_is(0.8))
         final = tv.deliveries[-1].args[0]
         assert tv.snapshot().receiver.volume_level == final  # type: ignore[union-attr]
         for service in (desktop, android):
@@ -314,6 +386,62 @@ def during_confirmation(link: TvLink, action: Callable[[], object]) -> None:
     link.before_read[:] = [lambda: None, action]
 
 
+def other_controller_loads_before_the_send(link: TvLink, android: ControlService) -> None:
+    """The other controller starts new media after this one's pre-command read and before
+    its send: in the window where the command was already prepared for the old session."""
+    link.before_send.append(
+        partial(
+            android.load_media, DEVICE_ID, MediaRequest(url=OTHER_URL, content_type="video/mp4")
+        )
+    )
+
+
+def test_a_session_switch_before_the_send_leaves_the_command_unconfirmed_and_unrepeated() -> None:
+    # Current behavior, pinned: the pause prepared for the first session is still sent, once,
+    # and acts on whatever session the TV holds at that moment; it is never confirmed, since
+    # the media identity read before it no longer matches, and it is never resent.
+    tv = SharedTv()
+    desktop, desktop_link, android, _ = two_controllers(tv)
+    other_controller_loads_before_the_send(desktop_link, android)
+
+    result = desktop.pause(DEVICE_ID)
+
+    assert desktop_link.send_attempts == ["pause"]
+    assert [(d.controller, d.command) for d in tv.deliveries] == [
+        ("android", "load_media"),
+        ("desktop", "pause"),
+    ]
+    media = tv.snapshot().media
+    assert media is not None
+    assert (media.content_id, media.media_session_id) == (OTHER_URL, 2)
+    assert media.playback_state is PlaybackState.PAUSED  # the new session got the pause
+    assert result.confirmation is Confirmation.UNCONFIRMED
+    assert result.detail is not None and "content changed" in result.detail
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known gap (PR #38 review P3-3): ControlService does not re-check the media session "
+        "between its pre-command read and the send, and CastTransport carries no expected "
+        "session id: PyChromecast fills in the mediaSessionId it last heard of, which can "
+        "already be the new session, so a command prepared for a session that ended reaches "
+        "the new one. Fixing it needs the transport to send the pre-read mediaSessionId so "
+        "the receiver refuses a stale one (a CastTransport and adapter change, outside this "
+        "PR, to be validated on a real receiver)."
+    ),
+)
+def test_a_command_is_not_sent_to_a_session_that_ended_after_the_pre_read() -> None:
+    tv = SharedTv()
+    desktop, desktop_link, android, _ = two_controllers(tv)
+    other_controller_loads_before_the_send(desktop_link, android)
+
+    desktop.pause(DEVICE_ID)
+
+    assert tv.received("desktop") == []
+    assert tv.snapshot().media.playback_state is PlaybackState.PLAYING  # type: ignore[union-attr]
+
+
 def test_a_pause_is_not_confirmed_by_media_the_other_controller_loaded_meanwhile() -> None:
     tv = SharedTv()
     desktop, desktop_link, android, _ = two_controllers(tv)
@@ -391,6 +519,7 @@ def test_a_change_that_keeps_the_media_session_does_not_block_a_confirmation() -
     result = desktop.pause(DEVICE_ID)
 
     assert result.confirmation is Confirmation.CONFIRMED
+    assert_confirmation_backed_by_the_tv(result, desktop_link, playback_is(PlaybackState.PAUSED))
     assert [(d.controller, d.command) for d in tv.deliveries] == [
         ("desktop", "pause"),
         ("android", "set_volume"),

@@ -15,6 +15,9 @@ Faults are per link and model what a real network can do:
   delivery; tests use a barrier here to prove two service calls really overlap;
 - `before_read`: callables run, one per status read, just before the TV is read: the other
   controller acting while this one is confirming its command.
+
+Each link also keeps `observed_reads`, every status the TV returned to that controller, so a
+test can check that a confirmation rests on a state the TV really reported.
 """
 
 from __future__ import annotations
@@ -122,6 +125,7 @@ class TvLink:
     before_send: list[Callable[[], object]] = field(default_factory=list)
     before_read: list[Callable[[], object]] = field(default_factory=list)
     send_attempts: list[str] = field(default_factory=list)
+    observed_reads: list[DeviceStatus] = field(default_factory=list)
     status_reads: int = 0
     _known: set[DeviceId] = field(default_factory=set)
 
@@ -134,7 +138,9 @@ class TvLink:
         self.status_reads += 1
         if self.before_read:
             self.before_read.pop(0)()
-        return self.tv.snapshot()
+        status = self.tv.snapshot()
+        self.observed_reads.append(status)
+        return status
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> None:
         self._send(
