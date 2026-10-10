@@ -128,7 +128,15 @@ def test_discovery_returns_ids_and_names_but_never_addresses(transport: FakeTran
 
     assert result.isError is False
     assert structured(result) == {
-        "devices": [{"id": ID, "friendlyName": "Living room", "kind": "unknown", "modelName": None}]
+        "devices": [
+            {
+                "id": ID,
+                "friendlyName": "Living room",
+                "kind": "unknown",
+                "modelName": None,
+                "androidTvRemote": None,
+            }
+        ]
     }
     assert f"deviceId {ID}" in text(result)
     assert SECRET_HOST not in everything(result) and "8009" not in everything(result)

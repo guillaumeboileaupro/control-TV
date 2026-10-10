@@ -51,6 +51,7 @@ Critical path:
 - [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the items below unless the owner reprioritizes.
 - [ ] **L. Roadmap reconciliation (issue #34, documentation only):** this plan, `README.md`, `ARCHITECTURE.md` and `docs/REQUIREMENTS_TRACEABILITY.md` restored to the original scope; reviewed independently by Codex; merged only with the owner's authorization.
 - [ ] **M. Capability and evidence model (proposed P1):** per-device capabilities and the evidence levels, with the Cast logical volume and mute told apart from the TV's audible output, in tool answers and GUI wording.
+  - first part (branch `feat/tv-capabilities`, not merged, 2026-10-10): discovery reports per TV whether it advertises the Android TV Remote service (`Device.android_tv_remote`, bridge `androidTvRemote`: true, false, or null when unknown or for a Cast group), detected passively on the Cast browser's own zeroconf instance (a second instance competed for mDNS replies and missed a TV on the real network); the window says that a fixed Cast volume cannot be changed and that Mute may not silence the TV, and names the TV's own remote channel when it is offered. Real network, read-only (Ubuntu, 3 runs): both Google TVs offer it, the Cast group is unknown; discovery takes about 1.5 s longer. Not checked on Android yet. The channel is not used: pairing and any key command need the owner's go-ahead.
 - [ ] **N. Content on the TV from tools (proposed P3, Phase 5):** `load_media` and a provider launch exposed as MCP tools behind a resolver boundary, with observed-playback verification; no search UI or player in control-TV.
 - [ ] **O. ChatGPT reach (proposed S0 then P4, Phase 6, gate G1):** first, right after item L, a read-only feasibility test: a read-only control-TV tool called from ChatGPT text, then from ChatGPT voice mode, on the owner's ChatGPT app, with no TV command; then a transport the ChatGPT app can use for real, its security review, and the command tools.
 - [ ] **P. TV endpoints feasibility (proposed S1, Phase 5b, gates G3-G5):** read-only identification of each owner TV's platform, audio path and control endpoints.
@@ -977,8 +978,8 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés).
 - [ ] Obtenir l'autorisation explicite du propriétaire pour R1–R4, même en lecture seule.
 - [ ] Installer/ouvrir les deux clients et consigner les preuves séparément.
-- [ ] **R1** : Ubuntu découvre la TV sans Android ; Android découvre la même TV sans Ubuntu ; comparer identifiant stable.
-- [ ] **R2** : lire l'état initial indépendamment depuis les deux interfaces ; relever TV, application, session, lecture, mute, volume, heure et erreurs si exposés.
+- [ ] **R1** : Ubuntu découvre la TV sans Android ; Android découvre la même TV sans Ubuntu ; comparer identifiant stable. Observation partielle 2026-10-10 (non classée) : 3 TV découvertes par le moteur Ubuntu ; la liste de l'app Android affiche les 3 mêmes noms ; découverte Android lancée par le propriétaire, pas par le protocole ; app Android = build de la PR #33 (écart au protocole).
+- [ ] **R2** : lire l'état initial indépendamment depuis les deux interfaces ; relever TV, application, session, lecture, mute, volume, heure et erreurs si exposés. Observation partielle 2026-10-10 (non classée) : même état sur les deux pour la TV en lecture (connectée, lecture, volume 100 % fixe, non coupée) ; observation visuelle du propriétaire non recueillie ; le propriétaire utilisait l'app en même temps (pause, seek), donc pas de PASS.
 - [ ] **R3** : propriétaire modifie l'état via télécommande physique ou autre émetteur ; chaque client relit puis converge sans commande control-TV.
 - [ ] **R4** : répéter les rafraîchissements simultanés ; vérifier stabilité, absence de changement visible/audible et absence d'envoi de commande par conception, sans inférer une preuve réseau non instrumentée.
 - [ ] Pour chaque test R1–R4, enregistrer PASS/FAIL/NOT RUN, horodatage, capture/log, version et motif d'échec.
@@ -1014,18 +1015,18 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Tester absence de session média, contenu non compatible, délai d'attente et perte réseau.
 
 **2B — Navigation dans la TV**
-- [ ] Évaluer protocole réel pour Home, Retour, Haut, Bas, Gauche, Droite, OK/Entrée et Menu si disponibles.
+- [ ] Évaluer protocole réel pour Home, Retour, Haut, Bas, Gauche, Droite, OK/Entrée et Menu si disponibles. Candidat identifié : service Android TV Remote annoncé par les deux Google TV (2026-10-10) ; non appairé, non essayé.
 - [ ] Proposer ces boutons dans les deux interfaces, avec retour utilisateur et erreurs explicites.
 - [ ] Vérifier sur l'écran d'accueil Google TV et dans plusieurs applications.
 - [ ] Tester commandes répétées, maintien éventuel et navigation lorsque la TV n'accepte pas la commande.
 - [ ] Documenter les limitations selon le modèle TV et les autorisations/appairages nécessaires.
 
 **2C — Volume et son physique**
-- [ ] Lire le volume logique Cast, mute et `volume_control_type`.
+- [x] Lire le volume logique Cast, mute et `volume_control_type`. Lu sur les vraies TV le 2026-10-10, en lecture seule (moteur Ubuntu et écran de l'app Android) : les trois récepteurs déclarent un volume Cast **fixe** à 100 %, non coupé.
 - [ ] Tester Volume +/− et Mute/Unmute depuis Ubuntu et Android.
 - [ ] Séparer **confirmation receiver** et **variation sonore audible** ; ne pas cocher la seconde sur seule réponse Cast.
 - [ ] Tester récepteur à volume fixe et, si disponible, récepteur à volume ajustable.
-- [ ] Évaluer un mécanisme alternatif de contrôle du son TV si Cast ne commande pas le volume physique.
+- [ ] Évaluer un mécanisme alternatif de contrôle du son TV si Cast ne commande pas le volume physique. **En cours (≈ 30 %)** : les deux Google TV annoncent le service Android TV Remote (protocole v2 de la télécommande Google : touches volume, mute, alimentation, navigation, saisie de texte) ; détection intégrée à la découverte (branche `feat/tv-capabilities`, non fusionnée). Reste : appairage (code affiché sur la TV, propriétaire présent), adaptateur derrière `ControlService`, essais Volume −/+ et Mute avec autorisation, puis Android (bibliothèque et dépendances natives à vérifier).
 - [ ] Afficher un message clair lorsque la TV confirme une commande logique sans changement sonore.
 
 **2D — Alimentation**
@@ -1036,7 +1037,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Documenter les limitations et éviter d'afficher un succès non confirmé.
 
 **2E — APPLICATIONS INSTALLÉES SUR LA TV : découverte ET lancement (exigence propriétaire)**
-- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents.
+- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV).
 - [ ] Définir les permissions, appairages et restrictions nécessaires ; proposer une solution viable sans serveur permanent.
 - [ ] Récupérer identifiant/package, nom affiché, icône si disponible et statut lançable.
 - [ ] Afficher la liste dans **Ubuntu** avec recherche/tri et état de chargement/erreur.
@@ -1050,7 +1051,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] **Critère de sortie : liste issue de la TV + lancement effectif depuis chacune des deux applications**, ou limite matérielle précisément documentée et décision du propriétaire sur une alternative.
 
 **2F — CLAVIER DISTANT : remplir un champ de saisie TV (exigence propriétaire)**
-- [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant.
+- [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant. Candidat identifié : service Android TV Remote (saisie de texte de la télécommande Google), annoncé par les deux Google TV ; non appairé, non essayé.
 - [ ] Vérifier appairage, authentification, permissions, chiffrement et compatibilité selon TV.
 - [ ] Ajouter dans **Ubuntu** une zone de saisie utilisant le clavier physique du PC.
 - [ ] Ajouter dans **Android** une zone de saisie utilisant le clavier virtuel du téléphone.
@@ -1131,6 +1132,15 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 ### 12. Checklists exhaustives et revue indépendante PR #38
 
 **Document de suivi détaillé et critères de sortie par phase : [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).** Ce fichier comprend **238 cases de suivi** couvrant gouvernance, autonomie et convergence, R1–R4, commandes TV, volume audible, veille/réveil, **liste et lancement des applications réellement installées**, **clavier distant pour remplir les champs TV depuis Ubuntu et Android**, concurrence C1–C7, widget #33, CI, packaging, documentation et critères bloquants de livraison. Les critères matériels ne peuvent être cochés sur la base de simulations.
+
+#### Capacités par TV — première tranche de l'élément M (2026-10-10, branche `feat/tv-capabilities`, non fusionnée)
+
+| Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve / blocage |
+|---|---:|---:|---:|---:|---:|---|
+| Détection du service Android TV Remote dans la découverte | 100 % implémenté | non chiffré au plan (sous 2C) | ≈ 11 min, non ventilées par tâche | 0 | — | tests, CI ; réseau réel en lecture seule (Ubuntu, 3 essais) |
+| Message « volume fixe / Mute peut ne pas couper / canal télécommande » dans l'UI | 100 % implémenté | inclus | inclus ci-dessus | 0 | — | tests UI |
+| Vérification sur Android | 0 % confirmé | — | 0 | à faire | — | téléphone utilisé par le propriétaire |
+| Mécanisme alternatif du son (2C) | ≈ 30 % (candidat identifié et détecté) | 3–7 h (ligne « Volume… ») | inclus ci-dessus | ≈ 3–6 h | ≈ 3–6 % | appairage et essais à autoriser |
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 

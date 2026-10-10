@@ -17,7 +17,9 @@ Response: {"id": <same as request, or null if the request itself could not be re
 
 Read-only methods:
 - `ping`             -> {"status", "controlTvVersion"}
-- `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`
+- `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`. Each device
+                        carries `androidTvRemote`: whether it advertises the Android TV
+                        Remote service (`true`/`false`), or `null` when unknown
 - `get_status`       -> {"status": {...}}; required param `deviceId` (the stable id from
                         discovery, never a display name). Fields the TV did not report are
                         `null`, never a default: `null` means unknown, not "off" or "zero".
@@ -81,6 +83,7 @@ def _device_to_json(device: Device) -> dict[str, Any]:
         "port": device.port,
         "kind": device.kind.value,
         "modelName": device.model_name,
+        "androidTvRemote": device.android_tv_remote,
     }
 
 
