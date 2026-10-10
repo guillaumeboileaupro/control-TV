@@ -715,7 +715,7 @@ Le développement MCP et ChatGPT Voice est reporté. Nous conservons les PR corr
 | PR ouvertes | #33, #36, #38 |
 | Tests automatisés | PR #38 finalisée (branche, non fusionnée) : 1 208 réussis, 8 ignorés, 1 échec attendu (`xfail` strict, lacune connue P3-3) en local ; CI : voir la ligne suivante |
 | Couverture | 98,02 % |
-| CI | PR #38 : 4/4 jobs réussis au commit `c55bc4d` ; nouveau HEAD de finalisation : résultat consigné dans la section 12 après exécution |
+| CI | PR #38 : 4/4 jobs réussis au commit de finalisation `ca7fe39` (run `38037796979` : 1 207 réussis, 9 ignorés, 1 `xfail` strict, couverture 98,02 %) |
 | Validation sur matériel réel | À réaliser pour les deux applications en parallèle |
 | **Temps restant estimé** | **40–80 heures** |
 
@@ -963,7 +963,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [x] Vérification locale rapportée : 1207 tests réussis / 8 ignorés, couverture Python 98,02 % ; 17 tests ciblés ; stress concurrence sans échec. CI du commit : 1206 réussis / 9 ignorés, 4/4 jobs verts. **Ces résultats proviennent du rapport Claude, non d'une nouvelle exécution ici.**
 - [x] Protocole R1–R4 jugé prêt pour exécution **après autorisation**.
 - [x] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min). Fait sur la branche de la PR #38 (non fusionnée).
-- [ ] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min).
+- [x] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min). Fait : description actualisée (19 cas, livraison zéro ou une, lacune P3-3).
 - [x] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min). Fait sur la branche de la PR #38 (non fusionnée) : la garantie « aucune commande envoyée à une session devenue obsolète » **n'est pas assurée** ; le comportement actuel (une seule tentative, appliquée à la nouvelle session, jamais confirmée ni rejouée) est figé par un test, et la garantie manquante par un `xfail` strict. Correction proposée hors PR #38 : transmettre l'identifiant de session lu avant la commande pour que le récepteur refuse une session obsolète.
 - [x] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [x] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min). Fait sur la branche de la PR #38 (non fusionnée).
@@ -1144,6 +1144,21 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 ### 12. Checklists exhaustives et revue indépendante PR #38
 
 **Document de suivi détaillé et critères de sortie par phase : [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).** Ce fichier comprend **238 cases de suivi** couvrant gouvernance, autonomie et convergence, R1–R4, commandes TV, volume audible, veille/réveil, **liste et lancement des applications réellement installées**, **clavier distant pour remplir les champs TV depuis Ubuntu et Android**, concurrence C1–C7, widget #33, CI, packaging, documentation et critères bloquants de livraison. Les critères matériels ne peuvent être cochés sur la base de simulations.
+
+#### Finalisation de la PR #38 par Claude (2026-10-10, branche non fusionnée)
+
+- [x] `main` (`47319b9`) fusionné dans la branche par une fusion classique (`8b4efa8`), sans conflit ni réécriture d'historique ; les exigences récentes (applications installées, lancement, clavier distant, contrôle simultané) sont conservées et non implémentées ici.
+- [x] Sept P3 appliquées (`1348cfe`, `ca7fe39`, description de la PR) : P3-1 (19 cas), P3-2 (zéro ou une livraison), P3-3 (lacune confirmée et figée, `xfail` strict), P3-4/P3-5/P3-6 (critères R1–R4), P3-7 (confirmations adossées aux lectures de la TV simulée).
+- [x] Tests locaux : 1 208 réussis, 8 ignorés, 1 `xfail` strict ; couverture 98,02 % ; concurrence stable (20 exécutions séquentielles et 4×5 parallèles, 0 échec) ; cinq mutations détectées (8, 5, 3, 5 et 7 tests en échec).
+- [x] CI `ca7fe39` : run `38037796979`, 4/4 jobs réussis, 1 207 réussis, 9 ignorés, 1 `xfail`, couverture 98,02 %.
+- [ ] Lacune P3-3 : empêcher l'envoi d'une commande à une session média terminée entre la prélecture et l'envoi (transmettre l'identifiant de session lu ; modification de `CastTransport` et de l'adaptateur, hors PR #38, à valider sur un vrai récepteur).
+- [ ] Nouvelle revue Codex du HEAD de finalisation, puis autorisation du propriétaire avant toute fusion ; R1–R4 non exécutés.
+
+| Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve |
+|---|---:|---:|---:|---:|---:|---|
+| Fusion de `main` dans la branche | 100 % | non chiffré | non mesuré (avant le chronomètre) | 0 | — | `8b4efa8` sans conflit |
+| Sept P3 (tests, protocole, traçabilité, description) | 100 % | ≈ 67 min | ≈ 13 min mesurées (chronomètre démarré après la fusion), non ventilées par P3 | 0 | ≈ 19 % | tests, mutations, CI `38037796979` |
+| Revue Codex du nouveau HEAD | 0 % confirmé | — | 0 | à demander | — | — |
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 

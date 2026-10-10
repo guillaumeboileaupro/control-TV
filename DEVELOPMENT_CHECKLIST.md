@@ -69,13 +69,13 @@
 - [x] Tests automatisés : absence de rejeu automatique.
 - [x] Revue indépendante Claude : **APPROVED**, aucun P0/P1/P2.
 - [x] P3-1 : corriger `docs/REQUIREMENTS_TRACEABILITY.md` (16 → 17 tests), si retenu. Fait (branche PR #38, non fusionnée).
-- [ ] P3-2 : actualiser la description de la PR #38 (17 tests ; livraison zéro-ou-une), si retenu.
+- [x] P3-2 : actualiser la description de la PR #38 (17 tests ; livraison zéro-ou-une), si retenu. Fait : 19 cas (18 réussis, 1 `xfail` strict), livraison zéro ou une.
 - [x] P3-3 : ajouter un test de changement de session **entre prélecture et envoi**, si retenu. Fait (branche PR #38, non fusionnée) : lacune confirmée, la commande atteint la nouvelle session (jamais confirmée ni rejouée) ; figée par un test et un `xfail` strict ; correction hors PR #38.
 - [x] P3-4 : reformuler R4 : absence de changement visible/audible, pas preuve réseau d'absence d'envoi. Fait (branche PR #38, non fusionnée).
 - [x] P3-5 : clarifier R3 : aucune commande **depuis control-TV** ; action manuelle du propriétaire sur la TV attendue. Fait (branche PR #38, non fusionnée).
 - [x] P3-6 : critères PASS/FAIL/NOT RUN par étape et code d'erreur de lecture. Fait (branche PR #38, non fusionnée).
 - [x] P3-7 : vérifier les confirmations de commandes supplantées contre l'historique d'état lu par le simulateur. Fait (branche PR #38, non fusionnée).
-- [ ] Après corrections facultatives retenues, exécuter les tests pertinents et vérifier les quatre jobs CI sur le nouveau HEAD.
+- [x] Après corrections facultatives retenues, exécuter les tests pertinents et vérifier les quatre jobs CI sur le nouveau HEAD. Fait : local 1 208 réussis / 8 ignorés / 1 `xfail` ; CI `ca7fe39` run `38037796979`, 4/4 jobs réussis.
 - [ ] Demander l'autorisation explicite du propriétaire **avant toute fusion de PR #38**.
 
 ### 1.3 R1–R4 — Recette réelle en lecture seule
