@@ -15,6 +15,10 @@ export interface Device {
   port: number;
   kind: string;
   modelName: string | null;
+  // Whether the TV advertises its own remote-control channel (Android TV Remote): true or
+  // false when discovery looked for it, null when unknown. Optional: an older control backend
+  // does not send it, which reads as unknown. control-TV does not use that channel.
+  androidTvRemote?: boolean | null;
 }
 
 export interface ReceiverStatus {

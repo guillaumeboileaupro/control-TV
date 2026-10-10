@@ -354,3 +354,14 @@ def test_media_details_keep_reported_values() -> None:
 def test_media_details_require_their_own_types(changes: dict[str, object]) -> None:
     with pytest.raises(InvalidArgumentError):
         MediaStatus(**changes)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+def test_device_android_tv_remote_is_a_boolean_or_unknown(value: bool | None) -> None:
+    assert make_device(android_tv_remote=value).android_tv_remote is value
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", "yes"])
+def test_device_rejects_a_non_boolean_android_tv_remote(value: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="android_tv_remote"):
+        make_device(android_tv_remote=value)
