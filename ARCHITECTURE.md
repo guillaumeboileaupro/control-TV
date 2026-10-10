@@ -93,6 +93,17 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 - **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
 - **Limitation:** Python lives in the app process, so the desktop recovery (kill and relaunch the bridge process, PR #29) has no equivalent; a request stuck in Python leaves later requests `bridge_busy` until the app restarts.
 
+## Several remotes on one TV (issue #37)
+
+The desktop window and the Android app are independent remotes: two processes, each with its own `ControlService`, transport and discovery cache, and no link between them (no cross-device synchronization, no shared server). The TV is the only shared state, and the contract, pinned on a simulated TV shared by two `ControlService` instances (`tests/shared_tv.py`, `tests/test_dual_controller.py`), is:
+
+- each remote discovers the TV itself, and keeps no copy of its state: its next `get_status` reads the TV, so it sees the other remote's effect there, and only there;
+- each command is attempted once, by the remote that sent it, and is never resent; an ambiguous failure means the TV may have received it zero or one time; commands from both remotes race at the TV, and the last one actually delivered wins;
+- a command is confirmed only from what the TV reports for the same media session: a change made by the other remote during the confirmation (other media, the same content reloaded in a new session, a new session at the same position, its own opposite command) leaves it unconfirmed.
+- known gap: a media-session switch between a command's pre-command read and its send is not detected before sending (the transport carries no expected session id, and PyChromecast addresses the session it last heard of), so the command acts on the new session; it is never confirmed nor resent. Preventing it needs the transport to send the pre-read session id so the receiver refuses a stale one (outside PR #38).
+
+There is no periodic status refresh (`DEVELOPMENT_PLAN.md`, "Status refresh"), so each remote shows the other's change at its next read. The hardware protocol for Ubuntu + Android is `docs/DUAL_CONTROLLER_VALIDATION.md`.
+
 ## Planned native integrations
 
 - **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
@@ -148,4 +159,3 @@ Retain only explicitly useful artifacts. Release deliverables should be copied t
 Never blindly delete global/shared caches or unrelated data: `$CARGO_HOME`, Cargo registry/git caches, `~/.gradle`, Android SDK/NDK, global Python environments/caches, the user's home directory or system `/tmp`. Recursive deletion targets must first be verified as project-owned or explicitly known project-local temporary paths. Global/shared cache cleanup requires explicit owner instruction.
 
 Once build tooling exists, the project must provide documented `clean` and `dist-clean` commands. `clean` removes normal project-owned generated output. `dist-clean` removes all reproducible project-owned generated output while still preserving shared/global caches. If cleanup cannot be completed, the iteration is not complete and the exact remaining path, size and reason must be recorded.
-

@@ -2,6 +2,8 @@
 
 Reconciliation of the original product scope (issue #34). This file traces each requirement to what exists, how it is validated and what is missing; `DEVELOPMENT_PLAN.md` holds the actionable items and their checkboxes, and stays the source of truth for progress. Nothing here marks work as done.
 
+Priority (owner decision, issue #37, 2026-10-08): the standalone Ubuntu and Android remotes, usable in parallel on the same TV, come first; ChatGPT Voice and MCP (R1, R3, R4 and the tools of the other requirements) are postponed, not abandoned.
+
 Authority, most recent first: the owner's correction of 2026-10-08 07:29 UTC on issue #34 (it supersedes the issue body, the earlier comments and both assistant audits where they conflict); the owner's convergence comment and additions of the same day; the issue body; the repository documents since 2026-09-25.
 
 ## Product scope
@@ -54,7 +56,7 @@ Statuses: **active**, **rewritten** (kept with the corrected scope), **supersede
 
 | ID | Requirement | Status | Exists today | Automated validation | Real-hardware evidence | Missing | Proposed PR |
 |---|---|---|---|---|---|---|---|
-| R1 | ChatGPT voice (and text) -> control-TV tools -> shared service -> TV, without needless confirmation dialogue | active | Local stdio MCP server, 8 Cast tools (PR #31) | 48 MCP tests | A real MCP client (Codex CLI), read-only: discovery and one status; no command through MCP; ChatGPT not connected | Proof that ChatGPT voice mode calls the tools (G1, tested first), a transport the ChatGPT app can reach, its security review, tool annotations that let a command run in one call where the platform allows, tools for R4, R7-R12 | S0, then P4 (and the tools of P3, P6-P8) |
+| R1 | ChatGPT voice (and text) -> control-TV tools -> shared service -> TV, without needless confirmation dialogue | postponed (issue #37) | Local stdio MCP server, 8 Cast tools (PR #31) | 48 MCP tests | A real MCP client (Codex CLI), read-only: discovery and one status; no command through MCP; ChatGPT not connected | Proof that ChatGPT voice mode calls the tools (G1, tested first), a transport the ChatGPT app can reach, its security review, tool annotations that let a command run in one call where the platform allows, tools for R4, R7-R12 | S0, then P4 (and the tools of P3, P6-P8) |
 | R2 | In-app voice (microphone, speech-to-text, intent) | **superseded** | - | - | - | not requested | none |
 | R3 | Content resolution for a request made in ChatGPT (backend/MCP only; ChatGPT may already supply a provider link or identifier) | rewritten | Nothing | - | - | A resolver boundary that turns a provider reference (and, only if decided, a backend search) into a target the TV can play; provider restrictions (G2) | P3 |
 | R4 | Launch the requested content ON THE TV, verify the observed playback, never replay on ambiguity | rewritten | `ControlService.load_media(URL)` with URL-bound confirmation; not exposed anywhere | service and adapter tests | none; a YouTube session reported an empty `contentId`, so play/pause on it cannot be receiver-confirmed by design | MCP exposure, a provider launch (e.g. the Cast YouTube receiver), a verification rule for receivers that report no content id | P3 |
@@ -74,6 +76,7 @@ Statuses: **active**, **rewritten** (kept with the corrected scope), **supersede
 | R18 | GUI for power, audible sound, application catalog and launch, playback and navigation; minimal and accessible; no search, microphone or player | rewritten | playback and Cast sound only | UI tests | desktop read-only; phone layout partly | The listed controls, per capability | P6-P9 |
 | R19 | Hardware validation matrix per device, endpoint and evidence level | active | `docs/CAST_HARDWARE_VALIDATION.md`, plan records | - | partial (below) | One matrix covering every endpoint | P1, P2 |
 | R20 | Process: cleanup, private agent files, Conventional Commits, isolated PRs | active (holds) | yes | - | - | - | - |
+| R21 | Ubuntu and Android remotes used in parallel on the same TV: independent, no cross-device synchronization assumed, state always read from the TV, an uncertain command never resent (issue #37) | active | Two separate processes, each with its own `ControlService` and transport; the service keeps no TV state | dual-controller contract on a shared simulated TV: 19 test cases (branch `test/dual-controller-convergence`, not merged): 18 pass and 1 is a strict expected failure recording a known gap, a command prepared before a media-session switch reaching the new session (it is never confirmed nor resent) | none yet | the Ubuntu + Android hardware protocol (`docs/DUAL_CONTROLLER_VALIDATION.md`); no periodic refresh, so a remote shows the other's change at its next read | C1 (issue #37) |
 
 ## Hardware observations
 
@@ -110,6 +113,7 @@ Small, independent, one shared engine; each synchronizes `DEVELOPMENT_PLAN.md`. 
 
 | PR | Scope | Depends on | Acceptance |
 |---|---|---|---|
+| C1 (issue #37) | Dual-controller state convergence contract: a simulated TV shared by two `ControlService` instances, tests and the hardware protocol | - | both controllers always read the TV's real state; each command attempted once and never replayed, with zero-or-one delivery on an ambiguous failure; no confirmation from another controller's media session; every CONFIRMED result rests on a status the TV itself returned and shows the requested state |
 | D0 | This documentation reconciliation | owner review, Codex review | scope, matrix and plan reconciled; no item marked done; history kept |
 | S0 | **First, gate G1:** read-only ChatGPT feasibility test, right after D0 and before substantial P3 work: only read-only tools offered through a temporary transport the owner authorizes, called from ChatGPT text then voice mode | D0, owner authorization of the transport | ChatGPT voice observed calling a control-TV tool (or the failure recorded); no TV command |
 | P1 | Capability and evidence model: per-device capabilities (endpoint, Cast volume type, supported operations), the evidence levels and the Cast-logical/audible distinction in tool answers and GUI wording | - | a fixed-volume receiver is never presented as controlling the TV's sound; tests; no new command path |
