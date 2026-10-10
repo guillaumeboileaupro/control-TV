@@ -86,7 +86,7 @@
 - [ ] Vérifier que chaque test a des critères PASS, FAIL et NOT RUN/INCONCLUSIF et une méthode de preuve.
 - [ ] **R1 Ubuntu** : découvrir la TV depuis Ubuntu et relever son identifiant stable.
 - [ ] **R1 Android** : découvrir la TV depuis Android indépendamment et comparer l'identifiant.
-- [ ] **R2** : lire l'état initial sur Ubuntu puis Android et comparer session, lecture, application et volume logique disponibles.
+- [ ] **R2** : lire l'état initial sur Ubuntu puis Android et comparer session, lecture, application et volume logique disponibles. Observation partielle 2026-10-10, non classée (voir `DEVELOPMENT_PLAN.md`).
 - [ ] **R3** : modifier manuellement la TV avec sa télécommande physique ou une application de diffusion externe ; observer les rafraîchissements **sans commande control-TV**.
 - [ ] **R3** : vérifier que les deux applications convergent vers le nouvel état et noter délais/anomalies.
 - [ ] **R4** : enchaîner des rafraîchissements sur Ubuntu et Android, noter erreurs, stabilité et changements visibles/audibles.
