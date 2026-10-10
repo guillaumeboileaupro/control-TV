@@ -62,7 +62,7 @@ Critical path:
 - [ ] **O. ChatGPT reach (proposed S0 then P4, Phase 6, gate G1), postponed (issue #37; S0 prepared on PR #36, kept unmerged):** first, right after item L, a read-only feasibility test: a read-only control-TV tool called from ChatGPT text, then from ChatGPT voice mode, on the owner's ChatGPT app, with no TV command; then a transport the ChatGPT app can use for real, its security review, and the command tools.
 - [ ] **P. TV endpoints feasibility (proposed S1, Phase 5b, gates G3-G5):** read-only identification of each owner TV's platform, audio path and control endpoints.
 - [ ] **Q. Power, audible sound, navigation and applications (proposed P5-P9, Phase 5b):** in the GUI (Linux, then Android) and as tools, per proven capability (issue #37 phase 2; tools postponed with MCP).
-- [ ] **R. Ubuntu and Android remotes in parallel on one TV (issue #37 phase 1):** first PR, the dual-controller state convergence contract (branch `test/dual-controller-convergence`, not merged): a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`) and 17 tests (`tests/test_dual_controller.py`): each controller must discover the TV itself; one controller's command is seen by the other at its next read, never cached; 60 random commands from both leave both reading the TV's real state; internal send barriers force concurrent play/pause and volume calls to overlap, each controller attempts its command once, and both converge on the last delivered state; a command undone by the other controller stays unconfirmed and is never resent; an ambiguous attempt is modeled both before delivery and after delivery, so the TV receives it zero or one time and no status read replays it; a pause, seek or stop is never confirmed by media the other controller loaded meanwhile, nor by the same content reloaded in a new session, nor by a new session at the same position, while a change that keeps the session (volume) does not block a confirmation. Three mutations (a command attempted twice, no media-session guard, a cached status) fail the focused tests. Simulator evidence only: the Ubuntu + Android hardware protocol is `docs/DUAL_CONTROLLER_VALIDATION.md`, not yet run; C6 and C7 require explicit timing/send instrumentation before they can prove their respective claims.
+- [ ] **R. Ubuntu and Android remotes in parallel on one TV (issue #37 phase 1):** first PR, the dual-controller state convergence contract (PR #38, branch `test/dual-controller-convergence`, not merged): a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`) and 19 test cases (`tests/test_dual_controller.py`; 18 pass, 1 strict expected failure for the known gap below): each controller must discover the TV itself; one controller's command is seen by the other at its next read, never cached; 60 random commands from both leave both reading the TV's real state; internal send barriers force concurrent play/pause and volume calls to overlap, each controller attempts its command once, and both converge on the last delivered state; a command undone by the other controller stays unconfirmed and is never resent; an ambiguous attempt is modeled both before delivery and after delivery, so the TV receives it zero or one time and no status read replays it; a pause, seek or stop is never confirmed by media the other controller loaded meanwhile, nor by the same content reloaded in a new session, nor by a new session at the same position, while a change that keeps the session (volume) does not block a confirmation. Every CONFIRMED result is checked against the statuses the simulated TV actually returned to that controller and must show the requested state (review P3-7). A media-session switch between the pre-command read and the send is pinned (review P3-3): the command is sent once and acts on the new session, never confirmed nor resent; that it is sent at all is a **known gap**, recorded as a strict expected failure, whose fix (the transport sending the pre-read session id so the receiver refuses a stale one) is outside PR #38. Five mutations (a command attempted twice, no media-session guard, a cached status, a confirmation citing a status the TV never returned, a confirmation ignoring the requested state) fail 8, 5, 3, 5 and 7 focused tests. Simulator evidence only: the Ubuntu + Android hardware protocol is `docs/DUAL_CONTROLLER_VALIDATION.md`, not yet run; C6 and C7 require explicit timing/send instrumentation before they can prove their respective claims.
 - [ ] **F. Windows packaging and validation (Phase 7): postponed by product decision**, not a current priority; no Windows limitation is lifted by this.
 
 Media/content resolution is no longer complementary: it is item N (Phase 5), limited to backend/MCP operations.
@@ -713,9 +713,9 @@ Le développement MCP et ChatGPT Voice est reporté. Nous conservons les PR corr
 | Dépôt | [control-TV](https://github.com/guillaumeboileaupro/control-TV) |
 | Issue de référence | [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37) |
 | PR ouvertes | #33, #36, #38 |
-| Tests automatisés | 1 206 réussis, 9 ignorés |
+| Tests automatisés | PR #38 finalisée (branche, non fusionnée) : 1 208 réussis, 8 ignorés, 1 échec attendu (`xfail` strict, lacune connue P3-3) en local ; CI : voir la ligne suivante |
 | Couverture | 98,02 % |
-| CI | 4/4 jobs réussis sur la PR #38 |
+| CI | PR #38 : 4/4 jobs réussis au commit `c55bc4d` ; nouveau HEAD de finalisation : résultat consigné dans la section 12 après exécution |
 | Validation sur matériel réel | À réaliser pour les deux applications en parallèle |
 | **Temps restant estimé** | **40–80 heures** |
 
@@ -730,13 +730,14 @@ L'estimation de 40–80 heures correspond au travail restant sur l'issue #37. El
 | Architecture de contrôle partagée | Déjà implémentée | Historique non chiffré | Non communiqué |
 | Tests simulés de convergence — PR #38 | 100 % implémentés* | 12–24 h | ≈ 6 h 16, corrections comprises |
 | Préparation des tests matériels R1–R4 | **100 %** | 1 h 10–1 h 40 | **25 min** |
-| Revue indépendante Claude — PR #38 | **0 % confirmé** | 30–60 min | 0 |
+| Revue indépendante Claude — PR #38 | **100 %** (APPROVED au commit `c55bc4d`) | 30–60 min | ≈ 4 min mesurées (rédaction du rapport non mesurée) |
+| Finalisation PR #38 (fusion de `main`, sept P3) | **100 % implémenté**, revue Codex et CI à confirmer | ≈ 67 min (P3) | voir la section 12 |
 | Tests réels Ubuntu + Android R1–R4 | **0 %** | 25–45 min | 0 |
 | Analyse des anomalies matérielles | **0 %** | 1–2 h | 0 |
 | Fiabilisation Ubuntu | **0 %** | 4–8 h | 0 |
 | Fiabilisation Android | **0 %** | 6–12 h | 0 |
 
-*Implémentation et corrections terminées ; revue indépendante toujours attendue. Le « 100 % » ne signifie pas validé matériellement.
+*Implémentation, corrections, revue indépendante Claude et sept P3 terminées ; nouvelle revue Codex et autorisation du propriétaire attendues. Le « 100 % » ne signifie pas validé matériellement.
 
 #### Tests R1–R4
 
@@ -798,7 +799,7 @@ Les builds Linux et Android existent déjà. Il reste à vérifier leur installa
 
 | PR | Objet | État | Prochaine action | Temps estimé |
 |---|---|---|---|---|
-| [#38](https://github.com/guillaumeboileaupro/control-TV/pull/38) | Convergence Ubuntu/Android | Corrections terminées, CI verte | Revue Claude | 30–60 min |
+| [#38](https://github.com/guillaumeboileaupro/control-TV/pull/38) | Convergence Ubuntu/Android | Revue Claude APPROVED ; `main` fusionnée dans la branche ; sept P3 appliquées ; lacune P3-3 documentée | Revue Codex du nouveau HEAD, puis décision du propriétaire | — |
 | [#33](https://github.com/guillaumeboileaupro/control-TV/pull/33) | Widget Android | Ouverte | Analyser les conflits et la compatibilité | 1–2 h |
 | [#36](https://github.com/guillaumeboileaupro/control-TV/pull/36) | Faisabilité MCP | Ouverte, reportée | Aucune pour le moment | — |
 
@@ -815,7 +816,9 @@ Pour la #33, si des corrections sont nécessaires, prévoir provisoirement **2�
 | Implémentation initiale PR #38 | ≈ 6 h |
 | Corrections Codex PR #38 | ≈ 16 min |
 | Préparation matérielle R1–R4 | ≈ 25 min |
-| **Total connu** | **≈ 6 h 41** |
+| Revue indépendante Claude PR #38 | ≈ 4 min mesurées (rédaction non mesurée) |
+| Finalisation PR #38 (fusion de `main` et sept P3) | voir la section 12 (mesure Claude) |
+| **Total connu** | **≈ 6 h 45, hors finalisation** |
 
 Ce total ne représente **pas toutes les heures historiques du projet** : seules les durées explicitement communiquées sont comptabilisées.
 
@@ -833,7 +836,7 @@ La répartition reste approximative. Le temps de résolution des problèmes mat�
 ### 7. Ordre de travail recommandé
 
 1. **Codex analyse la PR #33.** Temps : **1–2 h**. Avancement : **0 % confirmé**. Aucun merge.
-2. **Claude revoit la PR #38** sur le commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. Temps : **30–60 min**. Avancement : **0 % confirmé**.
+2. **Claude revoit la PR #38** sur le commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac` : **fait (APPROVED)**, puis finalisation (fusion de `main`, sept P3) sur la branche de la PR ; reste la revue Codex du nouveau HEAD et la décision du propriétaire.
 3. **Après validation et autorisation : tests matériels R1–R4.** Temps : **25–45 min**. Avancement : **0 %**.
 4. **Corriger les anomalies Ubuntu/Android.** Temps : **10–20 h provisionnelles**. Avancement : **0 %** sur ce lot.
 5. **Tester et compléter les commandes TV.** Temps : **16–32 h**. Avancement matériel : **0 %**.
@@ -959,13 +962,13 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [x] Quatre corrections P2 vérifiées : barrière d'entrelacement, zéro/une réception, `send_attempts`, scénario C6 documenté.
 - [x] Vérification locale rapportée : 1207 tests réussis / 8 ignorés, couverture Python 98,02 % ; 17 tests ciblés ; stress concurrence sans échec. CI du commit : 1206 réussis / 9 ignorés, 4/4 jobs verts. **Ces résultats proviennent du rapport Claude, non d'une nouvelle exécution ici.**
 - [x] Protocole R1–R4 jugé prêt pour exécution **après autorisation**.
-- [ ] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min).
+- [x] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [ ] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min).
-- [ ] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min).
-- [ ] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min).
-- [ ] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min).
-- [ ] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min).
-- [ ] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min).
+- [x] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min). Fait sur la branche de la PR #38 (non fusionnée) : la garantie « aucune commande envoyée à une session devenue obsolète » **n'est pas assurée** ; le comportement actuel (une seule tentative, appliquée à la nouvelle session, jamais confirmée ni rejouée) est figé par un test, et la garantie manquante par un `xfail` strict. Correction proposée hors PR #38 : transmettre l'identifiant de session lu avant la commande pour que le récepteur refuse une session obsolète.
+- [x] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [ ] Obtenir autorisation du propriétaire avant toute fusion PR #38.
 - [ ] Fusionner PR #38 uniquement si autorisé, puis vérifier CI sur la branche cible.
 
@@ -984,7 +987,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 **1B — PR #38 et préparation de validation**
 - [x] Contrat simulé de convergence implémenté et revu.
 - [x] Protocole R1–R4 préparé et approuvé techniquement par Claude.
-- [ ] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés).
+- [x] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés). Fait sur la branche de la PR #38 (non fusionnée).
 - [ ] Obtenir l'autorisation explicite du propriétaire pour R1–R4, même en lecture seule.
 - [ ] Installer/ouvrir les deux clients et consigner les preuves séparément.
 - [ ] **R1** : Ubuntu découvre la TV sans Android ; Android découvre la même TV sans Ubuntu ; comparer identifiant stable.

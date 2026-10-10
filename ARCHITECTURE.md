@@ -100,6 +100,7 @@ The desktop window and the Android app are independent remotes: two processes, e
 - each remote discovers the TV itself, and keeps no copy of its state: its next `get_status` reads the TV, so it sees the other remote's effect there, and only there;
 - each command is attempted once, by the remote that sent it, and is never resent; an ambiguous failure means the TV may have received it zero or one time; commands from both remotes race at the TV, and the last one actually delivered wins;
 - a command is confirmed only from what the TV reports for the same media session: a change made by the other remote during the confirmation (other media, the same content reloaded in a new session, a new session at the same position, its own opposite command) leaves it unconfirmed.
+- known gap: a media-session switch between a command's pre-command read and its send is not detected before sending (the transport carries no expected session id, and PyChromecast addresses the session it last heard of), so the command acts on the new session; it is never confirmed nor resent. Preventing it needs the transport to send the pre-read session id so the receiver refuses a stale one (outside PR #38).
 
 There is no periodic status refresh (`DEVELOPMENT_PLAN.md`, "Status refresh"), so each remote shows the other's change at its next read. The hardware protocol for Ubuntu + Android is `docs/DUAL_CONTROLLER_VALIDATION.md`.
 
