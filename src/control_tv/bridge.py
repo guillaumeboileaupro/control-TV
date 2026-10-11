@@ -46,6 +46,23 @@ that could not be sent is an error response instead (`device_unavailable`,
 `command_rejected` for a delivered command the receiver refused, `unsupported_operation`,
 `timeout`, ...); a `timeout` on delivery is ambiguous, so a caller must not resend on its own.
 
+The TV's own remote channel (Android TV Remote protocol), separate from Cast: a TV whose
+Cast volume is fixed is heard at the volume the TV itself sets. All take `deviceId`, a TV
+found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemote` is
+`false` answers `unsupported_operation`, a TV not paired yet answers `pairing_required`:
+- `get_remote_status`     -> {"remote": {"isOn", "volume"}}: what the TV reported; `volume`
+                             is {"level", "max", "muted"} or `null`, `isOn` may be `null`
+- `start_remote_pairing`  -> {"pairing": "code_shown"}: the TV shows a 6-character code
+- `finish_remote_pairing` -> also requires `code`, the code shown; {"pairing": "paired"},
+                             or `command_rejected` when the TV refuses the code
+- `press_remote_key`      -> also requires `key`, one of `volume_up`, `volume_down`, `mute`
+                             (the speaker), `power`, `up`, `down`, `left`, `right`, `ok`,
+                             `back`, `home`. The key is sent once, never resent. Answers
+                             {"result": {"key", "deviceId", "confirmation", "detail", "before",
+                             "after"}}: `confirmed` only when the TV reported the expected
+                             volume or mute change (its report, not a person hearing it);
+                             keys whose effect the TV does not report are `not_checked`.
+
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
 which is reported as an ordinary error response so a single bad request cannot kill this
@@ -68,6 +85,9 @@ from control_tv.domain import (
     DeviceStatus,
     ErrorCode,
     InvalidArgumentError,
+    RemoteKey,
+    RemoteKeyResult,
+    RemoteObservation,
 )
 from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
 
@@ -203,6 +223,70 @@ def _handle_set_muted(control: ControlService, params: dict[str, Any]) -> Any:
     return {"result": _command_result_to_json(control.set_muted(device_id, muted))}
 
 
+REMOTE_KEYS: dict[str, RemoteKey] = {
+    "volume_up": RemoteKey.VOLUME_UP,
+    "volume_down": RemoteKey.VOLUME_DOWN,
+    "mute": RemoteKey.VOLUME_MUTE,
+    "power": RemoteKey.POWER,
+    "up": RemoteKey.DPAD_UP,
+    "down": RemoteKey.DPAD_DOWN,
+    "left": RemoteKey.DPAD_LEFT,
+    "right": RemoteKey.DPAD_RIGHT,
+    "ok": RemoteKey.DPAD_CENTER,
+    "back": RemoteKey.BACK,
+    "home": RemoteKey.HOME,
+}
+_KEY_NAMES = {key: name for name, key in REMOTE_KEYS.items()}
+
+
+def _remote_to_json(observation: RemoteObservation) -> dict[str, Any]:
+    volume = observation.volume
+    return {
+        "isOn": observation.is_on,
+        "volume": None
+        if volume is None
+        else {"level": volume.level, "max": volume.maximum, "muted": volume.muted},
+    }
+
+
+def _remote_key_result_to_json(result: RemoteKeyResult) -> dict[str, Any]:
+    return {
+        "key": _KEY_NAMES[result.key],
+        "deviceId": str(result.device_id),
+        "confirmation": result.confirmation.value,
+        "detail": result.detail,
+        "before": _remote_to_json(result.before),
+        "after": _remote_to_json(result.after),
+    }
+
+
+def _handle_get_remote_status(control: ControlService, params: dict[str, Any]) -> Any:
+    return {"remote": _remote_to_json(control.get_remote_status(_device_id_param(params)))}
+
+
+def _handle_start_remote_pairing(control: ControlService, params: dict[str, Any]) -> Any:
+    control.start_remote_pairing(_device_id_param(params))
+    return {"pairing": "code_shown"}
+
+
+def _handle_finish_remote_pairing(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    code = params.get("code")
+    if not isinstance(code, str):
+        raise InvalidArgumentError("code must be a string")
+    control.finish_remote_pairing(device_id, code)
+    return {"pairing": "paired"}
+
+
+def _handle_press_remote_key(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    name = params.get("key")
+    if not isinstance(name, str) or name not in REMOTE_KEYS:
+        raise InvalidArgumentError(f"key must be one of {', '.join(REMOTE_KEYS)}: {name!r}")
+    result = control.press_remote_key(device_id, REMOTE_KEYS[name])
+    return {"result": _remote_key_result_to_json(result)}
+
+
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
@@ -213,6 +297,10 @@ _HANDLERS: dict[str, Handler] = {
     "seek": _handle_seek,
     "set_volume": _handle_set_volume,
     "set_muted": _handle_set_muted,
+    "get_remote_status": _handle_get_remote_status,
+    "start_remote_pairing": _handle_start_remote_pairing,
+    "finish_remote_pairing": _handle_finish_remote_pairing,
+    "press_remote_key": _handle_press_remote_key,
 }
 
 
@@ -263,10 +351,18 @@ def run(control: ControlService, *, stdin: TextIO = sys.stdin, stdout: TextIO = 
         stdout.flush()
 
 
-def main() -> None:
+def default_service() -> ControlService:
+    """The service every host runs: Cast, plus the TV's own remote channel."""
     from control_tv.adapters import PyChromecastTransport
+    from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
 
-    run(ControlService(PyChromecastTransport()))
+    return ControlService(
+        PyChromecastTransport(), remote=TvRemoteChannel(default_credentials_dir())
+    )
+
+
+def main() -> None:
+    run(default_service())
 
 
 if __name__ == "__main__":

@@ -17,20 +17,16 @@ from typing import Any
 import pytest
 from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
-from control_tv.adapters.tv_remote import (
-    CERT_FILE,
-    KEY_FILE,
-    AudibleVolume,
-    RemoteKey,
-    RemoteObservation,
-    TvRemoteChannel,
-)
+from control_tv.adapters.tv_remote import CERT_FILE, KEY_FILE, TvRemoteChannel
 from control_tv.domain import (
+    AudibleVolume,
     CommandRejectedError,
     DeviceUnavailableError,
     InvalidArgumentError,
     OperationTimeoutError,
     PairingRequiredError,
+    RemoteKey,
+    RemoteObservation,
     UnsupportedOperationError,
 )
 

@@ -30,8 +30,6 @@ import re
 import stat
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -43,6 +41,13 @@ from control_tv.domain import (
     OperationTimeoutError,
     PairingRequiredError,
     UnsupportedOperationError,
+)
+from control_tv.domain.remote import (
+    VOLUME_KEYS,
+    AudibleVolume,
+    KeyPress,
+    RemoteKey,
+    RemoteObservation,
 )
 
 CLIENT_NAME = "control-TV"
@@ -58,49 +63,14 @@ RemoteFactory = Callable[[str, str, str, str], Any]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
 
 
-class RemoteKey(StrEnum):
-    """The keys this application may send, by their Android key code name."""
+def default_credentials_dir() -> Path:
+    """Where this user's client certificate and key live: the user data directory.
 
-    VOLUME_UP = "KEYCODE_VOLUME_UP"
-    VOLUME_DOWN = "KEYCODE_VOLUME_DOWN"
-    VOLUME_MUTE = "KEYCODE_VOLUME_MUTE"  # the speaker; KEYCODE_MUTE is the microphone
-    POWER = "KEYCODE_POWER"
-    DPAD_UP = "KEYCODE_DPAD_UP"
-    DPAD_DOWN = "KEYCODE_DPAD_DOWN"
-    DPAD_LEFT = "KEYCODE_DPAD_LEFT"
-    DPAD_RIGHT = "KEYCODE_DPAD_RIGHT"
-    DPAD_CENTER = "KEYCODE_DPAD_CENTER"
-    BACK = "KEYCODE_BACK"
-    HOME = "KEYCODE_HOME"
-
-
-VOLUME_KEYS = frozenset({RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE})
-
-
-@dataclass(frozen=True, slots=True)
-class AudibleVolume:
-    """The TV's own volume, as the TV reported it: the sound the owner actually hears."""
-
-    level: int
-    maximum: int
-    muted: bool
-
-
-@dataclass(frozen=True, slots=True)
-class RemoteObservation:
-    """What the TV reported on its remote channel; `None` means it did not say."""
-
-    is_on: bool | None
-    volume: AudibleVolume | None
-
-
-@dataclass(frozen=True, slots=True)
-class KeyPress:
-    """A key that was sent once, with what the TV reported just before and just after."""
-
-    key: RemoteKey
-    before: RemoteObservation
-    after: RemoteObservation
+    `$XDG_DATA_HOME/control-tv/tv-remote`, or `~/.local/share/control-tv/tv-remote`. The
+    embedded Android runtime sets the home directory to the app's private files.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "control-tv" / "tv-remote"
 
 
 def _volume(info: Any) -> AudibleVolume | None:
