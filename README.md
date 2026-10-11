@@ -32,7 +32,7 @@ Today: Cast playback control and the receiver's volume and mute are implemented 
 Prerequisite: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). `uv` resolves and pins every dependency (including its own managed Python) into `uv.lock`, so `setup` reproduces the exact same `.venv` on Linux, Windows and macOS. Only Linux has been exercised so far.
 
 ```bash
-python3 scripts/dev.py setup        # create .venv from uv.lock, with the MCP extra (uv sync --locked --extra mcp)
+python3 scripts/dev.py setup        # create .venv from uv.lock, with the optional extras (uv sync --locked --extra mcp --extra tvremote)
 python3 scripts/dev.py lock         # regenerate uv.lock after changing a dependency
 python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest, dependency check
 python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
@@ -91,6 +91,8 @@ python3 packaging/android_icon.py       # after a logo change: regenerate the la
 ```
 
 The APK runs the same `control_tv` package in CPython embedded by Chaquopy (arm64-v8a phones, Android 7.0 / API 24 and later). It is a debug build signed with the debug key, for personal sideloading (`adb install`); there is no Google Play publication objective.
+
+Android TV Remote channel (`DEVELOPMENT_PLAN.md` phase 2C, in progress): `control_tv.adapters.tv_remote` speaks the Google TV's own remote protocol (the audible volume, mute, power and navigation keys a fixed Cast volume cannot change) through the optional `control-tv[tvremote]` extra (`androidtvremote2==0.3.2`, Apache-2.0), which `setup` installs for development. It pairs explicitly with the code the TV shows, keeps its client certificate and key private (directory 0700, files 0600), sends only an allowlist of keys, once each, over one short connection per operation, and never resends after an ambiguous failure. It is not wired to the application yet, and the frozen desktop bridge and the Android app do not include it until it is validated on a real TV.
 
 MCP server (`DEVELOPMENT_PLAN.md` Phase 6): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency for development (`uv sync --locked --extra mcp`: `control-tv[mcp]`, the official MCP Python SDK `mcp==1.30.0`). The SDK stays optional at run time: the frozen desktop bridge (`bridge-build`) and the Android app (`android-python`) are built from their own environments without it. The client starts it; for Codex, in `~/.codex/config.toml`:
 

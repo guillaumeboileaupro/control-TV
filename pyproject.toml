@@ -18,6 +18,12 @@ dependencies = [
 mcp = [
     "mcp==1.30.0",
 ]
+# The Android TV Remote channel (protocol v2) of a Google TV: audible volume, mute, keys.
+# Optional while it is validated on real TVs: the desktop bridge and the Android app do not
+# install it yet (cryptography is native; see DEVELOPMENT_PLAN.md, phase 2C).
+tvremote = [
+    "androidtvremote2==0.3.2",
+]
 
 [dependency-groups]
 dev = [

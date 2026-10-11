@@ -13,6 +13,7 @@ from control_tv.domain.errors import (
     ErrorCode,
     InvalidArgumentError,
     OperationTimeoutError,
+    PairingRequiredError,
     UnsupportedMediaError,
     UnsupportedOperationError,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "MediaStatus",
     "MetadataType",
     "OperationTimeoutError",
+    "PairingRequiredError",
     "PlaybackState",
     "ReceiverStatus",
     "StreamType",
