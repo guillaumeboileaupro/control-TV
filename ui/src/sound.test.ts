@@ -976,7 +976,7 @@ describe("fixed volume", () => {
     assert.equal(
       describeSound(withRemote).note,
       "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it." +
-        " This TV has its own remote-control channel, which control-TV doesn't use yet.",
+        " Use the TV remote below for the volume you hear.",
     );
     for (const state of [notOffered, unknown, fixed]) {
       assert.equal(

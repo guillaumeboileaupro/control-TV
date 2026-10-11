@@ -1,0 +1,353 @@
+// Tests for the TV remote panel logic, run with Node's built-in runner (`npm test`). Hand-written
+// states and answers only: they say nothing about a real TV, only how the panel reasons over what
+// the control layer answers.
+
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+
+import { DEVICE, readyWith, statusOf } from "./fixtures.ts";
+import {
+  finishDiscovery,
+  idle,
+  refreshStatus,
+  selectDevice,
+  startDiscovery,
+  type AppState,
+  type Device,
+} from "./model.ts";
+import { startTransport } from "./playback.ts";
+import {
+  describeRemote,
+  describeReport,
+  finishRemote,
+  remoteInvocation,
+  startRemote,
+  toReport,
+  type RemoteAction,
+  type RemoteAnswer,
+  type RemoteRequest,
+} from "./remote.ts";
+
+const TV: Device = { ...DEVICE, androidTvRemote: true };
+
+function withTv(device: Device = TV): AppState {
+  const ready = readyWith(statusOf());
+  return { ...ready, selected: device, devices: [device] };
+}
+
+function run(
+  state: AppState,
+  action: RemoteAction,
+  answer: RemoteAnswer,
+): { state: AppState; request: RemoteRequest } {
+  const started = startRemote(state, action);
+  assert.notEqual(started.request, null, "the request should have started");
+  const request = started.request as RemoteRequest;
+  return { state: finishRemote(started.state, request.requestId, answer), request };
+}
+
+const report = (level: number, muted = false) => ({
+  isOn: true,
+  volume: { level, max: 100, muted },
+});
+
+const keyAnswer = (confirmation: string, after: unknown, detail = "the TV reports volume 11/100") =>
+  ({
+    ok: true,
+    result: {
+      result: { key: "volume_up", deviceId: "a", confirmation, detail, before: report(10), after },
+    },
+  }) as const;
+
+const failure = (code: string, message = "detail"): RemoteAnswer => ({
+  ok: false,
+  failure: { code, message },
+});
+
+describe("which TV gets the panel", () => {
+  test("only a TV that advertises its own remote channel", () => {
+    assert.equal(describeRemote(withTv()).visible, true);
+    for (const androidTvRemote of [false, null, undefined]) {
+      const state = withTv({ ...DEVICE, androidTvRemote });
+      assert.equal(describeRemote(state).visible, false);
+      assert.equal(startRemote(state, { kind: "status" }).request, null);
+    }
+  });
+
+  test("never a Cast group, even one that reports the channel", () => {
+    const group = withTv({ ...TV, kind: "group" });
+
+    assert.equal(describeRemote(group).visible, false);
+    assert.equal(startRemote(group, { kind: "key", key: "volume_up" }).request, null);
+  });
+});
+
+describe("requests", () => {
+  test("each action maps onto its application command with only what it needs", () => {
+    const base = { requestId: 1, deviceId: "a" };
+    assert.deepEqual(remoteInvocation({ ...base, action: { kind: "status" } }), {
+      command: "bridge_get_remote_status",
+      args: { deviceId: "a" },
+    });
+    assert.deepEqual(remoteInvocation({ ...base, action: { kind: "key", key: "mute" } }), {
+      command: "bridge_press_remote_key",
+      args: { deviceId: "a", key: "mute" },
+    });
+    assert.deepEqual(remoteInvocation({ ...base, action: { kind: "show_code" } }), {
+      command: "bridge_start_remote_pairing",
+      args: { deviceId: "a" },
+    });
+    assert.deepEqual(remoteInvocation({ ...base, action: { kind: "pair", code: "A1B2C3" } }), {
+      command: "bridge_finish_remote_pairing",
+      args: { deviceId: "a", code: "A1B2C3" },
+    });
+  });
+
+  test("one request at a time, shared with every other request of the app", () => {
+    const started = startRemote(withTv(), { kind: "key", key: "volume_up" });
+
+    assert.equal(idle(started.state), false);
+    assert.equal(startRemote(started.state, { kind: "key", key: "volume_up" }).request, null);
+    assert.equal(startTransport(started.state, "pause").request, null);
+    assert.equal(refreshStatus(started.state).request, null);
+    assert.equal(describeRemote(started.state).keysEnabled, false);
+    assert.equal(describeRemote(started.state).progress, "Sending Volume up…");
+    assert.equal(describeRemote(started.state).pendingKey, "volume_up");
+  });
+
+  test("no key while another app request runs", () => {
+    const pending = startTransport(withTv(), "pause").state;
+
+    assert.equal(startRemote(pending, { kind: "key", key: "volume_up" }).request, null);
+  });
+
+  test("a late or duplicate answer is ignored", () => {
+    const started = startRemote(withTv(), { kind: "status" });
+    const request = started.request as RemoteRequest;
+
+    assert.equal(
+      finishRemote(started.state, request.requestId + 1, { ok: true, result: {} }),
+      started.state,
+    );
+    const done = finishRemote(started.state, request.requestId, {
+      ok: true,
+      result: { remote: report(3) },
+    });
+    assert.equal(finishRemote(done, request.requestId, { ok: true, result: {} }), done);
+  });
+});
+
+describe("keys and what the TV reports", () => {
+  test("a confirmed volume key shows the TV's own new volume", () => {
+    const { state } = run(
+      withTv(),
+      { kind: "key", key: "volume_up" },
+      keyAnswer("confirmed", report(11)),
+    );
+    const view = describeRemote(state);
+
+    assert.equal(view.readout, "TV volume 11 of 100");
+    assert.deepEqual(view.outcome, {
+      tone: "done",
+      text: "Volume up: the TV reports volume 11/100.",
+      technical: null,
+    });
+    assert.equal(state.remote.pairing, "paired");
+    assert.equal(idle(state), true);
+  });
+
+  test("an unconfirmed key is sent, not done, and shows what the TV still reports", () => {
+    const { state } = run(
+      withTv(),
+      { kind: "key", key: "volume_up" },
+      keyAnswer("unconfirmed", report(100), "sent; the TV still reports volume 100/100"),
+    );
+    const view = describeRemote(state);
+
+    assert.equal(view.outcome?.tone, "sent");
+    assert.equal(view.outcome?.text, "Volume up was sent, but the TV didn't report the change.");
+    assert.equal(view.readout, "TV volume 100 of 100");
+  });
+
+  test("a key whose effect the TV does not report asks the person to look", () => {
+    const { state } = run(
+      withTv(),
+      { kind: "key", key: "power" },
+      keyAnswer("not_checked", { isOn: null, volume: null }),
+    );
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "Power was sent. The TV doesn't report what this key does: check the TV.",
+    );
+    assert.equal(describeRemote(state).readout, "");
+  });
+
+  test("a key whose answer is lost is uncertain and never resent", () => {
+    for (const code of ["timeout", "bridge_timeout", "bridge_transport"]) {
+      const { state } = run(withTv(), { kind: "key", key: "volume_up" }, failure(code));
+
+      assert.equal(
+        describeRemote(state).outcome?.text,
+        "Volume up may or may not have reached the TV. It was not sent again: check the TV.",
+      );
+      assert.equal(state.remote.pending, null);
+    }
+  });
+
+  test("the reported state is worded from the TV's report only", () => {
+    assert.equal(describeReport(null), "");
+    assert.equal(describeReport(report(7, true)), "TV volume 7 of 100 · Muted");
+    assert.equal(describeReport({ isOn: false, volume: null }), "The TV reports it is off");
+    assert.equal(describeReport({ isOn: null, volume: null }), "");
+  });
+
+  test("a malformed report is the TV saying nothing", () => {
+    assert.equal(toReport(null), null);
+    assert.deepEqual(toReport({ isOn: "yes", volume: { level: 3, max: 0, muted: false } }), {
+      isOn: null,
+      volume: null,
+    });
+    assert.deepEqual(toReport({ isOn: true, volume: { level: "3", max: 100, muted: false } }), {
+      isOn: true,
+      volume: null,
+    });
+  });
+
+  test("reading the TV's volume shows its report and sends no key", () => {
+    const { state, request } = run(
+      withTv(),
+      { kind: "status" },
+      { ok: true, result: { remote: report(25, true) } },
+    );
+
+    assert.equal(request.action.kind, "status");
+    assert.equal(describeRemote(state).readout, "TV volume 25 of 100 · Muted");
+    assert.equal(describeRemote(state).outcome, null);
+  });
+});
+
+describe("pairing", () => {
+  test("a TV that must be paired first hides the keys and offers to show a code", () => {
+    const { state } = run(withTv(), { kind: "key", key: "volume_up" }, failure("pairing_required"));
+    const view = describeRemote(state);
+
+    assert.equal(state.remote.pairing, "needed");
+    assert.equal(view.keysEnabled, false);
+    assert.deepEqual(view.pairing, {
+      codeEntry: false,
+      text: "Pair control-TV with this TV to use its own remote.",
+    });
+    assert.equal(startRemote(state, { kind: "key", key: "volume_up" }).request, null);
+    assert.equal(startRemote(state, { kind: "status" }).request, null);
+    assert.equal(view.readEnabled, false);
+  });
+
+  test("showing a code, then typing it, pairs", () => {
+    const needed = run(withTv(), { kind: "status" }, failure("pairing_required")).state;
+    const shown = run(
+      needed,
+      { kind: "show_code" },
+      { ok: true, result: { pairing: "code_shown" } },
+    );
+
+    assert.deepEqual(describeRemote(shown.state).pairing, {
+      codeEntry: true,
+      text: "Type the code the TV shows.",
+    });
+    assert.equal(describeRemote(shown.state).outcome, null);
+    const paired = run(
+      shown.state,
+      { kind: "pair", code: " a1b2c3 " },
+      {
+        ok: true,
+        result: { pairing: "paired" },
+      },
+    );
+
+    assert.deepEqual(paired.request.action, { kind: "pair", code: "A1B2C3" });
+    assert.equal(paired.state.remote.pairing, "paired");
+    assert.equal(describeRemote(paired.state).pairing, null);
+    assert.equal(describeRemote(paired.state).keysEnabled, true);
+    assert.equal(describeRemote(paired.state).outcome?.text, "Paired with this TV.");
+  });
+
+  test("a malformed code is refused here and nothing is sent", () => {
+    const shown = { ...withTv(), remote: { ...withTv().remote, pairing: "code_shown" as const } };
+
+    for (const code of ["12345", "1234567", "GHIJKL", ""]) {
+      const started = startRemote(shown, { kind: "pair", code });
+      assert.equal(started.request, null);
+      assert.equal(
+        started.state.remote.outcome?.text,
+        "Type the 6 letters and digits the TV shows.",
+      );
+    }
+  });
+
+  test("a code is only sent after the TV was asked to show one", () => {
+    assert.equal(startRemote(withTv(), { kind: "pair", code: "A1B2C3" }).request, null);
+  });
+
+  test("a refused code asks for a new one", () => {
+    const shown = { ...withTv(), remote: { ...withTv().remote, pairing: "code_shown" as const } };
+    const { state } = run(shown, { kind: "pair", code: "FFFFFF" }, failure("command_rejected"));
+
+    assert.equal(state.remote.pairing, "needed");
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "The TV refused that code. Show a new code and try again.",
+    );
+  });
+
+  test("a version without the channel says so", () => {
+    const { state } = run(withTv(), { kind: "status" }, failure("unsupported_operation"));
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "This version of control-TV can't use the TV's own remote.",
+    );
+  });
+
+  test("any other failure is worded by the shared failure descriptions", () => {
+    const { state } = run(withTv(), { kind: "status" }, failure("device_unavailable"));
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "Can't reach this device. Make sure it is on and connected to the same network, then try again.",
+    );
+    assert.equal(describeRemote(state).outcome?.technical, "device_unavailable: detail");
+  });
+});
+
+describe("the panel belongs to one TV", () => {
+  test("selecting another TV starts from nothing; refreshing the same TV keeps it", () => {
+    const other: Device = { ...TV, id: "b", friendlyName: "Device b" };
+    const paired = run(
+      withTv(),
+      { kind: "status" },
+      { ok: true, result: { remote: report(5) } },
+    ).state;
+    const listed = finishDiscovery(startDiscovery(paired), [TV, other]);
+
+    const refreshed = refreshStatus(listed).state;
+    assert.equal(refreshed.remote.pairing, "paired");
+
+    const switched = selectDevice(listed, "b").state;
+    assert.equal(switched.remote.pairing, "unknown");
+    assert.equal(switched.remote.report, null);
+  });
+
+  test("a TV that disappears from discovery takes its panel state with it", () => {
+    const paired = run(
+      withTv(),
+      { kind: "status" },
+      { ok: true, result: { remote: report(5) } },
+    ).state;
+
+    const gone = finishDiscovery(startDiscovery(paired), []);
+
+    assert.equal(gone.remote.report, null);
+    assert.equal(gone.remote.pairing, "unknown");
+  });
+});

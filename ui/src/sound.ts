@@ -137,7 +137,7 @@ export function describeSound(state: AppState): SoundDescription {
     // own setting, which was seen not to silence a real TV, so it is not promised.
     note = "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it.";
     if (state.selected.androidTvRemote === true) {
-      note += " This TV has its own remote-control channel, which control-TV doesn't use yet.";
+      note += " Use the TV remote below for the volume you hear.";
     }
   } else if (volume === null && mute === null) {
     note = "The TV didn't report its volume or mute state, so sound controls aren't available.";
