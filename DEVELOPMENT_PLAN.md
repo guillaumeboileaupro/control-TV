@@ -1148,7 +1148,7 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 | Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve / blocage |
 |---|---:|---:|---:|---:|---:|---|
 | Revue de dépendance `androidtvremote2` 0.3.2 (licence, graphe, compatibilité protobuf 7 / cryptography 50) | 100 % | 30 min | ≈ 20 min (2026-10-10) | 0 | ≈ 66 % de la tâche | lock : seuls `aiofiles` et `androidtvremote2` ajoutés ; essai hors ligne dans un venv jetable |
-| Adaptateur `tv_remote` (appairage, identifiants privés, touches autorisées, lecture volume audible) | 100 % implémenté, 0 % validé sur TV | 2–3 h | ≈ 8 min | 0 (code) | ≈ 5 % de l'estimation basse | 45 tests sur simulation, couverture 100 % ; CI à confirmer |
+| Adaptateur `tv_remote` (appairage, identifiants privés, touches autorisées, lecture volume audible) | 100 % implémenté, 0 % validé sur TV | 2–3 h | ≈ 8 min | 0 (code) | ≈ 5 % de l'estimation basse | 45 tests sur simulation, couverture 100 % du module ; CI 38167461872 : 4/4 jobs verts (1262 réussis, 9 ignorés, 98,55 %) |
 | Branchement `ControlService` / pont / UI (volume audible, mute, alimentation, navigation) | 0 % | 2–4 h | 0 | 2–4 h | 0 % | prochaine tranche |
 | Appairage et essais réels Volume −/+, Mute | 0 % | 1 h | 0 | 1 h | 0 % | **autorisation du propriétaire, TV choisie, propriétaire devant la TV** |
 | Empaquetage Linux (pont figé) et Android (Chaquopy, cryptography 42.0.8) | 0 % | 2–4 h | 0 | 2–4 h | 0 % | PR séparée après preuve sur TV |
