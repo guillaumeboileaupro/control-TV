@@ -9,8 +9,8 @@ Rules this adapter keeps:
 
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
-- Only an allowlist of keys can be sent (`RemoteKey`). Text, app launch and voice are not
-  exposed by this module.
+- Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
+  field (`type_text`), never logged or echoed. App launch and voice are not exposed.
 - One short connection per operation: connect, act, flush, close. No connection stays open
   and nothing listens, so there is no background session that could drop a key silently.
 - A key is sent once. A failure after the key was handed to the connection is ambiguous: the
@@ -44,11 +44,13 @@ from control_tv.domain import (
     UnsupportedOperationError,
 )
 from control_tv.domain.remote import (
+    MAX_TEXT_LENGTH,
     VOLUME_KEYS,
     AudibleVolume,
     KeyPress,
     RemoteKey,
     RemoteObservation,
+    TextEntry,
 )
 
 CLIENT_NAME = "control-TV"
@@ -101,9 +103,34 @@ def _volume(info: Any) -> AudibleVolume | None:
 
 def _observe(remote: Any) -> RemoteObservation:
     is_on = remote.is_on
+    app = remote.current_app
     return RemoteObservation(
-        is_on=is_on if isinstance(is_on, bool) else None, volume=_volume(remote.volume_info)
+        is_on=is_on if isinstance(is_on, bool) else None,
+        volume=_volume(remote.volume_info),
+        current_app=app if isinstance(app, str) and app else None,
     )
+
+
+def _field_reported(remote: Any) -> bool:
+    """Whether the TV reported an active text field (its input-method edit counters).
+
+    The library keeps them on its protocol object only; `androidtvremote2` is pinned, and a
+    missing attribute reads as "not reported", never as an active field.
+    """
+    protocol = getattr(remote, "_remote_message_protocol", None)
+    counter = getattr(protocol, "ime_field_counter", 0)
+    return isinstance(counter, int) and not isinstance(counter, bool) and counter > 0
+
+
+def _checked_text(text: object) -> str:
+    """Printable text only, 1 to MAX_TEXT_LENGTH characters. Never echoed in a message."""
+    if not isinstance(text, str) or not text:
+        raise InvalidArgumentError("the text to type must be a non-empty string")
+    if len(text) > MAX_TEXT_LENGTH:
+        raise InvalidArgumentError(f"the text to type is limited to {MAX_TEXT_LENGTH} characters")
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise InvalidArgumentError("the text to type cannot contain control characters")
+    return text
 
 
 def _checked_host(host: str) -> str:
@@ -127,8 +154,9 @@ def _library_errors() -> tuple[type[Exception], type[Exception], type[Exception]
 def _default_remote_factory(client_name: str, certfile: str, keyfile: str, host: str) -> Any:
     from androidtvremote2 import AndroidTVRemote
 
-    # Built inside the running loop, which the library requires; IME off: no text input here.
-    return AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=False)
+    # Built inside the running loop, which the library requires. The input method is on: it
+    # carries text to the TV's active field and reports the app in front.
+    return AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True)
 
 
 def _default_cert_generator(client_name: str) -> tuple[bytes, bytes]:
@@ -230,6 +258,24 @@ class TvRemoteChannel:
             if key in VOLUME_KEYS:
                 await self._wait_for(lambda: _observe(remote).volume != before.volume)
             return KeyPress(key=key, before=before, after=_observe(remote))
+
+        return self._run(lambda: self._session(host, send))
+
+    def type_text(self, host: str, text: str) -> TextEntry:
+        """Send `text` once to the TV's active text field, replacing what the field holds.
+
+        The adapter waits a short time for the TV to report an active field, then sends the
+        text once either way and says whether a field was reported. The text never appears
+        in an error or a result.
+        """
+        host = _checked_host(host)
+        text = _checked_text(text)
+
+        async def send(remote: Any) -> TextEntry:
+            await self._wait_for(lambda: _field_reported(remote))
+            reported = _field_reported(remote)
+            remote.send_text(text)
+            return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
 
         return self._run(lambda: self._session(host, send))
 

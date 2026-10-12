@@ -48,6 +48,7 @@ function run(
 
 const report = (level: number, muted = false) => ({
   isOn: true,
+  currentApp: null,
   volume: { level, max: 100, muted },
 });
 
@@ -216,18 +217,23 @@ describe("keys and what the TV reports", () => {
   test("the reported state is worded from the TV's report only", () => {
     assert.equal(describeReport(null), "");
     assert.equal(describeReport(report(7, true)), "TV volume 7 of 100 · Muted");
-    assert.equal(describeReport({ isOn: false, volume: null }), "The TV reports it is off");
-    assert.equal(describeReport({ isOn: null, volume: null }), "");
+    assert.equal(
+      describeReport({ isOn: false, currentApp: null, volume: null }),
+      "The TV reports it is off",
+    );
+    assert.equal(describeReport({ isOn: null, currentApp: null, volume: null }), "");
   });
 
   test("a malformed report is the TV saying nothing", () => {
     assert.equal(toReport(null), null);
     assert.deepEqual(toReport({ isOn: "yes", volume: { level: 3, max: 0, muted: false } }), {
       isOn: null,
+      currentApp: null,
       volume: null,
     });
     assert.deepEqual(toReport({ isOn: true, volume: { level: "3", max: 100, muted: false } }), {
       isOn: true,
+      currentApp: null,
       volume: null,
     });
   });
@@ -367,5 +373,84 @@ describe("the panel belongs to one TV", () => {
 
     assert.equal(gone.remote.report, null);
     assert.equal(gone.remote.pairing, "unknown");
+  });
+});
+
+describe("typing on the TV", () => {
+  const typed = (fieldReported: boolean): RemoteAnswer => ({
+    ok: true,
+    result: {
+      result: {
+        deviceId: "a",
+        confirmation: "not_checked",
+        detail: "sent",
+        fieldReported,
+        observed: { isOn: true, currentApp: "com.example.tv", volume: null },
+      },
+    },
+  });
+
+  test("text goes to its own command, with only the device and the text", () => {
+    const started = startRemote(withTv(), { kind: "text", text: "hello world" });
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest), {
+      command: "bridge_type_remote_text",
+      args: { deviceId: "a", text: "hello world" },
+    });
+    assert.equal(describeRemote(started.state).sendingText, true);
+    assert.equal(describeRemote(started.state).progress, "Sending text…");
+  });
+
+  test("sent text asks the person to check, and never repeats the text", () => {
+    const { state } = run(withTv(), { kind: "text", text: "s3cret pass" }, typed(true));
+    const view = describeRemote(state);
+
+    assert.equal(view.outcome?.tone, "sent");
+    assert.equal(view.outcome?.text, "Text sent to the TV's text field: check the TV.");
+    assert.equal(JSON.stringify(state.remote).includes("s3cret"), false);
+    assert.equal(view.readout, "TV app: com.example.tv");
+  });
+
+  test("text sent while the TV reported no open field says how to fix it", () => {
+    const { state } = run(withTv(), { kind: "text", text: "abc" }, typed(false));
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "Text sent, but the TV didn't report an open text field. Open a search or text field on the TV, then send again.",
+    );
+  });
+
+  test("empty, too long or multi-line text is refused here and nothing is sent", () => {
+    for (const text of ["", "a".repeat(257), "two\nlines", "tab\there"]) {
+      const started = startRemote(withTv(), { kind: "text", text });
+      assert.equal(started.request, null);
+      assert.equal(started.state.remote.outcome?.text, "Type 1 to 256 characters, on one line.");
+    }
+  });
+
+  test("text whose answer is lost is uncertain, never resent and never shown", () => {
+    const { state } = run(withTv(), { kind: "text", text: "s3cret" }, failure("bridge_timeout"));
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "The text may or may not have reached the TV. It was not sent again: check the TV.",
+    );
+    assert.equal(JSON.stringify(state.remote).includes("s3cret"), false);
+  });
+
+  test("no text while pairing is needed", () => {
+    const needed = { ...withTv(), remote: { ...withTv().remote, pairing: "needed" as const } };
+
+    assert.equal(startRemote(needed, { kind: "text", text: "abc" }).request, null);
+  });
+
+  test("Backspace and Enter are keys of their own", () => {
+    const started = startRemote(withTv(), { kind: "key", key: "delete" });
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest).args, {
+      deviceId: "a",
+      key: "delete",
+    });
+    assert.equal(describeRemote(started.state).progress, "Sending Backspace…");
   });
 });

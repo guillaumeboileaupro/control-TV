@@ -29,6 +29,7 @@ from control_tv.domain import (
     PairingRequiredError,
     RemoteKey,
     RemoteObservation,
+    TextEntry,
     UnsupportedOperationError,
 )
 from control_tv.ports import TvRemote
@@ -74,6 +75,13 @@ class FakeRemote:
         self.calls.append(("press", host, key.value))
         self._maybe_fail()
         return KeyPress(key=key, before=self.before, after=self.after or self.before)
+
+    field_reported: bool = True
+
+    def type_text(self, host: str, text: str) -> TextEntry:
+        self.calls.append(("type_text", host, text))
+        self._maybe_fail()
+        return TextEntry(length=len(text), field_reported=self.field_reported, observed=self.before)
 
 
 class GroupTransport(FakeTransport):
@@ -253,7 +261,11 @@ def test_bridge_remote_status_reports_what_the_tv_said() -> None:
 
     response = call(service, "get_remote_status", deviceId=str(DEVICE_ID))
 
-    assert response == {"id": 1, "ok": True, "result": {"remote": {"isOn": None, "volume": None}}}
+    assert response == {
+        "id": 1,
+        "ok": True,
+        "result": {"remote": {"isOn": None, "currentApp": None, "volume": None}},
+    }
 
 
 def test_bridge_press_key_answers_with_the_tvs_reports() -> None:
@@ -267,8 +279,16 @@ def test_bridge_press_key_answers_with_the_tvs_reports() -> None:
         "deviceId": str(DEVICE_ID),
         "confirmation": "confirmed",
         "detail": "the TV reports its sound muted",
-        "before": {"isOn": True, "volume": {"level": 10, "max": 100, "muted": False}},
-        "after": {"isOn": True, "volume": {"level": 10, "max": 100, "muted": True}},
+        "before": {
+            "isOn": True,
+            "currentApp": None,
+            "volume": {"level": 10, "max": 100, "muted": False},
+        },
+        "after": {
+            "isOn": True,
+            "currentApp": None,
+            "volume": {"level": 10, "max": 100, "muted": True},
+        },
     }
 
 
@@ -344,3 +364,70 @@ def test_without_xdg_data_home_credentials_go_to_the_users_local_share(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     assert default_credentials_dir() == tmp_path / ".local" / "share" / "control-tv" / "tv-remote"
+
+
+# Typing text ---------------------------------------------------------------------------------
+
+
+def test_text_goes_once_to_the_discovered_tv_and_is_never_confirmed_by_it() -> None:
+    remote = FakeRemote()
+
+    result = discovered(remote).type_remote_text(DEVICE_ID, "hello world")
+
+    assert remote.calls == [("type_text", HOST, "hello world")]
+    assert result.confirmation is Confirmation.NOT_CHECKED
+    assert result.detail == "sent to the TV's active text field; check the TV"
+
+
+def test_text_sent_without_an_active_field_reported_says_so() -> None:
+    result = discovered(FakeRemote(field_reported=False)).type_remote_text(DEVICE_ID, "abc")
+
+    assert result.detail == "sent, but the TV did not report an active text field; check the TV"
+    assert result.field_reported is False
+
+
+def test_text_must_be_a_string_and_a_group_gets_none() -> None:
+    remote = FakeRemote()
+
+    with pytest.raises(InvalidArgumentError):
+        discovered(remote).type_remote_text(DEVICE_ID, 42)  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(remote, GroupTransport()).type_remote_text(DEVICE_ID, "abc")
+
+    assert remote.calls == []
+
+
+def test_bridge_types_text_and_never_echoes_it() -> None:
+    secret = "p4ss word"
+    response = call(
+        discovered(FakeRemote()), "type_remote_text", deviceId=str(DEVICE_ID), text=secret
+    )
+
+    assert response["ok"] is True
+    assert response["result"]["result"]["confirmation"] == "not_checked"
+    assert response["result"]["result"]["fieldReported"] is True
+    assert secret not in str(response)
+
+
+def test_bridge_refuses_text_that_is_not_a_string() -> None:
+    remote = FakeRemote()
+
+    response = call(discovered(remote), "type_remote_text", deviceId=str(DEVICE_ID), text=None)
+
+    assert response["error"]["code"] == "invalid_argument"
+    assert remote.calls == []
+
+
+def test_bridge_reports_the_app_in_front_when_the_tv_says() -> None:
+    observed = RemoteObservation(is_on=True, volume=None, current_app="com.example.tv")
+
+    response = call(
+        discovered(FakeRemote(before=observed)), "get_remote_status", deviceId=str(DEVICE_ID)
+    )
+
+    assert response["result"]["remote"]["currentApp"] == "com.example.tv"
+
+
+def test_bridge_keyboard_keys_are_backspace_and_enter() -> None:
+    assert REMOTE_KEYS["delete"] is RemoteKey.DELETE
+    assert REMOTE_KEYS["enter"] is RemoteKey.ENTER
