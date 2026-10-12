@@ -23,7 +23,7 @@
 - [x] Tests locaux rapportés : **1207 réussis, 8 ignorés**, couverture **98,02 %** ; CI de référence : **1206 réussis, 9 ignorés**, 4/4 jobs verts. Différence liée à l'environnement de tests.
 - [x] Revue de reproductibilité du protocole R1–R4 : **prêt à exécuter avec autorisation**.
 - [ ] Exécuter R1–R4 sur les deux plateformes réelles : **NON FAIT**.
-- [ ] Fusionner PR #38 : **NON AUTORISÉ** (approbation technique ≠ autorisation du propriétaire).
+- [x] Fusionner PR #38 : autorisé et fusionné le 2026-10-12 (`5451946`), CI `main` 4/4 verte.
 
 ## Phase 0 — Gouvernance, exigences et architecture (transverse)
 
@@ -76,7 +76,7 @@
 - [x] P3-6 : critères PASS/FAIL/NOT RUN par étape et code d'erreur de lecture. Fait (branche PR #38, non fusionnée).
 - [x] P3-7 : vérifier les confirmations de commandes supplantées contre l'historique d'état lu par le simulateur. Fait (branche PR #38, non fusionnée).
 - [x] Après corrections facultatives retenues, exécuter les tests pertinents et vérifier les quatre jobs CI sur le nouveau HEAD. Fait : local 1 208 réussis / 8 ignorés / 1 `xfail` ; CI `ca7fe39` run `38037796979`, 4/4 jobs réussis.
-- [ ] Demander l'autorisation explicite du propriétaire **avant toute fusion de PR #38**.
+- [x] Demander l'autorisation explicite du propriétaire **avant toute fusion de PR #38** (accordée le 2026-10-12).
 
 ### 1.3 R1–R4 — Recette réelle en lecture seule
 
@@ -326,7 +326,7 @@
 
 ## Prochaine séquence concrète
 
-1. **PR #38** : décider des corrections P3 documentaires (P3-1/2 ; clarifications R1–R4 P3-4/5/6), puis demander l'autorisation de fusion. **APPROVED techniquement ≠ fusion autorisée**.
+1. ~~PR #38~~ : fusionnée le 2026-10-12 ; décision du propriétaire : le code MCP déjà dans `main` est conservé tel quel, sans développement.
 2. **R1–R4** : obtenir autorisation pour la recette réelle en lecture seule, consigner les preuves et les anomalies.
 3. **PR #33** : résoudre les conflits documentaires sans écraser le plan ; relancer CI ; valider le widget sur matériel avant fusion autorisée.
 4. **Étude de faisabilité prioritaire phase 2** : déterminer sur la TV cible comment **énumérer/lancer les applications installées** et **saisir du texte** depuis les deux plateformes ; mettre à jour les estimations.

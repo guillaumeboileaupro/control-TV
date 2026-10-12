@@ -4,7 +4,7 @@
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.
 
-**Abandoned by the owner on 2026-10-12: MCP and ChatGPT Voice (content started from ChatGPT, ChatGPT reach, gate G1) and Windows.** They are no longer goals or work items of this plan; PR #36 is closed. Code already merged for them stays in `main` until a separate decision (the local MCP server of PR #31, `control_tv.mcp_server` and its optional `mcp` extra); it is not developed further.
+**Abandoned by the owner on 2026-10-12: MCP and ChatGPT Voice (content started from ChatGPT, ChatGPT reach, gate G1) and Windows.** They are no longer goals or work items of this plan; PR #36 is closed. Code already merged for them stays in `main` (owner decision, 2026-10-12: kept as it is; the local MCP server of PR #31, `control_tv.mcp_server` and its optional `mcp` extra); it is not developed further.
 
 Python is part of the implementation, with `pychromecast` for Chromecast discovery and playback control; other TV endpoints (power, audible sound, navigation, applications, text) are added behind the same service only where they are proven on the owner's hardware (today the Android TV Remote channel). Tauri 2 provides the cross-platform application shell; Rust/native components are used where they bring a concrete benefit.
 
@@ -317,7 +317,7 @@ Exit criteria:
 
 ## Phase 6 - MCP adapter: abandoned
 
-Abandoned by the owner on 2026-10-12 together with ChatGPT Voice; PR #36 (read-only ChatGPT feasibility test) is closed. What PR #31 merged stays in `main` and is not developed further: a local stdio MCP server (`src/control_tv/mcp_server.py`, optional extra `control-tv[mcp]`, installed by `dev.py setup` for development only), never packaged in the `.deb` or the APK and never sent a command to a real TV. Removing that code is a separate owner decision.
+Abandoned by the owner on 2026-10-12 together with ChatGPT Voice; PR #36 (read-only ChatGPT feasibility test) is closed. What PR #31 merged stays in `main` and is not developed further: a local stdio MCP server (`src/control_tv/mcp_server.py`, optional extra `control-tv[mcp]`, installed by `dev.py setup` for development only), never packaged in the `.deb` or the APK and never sent a command to a real TV. Owner decision (2026-10-12): the code is kept where it is, not developed further.
 
 ## Estimates
 
@@ -608,7 +608,7 @@ A deliverable or exit criterion whose wording refers to real hardware, a real de
 
 Les deux applications doivent fonctionner indépendamment, sans serveur permanent, avec une interface utilisable et des commandes fiables.
 
-**MCP, ChatGPT Voice et Windows sont abandonnés (décision du propriétaire, 2026-10-12)** : ce ne sont plus des objectifs ; la PR #36 est fermée ; le code MCP déjà présent dans `main` (PR #31) n'est plus développé, sa suppression éventuelle est une décision séparée.
+**MCP, ChatGPT Voice et Windows sont abandonnés (décision du propriétaire, 2026-10-12)** : ce ne sont plus des objectifs ; la PR #36 est fermée ; le code MCP déjà présent dans `main` (PR #31) n'est plus développé, le propriétaire a décidé le 2026-10-12 de le conserver tel quel.
 
 ### 1. État général du projet
 
@@ -877,8 +877,8 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [x] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [x] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [x] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min). Fait sur la branche de la PR #38 (non fusionnée).
-- [ ] Obtenir autorisation du propriétaire avant toute fusion PR #38.
-- [ ] Fusionner PR #38 uniquement si autorisé, puis vérifier CI sur la branche cible.
+- [x] Obtenir autorisation du propriétaire avant toute fusion PR #38 (2026-10-12).
+- [x] Fusionner PR #38 uniquement si autorisé, puis vérifier CI sur la branche cible : fusionnée le 2026-10-12 (`5451946`), CI `main` run `38266680952` 4/4 jobs verts.
 
 **Note :** les sept P3 représentent ≈67 min si tous retenus, **sans obligation de les effectuer avant les essais matériels** ; P3-1/P3-2 sont recommandés avant une éventuelle fusion. La PR #33 reste non fusionnable à cause de conflits documentaires ; #36 est fermée (abandon MCP/Voice, 2026-10-12).
 

@@ -1,18 +1,17 @@
 # control-TV — TODO
 
-État au 2026-10-12. Liste courte des prochaines actions, dans l'ordre. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
+État au 2026-10-12 (mis à jour après les fusions). Liste courte des prochaines actions, dans l'ordre. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
 
 **Objectif :** deux télécommandes autonomes, Ubuntu et Android, qui contrôlent la même Google TV en parallèle, sans serveur permanent. MCP, ChatGPT Voice et Windows sont abandonnés depuis le 2026-10-12.
 
 **Règles :** aucune fusion et aucune commande envoyée à la TV sans l'accord explicite du propriétaire. Une CI verte n'est pas une validation sur matériel.
 
-## 1. Fusions à décider (propriétaire)
+## 1. Fusions — terminé le 2026-10-12
 
-- [ ] **#41** : le canal télécommande est intégré au `.deb` et à l'APK. CI verte.
-- [ ] **#42** : clavier distant, Backspace/Entrée, application active, synchronisation du plan. À fusionner après #41.
-- [ ] **#43** : retrait de MCP, ChatGPT Voice et Windows du plan, et ce fichier. À fusionner après #42.
-- [ ] **#38** : tests de convergence Ubuntu/Android. Décider d'abord des corrections de documentation proposées par la revue (P3-1/P3-2 recommandées, ≈ 7 min).
-- [ ] Code MCP encore présent dans `main` (PR #31) : le garder tel quel, ou le supprimer dans une PR séparée ?
+- [x] **#41, #42, #43** : canal télécommande dans le `.deb` et l'APK, clavier distant, nettoyage du plan. Fusionnées.
+- [x] **#38** : tests de convergence Ubuntu/Android. Corrections P3 déjà faites ; branche remise à jour avec `main`, puis fusionnée (CI `main` 4/4 verte).
+- [x] Code MCP de `main` (PR #31) : **conservé tel quel**, sans développement (décision du propriétaire).
+- Seule PR encore ouverte : **#33** (widget Android, section 4).
 
 ## 2. Phase 1 — les deux applications sur la même TV
 
@@ -50,6 +49,6 @@
 
 | Lot | Avancement | Restant estimé |
 |---|---|---|
-| Phase 1 : autonomie et convergence | tests simulés 100 % ; matériel partiel, non classé | 14–28 h (enveloppe) |
+| Phase 1 : autonomie et convergence | tests simulés 100 %, fusionnés (#38) ; matériel partiel, non classé | 14–28 h (enveloppe) |
 | Phase 2 : commandes, applications, clavier | son validé sur Ubuntu ; le reste codé, 0 % confirmé sur TV ; applications 0 % | 16–32 h, à réestimer après la décision ADB |
 | Phase 3 : livraison | builds CI disponibles ; recette finale à faire | 10–20 h |
