@@ -177,6 +177,94 @@
             <p id="sound-note" class="note" hidden></p>
           </div>
 
+          <!-- The TV's own remote (Google TV remote protocol): the volume the TV itself sets, mute,
+               power and navigation. Only for a TV that advertises it. Each press sends one key
+               once; what is shown of the TV is its own last report. -->
+          <div
+            id="tv-remote"
+            class="tv-remote"
+            role="group"
+            aria-labelledby="tv-remote-title"
+            hidden
+          >
+            <p id="tv-remote-title" class="tv-remote-title">TV remote</p>
+            <div id="remote-pairing" class="tv-remote-pairing" hidden>
+              <p id="remote-pairing-text" class="note"></p>
+              <div class="tv-remote-row">
+                <input
+                  id="remote-code"
+                  class="remote-code"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="off"
+                  autocapitalize="characters"
+                  spellcheck="false"
+                  maxlength="6"
+                  aria-label="Code shown on the TV"
+                  hidden
+                />
+                <button id="remote-pair" class="btn btn-primary" type="button" hidden>Pair</button>
+                <button id="remote-show-code" class="btn" type="button">Show code on TV</button>
+              </div>
+            </div>
+            <div class="tv-remote-row">
+              <button
+                class="btn"
+                type="button"
+                data-remote-key="volume_down"
+                aria-label="TV volume down"
+              >
+                Vol −
+              </button>
+              <button
+                class="btn"
+                type="button"
+                data-remote-key="volume_up"
+                aria-label="TV volume up"
+              >
+                Vol +
+              </button>
+              <button
+                class="btn"
+                type="button"
+                data-remote-key="mute"
+                aria-label="TV mute or unmute"
+              >
+                Mute
+              </button>
+              <button class="btn" type="button" data-remote-key="power" aria-label="TV power">
+                Power
+              </button>
+            </div>
+            <div class="dpad">
+              <button class="btn dpad-up" type="button" data-remote-key="up" aria-label="Up">
+                ↑
+              </button>
+              <button class="btn dpad-left" type="button" data-remote-key="left" aria-label="Left">
+                ←
+              </button>
+              <button class="btn dpad-ok" type="button" data-remote-key="ok">OK</button>
+              <button
+                class="btn dpad-right"
+                type="button"
+                data-remote-key="right"
+                aria-label="Right"
+              >
+                →
+              </button>
+              <button class="btn dpad-down" type="button" data-remote-key="down" aria-label="Down">
+                ↓
+              </button>
+            </div>
+            <div class="tv-remote-row">
+              <button class="btn" type="button" data-remote-key="back">Back</button>
+              <button class="btn" type="button" data-remote-key="home">Home</button>
+              <button id="remote-read" class="btn" type="button">Read TV volume</button>
+            </div>
+            <p id="remote-readout" class="sound-readout is-empty"></p>
+            <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>
+          </div>
+
           <!-- Outside the controls on purpose: a command's outcome must stay visible even when
                its result removes the controls (a stopped TV has no media left to control). -->
           <div id="command-feedback" class="command-feedback" aria-live="polite"></div>

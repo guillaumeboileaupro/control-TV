@@ -302,7 +302,7 @@ def test_setup_syncs_the_locked_environment(
 
     assert dev.main(["setup"], root=repo) == 0
 
-    assert log.read_text().splitlines() == ["sync --locked --extra mcp"]
+    assert log.read_text().splitlines() == ["sync --locked --extra mcp --extra tvremote"]
 
 
 def test_lock_regenerates_the_lockfile(

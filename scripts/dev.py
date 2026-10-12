@@ -264,12 +264,13 @@ def _run_uv(root: Path, args: Sequence[str]) -> int:
 
 
 def cmd_setup(root: Path) -> int:
-    """Create/update .venv to exactly match uv.lock (with the optional MCP server's extra).
+    """Create/update .venv to exactly match uv.lock, with the optional extras: the MCP server
+    and the Android TV Remote channel.
 
     Fails if the lock is out of date. The packaging and Android commands sync their own
-    exact environments, without the MCP extra.
+    exact environments, without these extras.
     """
-    return _run_uv(root, ["sync", "--locked", "--extra", "mcp"])
+    return _run_uv(root, ["sync", "--locked", "--extra", "mcp", "--extra", "tvremote"])
 
 
 def cmd_lock(root: Path) -> int:

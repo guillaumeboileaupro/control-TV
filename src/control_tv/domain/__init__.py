@@ -13,6 +13,7 @@ from control_tv.domain.errors import (
     ErrorCode,
     InvalidArgumentError,
     OperationTimeoutError,
+    PairingRequiredError,
     UnsupportedMediaError,
     UnsupportedOperationError,
 )
@@ -30,10 +31,18 @@ from control_tv.domain.models import (
     StreamType,
     VolumeControlType,
 )
+from control_tv.domain.remote import (
+    AudibleVolume,
+    KeyPress,
+    RemoteKey,
+    RemoteKeyResult,
+    RemoteObservation,
+)
 from control_tv.domain.results import Command, CommandResult, Confirmation
 
 __all__ = [
     "AmbiguousTargetError",
+    "AudibleVolume",
     "Command",
     "CommandRejectedError",
     "CommandResult",
@@ -49,12 +58,17 @@ __all__ = [
     "DiscoveryError",
     "ErrorCode",
     "InvalidArgumentError",
+    "KeyPress",
     "MediaRequest",
     "MediaStatus",
     "MetadataType",
     "OperationTimeoutError",
+    "PairingRequiredError",
     "PlaybackState",
     "ReceiverStatus",
+    "RemoteKey",
+    "RemoteKeyResult",
+    "RemoteObservation",
     "StreamType",
     "UnsupportedMediaError",
     "UnsupportedOperationError",

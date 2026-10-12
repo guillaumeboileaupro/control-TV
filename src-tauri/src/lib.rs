@@ -38,6 +38,11 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 /// The UI keeps one request in flight and never resends on a timeout (delivery is then
 /// ambiguous), so a long bound only ever delays reporting a stuck bridge.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+/// Outer bound on one request on the TV's own remote channel (status, pairing or one key). The
+/// control layer bounds each such operation to 8s (`DEFAULT_TIMEOUT` in
+/// `control_tv.adapters.tv_remote`); this is generous on top of it, so only a stuck bridge
+/// exceeds it. A key is never resent on a timeout: its delivery is then ambiguous.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -771,6 +776,85 @@ async fn bridge_set_muted(
     send_set_muted(state.inner().clone(), &device_id, muted).await
 }
 
+/// The request for one key on the TV's own remote channel: the stable device id and the key's
+/// name (`volume_up`, `mute`, `power`, `ok`, ...). Which names exist is decided by the control
+/// layer, which refuses any other before anything is sent.
+fn remote_key_request(device_id: &str, key: &str) -> Value {
+    json!({ "deviceId": device_id, "key": key })
+}
+
+/// The request that finishes pairing: the code the TV shows, passed as typed. Its format is
+/// checked by the control layer.
+fn pairing_code_request(device_id: &str, code: &str) -> Value {
+    json!({ "deviceId": device_id, "code": code })
+}
+
+/// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
+/// no retry, no state of its own, and the answer is data.
+async fn send_remote(
+    state: SharedBridgeState,
+    method: &'static str,
+    params: Value,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(state, method, params, REMOTE_TIMEOUT).await
+}
+
+/// Read-only: what the TV reports on its own remote channel (power, audible volume and mute).
+#[tauri::command]
+async fn bridge_get_remote_status(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "get_remote_status",
+        status_request(&device_id),
+    )
+    .await
+}
+
+/// Asks the TV to show a pairing code.
+#[tauri::command]
+async fn bridge_start_remote_pairing(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "start_remote_pairing",
+        status_request(&device_id),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_finish_remote_pairing(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    code: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "finish_remote_pairing",
+        pairing_code_request(&device_id, &code),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_press_remote_key(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    key: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "press_remote_key",
+        remote_key_request(&device_id, &key),
+    )
+    .await
+}
+
 /// The failure of an embedded (Android) bridge call. The Android side rejects with
 /// `backend_unavailable` only when the embedded Python could not start, before any request
 /// reached the shared control layer (certainly not sent); any other rejection may have come
@@ -878,7 +962,11 @@ pub fn run() {
             bridge_stop,
             bridge_seek,
             bridge_set_volume,
-            bridge_set_muted
+            bridge_set_muted,
+            bridge_get_remote_status,
+            bridge_start_remote_pairing,
+            bridge_finish_remote_pairing,
+            bridge_press_remote_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1700,6 +1788,30 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
         }
     }
 
+    // --- the TV's own remote channel: plain forwards ---------------------------------------
+
+    #[test]
+    fn a_remote_key_request_carries_the_device_id_and_the_key_name_as_typed() {
+        assert_eq!(
+            remote_key_request("uuid-1", "volume_up"),
+            json!({"deviceId": "uuid-1", "key": "volume_up"})
+        );
+    }
+
+    #[test]
+    fn a_pairing_code_request_carries_the_code_as_typed() {
+        assert_eq!(
+            pairing_code_request("uuid-1", " a1b2c3 "),
+            json!({"deviceId": "uuid-1", "code": " a1b2c3 "})
+        );
+    }
+
+    #[test]
+    fn the_remote_bound_leaves_room_for_the_control_layers_own_8s_bound() {
+        assert!(REMOTE_TIMEOUT >= Duration::from_secs(16));
+        assert!(REMOTE_TIMEOUT < COMMAND_TIMEOUT);
+    }
+
     #[test]
     fn a_level_that_is_not_a_finite_number_reaches_the_bridge_as_null_so_it_is_refused() {
         // serde_json writes NaN and infinity as null; the control layer then refuses the request.
@@ -1881,6 +1993,40 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
         assert_eq!(volume.code, "device_not_found");
         assert_eq!(mute.code, "device_not_found");
         assert_eq!(unmute.code, "device_not_found");
+    }
+
+    #[test]
+    fn the_real_bridge_refuses_the_remote_channel_for_a_tv_it_never_discovered() {
+        let python = resolve_python();
+        if !python.exists() {
+            eprintln!(
+                "skipping: {} not found - run `python3 scripts/dev.py setup`",
+                python.display()
+            );
+            return;
+        }
+
+        let bridge = PythonBridge::spawn(&development_program())
+            .expect("failed to spawn the bridge process");
+        let key = bridge
+            .call(
+                "press_remote_key",
+                remote_key_request("never-discovered", "volume_up"),
+            )
+            .unwrap_err();
+        let status = bridge
+            .call("get_remote_status", status_request("never-discovered"))
+            .unwrap_err();
+        let pairing = bridge
+            .call(
+                "finish_remote_pairing",
+                pairing_code_request("never-discovered", "A1B2C3"),
+            )
+            .unwrap_err();
+
+        assert_eq!(key.code, "device_not_found");
+        assert_eq!(status.code, "device_not_found");
+        assert_eq!(pairing.code, "device_not_found");
     }
 
     #[test]

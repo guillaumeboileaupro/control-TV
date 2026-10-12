@@ -18,6 +18,8 @@
     "src/playback.test.ts",
     "src/sound.ts",
     "src/sound.test.ts",
+    "src/remote.ts",
+    "src/remote.test.ts",
     "src/interaction.ts",
     "src/interaction.test.ts"
   ],

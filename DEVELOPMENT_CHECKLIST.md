@@ -140,7 +140,7 @@
 - [ ] Tester Mute/Unmute depuis les deux applications et relever confirmation Cast.
 - [ ] Vérifier **séparément** l'effet réellement audible sur la TV.
 - [ ] Vérifier le comportement d'un récepteur à volume fixe : ne pas promettre de variation audible.
-- [ ] Étudier et tester une méthode alternative autorisée si le volume physique ne répond pas au Cast.
+- [x] Étudier et tester une méthode alternative autorisée si le volume physique ne répond pas au Cast. **Ubuntu, une Google TV, 2026-10-12, avec autorisation et observation du propriétaire** : canal Android TV Remote appairé ; Volume + → barre de volume vue sur la TV ; Mute → son coupé, Mute → son revenu. La TV ne rapporte pas son volume sur ce canal : résultat applicatif « envoyé, non confirmé », effet attesté par le propriétaire uniquement. **Android non testé** (l'APK n'embarque pas encore le canal).
 - [ ] Vérifier synchronisation du niveau et de Mute entre les deux interfaces.
 - [ ] Éviter les commandes répétées après timeout ou livraison incertaine.
 
