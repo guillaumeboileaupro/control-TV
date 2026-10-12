@@ -690,3 +690,110 @@ button {
 .sound .note {
   margin: 4px 0 0;
 }
+
+/* The TV's own remote: rows of keys and a small cross for navigation, the TV's last report under
+   them. Text labels, the same buttons as everywhere else; no device-like decoration. */
+
+.tv-remote {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.tv-remote-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.tv-remote-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tv-remote-pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tv-remote-pairing .note {
+  margin: 0;
+}
+
+.remote-code {
+  width: 8ch;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-areas:
+    ". up ."
+    "left ok right"
+    ". down .";
+  gap: 6px;
+}
+
+.dpad .btn {
+  padding: 0;
+}
+
+.dpad-up {
+  grid-area: up;
+}
+
+.dpad-left {
+  grid-area: left;
+}
+
+.dpad-ok {
+  grid-area: ok;
+}
+
+.dpad-right {
+  grid-area: right;
+}
+
+.dpad-down {
+  grid-area: down;
+}
+
+.tv-remote .btn.is-loading {
+  border-color: var(--accent);
+}
+
+.remote-feedback .feedback,
+.remote-feedback .problem {
+  margin: 0;
+}
+
+/* The text for the TV's active field: one line, the field takes the width the button leaves. */
+.tv-remote-text {
+  display: flex;
+  gap: 8px;
+}
+
+.remote-text {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.tv-remote > .note {
+  margin: 0;
+}

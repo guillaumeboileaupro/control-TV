@@ -1,6 +1,6 @@
 # control-TV — Checklists exhaustives de développement et de recette
 
-> Référence opérationnelle de l'issue [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37), complément de [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Priorité : **deux applications autonomes Ubuntu et Android, simultanément sur la même Google TV/Chromecast**, sans serveur permanent. **MCP et ChatGPT Voice reportés**. Ne jamais fusionner de PR ni envoyer de commande à la télévision réelle sans accord explicite du propriétaire.
+> Référence opérationnelle de l'issue [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37), complément de [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Priorité : **deux applications autonomes Ubuntu et Android, simultanément sur la même Google TV/Chromecast**, sans serveur permanent. **MCP, ChatGPT Voice et Windows abandonnés (2026-10-12)**. Ne jamais fusionner de PR ni envoyer de commande à la télévision réelle sans accord explicite du propriétaire.
 
 ## Mode d'emploi et preuves
 
@@ -37,7 +37,7 @@
 - [ ] Prévoir l'état hors ligne, perte de Wi-Fi, changement de réseau, changement d'adresse IP et redécouverte.
 - [ ] Prévoir les permissions réseau locales et l'isolement client des points d'accès.
 - [ ] Définir le comportement de l'UI en cas de commande confirmée, rejetée, non confirmée ou expirée.
-- [ ] Maintenir PR #33 (widget Android) indépendante et PR #36 (MCP) suspendue.
+- [ ] Maintenir PR #33 (widget Android) indépendante. PR #36 (MCP) fermée : MCP/Voice abandonnés le 2026-10-12.
 - [ ] Documenter les autorisations du propriétaire avant commandes réelles et avant merge.
 - [ ] Rattacher chaque exigence aux tests automatisés, à la recette matérielle et à la preuve de livraison.
 - [ ] Réévaluer les budgets : **phase 1 14–28 h ; phase 2 16–32 h ; phase 3 10–20 h ; total provisoire 40–80 h**. Les exigences de clavier et de lancement d'apps peuvent augmenter ce total.
@@ -86,7 +86,7 @@
 - [ ] Vérifier que chaque test a des critères PASS, FAIL et NOT RUN/INCONCLUSIF et une méthode de preuve.
 - [ ] **R1 Ubuntu** : découvrir la TV depuis Ubuntu et relever son identifiant stable.
 - [ ] **R1 Android** : découvrir la TV depuis Android indépendamment et comparer l'identifiant.
-- [ ] **R2** : lire l'état initial sur Ubuntu puis Android et comparer session, lecture, application et volume logique disponibles.
+- [ ] **R2** : lire l'état initial sur Ubuntu puis Android et comparer session, lecture, application et volume logique disponibles. Observation partielle 2026-10-10, non classée (voir `DEVELOPMENT_PLAN.md`).
 - [ ] **R3** : modifier manuellement la TV avec sa télécommande physique ou une application de diffusion externe ; observer les rafraîchissements **sans commande control-TV**.
 - [ ] **R3** : vérifier que les deux applications convergent vers le nouvel état et noter délais/anomalies.
 - [ ] **R4** : enchaîner des rafraîchissements sur Ubuntu et Android, noter erreurs, stabilité et changements visibles/audibles.
@@ -140,7 +140,7 @@
 - [ ] Tester Mute/Unmute depuis les deux applications et relever confirmation Cast.
 - [ ] Vérifier **séparément** l'effet réellement audible sur la TV.
 - [ ] Vérifier le comportement d'un récepteur à volume fixe : ne pas promettre de variation audible.
-- [ ] Étudier et tester une méthode alternative autorisée si le volume physique ne répond pas au Cast.
+- [x] Étudier et tester une méthode alternative autorisée si le volume physique ne répond pas au Cast. **Ubuntu, une Google TV, 2026-10-12, avec autorisation et observation du propriétaire** : canal Android TV Remote appairé ; Volume + → barre de volume vue sur la TV ; Mute → son coupé, Mute → son revenu. La TV ne rapporte pas son volume sur ce canal : résultat applicatif « envoyé, non confirmé », effet attesté par le propriétaire uniquement. **Android non testé** (l'APK n'embarque pas encore le canal).
 - [ ] Vérifier synchronisation du niveau et de Mute entre les deux interfaces.
 - [ ] Éviter les commandes répétées après timeout ou livraison incertaine.
 
@@ -300,7 +300,7 @@
 - [ ] Fournir matrice de compatibilité Ubuntu/Android/TV et résultats de recette.
 - [ ] Mettre à jour README, ARCHITECTURE, DEVELOPMENT_PLAN et traçabilité des exigences.
 - [ ] Fournir versions, SHA, changelog, liens des artefacts et procédures de rollback.
-- [ ] Vérifier qu'aucun élément MCP/Voice reporté n'est présenté comme nécessaire au fonctionnement.
+- [ ] Vérifier qu'aucun élément MCP/Voice (abandonné) n'est présenté comme nécessaire au fonctionnement.
 - [ ] Demander validation finale du propriétaire avant publication/fusion.
 
 **Sortie phase 3 :** deux applications installables et utilisables au quotidien, avec preuves de recette réelle et limites connues.

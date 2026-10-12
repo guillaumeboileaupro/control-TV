@@ -24,7 +24,11 @@ def test_ping_answers_with_this_package_version() -> None:
     assert response == {
         "id": 1,
         "ok": True,
-        "result": {"status": "ready", "controlTvVersion": control_tv.__version__},
+        "result": {
+            "status": "ready",
+            "controlTvVersion": control_tv.__version__,
+            "tvRemote": True,
+        },
     }
 
 
@@ -80,7 +84,9 @@ def test_the_startup_diagnostic_proves_the_import_and_the_ping() -> None:
     line = embedded.startup_diagnostic()
 
     assert f"control_tv {control_tv.__version__} imported" in line
-    assert line.endswith(f"embedded ping ok, controlTvVersion={control_tv.__version__}")
+    assert line.endswith(
+        f"embedded ping ok, controlTvVersion={control_tv.__version__}, tvRemote=yes"
+    )
     assert line.startswith("python 3.")
 
 

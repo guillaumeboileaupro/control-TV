@@ -273,3 +273,86 @@ def test_the_android_app_never_embeds_the_optional_mcp_server_or_its_dependencie
     assert "mcp" not in {android.normalized(d["name"]) for d in project["dependencies"]}
     assert "mcp" not in embedded
     assert {"starlette", "uvicorn", "pydantic"} <= mcp_only
+
+
+# --- The TV's own remote channel: an embedded extra with pinned native wheels -------------
+
+
+def real_lock() -> dict[str, Any]:
+    return tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+
+
+def test_the_app_embeds_the_tv_remote_extra_and_never_the_mcp_server() -> None:
+    names = set(android.runtime_packages(real_lock(), extras=android.EXTRAS))
+
+    assert android.EXTRAS == ("tvremote",)
+    assert {"androidtvremote2", "aiofiles", "cryptography", "cffi", "pycparser"} <= names
+    assert {"pychromecast", "zeroconf", "protobuf"} <= names
+    assert not names & {"mcp", "starlette", "uvicorn", "pydantic", "pyjwt"}
+
+
+def test_an_extra_missing_from_the_lock_is_refused() -> None:
+    with pytest.raises(RuntimeError, match="no optional extra"):
+        android.runtime_packages(real_lock(), extras=("nope",))
+
+
+def test_every_embedded_package_is_pure_built_from_sdist_or_a_pinned_chaquopy_wheel() -> None:
+    packages = android.runtime_packages(real_lock(), extras=android.EXTRAS)
+
+    unsourced = [
+        name
+        for name, entry in packages.items()
+        if name not in android.FROM_SDIST
+        and name not in android.CHAQUOPY_WHEELS
+        and android.pure_wheel(entry) is None
+    ]
+
+    assert unsourced == []
+    assert set(android.CHAQUOPY_WHEELS) == {"cryptography", "cffi"}
+
+
+def test_chaquopy_wheels_are_pinned_android_arm64_builds_for_the_apps_python() -> None:
+    wheels = [*android.CHAQUOPY_WHEELS.values(), *android.CHAQUOPY_ADDITIONS]
+
+    for wheel in wheels:
+        assert wheel.url == f"{android.CHAQUOPY_REPOSITORY}/{wheel.path}"
+        assert wheel.filename.endswith("_arm64_v8a.whl")
+        assert "android_24" in wheel.filename  # the app's minSdk
+        assert len(wheel.sha256) == 64 and int(wheel.sha256, 16) >= 0
+        assert wheel.filename.split("-")[1] == wheel.version
+    natives = [w for w in wheels if w.name in android.CHAQUOPY_WHEELS]
+    assert all("-cp312-cp312-" in w.filename for w in natives)  # Chaquopy's Python 3.12
+
+
+def test_requirements_pin_chaquopys_versions_for_the_packages_it_replaces() -> None:
+    packages = {
+        "cffi": {"name": "cffi", "version": "2.1.1"},
+        "cryptography": {"name": "cryptography", "version": "50.0.2"},
+        "zeroconf": {"name": "zeroconf", "version": "0.151.3"},
+    }
+
+    assert android.requirements_lines(packages, "0.1.0") == [
+        "control-tv==0.1.0",
+        "cffi==1.17.1",
+        "cryptography==42.0.8",
+        "zeroconf==0.151.3",
+        "chaquopy-libffi==3.3",
+    ]
+
+
+def test_without_a_replaced_package_no_chaquopy_addition_is_pinned() -> None:
+    packages = {"zeroconf": {"name": "zeroconf", "version": "0.151.3"}}
+
+    assert android.requirements_lines(packages, "0.1.0") == [
+        "control-tv==0.1.0",
+        "zeroconf==0.151.3",
+    ]
+
+
+def test_the_chaquopy_wheels_match_the_gradle_plugin_and_python_of_the_app() -> None:
+    gradle = (ROOT / "src-tauri" / "gen" / "android" / "build.gradle.kts").read_text()
+    app = (ROOT / "src-tauri" / "gen" / "android" / "app" / "build.gradle.kts").read_text()
+
+    assert 'classpath("com.chaquo.python:gradle:17.0.0")' in gradle
+    assert 'version = "3.12"' in app
+    assert "minSdk = 24" in app

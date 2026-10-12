@@ -1,4 +1,5 @@
 import type { CommandView } from "./playback.ts";
+import { REMOTE_IDLE, type RemoteView } from "./remote.ts";
 
 // Application state and presentation logic for the manual UI, as plain functions.
 //
@@ -15,6 +16,10 @@ export interface Device {
   port: number;
   kind: string;
   modelName: string | null;
+  // Whether the TV advertises its own remote-control channel (Android TV Remote): true or
+  // false when discovery looked for it, null when unknown. Optional: an older control backend
+  // does not send it, which reads as unknown. Only `true` offers the TV remote panel.
+  androidTvRemote?: boolean | null;
 }
 
 export interface ReceiverStatus {
@@ -89,6 +94,9 @@ export interface AppState {
   // A volume, in whole percent, the operator is moving the volume control to and has not sent
   // yet. Like the seek draft it is a request being composed, never a level the TV reported.
   volumeDraft: number | null;
+  // The TV's own remote channel for the selected TV (see remote.ts): its last report, the
+  // request in flight and the pairing step. It belongs to one TV and is reset with the selection.
+  remote: RemoteView;
   notice: string | null;
   nextRequestId: number;
 }
@@ -203,6 +211,7 @@ export function initialState(): AppState {
     command: { kind: "idle" },
     seekDraft: null,
     volumeDraft: null,
+    remote: REMOTE_IDLE,
     notice: null,
     nextRequestId: 1,
   };
@@ -217,7 +226,8 @@ export function idle(state: AppState): boolean {
   return (
     state.discovery.kind !== "running" &&
     state.status.kind !== "loading" &&
-    state.command.kind !== "pending"
+    state.command.kind !== "pending" &&
+    state.remote.pending === null
   );
 }
 
@@ -265,6 +275,7 @@ export function finishDiscovery(state: AppState, devices: Device[]): AppState {
     command: { kind: "idle" },
     seekDraft: null,
     volumeDraft: null,
+    remote: REMOTE_IDLE,
     notice: "The selected device was not found by the latest discovery. Select a device again.",
   };
 }
@@ -282,6 +293,8 @@ function beginStatusRead(
     state: {
       ...state,
       selected,
+      // Another TV starts from nothing; a refresh of the same TV keeps its pairing step and report.
+      remote: state.selected?.id === selected.id ? state.remote : REMOTE_IDLE,
       status: { kind: "loading", requestId },
       command: { kind: "idle" },
       seekDraft: null,

@@ -67,7 +67,11 @@ def test_ping_reports_readiness_and_version(control: ControlService) -> None:
     assert response == {
         "id": 1,
         "ok": True,
-        "result": {"status": "ready", "controlTvVersion": control_tv.__version__},
+        "result": {
+            "status": "ready",
+            "controlTvVersion": control_tv.__version__,
+            "tvRemote": True,
+        },
     }
 
 
@@ -90,6 +94,7 @@ def test_discover_devices_returns_transport_devices_as_json(control: ControlServ
             "port": 8009,
             "kind": "unknown",
             "modelName": None,
+            "androidTvRemote": None,
         }
     ]
 
@@ -383,7 +388,11 @@ def test_main_serves_a_ping_over_real_stdio() -> None:
     assert response == {
         "id": 1,
         "ok": True,
-        "result": {"status": "ready", "controlTvVersion": control_tv.__version__},
+        "result": {
+            "status": "ready",
+            "controlTvVersion": control_tv.__version__,
+            "tvRemote": True,
+        },
     }
 
 

@@ -302,7 +302,7 @@ def test_setup_syncs_the_locked_environment(
 
     assert dev.main(["setup"], root=repo) == 0
 
-    assert log.read_text().splitlines() == ["sync --locked --extra mcp"]
+    assert log.read_text().splitlines() == ["sync --locked --extra mcp --extra tvremote"]
 
 
 def test_lock_regenerates_the_lockfile(
@@ -572,7 +572,9 @@ def test_bridge_build_syncs_the_packaging_group_then_freezes(
 
     assert dev.main(["bridge-build"], root=repo) == 0
 
-    assert log.read_text().splitlines() == ["sync --locked --group packaging --python 3.12.15"]
+    assert log.read_text().splitlines() == [
+        "sync --locked --group packaging --extra tvremote --python 3.12.15"
+    ]
     assert calls == [[str(repo / "packaging" / "build_bridge.py"), "build"]]
 
 

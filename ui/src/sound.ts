@@ -133,7 +133,12 @@ export function describeSound(state: AppState): SoundDescription {
 
   let note: string | null = null;
   if (fixed) {
-    note = "This TV's volume is fixed, so it can't be changed here.";
+    // A fixed Cast volume leaves the TV's sound to the TV: Mute only changes the receiver's
+    // own setting, which was seen not to silence a real TV, so it is not promised.
+    note = "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it.";
+    if (state.selected.androidTvRemote === true) {
+      note += " Use the TV remote below for the volume you hear.";
+    }
   } else if (volume === null && mute === null) {
     note = "The TV didn't report its volume or mute state, so sound controls aren't available.";
   } else if (volume === null) {
