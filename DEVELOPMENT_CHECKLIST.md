@@ -1,6 +1,6 @@
 # control-TV — Checklists exhaustives de développement et de recette
 
-> Référence opérationnelle de l'issue [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37), complément de [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Priorité : **deux applications autonomes Ubuntu et Android, simultanément sur la même Google TV/Chromecast**, sans serveur permanent. **MCP et ChatGPT Voice reportés**. Ne jamais fusionner de PR ni envoyer de commande à la télévision réelle sans accord explicite du propriétaire.
+> Référence opérationnelle de l'issue [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37), complément de [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Priorité : **deux applications autonomes Ubuntu et Android, simultanément sur la même Google TV/Chromecast**, sans serveur permanent. **MCP, ChatGPT Voice et Windows abandonnés (2026-10-12)**. Ne jamais fusionner de PR ni envoyer de commande à la télévision réelle sans accord explicite du propriétaire.
 
 ## Mode d'emploi et preuves
 
@@ -37,7 +37,7 @@
 - [ ] Prévoir l'état hors ligne, perte de Wi-Fi, changement de réseau, changement d'adresse IP et redécouverte.
 - [ ] Prévoir les permissions réseau locales et l'isolement client des points d'accès.
 - [ ] Définir le comportement de l'UI en cas de commande confirmée, rejetée, non confirmée ou expirée.
-- [ ] Maintenir PR #33 (widget Android) indépendante et PR #36 (MCP) suspendue.
+- [ ] Maintenir PR #33 (widget Android) indépendante. PR #36 (MCP) fermée : MCP/Voice abandonnés le 2026-10-12.
 - [ ] Documenter les autorisations du propriétaire avant commandes réelles et avant merge.
 - [ ] Rattacher chaque exigence aux tests automatisés, à la recette matérielle et à la preuve de livraison.
 - [ ] Réévaluer les budgets : **phase 1 14–28 h ; phase 2 16–32 h ; phase 3 10–20 h ; total provisoire 40–80 h**. Les exigences de clavier et de lancement d'apps peuvent augmenter ce total.
@@ -300,7 +300,7 @@
 - [ ] Fournir matrice de compatibilité Ubuntu/Android/TV et résultats de recette.
 - [ ] Mettre à jour README, ARCHITECTURE, DEVELOPMENT_PLAN et traçabilité des exigences.
 - [ ] Fournir versions, SHA, changelog, liens des artefacts et procédures de rollback.
-- [ ] Vérifier qu'aucun élément MCP/Voice reporté n'est présenté comme nécessaire au fonctionnement.
+- [ ] Vérifier qu'aucun élément MCP/Voice (abandonné) n'est présenté comme nécessaire au fonctionnement.
 - [ ] Demander validation finale du propriétaire avant publication/fusion.
 
 **Sortie phase 3 :** deux applications installables et utilisables au quotidien, avec preuves de recette réelle et limites connues.
