@@ -960,8 +960,39 @@ describe("fixed volume", () => {
 
     assert.equal(sound.volume, null);
     assert.equal(sound.readout, "Volume 100%");
-    assert.equal(sound.note, "This TV's volume is fixed, so it can't be changed here.");
+    assert.equal(
+      sound.note,
+      "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it.",
+    );
     assert.notEqual(sound.mute, null);
+  });
+
+  test("a fixed-volume TV with its own remote channel says so, and only then", () => {
+    const fixed = readyWith(statusOf({ receiver: { volumeLevel: 1, volumeControlType: "fixed" } }));
+    const withRemote: AppState = { ...fixed, selected: { ...DEVICE, androidTvRemote: true } };
+    const notOffered: AppState = { ...fixed, selected: { ...DEVICE, androidTvRemote: false } };
+    const unknown: AppState = { ...fixed, selected: { ...DEVICE, androidTvRemote: null } };
+
+    assert.equal(
+      describeSound(withRemote).note,
+      "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it." +
+        " This TV has its own remote-control channel, which control-TV doesn't use yet.",
+    );
+    for (const state of [notOffered, unknown, fixed]) {
+      assert.equal(
+        describeSound(state).note,
+        "This TV's volume is fixed, so it can't be changed here, and Mute may not silence it.",
+      );
+    }
+  });
+
+  test("an adjustable volume never mentions the remote channel", () => {
+    const adjustable = readyWith(
+      statusOf({ receiver: { volumeLevel: 0.4, volumeControlType: "attenuation" } }),
+    );
+    const withRemote: AppState = { ...adjustable, selected: { ...DEVICE, androidTvRemote: true } };
+
+    assert.equal(describeSound(withRemote).note, null);
   });
 
   test("no volume draft or command is possible on a fixed volume", () => {

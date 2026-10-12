@@ -114,11 +114,20 @@ class Device:
     port: int
     kind: DeviceKind = DeviceKind.UNKNOWN
     model_name: str | None = None
+    android_tv_remote: bool | None = None
+    """Whether the device advertises the Android TV Remote service (protocol v2), the channel
+    its own remote uses for keys such as volume and power: True or False when discovery looked
+    for it, None when unknown (not looked for, the look failed, or a Cast group). control-TV
+    does not use that channel; it only reports it."""
 
     def __post_init__(self) -> None:
         _require(bool(self.id.strip()), "device id must not be blank")
         _require(bool(self.host.strip()), "device host must not be blank")
         _require(0 < self.port < 65536, f"device port out of range: {self.port}")
+        _require(
+            self.android_tv_remote is None or isinstance(self.android_tv_remote, bool),
+            f"android_tv_remote must be a boolean or None: {self.android_tv_remote!r}",
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

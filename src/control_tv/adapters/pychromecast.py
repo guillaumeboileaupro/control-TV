@@ -33,6 +33,11 @@ from pychromecast.error import (
 )
 from pychromecast.response_handler import WaitResponse
 
+from control_tv.adapters.remote_detection import (
+    NoRemoteDetection,
+    RemoteDetector,
+    ZeroconfRemoteDetector,
+)
 from control_tv.domain import (
     CommandRejectedError,
     ConnectionState,
@@ -283,6 +288,7 @@ class PyChromecastTransport:
         discoverer: Discoverer = _default_discoverer,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         clock: Callable[[], float] = time.monotonic,
+        remote_detector: RemoteDetector | None = None,
     ) -> None:
         for name, timeout in (
             ("connection_timeout", connection_timeout),
@@ -295,6 +301,15 @@ class PyChromecastTransport:
         self._request_timeout = request_timeout
         self._recovery_timeout = recovery_timeout
         self._discoverer = discoverer
+        # The Android TV Remote service is looked for after real discovery only: a test
+        # discoverer gets no network browse unless the test passes its own detector.
+        if remote_detector is None:
+            remote_detector = (
+                ZeroconfRemoteDetector()
+                if discoverer is _default_discoverer
+                else NoRemoteDetection()
+            )
+        self._remote_detector = remote_detector
         self._now = now
         self._clock = clock
         self._casts: dict[DeviceId, Chromecast] = {}
@@ -315,7 +330,14 @@ class PyChromecastTransport:
         casts: list[Chromecast] = []
         try:
             casts, browser = self._discoverer(timeout)
-            discovered = [self._device(cast_device) for cast_device in casts]
+            # On the Cast browser's own zeroconf, after it found devices; never during the
+            # recovery inside get_status, which runs under the caller's strict budget.
+            remote_hosts = (
+                self._remote_detector.detect(getattr(browser, "zc", None))
+                if casts and cleanup_deadline is None
+                else None
+            )
+            discovered = [self._device(cast_device, remote_hosts) for cast_device in casts]
             replacements = {DeviceId(str(cast_device.uuid)): cast_device for cast_device in casts}
             if not replacements:
                 self._stop_browser(browser)
@@ -479,15 +501,22 @@ class PyChromecastTransport:
         self._stop_browser(browser)
 
     @staticmethod
-    def _device(cast_device: Chromecast) -> Device:
+    def _device(cast_device: Chromecast, remote_hosts: frozenset[str] | None = None) -> Device:
         info = cast_device.cast_info
+        kind = _KIND_MAP.get(info.cast_type or "", DeviceKind.UNKNOWN)
+        # A Cast group's address is one of its member TVs': matching it would credit the group
+        # with that TV's remote channel, so a group's stays unknown.
+        android_tv_remote = (
+            None if remote_hosts is None or kind is DeviceKind.GROUP else info.host in remote_hosts
+        )
         return Device(
             id=DeviceId(str(info.uuid)),
             friendly_name=info.friendly_name or str(info.uuid),
             host=info.host,
             port=info.port,
-            kind=_KIND_MAP.get(info.cast_type or "", DeviceKind.UNKNOWN),
+            kind=kind,
             model_name=info.model_name,
+            android_tv_remote=android_tv_remote,
         )
 
     def _cast(self, device_id: DeviceId) -> Chromecast:

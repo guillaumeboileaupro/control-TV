@@ -90,6 +90,7 @@ def test_discover_devices_returns_transport_devices_as_json(control: ControlServ
             "port": 8009,
             "kind": "unknown",
             "modelName": None,
+            "androidTvRemote": None,
         }
     ]
 
