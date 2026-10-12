@@ -37,6 +37,8 @@ from control_tv.domain.remote import (
     RemoteKey,
     RemoteKeyResult,
     RemoteObservation,
+    RemoteTextResult,
+    TextEntry,
 )
 from control_tv.domain.results import Command, CommandResult, Confirmation
 
@@ -69,7 +71,9 @@ __all__ = [
     "RemoteKey",
     "RemoteKeyResult",
     "RemoteObservation",
+    "RemoteTextResult",
     "StreamType",
+    "TextEntry",
     "UnsupportedMediaError",
     "UnsupportedOperationError",
     "VolumeControlType",

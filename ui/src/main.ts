@@ -115,6 +115,9 @@ interface Elements {
   remotePair: HTMLButtonElement;
   remoteShowCode: HTMLButtonElement;
   remoteRead: HTMLButtonElement;
+  remoteTextForm: HTMLFormElement;
+  remoteText: HTMLInputElement;
+  remoteTextSend: HTMLButtonElement;
   remoteReadout: HTMLElement;
   remoteFeedback: HTMLElement;
   muteButton: HTMLButtonElement;
@@ -603,6 +606,9 @@ function start(elements: Elements): void {
       button.setAttribute("aria-busy", String(sending));
     }
     setBusy(el.remoteRead, !remote.readEnabled);
+    setBusy(el.remoteTextSend, !remote.keysEnabled);
+    el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
+    el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
 
     el.remotePairing.hidden = remote.pairing === null;
     if (remote.pairing !== null) {
@@ -915,6 +921,10 @@ function start(elements: Elements): void {
     );
   }
   elements.remoteRead.addEventListener("click", () => onRemote({ kind: "status" }));
+  elements.remoteTextForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    onRemote({ kind: "text", text: elements.remoteText.value });
+  });
   elements.remoteShowCode.addEventListener("click", () => onRemote({ kind: "show_code" }));
   const pair = (): void => onRemote({ kind: "pair", code: elements.remoteCode.value });
   elements.remotePair.addEventListener("click", pair);
@@ -967,6 +977,9 @@ window.addEventListener("DOMContentLoaded", () => {
     remotePair: byId<HTMLButtonElement>("remote-pair"),
     remoteShowCode: byId<HTMLButtonElement>("remote-show-code"),
     remoteRead: byId<HTMLButtonElement>("remote-read"),
+    remoteTextForm: byId<HTMLFormElement>("remote-text-form"),
+    remoteText: byId<HTMLInputElement>("remote-text"),
+    remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
     remoteReadout: byId("remote-readout"),
     remoteFeedback: byId("remote-feedback"),
     muteButton: byId<HTMLButtonElement>("mute-button"),

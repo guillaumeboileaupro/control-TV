@@ -28,6 +28,8 @@ class RemoteKey(StrEnum):
     DPAD_CENTER = "KEYCODE_DPAD_CENTER"
     BACK = "KEYCODE_BACK"
     HOME = "KEYCODE_HOME"
+    DELETE = "KEYCODE_DEL"  # the keyboard's Backspace, in the TV's active text field
+    ENTER = "KEYCODE_ENTER"  # the keyboard's Enter: submits the TV's active text field
 
 
 VOLUME_KEYS = frozenset({RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE})
@@ -44,10 +46,15 @@ class AudibleVolume:
 
 @dataclass(frozen=True, slots=True)
 class RemoteObservation:
-    """What the TV reported on its remote channel; `None` means it did not say."""
+    """What the TV reported on its remote channel; `None` means it did not say.
+
+    `current_app` is the package name of the app in front on the TV (for example
+    `com.google.android.youtube.tv`), as the TV reported it.
+    """
 
     is_on: bool | None
     volume: AudibleVolume | None
+    current_app: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,3 +81,31 @@ class RemoteKeyResult:
     before: RemoteObservation
     after: RemoteObservation
     detail: str
+
+
+MAX_TEXT_LENGTH = 256
+
+
+@dataclass(frozen=True, slots=True)
+class TextEntry:
+    """Text that was sent once to the TV's active text field.
+
+    `field_reported`: whether the TV reported an active text field when the text was sent.
+    The text itself is never kept here: it may be a password.
+    """
+
+    length: int
+    field_reported: bool
+    observed: RemoteObservation
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RemoteTextResult:
+    """Text sent to the TV's active field. The TV does not echo it back, so its effect is
+    never confirmed by the TV: only the person in front of it can check."""
+
+    device_id: DeviceId
+    confirmation: Confirmation
+    detail: str
+    field_reported: bool
+    observed: RemoteObservation

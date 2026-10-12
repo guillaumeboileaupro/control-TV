@@ -25,7 +25,9 @@ export type RemoteKeyName =
   | "right"
   | "ok"
   | "back"
-  | "home";
+  | "home"
+  | "delete"
+  | "enter";
 
 export const KEY_LABELS: Record<RemoteKeyName, string> = {
   volume_down: "Volume down",
@@ -39,6 +41,8 @@ export const KEY_LABELS: Record<RemoteKeyName, string> = {
   ok: "OK",
   back: "Back",
   home: "Home",
+  delete: "Backspace",
+  enter: "Enter",
 };
 
 // The TV's own report, as the control layer relays it. `null` means the TV did not say.
@@ -50,6 +54,8 @@ export interface AudibleVolume {
 
 export interface RemoteReport {
   isOn: boolean | null;
+  // The package name of the app in front on the TV, as the TV reported it.
+  currentApp: string | null;
   volume: AudibleVolume | null;
 }
 
@@ -57,7 +63,9 @@ export type RemoteAction =
   | { kind: "status" }
   | { kind: "key"; key: RemoteKeyName }
   | { kind: "show_code" }
-  | { kind: "pair"; code: string };
+  | { kind: "pair"; code: string }
+  // Text for the TV's active field. It may be a password: it is never put in an outcome.
+  | { kind: "text"; text: string };
 
 // `unknown`: not tried yet. `needed`: the TV answered that it must be paired first.
 // `code_shown`: the TV was asked to show a code. `paired`: the TV accepted this app.
@@ -95,6 +103,16 @@ export interface RemoteRequest {
 export type RemoteAnswer = { ok: true; result: unknown } | { ok: false; failure: BridgeFailure };
 
 const PAIRING_CODE = /^[0-9a-fA-F]{6}$/;
+export const MAX_TEXT_LENGTH = 256;
+
+// What the control layer accepts: 1 to 256 characters, none of them a control character.
+function textAllowed(text: string): boolean {
+  return (
+    text.length > 0 &&
+    text.length <= MAX_TEXT_LENGTH &&
+    ![...text].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+  );
+}
 
 // The application command and its arguments, as the Tauri boundary expects them.
 export function remoteInvocation(request: RemoteRequest): {
@@ -112,6 +130,8 @@ export function remoteInvocation(request: RemoteRequest): {
       return { command: "bridge_start_remote_pairing", args: { deviceId } };
     case "pair":
       return { command: "bridge_finish_remote_pairing", args: { deviceId, code: action.code } };
+    case "text":
+      return { command: "bridge_type_remote_text", args: { deviceId, text: action.text } };
   }
 }
 
@@ -136,8 +156,16 @@ export function startRemote(
   if (selected === null || !remoteAvailable(state) || !idle(state)) {
     return { state, request: null };
   }
-  if ((action.kind === "key" || action.kind === "status") && !keysAllowed(state)) {
+  if (action.kind !== "show_code" && action.kind !== "pair" && !keysAllowed(state)) {
     return { state, request: null };
+  }
+  if (action.kind === "text" && !textAllowed(action.text)) {
+    const outcome: RemoteOutcome = {
+      tone: "failed",
+      text: `Type 1 to ${MAX_TEXT_LENGTH} characters, on one line.`,
+      technical: null,
+    };
+    return { state: { ...state, remote: { ...state.remote, outcome } }, request: null };
   }
   let sent: RemoteAction = action;
   if (action.kind === "pair") {
@@ -176,6 +204,8 @@ export function toReport(value: unknown): RemoteReport | null {
     return null;
   }
   const isOn = typeof value["isOn"] === "boolean" ? value["isOn"] : null;
+  const app = value["currentApp"];
+  const currentApp = typeof app === "string" && app !== "" ? app : null;
   const raw = value["volume"];
   let volume: AudibleVolume | null = null;
   if (
@@ -187,7 +217,7 @@ export function toReport(value: unknown): RemoteReport | null {
   ) {
     volume = { level: raw["level"], max: raw["max"], muted: raw["muted"] };
   }
-  return { isOn, volume };
+  return { isOn, currentApp, volume };
 }
 
 function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOutcome {
@@ -217,6 +247,13 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
     case "timeout":
     case "bridge_timeout":
     case "bridge_transport":
+      if (action.kind === "text") {
+        return {
+          tone: "failed",
+          text: "The text may or may not have reached the TV. It was not sent again: check the TV.",
+          technical,
+        };
+      }
       if (action.kind === "key") {
         // The key may have reached the TV: it was not sent again, and the panel says so.
         return {
@@ -312,6 +349,25 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
           outcome: { tone: "done", text: "Paired with this TV.", technical: null },
         },
       };
+    case "text": {
+      const typed = isObject(result["result"]) ? result["result"] : {};
+      const fieldReported = typed["fieldReported"] === true;
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          pairing: "paired",
+          report: toReport(typed["observed"]) ?? remote.report,
+          outcome: {
+            tone: "sent",
+            text: fieldReported
+              ? "Text sent to the TV's text field: check the TV."
+              : "Text sent, but the TV didn't report an open text field. Open a search or text field on the TV, then send again.",
+            technical: null,
+          },
+        },
+      };
+    }
   }
 }
 
@@ -328,6 +384,8 @@ export interface RemoteDescription {
   // The request in flight, worded, or null.
   progress: string | null;
   pendingKey: RemoteKeyName | null;
+  // Text for the TV's field is on its way.
+  sendingText: boolean;
   busy: boolean;
   outcome: RemoteOutcome | null;
 }
@@ -340,6 +398,7 @@ const HIDDEN: RemoteDescription = {
   readout: "",
   progress: null,
   pendingKey: null,
+  sendingText: false,
   busy: false,
   outcome: null,
 };
@@ -347,13 +406,15 @@ const HIDDEN: RemoteDescription = {
 function progressOf(action: RemoteAction): string {
   switch (action.kind) {
     case "status":
-      return "Reading the TV's volume…";
+      return "Reading the TV's state…";
     case "key":
       return `Sending ${KEY_LABELS[action.key]}…`;
     case "show_code":
       return "Asking the TV to show a code…";
     case "pair":
       return "Pairing…";
+    case "text":
+      return "Sending text…";
   }
 }
 
@@ -371,6 +432,9 @@ export function describeReport(report: RemoteReport | null): string {
   }
   if (report.isOn === false) {
     parts.push("The TV reports it is off");
+  }
+  if (report.currentApp !== null) {
+    parts.push(`TV app: ${report.currentApp}`);
   }
   return parts.join(" · ");
 }
@@ -396,6 +460,7 @@ export function describeRemote(state: AppState): RemoteDescription {
     readout: describeReport(remote.report),
     progress: pending === null ? null : progressOf(pending.action),
     pendingKey: pending !== null && pending.action.kind === "key" ? pending.action.key : null,
+    sendingText: pending !== null && pending.action.kind === "text",
     busy,
     outcome: remote.outcome,
   };

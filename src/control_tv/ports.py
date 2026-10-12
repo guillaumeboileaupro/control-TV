@@ -18,6 +18,7 @@ from control_tv.domain import (
     MediaRequest,
     RemoteKey,
     RemoteObservation,
+    TextEntry,
 )
 
 
@@ -72,6 +73,8 @@ class TvRemote(Protocol):
     def observe(self, host: str) -> RemoteObservation: ...
 
     def press(self, host: str, key: RemoteKey) -> KeyPress: ...
+
+    def type_text(self, host: str, text: str) -> TextEntry: ...
 
 
 class TvControl(Protocol):

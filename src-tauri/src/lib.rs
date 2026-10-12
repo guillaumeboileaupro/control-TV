@@ -789,6 +789,12 @@ fn pairing_code_request(device_id: &str, code: &str) -> Value {
     json!({ "deviceId": device_id, "code": code })
 }
 
+/// The request that types text into the TV's active field. The text is forwarded as typed and
+/// never logged: it may be a password.
+fn remote_text_request(device_id: &str, text: &str) -> Value {
+    json!({ "deviceId": device_id, "text": text })
+}
+
 /// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
 /// no retry, no state of its own, and the answer is data.
 async fn send_remote(
@@ -851,6 +857,20 @@ async fn bridge_press_remote_key(
         state.inner().clone(),
         "press_remote_key",
         remote_key_request(&device_id, &key),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_type_remote_text(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    text: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "type_remote_text",
+        remote_text_request(&device_id, &text),
     )
     .await
 }
@@ -966,7 +986,8 @@ pub fn run() {
             bridge_get_remote_status,
             bridge_start_remote_pairing,
             bridge_finish_remote_pairing,
-            bridge_press_remote_key
+            bridge_press_remote_key,
+            bridge_type_remote_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1799,6 +1820,14 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     }
 
     #[test]
+    fn a_text_request_carries_the_text_exactly_as_typed() {
+        assert_eq!(
+            remote_text_request("uuid-1", "héllo wörld"),
+            json!({"deviceId": "uuid-1", "text": "héllo wörld"})
+        );
+    }
+
+    #[test]
     fn a_pairing_code_request_carries_the_code_as_typed() {
         assert_eq!(
             pairing_code_request("uuid-1", " a1b2c3 "),
@@ -2027,6 +2056,15 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
         assert_eq!(key.code, "device_not_found");
         assert_eq!(status.code, "device_not_found");
         assert_eq!(pairing.code, "device_not_found");
+
+        let text = bridge
+            .call(
+                "type_remote_text",
+                remote_text_request("never-discovered", "hello"),
+            )
+            .unwrap_err();
+        assert_eq!(text.code, "device_not_found");
+        assert!(!text.message.contains("hello"));
     }
 
     #[test]

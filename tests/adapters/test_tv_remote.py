@@ -12,6 +12,7 @@ import asyncio
 import stat
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -46,6 +47,9 @@ class FakeTv:
         self.connect_error: Exception | None = None
         self.send_error: Exception | None = None
         self.connect_delay = 0.0
+        self.current_app = ""
+        self.field_counter = 0
+        self.texts: list[str] = []
         self.log: list[tuple[str, ...]] = []
         self.remotes: list[FakeRemote] = []
 
@@ -59,6 +63,8 @@ class FakeRemote:
         self.host = host
         self.is_on: bool | None = None
         self.volume_info: dict[str, Any] | None = None
+        self.current_app: str = ""
+        self._remote_message_protocol = SimpleNamespace(ime_field_counter=0)
         self.disconnected = 0
 
     async def async_connect(self) -> None:
@@ -69,6 +75,8 @@ class FakeRemote:
             raise self.tv.connect_error
         self.is_on = self.tv.is_on
         self.volume_info = None if self.tv.volume is None else dict(self.tv.volume)
+        self.current_app = self.tv.current_app
+        self._remote_message_protocol.ime_field_counter = self.tv.field_counter
 
     def send_key_command(self, key_code: str) -> None:
         self.tv.log.append(("key", key_code))
@@ -80,6 +88,12 @@ class FakeRemote:
             elif key_code == "KEYCODE_VOLUME_MUTE":
                 self.tv.volume["muted"] = not self.tv.volume["muted"]
             self.volume_info = dict(self.tv.volume)
+
+    def send_text(self, text: str) -> None:
+        self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
+        self.tv.texts.append(text)
+        if self.tv.send_error is not None:
+            raise self.tv.send_error
 
     async def async_start_pairing(self) -> None:
         self.tv.log.append(("start_pairing",))
@@ -192,7 +206,7 @@ def test_observe_returns_what_the_tv_reported_and_closes_the_connection(
     observed = channel.observe(HOST)
 
     assert observed == RemoteObservation(
-        is_on=True, volume=AudibleVolume(level=10, maximum=100, muted=False)
+        is_on=True, volume=AudibleVolume(level=10, maximum=100, muted=False), current_app=None
     )
     assert tv.log == [("connect",), ("disconnect",)]
     assert tv.remotes[0].host == HOST
@@ -288,6 +302,8 @@ def test_the_allowlist_has_no_text_launch_voice_or_microphone_key() -> None:
         "DPAD_CENTER",
         "BACK",
         "HOME",
+        "DELETE",
+        "ENTER",
     }
 
 
@@ -441,7 +457,7 @@ def test_closing_drops_a_pending_pairing(channel: TvRemoteChannel, tv: FakeTv) -
 # The real library, offline ---------------------------------------------------------------------
 
 
-def test_the_default_factory_builds_the_library_remote_without_text_input_or_network() -> None:
+def test_the_default_factory_builds_the_library_remote_without_voice_or_network() -> None:
     from androidtvremote2 import AndroidTVRemote
 
     from control_tv.adapters.tv_remote import _default_remote_factory
@@ -453,7 +469,7 @@ def test_the_default_factory_builds_the_library_remote_without_text_input_or_net
 
     assert isinstance(remote, AndroidTVRemote)
     assert remote.host == HOST
-    assert remote._enable_ime is False
+    assert remote._enable_ime is True  # carries text and reports the app in front
     assert remote._enable_voice is False
 
 
@@ -498,3 +514,51 @@ def test_the_channel_reports_whether_its_library_is_installed(
 
     monkeypatch.setattr(importlib.util, "find_spec", broken)
     assert channel_installed() is False
+
+
+# Text and the app in front ---------------------------------------------------------------------
+def test_the_app_in_front_is_reported_as_the_tv_said(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.current_app = "com.example.tv"
+
+    assert channel.observe(HOST).current_app == "com.example.tv"
+
+
+def test_text_is_sent_once_to_the_active_field(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.field_counter = 3
+
+    entry = channel.type_text(HOST, "héllo wörld")
+
+    assert tv.texts == ["héllo wörld"]
+    assert entry.length == 11 and entry.field_reported is True
+    assert tv.log == [("connect",), ("text", "11"), ("disconnect",)]
+
+
+def test_text_without_a_reported_field_is_still_sent_once_and_says_so(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    entry = channel.type_text(HOST, "abc")
+
+    assert tv.texts == ["abc"]
+    assert entry.field_reported is False
+
+
+@pytest.mark.parametrize("text", ["", None, 5, "a" * 257, "line\nbreak", "tab\t", "\x7f"])
+def test_malformed_text_is_refused_before_anything_is_sent(
+    channel: TvRemoteChannel, tv: FakeTv, text: Any
+) -> None:
+    with pytest.raises(InvalidArgumentError) as excinfo:
+        channel.type_text(HOST, text)
+
+    assert tv.log == []
+    if isinstance(text, str) and text:
+        assert text not in str(excinfo.value)
+
+
+def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.send_error = ConnectionClosed("lost while sending secret-123")
+
+    with pytest.raises(DeviceUnavailableError) as excinfo:
+        channel.type_text(HOST, "secret-123")
+
+    assert "secret-123" not in str(excinfo.value)
+    assert tv.texts == ["secret-123"]  # sent once, not resent

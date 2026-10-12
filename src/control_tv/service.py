@@ -38,6 +38,7 @@ from control_tv.domain import (
     RemoteKey,
     RemoteKeyResult,
     RemoteObservation,
+    RemoteTextResult,
     UnsupportedOperationError,
     VolumeControlType,
 )
@@ -532,6 +533,26 @@ class ControlService:
             before=press.before,
             after=press.after,
             detail=detail,
+        )
+
+    def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
+        """Send text once to the TV's active text field. The TV never echoes it, so the result
+        is `NOT_CHECKED`; the detail says whether the TV reported an active field."""
+        if not isinstance(text, str):
+            raise InvalidArgumentError("the text to type must be a string", device_id=device_id)
+        remote, host = self._remote_target(device_id)
+        entry = remote.type_text(host, text)
+        detail = (
+            "sent to the TV's active text field; check the TV"
+            if entry.field_reported
+            else "sent, but the TV did not report an active text field; check the TV"
+        )
+        return RemoteTextResult(
+            device_id=device_id,
+            confirmation=Confirmation.NOT_CHECKED,
+            detail=detail,
+            field_reported=entry.field_reported,
+            observed=entry.observed,
         )
 
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:

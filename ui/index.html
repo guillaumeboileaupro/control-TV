@@ -259,7 +259,46 @@
             <div class="tv-remote-row">
               <button class="btn" type="button" data-remote-key="back">Back</button>
               <button class="btn" type="button" data-remote-key="home">Home</button>
-              <button id="remote-read" class="btn" type="button">Read TV volume</button>
+              <button id="remote-read" class="btn" type="button">Read TV state</button>
+            </div>
+            <!-- The TV's active text field: the text replaces what the field holds; it is
+                 sent once and never kept or logged (it may be a password). -->
+            <form id="remote-text-form" class="tv-remote-text">
+              <input
+                id="remote-text"
+                class="remote-text"
+                type="text"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                maxlength="256"
+                enterkeyhint="send"
+                placeholder="Text for the TV"
+                aria-label="Text to type in the TV's active field"
+                aria-describedby="remote-text-hint"
+              />
+              <button id="remote-text-send" class="btn" type="submit">Send text</button>
+            </form>
+            <p id="remote-text-hint" class="note">
+              Open a search or text field on the TV first. The text replaces what the field holds.
+            </p>
+            <div class="tv-remote-row">
+              <button
+                class="btn"
+                type="button"
+                data-remote-key="delete"
+                aria-label="Backspace on the TV"
+              >
+                ⌫ Backspace
+              </button>
+              <button
+                class="btn"
+                type="button"
+                data-remote-key="enter"
+                aria-label="Enter on the TV"
+              >
+                Enter
+              </button>
             </div>
             <p id="remote-readout" class="sound-readout is-empty"></p>
             <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>

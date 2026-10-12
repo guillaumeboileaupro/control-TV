@@ -51,18 +51,28 @@ The TV's own remote channel (Android TV Remote protocol), separate from Cast: a 
 Cast volume is fixed is heard at the volume the TV itself sets. All take `deviceId`, a TV
 found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemote` is
 `false` answers `unsupported_operation`, a TV not paired yet answers `pairing_required`:
-- `get_remote_status`     -> {"remote": {"isOn", "volume"}}: what the TV reported; `volume`
-                             is {"level", "max", "muted"} or `null`, `isOn` may be `null`
+- `get_remote_status`     -> {"remote": {"isOn", "currentApp", "volume"}}: what the TV
+                             reported; `volume` is {"level", "max", "muted"} or `null`,
+                             `currentApp` the package name of the app in front or `null`,
+                             `isOn` may be `null`
 - `start_remote_pairing`  -> {"pairing": "code_shown"}: the TV shows a 6-character code
 - `finish_remote_pairing` -> also requires `code`, the code shown; {"pairing": "paired"},
                              or `command_rejected` when the TV refuses the code
 - `press_remote_key`      -> also requires `key`, one of `volume_up`, `volume_down`, `mute`
                              (the speaker), `power`, `up`, `down`, `left`, `right`, `ok`,
-                             `back`, `home`. The key is sent once, never resent. Answers
+                             `back`, `home`, `delete` (Backspace in the TV's text field),
+                             `enter` (submits it). The key is sent once, never resent. Answers
                              {"result": {"key", "deviceId", "confirmation", "detail", "before",
                              "after"}}: `confirmed` only when the TV reported the expected
                              volume or mute change (its report, not a person hearing it);
                              keys whose effect the TV does not report are `not_checked`.
+- `type_remote_text`      -> also requires `text` (1 to 256 printable characters): sent once
+                             to the TV's active text field, replacing what it holds. Answers
+                             {"result": {"deviceId", "confirmation", "detail", "fieldReported",
+                             "observed"}}, always `not_checked` (the TV does not echo text
+                             back); `fieldReported` says whether the TV reported an active
+                             field. The text is never echoed in an answer or an error: it may
+                             be a password.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -89,6 +99,7 @@ from control_tv.domain import (
     RemoteKey,
     RemoteKeyResult,
     RemoteObservation,
+    RemoteTextResult,
 )
 from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
 
@@ -242,6 +253,8 @@ REMOTE_KEYS: dict[str, RemoteKey] = {
     "ok": RemoteKey.DPAD_CENTER,
     "back": RemoteKey.BACK,
     "home": RemoteKey.HOME,
+    "delete": RemoteKey.DELETE,
+    "enter": RemoteKey.ENTER,
 }
 _KEY_NAMES = {key: name for name, key in REMOTE_KEYS.items()}
 
@@ -250,6 +263,7 @@ def _remote_to_json(observation: RemoteObservation) -> dict[str, Any]:
     volume = observation.volume
     return {
         "isOn": observation.is_on,
+        "currentApp": observation.current_app,
         "volume": None
         if volume is None
         else {"level": volume.level, "max": volume.maximum, "muted": volume.muted},
@@ -294,6 +308,25 @@ def _handle_press_remote_key(control: ControlService, params: dict[str, Any]) ->
     return {"result": _remote_key_result_to_json(result)}
 
 
+def _remote_text_result_to_json(result: RemoteTextResult) -> dict[str, Any]:
+    # Never the text itself: it may be a password.
+    return {
+        "deviceId": str(result.device_id),
+        "confirmation": result.confirmation.value,
+        "detail": result.detail,
+        "fieldReported": result.field_reported,
+        "observed": _remote_to_json(result.observed),
+    }
+
+
+def _handle_type_remote_text(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    text = params.get("text")
+    if not isinstance(text, str):
+        raise InvalidArgumentError("text must be a string")
+    return {"result": _remote_text_result_to_json(control.type_remote_text(device_id, text))}
+
+
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
@@ -308,6 +341,7 @@ _HANDLERS: dict[str, Handler] = {
     "start_remote_pairing": _handle_start_remote_pairing,
     "finish_remote_pairing": _handle_finish_remote_pairing,
     "press_remote_key": _handle_press_remote_key,
+    "type_remote_text": _handle_type_remote_text,
 }
 
 
