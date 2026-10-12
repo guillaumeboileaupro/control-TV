@@ -11,7 +11,8 @@ bridge-build` and `bridge-smoke` do both). Releases embed exactly the CPython ve
          the result if it still names a build-machine path, and write a deterministic
          inventory (SHA-256, size, mode, path) to `dist/python-bridge.inventory.tsv`
   smoke  copy `dist/python-bridge/` outside the repository and talk to it with an empty
-         environment: `ping` (which must report this checkout's version), a `get_status` that
+         environment: `ping` (which must report this checkout's version and the embedded TV remote
+         channel), a `get_status` that
          needs no network, then end of input. With `--strict` (releases, CI) it runs inside a
          Linux user/mount namespace in which the checkout and the build Python are empty, and
          fails when that isolation cannot be set up or verified; without it, the isolation is
@@ -508,6 +509,8 @@ def check_smoke_output(stdout: str, version: str) -> None:
         raise RuntimeError(
             f"the frozen bridge reports {ping['result']}, expected version {version}"
         )
+    if ping["result"].get("tvRemote") is not True:
+        raise RuntimeError(f"the frozen bridge does not embed the TV remote channel: {ping}")
     if status.get("id") != 2 or status.get("error", {}).get("code") != "device_not_found":
         raise RuntimeError(f"unexpected get_status response: {status}")
 

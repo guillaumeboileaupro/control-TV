@@ -480,3 +480,21 @@ def test_without_the_optional_extra_the_channel_says_so(
         channel.observe(HOST)
 
     assert tv.log == []
+
+
+def test_the_channel_reports_whether_its_library_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.util
+
+    from control_tv.adapters.tv_remote import channel_installed
+
+    assert channel_installed() is True
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert channel_installed() is False
+
+    def broken(name: str) -> None:
+        raise ValueError("broken module spec")
+
+    monkeypatch.setattr(importlib.util, "find_spec", broken)
+    assert channel_installed() is False

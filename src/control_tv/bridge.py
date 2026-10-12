@@ -16,7 +16,8 @@ Response: {"id": <same as request, or null if the request itself could not be re
 `id` is opaque to this module: it is only ever echoed back, never interpreted.
 
 Read-only methods:
-- `ping`             -> {"status", "controlTvVersion"}
+- `ping`             -> {"status", "controlTvVersion", "tvRemote"}: `tvRemote` says whether
+                        this build embeds the TV's own remote channel
 - `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`. Each device
                         carries `androidTvRemote`: whether it advertises the Android TV
                         Remote service (`true`/`false`), or `null` when unknown
@@ -163,7 +164,13 @@ def _device_id_param(params: dict[str, Any]) -> DeviceId:
 
 def _handle_ping(control: ControlService, params: dict[str, Any]) -> Any:
     del control, params
-    return {"status": "ready", "controlTvVersion": control_tv.__version__}
+    from control_tv.adapters.tv_remote import channel_installed
+
+    return {
+        "status": "ready",
+        "controlTvVersion": control_tv.__version__,
+        "tvRemote": channel_installed(),
+    }
 
 
 def _handle_discover_devices(control: ControlService, params: dict[str, Any]) -> Any:

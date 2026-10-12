@@ -433,7 +433,8 @@ def test_removal_is_refused_outside_the_repository(project: Path, tmp_path: Path
         build._remove_generated(tmp_path / "elsewhere")
 
 
-PING = {"id": 1, "ok": True, "result": {"status": "ready", "controlTvVersion": "0.1.0"}}
+PING_RESULT: dict[str, Any] = {"status": "ready", "controlTvVersion": "0.1.0", "tvRemote": True}
+PING = {"id": 1, "ok": True, "result": PING_RESULT}
 NOT_FOUND = {"id": 2, "ok": False, "error": {"code": "device_not_found", "message": "x"}}
 
 
@@ -453,8 +454,9 @@ def test_a_frozen_bridge_reporting_another_version_is_refused() -> None:
         [PING, {**NOT_FOUND, "error": {"code": "device_unavailable", "message": "x"}}],
         [{**PING, "result": {"status": "starting"}}, NOT_FOUND],
         [NOT_FOUND, PING],
+        [{**PING, "result": {**PING_RESULT, "tvRemote": False}}, NOT_FOUND],
     ],
-    ids=["missing-answer", "network-touched", "not-ready", "out-of-order"],
+    ids=["missing-answer", "network-touched", "not-ready", "out-of-order", "no-tv-remote"],
 )
 def test_unexpected_smoke_answers_are_refused(answers: list[dict[str, Any]]) -> None:
     with pytest.raises(RuntimeError):

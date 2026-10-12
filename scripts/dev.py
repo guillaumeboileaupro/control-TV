@@ -268,7 +268,7 @@ def cmd_setup(root: Path) -> int:
     and the Android TV Remote channel.
 
     Fails if the lock is out of date. The packaging and Android commands sync their own
-    exact environments, without these extras.
+    exact environments: the frozen bridge and the Android app with the TV remote extra only.
     """
     return _run_uv(root, ["sync", "--locked", "--extra", "mcp", "--extra", "tvremote"])
 
@@ -432,7 +432,11 @@ def release_python_version(root: Path) -> str:
 def cmd_bridge_build(root: Path) -> int:
     """Freeze the bridge with the locked PyInstaller and the release CPython, in the repo."""
     version = release_python_version(root)
-    code = _run_uv(root, ["sync", "--locked", "--group", "packaging", "--python", version])
+    # The frozen bridge embeds the TV's own remote channel (the `tvremote` extra), never MCP.
+    code = _run_uv(
+        root,
+        ["sync", "--locked", "--group", "packaging", "--extra", "tvremote", "--python", version],
+    )
     return code or _run_bridge_packaging(root, "build")
 
 
