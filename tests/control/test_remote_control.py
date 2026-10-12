@@ -190,6 +190,17 @@ def test_the_detail_states_what_the_tv_reported() -> None:
     assert mute.detail == "sent; the TV still reports its sound not muted"
 
 
+def test_a_tv_that_does_not_report_its_sound_is_named_for_the_key_pressed() -> None:
+    silent = RemoteObservation(is_on=True, volume=None)
+
+    up = discovered(FakeRemote(before=silent)).press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)
+    mute = discovered(FakeRemote(before=silent)).press_remote_key(DEVICE_ID, RemoteKey.VOLUME_MUTE)
+
+    assert up.detail == "sent; the TV did not report its volume"
+    assert mute.detail == "sent; the TV did not report whether its sound is muted"
+    assert up.confirmation is mute.confirmation is Confirmation.UNCONFIRMED
+
+
 def test_a_failed_key_is_an_error_and_is_not_resent() -> None:
     remote = FakeRemote(error=PairingRequiredError("pair first"))
 

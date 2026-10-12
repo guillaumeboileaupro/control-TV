@@ -240,6 +240,15 @@ function keyOutcome(key: RemoteKeyName, result: Record<string, unknown>): Remote
     case "confirmed":
       return { tone: "done", text: `${label}: ${detail}.`, technical: null };
     case "unconfirmed":
+      // Some TVs never report their volume on this channel (their sound is set by the TV
+      // itself): only the person in front of the TV can tell whether it changed.
+      if (toReport(result["after"])?.volume == null) {
+        return {
+          tone: "sent",
+          text: `${label} was sent. This TV doesn't report its volume here: check the TV.`,
+          technical: detail === "" ? null : detail,
+        };
+      }
       return {
         tone: "sent",
         text: `${label} was sent, but the TV didn't report the change.`,

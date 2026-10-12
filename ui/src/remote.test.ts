@@ -169,6 +169,24 @@ describe("keys and what the TV reports", () => {
     assert.equal(view.readout, "TV volume 100 of 100");
   });
 
+  test("a TV that never reports its volume leaves the check to the person", () => {
+    const { state } = run(
+      withTv(),
+      { kind: "key", key: "volume_up" },
+      keyAnswer(
+        "unconfirmed",
+        { isOn: true, volume: null },
+        "sent; the TV did not report its volume",
+      ),
+    );
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "Volume up was sent. This TV doesn't report its volume here: check the TV.",
+    );
+    assert.equal(describeRemote(state).outcome?.tone, "sent");
+  });
+
   test("a key whose effect the TV does not report asks the person to look", () => {
     const { state } = run(
       withTv(),

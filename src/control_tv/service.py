@@ -310,7 +310,8 @@ def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
     if key not in (RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE):
         return Confirmation.NOT_CHECKED, "sent; the TV does not report the effect of this key"
     if before is None or after is None:
-        return Confirmation.UNCONFIRMED, "sent; the TV did not report its volume"
+        reported = "whether its sound is muted" if key is RemoteKey.VOLUME_MUTE else "its volume"
+        return Confirmation.UNCONFIRMED, f"sent; the TV did not report {reported}"
     if key is RemoteKey.VOLUME_MUTE:
         now = "muted" if after.muted else "not muted"
         if after.muted != before.muted:
