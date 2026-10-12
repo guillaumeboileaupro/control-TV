@@ -705,11 +705,11 @@ Le développement MCP et ChatGPT Voice est reporté. Nous conservons les PR corr
 |---|---|
 | Dépôt | [control-TV](https://github.com/guillaumeboileaupro/control-TV) |
 | Issue de référence | [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37) |
-| PR ouvertes | #33, #36, #38 |
-| Tests automatisés | 1 206 réussis, 9 ignorés |
+| PR ouvertes | #33, #36, #38 ; #41 (empaquetage du canal télécommande), #42 (clavier distant, application active) — mise à jour 2026-10-12 ; #39 et #40 fusionnées le 2026-10-12 |
+| Tests automatisés | 1 206 réussis, 9 ignorés (PR #38) ; branche #42 : 1 328 Python, 306 UI, 71 Rust (2026-10-12) |
 | Couverture | 98,02 % |
-| CI | 4/4 jobs réussis sur la PR #38 |
-| Validation sur matériel réel | À réaliser pour les deux applications en parallèle |
+| CI | 4/4 jobs réussis sur la PR #38 ; 4/4 sur #40 (fusionnée) et #41 |
+| Validation sur matériel réel | Ubuntu seul, une Google TV (2026-10-12) : appairage, Volume +, Mute aller-retour observés par le propriétaire. Android : rien. R1–R4 : partiel non classé |
 | **Temps restant estimé** | **40–80 heures** |
 
 L'estimation de 40–80 heures correspond au travail restant sur l'issue #37. Elle doit évoluer à partir des validations matérielles. Les chiffres CI constituent un instantané du commit de la PR #38 `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`, pas une promesse sur les exécutions futures.
@@ -795,7 +795,12 @@ Les builds Linux et Android existent déjà. Il reste à vérifier leur installa
 | [#33](https://github.com/guillaumeboileaupro/control-TV/pull/33) | Widget Android | Ouverte | Analyser les conflits et la compatibilité | 1–2 h |
 | [#36](https://github.com/guillaumeboileaupro/control-TV/pull/36) | Faisabilité MCP | Ouverte, reportée | Aucune pour le moment | — |
 
+| [#41](https://github.com/guillaumeboileaupro/control-TV/pull/41) | Canal télécommande dans le pont figé et l'APK | CI verte (Chaquopy installe `cryptography` 42.0.8) | Fusion si autorisée, puis essai téléphone | ≈ 1 h restante |
+| [#42](https://github.com/guillaumeboileaupro/control-TV/pull/42) | Clavier distant, Backspace/Entrée, application active | Empilée sur #41 ; tests verts en local | Essai sur TV autorisé, puis fusion si autorisée | voir 2F |
+
 Pour la #33, si des corrections sont nécessaires, prévoir provisoirement **2–5 heures supplémentaires** après l'analyse.
+
+**Écart à l'ordre recommandé (2026-10-11/12) :** sur demande du propriétaire (« le son ne marche pas »), la phase 2C (son audible) a été traitée avant la fin de la phase 1 : R1–R4 restent partiels et non classés, la décision sur la PR #38 et ses P3 reste à prendre, et la PR #33 n'a pas été corrigée. Ces points ne sont pas abandonnés : ils restent les prochaines étapes de la phase 1.
 
 **Aucune PR ne sera fusionnée sans l'accord explicite du propriétaire.** Le widget #33 reste indépendant ; la #36 reste suspendue.
 
@@ -1017,7 +1022,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Tester absence de session média, contenu non compatible, délai d'attente et perte réseau.
 
 **2B — Navigation dans la TV**
-- [ ] Évaluer protocole réel pour Home, Retour, Haut, Bas, Gauche, Droite, OK/Entrée et Menu si disponibles. Candidat identifié : service Android TV Remote annoncé par les deux Google TV (2026-10-10) ; non appairé, non essayé.
+- [ ] Évaluer protocole réel pour Home, Retour, Haut, Bas, Gauche, Droite, OK/Entrée et Menu si disponibles. Protocole retenu : Android TV Remote (appairé depuis Ubuntu le 2026-10-12). Flèches, OK, Retour, Accueil **implémentés** dans le panneau « TV remote » (Ubuntu et Android, même interface ; #40 fusionnée) ; **0 % confirmé sur TV** (aucune touche de navigation envoyée). Menu : non proposé.
 - [ ] Proposer ces boutons dans les deux interfaces, avec retour utilisateur et erreurs explicites.
 - [ ] Vérifier sur l'écran d'accueil Google TV et dans plusieurs applications.
 - [ ] Tester commandes répétées, maintien éventuel et navigation lorsque la TV n'accepte pas la commande.
@@ -1032,14 +1037,14 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Afficher un message clair lorsque la TV confirme une commande logique sans changement sonore.
 
 **2D — Alimentation**
-- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole).
+- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole). Touche Power du canal Android TV Remote **implémentée** (#40) ; la TV rapporte son état allumé/veille (`isOn`, lu `false` en veille le 2026-10-12, lecture seule) ; Power **non envoyé**, réveil depuis la veille **non essayé**.
 - [ ] Tester veille depuis Ubuntu, puis Android ; confirmer l'effet sur TV réelle.
 - [ ] Tester réveil depuis Ubuntu, puis Android ; confirmer le retour du contrôle.
 - [ ] Tester TV éteinte, veille réseau, TV inaccessible et erreur/timeout.
 - [ ] Documenter les limitations et éviter d'afficher un succès non confirmé.
 
 **2E — APPLICATIONS INSTALLÉES SUR LA TV : découverte ET lancement (exigence propriétaire)**
-- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV).
+- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV). **Faisabilité (2026-10-12) :** la seule méthode d'énumération réelle identifiée est le débogage réseau ADB de la Google TV (`pm list packages` puis lancement par package), à activer par le propriétaire dans les options développeur ; il donne un accès complet à la TV depuis le réseau local (risque de sécurité) et ajoute une dépendance (client ADB ou bibliothèque Python). **Décision du propriétaire requise** ; sinon, alternative documentée : lancement par lien d'applications connues, présenté comme catalogue, jamais comme liste installée. Avancement 2E : **0 % implémenté**.
 - [ ] Définir les permissions, appairages et restrictions nécessaires ; proposer une solution viable sans serveur permanent.
 - [ ] Récupérer identifiant/package, nom affiché, icône si disponible et statut lançable.
 - [ ] Afficher la liste dans **Ubuntu** avec recherche/tri et état de chargement/erreur.
@@ -1053,7 +1058,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] **Critère de sortie : liste issue de la TV + lancement effectif depuis chacune des deux applications**, ou limite matérielle précisément documentée et décision du propriétaire sur une alternative.
 
 **2F — CLAVIER DISTANT : remplir un champ de saisie TV (exigence propriétaire)**
-- [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant. Candidat identifié : service Android TV Remote (saisie de texte de la télécommande Google), annoncé par les deux Google TV ; non appairé, non essayé.
+- [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant. Protocole retenu : méthode de saisie (IME) du canal Android TV Remote. **Implémenté** (#42, non fusionnée) : champ « Text for the TV » dans les deux interfaces, envoi unique qui **remplace** le contenu du champ actif, Backspace et Entrée, texte jamais journalisé ni renvoyé, résultat `not_checked` avec indication « champ actif signalé ou non ». **0 % confirmé sur TV** ; détection du champ actif non vérifiée (lecture seule du 2026-10-12 faite TV en veille : aucun champ, aucune application signalés).
 - [ ] Vérifier appairage, authentification, permissions, chiffrement et compatibilité selon TV.
 - [ ] Ajouter dans **Ubuntu** une zone de saisie utilisant le clavier physique du PC.
 - [ ] Ajouter dans **Android** une zone de saisie utilisant le clavier virtuel du téléphone.
@@ -1124,7 +1129,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 | Lot | Avancement vérifié | Estimation restante de référence | Prochaine preuve |
 |---|---|---|---|
 | Phase 1 : autonomie/convergence | Tests simulés + revue Claude terminés ; R1–R4 matériel **0 %** | 14–28 h, à réviser | Autorisation + R1–R4 |
-| Phase 2 : commandes/applications/clavier | Validation matérielle complète **non démontrée** ; applications et clavier à étudier | 16–32 h **provisoires, potentiellement sous-estimées** | Faisabilité protocoles + campagne autorisée |
+| Phase 2 : commandes/applications/clavier | Son audible validé depuis Ubuntu (Volume +, Mute) ; navigation, Power et clavier implémentés, **0 % confirmé sur TV** ; Android **0 %** ; applications installées **0 %** (décision ADB attendue) | 16–32 h **provisoires, potentiellement sous-estimées** ; 2C réestimé 8–13 h | Essais autorisés Ubuntu (Power, navigation, texte), APK sur téléphone, décision ADB |
 | Phase 3 : livraison | CI/builds existants ; validation finale non démontrée | 10–20 h, à réviser | Installations et tests finaux |
 | **Total restant de référence** | **Pas de pourcentage global inventé** | **40–80 h, sous réserve de réestimation** | Décisions après tests matériels |
 
@@ -1153,6 +1158,8 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 | Branchement `ControlService` / pont / Tauri / UI (volume audible, mute, alimentation, navigation, appairage) | 100 % implémenté, 0 % validé sur TV | 2–4 h | ≈ 13 min | 0 (code) | ≈ 11 % de l'estimation basse | tests Python (service, pont), Rust (70), UI (298) ; rendu sans affichage avec pont simulé (largeurs 420 et 900 px) ; CI 38169124695 : 4/4 jobs verts (1299 réussis, 9 ignorés, 98,72 % ; Rust 70 ; UI 298) |
 | Appairage et essais réels Volume −/+, Mute (Ubuntu) | 100 % Ubuntu, 0 % Android | 1 h | ≈ 10 min | Android : inclus dans l'empaquetage | ≈ 17 % | 2026-10-12, pont réel du dépôt sur Ubuntu : appairage OK ; Volume + ×2 (barre de volume vue au 2e envoi ; le 1er n'a pas été observé séparément) ; Volume − ×2 envoyés pour revenir au niveau initial (retour non vérifié séparément) ; Mute → son coupé (propriétaire), Mute → son revenu (propriétaire). Aucune touche Power ni navigation envoyée. Incident de compte rendu : un second Mute a été annoncé à tort comme envoyé, puis corrigé avant toute nouvelle commande ; le son a été rétabli à la demande du propriétaire. |
 | Empaquetage Linux (pont figé) et Android (Chaquopy, cryptography 42.0.8) | ≈ 80 % (code, tests, préparation Android réelle) | 2–4 h | ≈ 7 min | ≈ 1 h (CI, essai téléphone) | ≈ 6 % de l'estimation basse | branche `feat/tv-remote-packaging` ; `android-python` réel OK ; CI 38219059015 : 4/4 jobs verts — pont figé construit avec le canal et smoke isolé exigeant `tvRemote: true` réussi ; APK : Chaquopy a installé hors ligne `androidtvremote2` 0.3.2, `cryptography` 42.0.8, `cffi` 1.17.1, `chaquopy-libffi` 3.3 ; essai sur téléphone à faire (installation de l'APK à autoriser) |
+| Clavier distant et application active (2F, #42) | 100 % implémenté, 0 % confirmé sur TV | à établir (non chiffré au plan) | non ventilé : ≈ 4 h 30 d'horloge pour empaquetage + clavier le 2026-10-12, attentes CI et réponses comprises | ≈ 1–2 h (essais Ubuntu et Android, corrections) | — | tests Python, UI, Rust ; rendu sans affichage 420/900 px ; essai TV à autoriser (TV allumée, champ de recherche ouvert) |
+| Applications installées (2E) | 0 % | 3–5 h au plan, insuffisant | 0 | à réestimer après décision ADB | — | décision du propriétaire sur le débogage réseau ADB |
 | **2C — total** | ≈ 75 % | 3–7 h au plan ; réestimé 8–13 h | ≈ 1.1 h cumulées | ≈ 3–7 h (empaquetage Linux + Android, essai Android) | — | réestimation : l'empaquetage natif n'était pas chiffré |
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
