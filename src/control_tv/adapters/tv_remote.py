@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import importlib.util
 import ipaddress
 import os
 import re
@@ -61,6 +62,14 @@ _SETTLE_STEP = 0.05
 T = TypeVar("T")
 RemoteFactory = Callable[[str, str, str, str], Any]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
+
+
+def channel_installed() -> bool:
+    """Whether this build embeds the optional library; checked without importing it."""
+    try:
+        return importlib.util.find_spec("androidtvremote2") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def default_credentials_dir() -> Path:

@@ -51,4 +51,5 @@ def startup_diagnostic() -> str:
     if not response.get("ok"):
         return f"{imported}; embedded ping failed ({response['error']['code']})"
     version = response["result"]["controlTvVersion"]
-    return f"{imported}; embedded ping ok, controlTvVersion={version}"
+    remote = "yes" if response["result"].get("tvRemote") else "no"
+    return f"{imported}; embedded ping ok, controlTvVersion={version}, tvRemote={remote}"

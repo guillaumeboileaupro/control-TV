@@ -4,27 +4,32 @@
 Run with the development environment's interpreter after `uv sync --locked --group android`
 (`python3 scripts/dev.py android-python` does both). It leaves in `dist/android-python/`:
 
-- `wheels/`: every package of the control layer's locked runtime dependencies as a
-  pure-Python wheel, plus control-TV's own wheel;
+- `wheels/`: every package of the control layer's locked runtime dependencies, with the
+  extras the app embeds (`EXTRAS`: the TV's own remote channel), as a pure-Python wheel,
+  plus control-TV's own wheel and the few native wheels below;
 - `requirements.txt`: the exact versions, which Chaquopy installs with `--no-index` from
   `wheels/` only, so nothing is resolved or downloaded while the APK is built.
 
 Every downloaded file is checked against its SHA-256 in `uv.lock`. zeroconf publishes no
 pure-Python wheel; its locked sdist is built with its optional Cython extensions disabled
 (`SKIP_CYTHON=1`), checked to contain no compiled module, and retagged `py3-none-any`.
-A dependency that has no pure-Python form fails the preparation: nothing native is
-silently substituted.
+The TV remote channel needs `cryptography`, which is native. Android cannot use the locked
+build: it takes the arm64 wheels Chaquopy publishes for its own Python (`CHAQUOPY_WHEELS`:
+`cryptography`, `cffi`, and the `libffi` that `cffi` needs), each pinned here by its exact
+file name and SHA-256 and checked on download. Their versions differ from the desktop lock
+(`cryptography` 42.0.8 on Android). Any other dependency that has no pure-Python form fails
+the preparation: nothing native is substituted unless it is listed and pinned here.
 
 Network boundary: the only network access is `uv sync --locked --group android` (run by
 `dev.py android-python`, hash-checked by uv) and `download`, which fetches exactly the
-locked URLs and refuses a hash mismatch. The two wheel builds (zeroconf and control-tv)
-run offline (`pip_wheel_command`: no index, no dependency resolution, no build isolation,
-no shared cache), with the build backends installed from the `android` group
-(`BUILD_BACKENDS`, checked against `uv.lock` before building), so no build dependency is
-resolved at build time. The builds and the retag run with a fixed `SOURCE_DATE_EPOCH`
-(`ZIP_EPOCH`, unless the caller sets one), which made two consecutive preparations on the
-same machine produce byte-identical wheels; reproducibility across machines or toolchains
-is not measured.
+locked URLs and the pinned Chaquopy wheels and refuses a hash mismatch. The two wheel builds
+(zeroconf and control-tv) run offline (`pip_wheel_command`: no index, no dependency
+resolution, no build isolation, no shared cache), with the build backends installed from the
+`android` group (`BUILD_BACKENDS`, checked against `uv.lock` before building), so no build
+dependency is resolved at build time. The builds and the retag run with a fixed
+`SOURCE_DATE_EPOCH` (`ZIP_EPOCH`, unless the caller sets one), which made two consecutive
+preparations on the same machine produce byte-identical wheels; reproducibility across
+machines or toolchains is not measured.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ import tomllib
 import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +64,57 @@ BUILD_BACKENDS = ("setuptools", "poetry-core")
 # Timestamp written into the built wheels' zip entries (1980-01-01, the earliest zip date),
 # so a rebuild of the same inputs does not differ by build time.
 ZIP_EPOCH = "315532800"
+# The project's optional extras the Android app embeds: the TV's own remote channel. The MCP
+# server is never embedded.
+EXTRAS = ("tvremote",)
+
+
+@dataclass(frozen=True)
+class ChaquopyWheel:
+    """A native wheel built by Chaquopy for its Python on Android, pinned by file and hash."""
+
+    name: str
+    version: str
+    path: str  # relative to CHAQUOPY_REPOSITORY
+    sha256: str
+
+    @property
+    def url(self) -> str:
+        return f"{CHAQUOPY_REPOSITORY}/{self.path}"
+
+    @property
+    def filename(self) -> str:
+        return self.path.rsplit("/", 1)[1]
+
+
+# Chaquopy's package repository for its Gradle plugin 17 (Python 3.12, minSdk 24, arm64).
+CHAQUOPY_REPOSITORY = "https://chaquo.com/pypi-13.1"
+# Locked packages Android replaces with Chaquopy's native build. `_rust.so` of cryptography
+# links the OpenSSL of Chaquopy's own Python (`libssl_chaquopy.so`, `libcrypto_chaquopy.so`);
+# `_cffi_backend.so` links the libffi of `chaquopy-libffi`.
+CHAQUOPY_WHEELS = {
+    "cryptography": ChaquopyWheel(
+        "cryptography",
+        "42.0.8",
+        "cryptography/cryptography-42.0.8-0-cp312-cp312-android_24_arm64_v8a.whl",
+        "2bbc7b31e6392b1105d363bb161e7edd5941aea2090497d610d53642af490a8c",
+    ),
+    "cffi": ChaquopyWheel(
+        "cffi",
+        "1.17.1",
+        "cffi/cffi-1.17.1-1-cp312-cp312-android_24_arm64_v8a.whl",
+        "c0cfaa67fb5ea65c3276fe202920d7810bf74aafae96dc81815b07c3fdb6025f",
+    ),
+}
+# What those wheels need that has no uv.lock entry: Chaquopy's own libffi build.
+CHAQUOPY_ADDITIONS = (
+    ChaquopyWheel(
+        "chaquopy-libffi",
+        "3.3",
+        "chaquopy-libffi/chaquopy_libffi-3.3-3-py3-none-android_24_arm64_v8a.whl",
+        "86873c2f8e5e43b07b72233bf35e06ad8dae41ba98e0556202d61d00d7ad952f",
+    ),
+)
 
 
 def normalized(name: str) -> str:
@@ -65,12 +122,20 @@ def normalized(name: str) -> str:
 
 
 def runtime_packages(
-    lock: Mapping[str, Any], project: str = PROJECT
+    lock: Mapping[str, Any], project: str = PROJECT, extras: Sequence[str] = ()
 ) -> dict[str, Mapping[str, Any]]:
-    """The locked packages the project needs at run time (its dependencies, transitively)."""
+    """The locked packages the project needs at run time (its dependencies and those of
+    `extras`, transitively)."""
     packages = {normalized(p["name"]): p for p in lock["package"]}
+    root = packages[normalized(project)]
+    optional = root.get("optional-dependencies", {})
+    roots = list(root.get("dependencies", []))
+    for extra in extras:
+        if extra not in optional:
+            raise RuntimeError(f"{project} has no optional extra {extra!r} in uv.lock")
+        roots += optional[extra]
     needed: dict[str, Mapping[str, Any]] = {}
-    pending = [normalized(d["name"]) for d in packages[normalized(project)].get("dependencies", [])]
+    pending = [normalized(d["name"]) for d in roots]
     while pending:
         name = pending.pop()
         if name in needed:
@@ -208,21 +273,30 @@ def _environment() -> dict[str, str]:
 def requirements_lines(
     packages: Mapping[str, Mapping[str, Any]], project_version: str
 ) -> list[str]:
+    """Exact pins: the locked version, or Chaquopy's for a package it replaces or adds."""
     lines = [f"{PROJECT}=={project_version}"]
-    lines += [f"{package['name']}=={package['version']}" for package in packages.values()]
+    for name, package in packages.items():
+        version = CHAQUOPY_WHEELS[name].version if name in CHAQUOPY_WHEELS else package["version"]
+        lines.append(f"{package['name']}=={version}")
+    if any(name in CHAQUOPY_WHEELS for name in packages):
+        lines += [f"{wheel.name}=={wheel.version}" for wheel in CHAQUOPY_ADDITIONS]
     return lines
 
 
 def prepare(output: Path = OUTPUT) -> Path:
     lock = tomllib.loads(LOCK.read_text(encoding="utf-8"))
     check_build_backends(lock)
-    packages = runtime_packages(lock)
+    packages = runtime_packages(lock, extras=EXTRAS)
     if output.exists():
         shutil.rmtree(output)
     wheels = output / "wheels"
     wheels.mkdir(parents=True)
 
     for name, package in packages.items():
+        if name in CHAQUOPY_WHEELS:
+            chaquopy = CHAQUOPY_WHEELS[name]
+            download(chaquopy.url, chaquopy.sha256, wheels / chaquopy.filename)
+            continue
         if name in FROM_SDIST:
             sdist = package.get("sdist")
             if sdist is None:
@@ -239,6 +313,10 @@ def prepare(output: Path = OUTPUT) -> Path:
         if wheel is None:
             raise RuntimeError(f"{name} {package['version']} has no pure-Python wheel in uv.lock")
         download(wheel["url"], expected_hash(wheel), wheels / wheel["url"].rsplit("/", 1)[1])
+
+    if any(name in CHAQUOPY_WHEELS for name in packages):
+        for chaquopy in CHAQUOPY_ADDITIONS:
+            download(chaquopy.url, chaquopy.sha256, wheels / chaquopy.filename)
 
     project = build_project_wheel(wheels)
     project_version = project.name.split("-")[1]
