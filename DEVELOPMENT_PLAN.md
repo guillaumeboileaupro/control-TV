@@ -31,7 +31,7 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 
 ## Current state and critical path
 
-State of `main` at `ded6e9c` (merge of PR #32, the desktop delivery wording fix, 2026-10-07; it contains everything listed below, including PR #31 `499bfb2`, PR #30 `3bcb516`, PR #29 `1c71530` and PR #26 `eba73f5`). CI on `main` `ded6e9c`: push run `37590130462`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android home-screen widget (PR #33, branch `feat/android-home-widget`, open, not to be merged without the owner's authorization) and this roadmap reconciliation (branch `docs/roadmap-reconciliation`).
+State of `main` at `c2d7484` (merge of PR #43, 2026-10-12; it contains the TV remote work of PRs #39 to #43 and everything listed below). CI on `main` `c2d7484`: push run `38251554583`, all four jobs green. Only merged work is described as part of `main`; an open pull request is listed as in progress and its items stay `[ ]` until it is merged. In progress, not merged: the Android home-screen widget (PR #33, open, not to be merged without the owner's validation). PR #36 (ChatGPT reach) is closed: MCP, ChatGPT Voice and Windows were abandoned on 2026-10-12.
 
 Product priority (owner, issue #37, 2026-10-08, updated 2026-10-12): two standalone remotes, Ubuntu and Android, on the same TV in parallel; then the TV controls the owner asked for (audible sound, power, navigation, installed applications, remote keyboard). The order and the time tracking are in the French section "Plan complet et suivi du temps". MCP, ChatGPT Voice and Windows are abandoned (see Goal). The Android widget (PR #33) stays open and separate. Android is personal and sideloaded only: no Google Play publication work is planned.
 
@@ -46,12 +46,13 @@ Critical path:
 - [x] **J. MCP control-TV adapter (PR #31, merged 2026-10-07):** historical; MCP was abandoned on 2026-10-12 and this code is no longer developed (see Goal).
 - [ ] **I. Android home-screen widget (Phase 7b):** implemented on PR #33 (open, not merged; its phone results are recorded on that branch and summarized in `docs/REQUIREMENTS_TRACEABILITY.md`).
 - [ ] **K. Linux tray (Phase 4b) and secondary improvements:** after the items below unless the owner reprioritizes.
-- [ ] **L. Roadmap reconciliation (issue #34, documentation only):** this plan, `README.md`, `ARCHITECTURE.md` and `docs/REQUIREMENTS_TRACEABILITY.md` restored to the original scope; reviewed independently by Codex; merged only with the owner's authorization.
+- [x] **L. Roadmap reconciliation (issue #34, documentation only):** this plan, `README.md`, `ARCHITECTURE.md` and `docs/REQUIREMENTS_TRACEABILITY.md` restored to the original scope; reviewed independently by Codex; merged as PR #35 (`4bf5578`, 2026-10-08) with the owner's authorization.
 - [ ] **M. Capability and evidence model (proposed P1):** per-device capabilities and the evidence levels, with the Cast logical volume and mute told apart from the TV's audible output, in the GUI wording.
-  - first part (branch `feat/tv-capabilities`, not merged, 2026-10-10): discovery reports per TV whether it advertises the Android TV Remote service (`Device.android_tv_remote`, bridge `androidTvRemote`: true, false, or null when unknown or for a Cast group), detected passively on the Cast browser's own zeroconf instance (a second instance competed for mDNS replies and missed a TV on the real network); the window says that a fixed Cast volume cannot be changed and that Mute may not silence the TV, and names the TV's own remote channel when it is offered. Real network, read-only (Ubuntu, 3 runs): both Google TVs offer it, the Cast group is unknown; discovery takes about 1.5 s longer. Not checked on Android yet. The channel is not used: pairing and any key command need the owner's go-ahead.
-  - second part (branch `feat/android-tv-remote`, stacked on `feat/tv-capabilities`, not merged, 2026-10-11): `control_tv.adapters.tv_remote`, the Android TV Remote channel behind the optional extra `control-tv[tvremote]` (`androidtvremote2==0.3.2`; adds `aiofiles` to the lock, nothing else changes): explicit pairing with the code shown on the TV, private client credentials (0700/0600), an allowlist of keys (volume, speaker mute, power, D-pad, OK, Back, Home) sent once each over one short connection per operation, the TV's own power and audible volume/mute reports returned as observed, new error `pairing_required`. Then wired (same branch): `ControlService` `TvRemote` port and methods, bridge methods `get_remote_status` / `start_remote_pairing` / `finish_remote_pairing` / `press_remote_key`, four Tauri commands, and a **TV remote** panel in the window (Vol −/+, Mute, Power, arrows, OK, Back, Home, Read TV volume, explicit pairing), shared by the Ubuntu and Android hosts through `bridge.default_service`. Fakes and a headless render with a mock bridge only; not in the frozen bridge or the APK. Nothing was sent to a TV.
+  - first part (PR #39, merged 2026-10-12): discovery reports per TV whether it advertises the Android TV Remote service (`Device.android_tv_remote`, bridge `androidTvRemote`: true, false, or null when unknown or for a Cast group), detected passively on the Cast browser's own zeroconf instance (a second instance competed for mDNS replies and missed a TV on the real network); the window says that a fixed Cast volume cannot be changed and that Mute may not silence the TV, and names the TV's own remote channel when it is offered. Real network, read-only (Ubuntu, 3 runs): both Google TVs offer it, the Cast group is unknown; discovery takes about 1.5 s longer. Not checked on Android yet. The channel is not used: pairing and any key command need the owner's go-ahead.
+  - second part (PR #40, merged 2026-10-12): `control_tv.adapters.tv_remote`, the Android TV Remote channel behind the optional extra `control-tv[tvremote]` (`androidtvremote2==0.3.2`; adds `aiofiles` to the lock, nothing else changes): explicit pairing with the code shown on the TV, private client credentials (0700/0600), an allowlist of keys (volume, speaker mute, power, D-pad, OK, Back, Home) sent once each over one short connection per operation, the TV's own power and audible volume/mute reports returned as observed, new error `pairing_required`. Then wired (same branch): `ControlService` `TvRemote` port and methods, bridge methods `get_remote_status` / `start_remote_pairing` / `finish_remote_pairing` / `press_remote_key`, four Tauri commands, and a **TV remote** panel in the window (Vol −/+, Mute, Power, arrows, OK, Back, Home, Read TV volume, explicit pairing), shared by the Ubuntu and Android hosts through `bridge.default_service`. Fakes and a headless render with a mock bridge only; not in the frozen bridge or the APK. Nothing was sent to a TV.
 - [ ] **P. TV endpoints feasibility (proposed S1, Phase 5b, gates G3-G5):** read-only identification of each owner TV's platform, audio path and control endpoints.
 - [ ] **Q. Power, audible sound, navigation and applications (proposed P5-P9, Phase 5b):** in the GUI (Linux, then Android), per proven capability.
+- [x] **R. Ubuntu and Android remotes in parallel on one TV (issue #37 phase 1):** first PR, the dual-controller state convergence contract (PR #38, merged 2026-10-12): a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`) and 19 test cases (`tests/test_dual_controller.py`; 18 pass, 1 strict expected failure for the known gap below): each controller must discover the TV itself; one controller's command is seen by the other at its next read, never cached; 60 random commands from both leave both reading the TV's real state; internal send barriers force concurrent play/pause and volume calls to overlap, each controller attempts its command once, and both converge on the last delivered state; a command undone by the other controller stays unconfirmed and is never resent; an ambiguous attempt is modeled both before delivery and after delivery, so the TV receives it zero or one time and no status read replays it; a pause, seek or stop is never confirmed by media the other controller loaded meanwhile, nor by the same content reloaded in a new session, nor by a new session at the same position, while a change that keeps the session (volume) does not block a confirmation. Every CONFIRMED result is checked against the statuses the simulated TV actually returned to that controller and must show the requested state (review P3-7). A media-session switch between the pre-command read and the send is pinned (review P3-3): the command is sent once and acts on the new session, never confirmed nor resent; that it is sent at all is a **known gap**, recorded as a strict expected failure, whose fix (the transport sending the pre-read session id so the receiver refuses a stale one) is outside PR #38. Five mutations (a command attempted twice, no media-session guard, a cached status, a confirmation citing a status the TV never returned, a confirmation ignoring the requested state) fail 8, 5, 3, 5 and 7 focused tests. Simulator evidence only: the Ubuntu + Android hardware protocol is `docs/DUAL_CONTROLLER_VALIDATION.md`, not yet run; C6 and C7 require explicit timing/send instrumentation before they can prove their respective claims.
 - Abandoned on 2026-10-12 (owner): **N** (content started from ChatGPT tools), **O** (ChatGPT reach, gate G1) and **F** (Windows).
 
 
@@ -159,7 +160,7 @@ First verified in the code on 2026-09-26 and kept current since (last synchroniz
 - [ ] **Load media:** `ControlService.load_media` exists and is tested but is exposed nowhere; starting content from ChatGPT was abandoned on 2026-10-12, and the window launches the TV's applications instead (item Q).
 - [x] **Media status freshness (PR #19, fixed and automation-validated, no real device involved):** `PyChromecastTransport.get_status` refreshed only the receiver status and read the media state from PyChromecast's cached `MediaStatus`. PyChromecast 14.0.10 merges every MEDIA_STATUS into that cache: it ignores an empty status list (a session that ended) and keeps any field a message omits, including the old `content_id`. A status read could therefore report a session that had ended, carry an old content id into a new state or session, and let such inherited data confirm a command (a Stop answered with a partial IDLE status was confirmed). Each status read now asks the receiver for its media status within the same deadline and parses only that reply; a field that reply omits stays unknown instead of taking PyChromecast's default (an omitted `currentTime` is not a position of 0, and an omitted `supportedMediaCommands` is not "seek unsupported"; review of PR #19). The request never launches an application: an application without the media namespace has no media session. No reply within the budget is a timeout, never a cached status; a request that cannot be sent is an unavailable device. Deterministic tests drive PyChromecast's real `MediaController` and `MediaStatus.update`; reverting to the cached read or to the app-launching request makes them fail. Hardware results obtained before this fix, including the recorded Pause, were read through the cached media state.
 - [x] **Structurally invalid media status replies (PR #20, fixed and automation-validated, no real device involved):** the fresh MEDIA_STATUS reply is checked before PyChromecast parses it. A reply that is not shaped like a media status (no status list, an entry that is not an object) fails the read as `device_unavailable`. Inside a well-shaped entry, a field whose value cannot be what the Cast protocol defines (a non-string content id, content type, player state or title; a negative, non-finite, boolean or non-numeric position, duration or playback rate; a command mask that is not a non-negative integer; metadata or a media block that is not an object) is reported as unknown, exactly like an omitted or null field, never as a plausible value (0, false, an empty string) and never as a crash; the same checks apply to media read from `extendedStatus`, and an unmapped media-channel volume that is not an object is ignored. Previously such values crashed the read, surfaced a receiver error as `invalid_argument`, or reached the domain as a number, an infinite duration or a non-string content id that then crashed the service's identity check.
-- [ ] **Status refresh:** the status is read on selection and on demand only; there is no periodic refresh, so the shown position and state can be stale (also needed by the tray, Phase 4b).
+- [ ] **Status refresh:** the status is read on selection and on demand only; there is no periodic refresh, so the shown position and state can be stale (also needed by the tray, Phase 4b). With two remotes on one TV (item R), each shows the other's change only after its own next read (a refresh, a selection or its next command's confirmation): the dual-controller contract pins that this read always reflects the TV, not when it happens.
 - [x] **One application version (PR #24, merged, automation-validated):** Python (`pyproject.toml`, `control_tv.__version__`), Cargo, `tauri.conf.json`, `ui/package.json` and both `package-lock.json` entries declare 0.1.0; `python3 scripts/dev.py version-check` compares the seven declarations and runs first in `dev.py check`, so CI fails on drift. The frozen bridge built on the packaging branch reports 0.1.0 in `ping` (checked by its smoke). No release is published.
 - [ ] **License metadata:** no package or application manifest declares the project license (GPL-3.0, `LICENSE`), and "only" versus "or later" is not stated; the packaged runtime's third-party licenses are tracked in Phase 7 and `docs/PACKAGING_LICENSES.md`.
 - [x] **Window wording overclaimed delivery (found 2026-10-06 while fixing the same issue in MCP, PR #31; fixed by PR #32, merged in `ded6e9c`; automation-validated):** after a command, the window worded `device_unavailable` as "The command wasn't sent" and `command_rejected` as "It received the command but didn't accept it" (`ui/src/playback.ts`), although the shared layer proves neither: the PyChromecast adapter maps an `OSError` raised while writing to the socket to `device_unavailable`, and every other PyChromecast error, including `UnsupportedNamespace` raised before any write, to `command_rejected`. Both now say the command may or may not have reached the TV and to check the current state before sending it again (`device_unavailable`: "Lost contact with this device", plus the network advice; `command_rejected`: "The command was refused", by the TV or the connection to it). Recovery stays Check state (a status read, never a resend); nothing is retried. Only the window's wording changed: the shared transport contract, MCP and Android are unchanged, and no hardware command was sent. Tests: UI 274 (3 new: the wording for both codes and every command, no command left pending or resent, the sound commands), and reverting the `device_unavailable` wording fails 3 of them. A status read failing with `device_unavailable` keeps its own wording ("Try again" is safe for a read).
@@ -615,10 +616,10 @@ Les deux applications doivent fonctionner indépendamment, sans serveur permanen
 |---|---|
 | Dépôt | [control-TV](https://github.com/guillaumeboileaupro/control-TV) |
 | Issue de référence | [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37) |
-| PR ouvertes | #33, #38 ; #41 (empaquetage du canal télécommande), #42 (clavier distant, application active) — mise à jour 2026-10-12 ; #39 et #40 fusionnées le 2026-10-12 |
-| Tests automatisés | 1 206 réussis, 9 ignorés (PR #38) ; branche #42 : 1 328 Python, 306 UI, 71 Rust (2026-10-12) |
-| Couverture | 98,02 % |
-| CI | 4/4 jobs réussis sur la PR #38 ; 4/4 sur #40 (fusionnée) et #41 |
+| PR ouvertes | #33 (widget Android) ; #38 fusionnée le 2026-10-12 ; #39 à #43 fusionnées le 2026-10-12 ; #36 fermée (abandon MCP/Voice) |
+| Tests automatisés | `main` après fusion de #38 (2026-10-12) : 1 346 réussis, 8 ignorés, 1 `xfail` strict (lacune connue P3-3) en local |
+| Couverture | 98,77% |
+| CI | 4/4 jobs réussis sur `main` `c2d7484` (run `38251554583`) ; branche #38 à jour : voir sa CI |
 | Validation sur matériel réel | Ubuntu seul, une Google TV (2026-10-12) : appairage, Volume +, Mute aller-retour observés par le propriétaire. Android : rien. R1–R4 : partiel non classé |
 | **Temps restant estimé** | **40–80 heures** |
 
@@ -633,13 +634,14 @@ L'estimation de 40–80 heures correspond au travail restant sur l'issue #37. El
 | Architecture de contrôle partagée | Déjà implémentée | Historique non chiffré | Non communiqué |
 | Tests simulés de convergence — PR #38 | 100 % implémentés* | 12–24 h | ≈ 6 h 16, corrections comprises |
 | Préparation des tests matériels R1–R4 | **100 %** | 1 h 10–1 h 40 | **25 min** |
-| Revue indépendante Claude — PR #38 | **0 % confirmé** | 30–60 min | 0 |
+| Revue indépendante Claude — PR #38 | **100 %** (APPROVED au commit `c55bc4d`) | 30–60 min | ≈ 4 min mesurées (rédaction du rapport non mesurée) |
+| Finalisation PR #38 (fusion de `main`, sept P3) | **100 % implémenté**, revue Codex et CI à confirmer | ≈ 67 min (P3) | voir la section 12 |
 | Tests réels Ubuntu + Android R1–R4 | **0 %** | 25–45 min | 0 |
 | Analyse des anomalies matérielles | **0 %** | 1–2 h | 0 |
 | Fiabilisation Ubuntu | **0 %** | 4–8 h | 0 |
 | Fiabilisation Android | **0 %** | 6–12 h | 0 |
 
-*Implémentation et corrections terminées ; revue indépendante toujours attendue. Le « 100 % » ne signifie pas validé matériellement.
+*Implémentation, corrections, revue indépendante Claude et sept P3 terminées ; nouvelle revue Codex et autorisation du propriétaire attendues. Le « 100 % » ne signifie pas validé matériellement.
 
 #### Tests R1–R4
 
@@ -701,7 +703,7 @@ Les builds Linux et Android existent déjà. Il reste à vérifier leur installa
 
 | PR | Objet | État | Prochaine action | Temps estimé |
 |---|---|---|---|---|
-| [#38](https://github.com/guillaumeboileaupro/control-TV/pull/38) | Convergence Ubuntu/Android | Corrections terminées, CI verte | Revue Claude | 30–60 min |
+| [#38](https://github.com/guillaumeboileaupro/control-TV/pull/38) | Convergence Ubuntu/Android | Revue Claude APPROVED ; `main` fusionnée dans la branche ; sept P3 appliquées ; lacune P3-3 documentée | Revue Codex du nouveau HEAD, puis décision du propriétaire | — |
 | [#33](https://github.com/guillaumeboileaupro/control-TV/pull/33) | Widget Android | Ouverte | Analyser les conflits et la compatibilité | 1–2 h |
 
 | [#41](https://github.com/guillaumeboileaupro/control-TV/pull/41) | Canal télécommande dans le pont figé et l'APK | CI verte (Chaquopy installe `cryptography` 42.0.8) | Fusion si autorisée, puis essai téléphone | ≈ 1 h restante |
@@ -722,7 +724,9 @@ Pour la #33, si des corrections sont nécessaires, prévoir provisoirement **2�
 | Implémentation initiale PR #38 | ≈ 6 h |
 | Corrections Codex PR #38 | ≈ 16 min |
 | Préparation matérielle R1–R4 | ≈ 25 min |
-| **Total connu** | **≈ 6 h 41** |
+| Revue indépendante Claude PR #38 | ≈ 4 min mesurées (rédaction non mesurée) |
+| Finalisation PR #38 (fusion de `main` et sept P3) | voir la section 12 (mesure Claude) |
+| **Total connu** | **≈ 6 h 45, hors finalisation** |
 
 Ce total ne représente **pas toutes les heures historiques du projet** : seules les durées explicitement communiquées sont comptabilisées.
 
@@ -740,7 +744,7 @@ La répartition reste approximative. Le temps de résolution des problèmes mat�
 ### 7. Ordre de travail recommandé
 
 1. **Codex analyse la PR #33.** Temps : **1–2 h**. Avancement : **0 % confirmé**. Aucun merge.
-2. **Claude revoit la PR #38** sur le commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. Temps : **30–60 min**. Avancement : **0 % confirmé**.
+2. **Claude revoit la PR #38** sur le commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac` : **fait (APPROVED)**, puis finalisation (fusion de `main`, sept P3) sur la branche de la PR ; reste la revue Codex du nouveau HEAD et la décision du propriétaire.
 3. **Après validation et autorisation : tests matériels R1–R4.** Temps : **25–45 min**. Avancement : **0 %**.
 4. **Corriger les anomalies Ubuntu/Android.** Temps : **10–20 h provisionnelles**. Avancement : **0 %** sur ce lot.
 5. **Tester et compléter les commandes TV.** Temps : **16–32 h**. Avancement matériel : **0 %**.
@@ -866,13 +870,13 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [x] Quatre corrections P2 vérifiées : barrière d'entrelacement, zéro/une réception, `send_attempts`, scénario C6 documenté.
 - [x] Vérification locale rapportée : 1207 tests réussis / 8 ignorés, couverture Python 98,02 % ; 17 tests ciblés ; stress concurrence sans échec. CI du commit : 1206 réussis / 9 ignorés, 4/4 jobs verts. **Ces résultats proviennent du rapport Claude, non d'une nouvelle exécution ici.**
 - [x] Protocole R1–R4 jugé prêt pour exécution **après autorisation**.
-- [ ] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min).
-- [ ] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min).
-- [ ] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min).
-- [ ] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min).
-- [ ] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min).
-- [ ] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min).
-- [ ] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min).
+- [x] Appliquer P3-1 : corriger « 16 tests » en « 17 tests » dans `docs/REQUIREMENTS_TRACEABILITY.md` (≈2 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] Appliquer P3-2 : actualiser la description PR #38, y compris zéro/ou/une livraison (≈5 min). Fait : description actualisée (19 cas, livraison zéro ou une, lacune P3-3).
+- [x] P3-3 facultatif : test du changement de session entre prélecture et envoi (≈15 min). Fait sur la branche de la PR #38 (non fusionnée) : la garantie « aucune commande envoyée à une session devenue obsolète » **n'est pas assurée** ; le comportement actuel (une seule tentative, appliquée à la nouvelle session, jamais confirmée ni rejouée) est figé par un test, et la garantie manquante par un `xfail` strict. Correction proposée hors PR #38 : transmettre l'identifiant de session lu avant la commande pour que le récepteur refuse une session obsolète.
+- [x] P3-4 facultatif : ne pas prétendre prouver « aucune commande » uniquement par l'absence de changement visible dans R4 (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-5 facultatif : clarifier R3 : aucune commande **depuis control-TV** ; action externe volontaire permise (≈5 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-6 facultatif : critères PASS/FAIL/NOT RUN par R1–R4, consigner les erreurs de lecture (≈10 min). Fait sur la branche de la PR #38 (non fusionnée).
+- [x] P3-7 facultatif : historique des lectures simulées et vérification de l'état rapporté après concurrence (≈20 min). Fait sur la branche de la PR #38 (non fusionnée).
 - [ ] Obtenir autorisation du propriétaire avant toute fusion PR #38.
 - [ ] Fusionner PR #38 uniquement si autorisé, puis vérifier CI sur la branche cible.
 
@@ -891,7 +895,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 **1B — PR #38 et préparation de validation**
 - [x] Contrat simulé de convergence implémenté et revu.
 - [x] Protocole R1–R4 préparé et approuvé techniquement par Claude.
-- [ ] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés).
+- [x] Clarifier dans le protocole les critères PASS/FAIL/NOT RUN et les erreurs de lecture (P3-4 à P3-6, recommandés). Fait sur la branche de la PR #38 (non fusionnée).
 - [ ] Obtenir l'autorisation explicite du propriétaire pour R1–R4, même en lecture seule.
 - [ ] Installer/ouvrir les deux clients et consigner les preuves séparément.
 - [ ] **R1** : Ubuntu découvre la TV sans Android ; Android découvre la même TV sans Ubuntu ; comparer identifiant stable. Observation partielle 2026-10-10 (non classée) : 3 TV découvertes par le moteur Ubuntu ; la liste de l'app Android affiche les 3 mêmes noms ; découverte Android lancée par le propriétaire, pas par le protocole ; app Android = build de la PR #33 (écart au protocole).
@@ -1049,7 +1053,22 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 
 **Document de suivi détaillé et critères de sortie par phase : [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).** Ce fichier comprend **238 cases de suivi** couvrant gouvernance, autonomie et convergence, R1–R4, commandes TV, volume audible, veille/réveil, **liste et lancement des applications réellement installées**, **clavier distant pour remplir les champs TV depuis Ubuntu et Android**, concurrence C1–C7, widget #33, CI, packaging, documentation et critères bloquants de livraison. Les critères matériels ne peuvent être cochés sur la base de simulations.
 
-#### Capacités par TV — première tranche de l'élément M (2026-10-10, branche `feat/tv-capabilities`, non fusionnée)
+#### Finalisation de la PR #38 par Claude (2026-10-10 ; fusionnée le 2026-10-12)
+
+- [x] `main` (`47319b9`) fusionné dans la branche par une fusion classique (`8b4efa8`), sans conflit ni réécriture d'historique ; les exigences récentes (applications installées, lancement, clavier distant, contrôle simultané) sont conservées et non implémentées ici.
+- [x] Sept P3 appliquées (`1348cfe`, `ca7fe39`, description de la PR) : P3-1 (19 cas), P3-2 (zéro ou une livraison), P3-3 (lacune confirmée et figée, `xfail` strict), P3-4/P3-5/P3-6 (critères R1–R4), P3-7 (confirmations adossées aux lectures de la TV simulée).
+- [x] Tests locaux : 1 208 réussis, 8 ignorés, 1 `xfail` strict ; couverture 98,02 % ; concurrence stable (20 exécutions séquentielles et 4×5 parallèles, 0 échec) ; cinq mutations détectées (8, 5, 3, 5 et 7 tests en échec).
+- [x] CI `ca7fe39` : run `38037796979`, 4/4 jobs réussis, 1 207 réussis, 9 ignorés, 1 `xfail`, couverture 98,02 %.
+- [ ] Lacune P3-3 : empêcher l'envoi d'une commande à une session média terminée entre la prélecture et l'envoi (transmettre l'identifiant de session lu ; modification de `CastTransport` et de l'adaptateur, hors PR #38, à valider sur un vrai récepteur).
+- [x] Fusion autorisée par le propriétaire le 2026-10-12 (« fais le 1. du TODO ») après mise à jour de la branche avec `main` (fusion classique, conflits documentaires résolus) ; la nouvelle revue Codex n'a pas eu lieu (limite d'usage). R1–R4 non exécutés.
+
+| Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve |
+|---|---:|---:|---:|---:|---:|---|
+| Fusion de `main` dans la branche | 100 % | non chiffré | non mesuré (avant le chronomètre) | 0 | — | `8b4efa8` sans conflit |
+| Sept P3 (tests, protocole, traçabilité, description) | 100 % | ≈ 67 min | ≈ 13 min mesurées (chronomètre démarré après la fusion), non ventilées par P3 | 0 | ≈ 19 % | tests, mutations, CI `38037796979` |
+| Revue Codex du nouveau HEAD | non faite (limite d'usage) ; remplacée par la décision de fusion du propriétaire | — | 0 | 0 | — | — |
+
+#### Capacités par TV — première tranche de l'élément M (2026-10-10, PR #39 fusionnée le 2026-10-12)
 
 | Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve / blocage |
 |---|---:|---:|---:|---:|---:|---|
@@ -1058,7 +1077,7 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 | Vérification sur Android | 0 % confirmé | — | 0 | à faire | — | téléphone utilisé par le propriétaire |
 | Mécanisme alternatif du son (2C) | ≈ 30 % (candidat identifié et détecté) | 3–7 h (ligne « Volume… ») | inclus ci-dessus | ≈ 3–6 h | ≈ 3–6 % | appairage et essais à autoriser |
 
-#### Canal Android TV Remote — deuxième tranche (2026-10-11, branche `feat/android-tv-remote`, non fusionnée)
+#### Canal Android TV Remote — deuxième tranche (2026-10-11, PR #40 fusionnée le 2026-10-12)
 
 | Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Budget consommé | Preuve / blocage |
 |---|---:|---:|---:|---:|---:|---|
