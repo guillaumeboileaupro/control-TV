@@ -36,8 +36,11 @@
 
 ## 4. Widget Android — PR #33
 
-- [ ] Résoudre les conflits de documentation sans écraser le plan actuel.
-- [ ] Relancer la CI, puis tester le widget sur la TV avec autorisation.
+- [x] Conflits résolus et branche remise à jour avec `main` (2026-10-13, CI 4/4 verte) ; description de la PR actualisée ; revue Codex demandée.
+- [x] Documentation du Mute corrigée : mute Cast confirmé par le récepteur, volume fixe, aucun effet audible (le vrai mute passe par le canal télécommande).
+- [ ] Tester sur le téléphone, avec ton accord pour chaque commande : Lecture/Pause, Stop, Volume.
+- [ ] Suite possible : faire passer le Mute du widget par le canal télécommande (le son réellement entendu).
+- [ ] Fusion de la #33 : ta décision, après ces essais.
 
 ## 5. Phase 3 — livraison
 
