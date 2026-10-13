@@ -17,7 +17,7 @@ import os
 import platform
 
 import control_tv
-from control_tv.bridge import handle_line
+from control_tv.bridge import default_service, handle_line
 from control_tv.service import ControlService
 
 # protobuf's native extension is not available on Android; its pure-Python implementation
@@ -30,9 +30,7 @@ _control: ControlService | None = None
 def _service() -> ControlService:
     global _control
     if _control is None:
-        from control_tv.adapters import PyChromecastTransport
-
-        _control = ControlService(PyChromecastTransport())
+        _control = default_service()
     return _control
 
 
@@ -53,4 +51,5 @@ def startup_diagnostic() -> str:
     if not response.get("ok"):
         return f"{imported}; embedded ping failed ({response['error']['code']})"
     version = response["result"]["controlTvVersion"]
-    return f"{imported}; embedded ping ok, controlTvVersion={version}"
+    remote = "yes" if response["result"].get("tvRemote") else "no"
+    return f"{imported}; embedded ping ok, controlTvVersion={version}, tvRemote={remote}"

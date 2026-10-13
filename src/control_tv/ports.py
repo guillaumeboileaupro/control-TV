@@ -9,7 +9,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from control_tv.domain import CommandResult, Device, DeviceId, DeviceStatus, MediaRequest
+from control_tv.domain import (
+    CommandResult,
+    Device,
+    DeviceId,
+    DeviceStatus,
+    KeyPress,
+    MediaRequest,
+    RemoteKey,
+    RemoteObservation,
+    TextEntry,
+)
 
 
 class CastTransport(Protocol):
@@ -47,6 +57,24 @@ class CastTransport(Protocol):
     def set_volume(self, device_id: DeviceId, level: float) -> None: ...
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> None: ...
+
+
+class TvRemote(Protocol):
+    """A TV's own remote-control channel, reached by the TV's IP address.
+
+    Implementations must translate failures into `ControlError` subclasses, send a key at
+    most once, and report only what the TV itself reported.
+    """
+
+    def start_pairing(self, host: str) -> None: ...
+
+    def finish_pairing(self, host: str, code: str) -> None: ...
+
+    def observe(self, host: str) -> RemoteObservation: ...
+
+    def press(self, host: str, key: RemoteKey) -> KeyPress: ...
+
+    def type_text(self, host: str, text: str) -> TextEntry: ...
 
 
 class TvControl(Protocol):

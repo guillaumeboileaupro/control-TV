@@ -21,6 +21,7 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_MEDIA = "unsupported_media"
     COMMAND_REJECTED = "command_rejected"
     TIMEOUT = "timeout"
+    PAIRING_REQUIRED = "pairing_required"
 
 
 class ControlError(Exception):
@@ -86,3 +87,9 @@ class OperationTimeoutError(ControlError):
     """An operation exceeded its bounded time budget."""
 
     code = ErrorCode.TIMEOUT
+
+
+class PairingRequiredError(ControlError):
+    """The TV's own remote-control channel needs this application to be paired with it first."""
+
+    code = ErrorCode.PAIRING_REQUIRED

@@ -2,7 +2,12 @@
 
 ## Product shape
 
-control-TV is a lightweight standalone TV controller targeting Android, Windows and Debian/Ubuntu. Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency. ChatGPT control is provided externally through MCP.
+control-TV serves two entry points over one engine (scope restored on 2026-10-08, issue #34; `docs/REQUIREMENTS_TRACEABILITY.md`):
+
+- **ChatGPT's own voice (or text) mode** calls control-TV's tools (MCP), which drive the shared control service, which drives the TV. Content asked for in ChatGPT starts on the TV; its resolution and launch are backend/MCP operations. ChatGPT never talks to the TV directly, and whether its voice mode can call custom MCP tools on the owner's ChatGPT surface is not established until it is observed.
+- **control-TV, a standalone graphical TV remote** (Debian/Ubuntu and Android; Windows abandoned on 2026-10-12): TVs, the TV's applications launched on the TV, power, audible sound, playback and navigation, each per proven capability. It has no microphone, speech-to-text, voice assistant, intent parser, search interface or video player.
+
+Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency.
 
 ## Architecture baseline
 
@@ -15,22 +20,27 @@ No agent may convert an exploratory technology comparison or its own preference 
 ## Functional boundaries
 
 ```text
-Manual UI
-   |
-   v
-Application / Tauri boundary
-   |
-   +------> shared control/domain interface <------ MCP adapter
+control-TV GUI                          ChatGPT app (voice or text)
+   |                                       |  integration / MCP tools
+   v                                       v
+Application / Tauri boundary            MCP adapter
+   |                                       |
+   +------> shared control/domain interface <------+
+                         |
+                         +------> content resolution (backend only; planned)
                          |
                          +------> Python Chromecast integration (`pychromecast` / required modules)
+                         |
+                         +------> other TV endpoints: power, audible sound, navigation, applications
+                         |        (planned, only where proven on real hardware)
                          |
                          +------> Rust/native components where justified
                          |
                          v
-                 Chromecast / Google TV
+                        TV
 ```
 
-GUI and MCP must use the same authoritative control/domain behavior. Do not create two divergent control engines. Technology boundaries must remain explicit and testable.
+GUI and MCP must use the same authoritative control/domain behavior. Do not create two divergent control engines. Technology boundaries must remain explicit and testable. A non-Cast endpoint is an adapter behind the same service, never a second engine.
 
 ## Current implementation
 
@@ -77,7 +87,7 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 ```
 
 - **One engine:** Android runs the same `control_tv` package and the same `handle_line` as the desktop bridge process; only the transport of the request line differs (an in-process call instead of stdio), so no Cast, validation or confirmation logic is duplicated in Kotlin or Rust.
-- **Runtime:** CPython 3.12 from Chaquopy 17.0.0, `arm64-v8a` only, `minSdk` 24. The embedded packages are the control layer's locked runtime dependencies as pure-Python wheels, hash-checked against `uv.lock` and installed offline (`packaging/android_python.py`); protobuf uses its pure-Python implementation and zeroconf is built without its optional Cython extensions. The two wheels built locally (zeroconf, control-tv) are built offline with build backends locked in `uv.lock` (no build dependency is resolved at build time). The APK carries its own Python: it does not use the checkout, a `.venv` or a host Python.
+- **Runtime:** CPython 3.12 from Chaquopy 17.0.0, `arm64-v8a` only, `minSdk` 24. The embedded packages are the control layer's locked runtime dependencies and its `tvremote` extra as pure-Python wheels, hash-checked against `uv.lock` and installed offline (`packaging/android_python.py`), except the native packages of the TV remote channel, which come from Chaquopy's repository as arm64 wheels pinned by file name and SHA-256 (`cryptography` 42.0.8 instead of the desktop lock's version, `cffi` 1.17.1, `chaquopy-libffi` 3.3; `cryptography` links the OpenSSL of Chaquopy's Python); protobuf uses its pure-Python implementation and zeroconf is built without its optional Cython extensions. The two wheels built locally (zeroconf, control-tv) are built offline with build backends locked in `uv.lock` (no build dependency is resolved at build time). The APK carries its own Python: it does not use the checkout, a `.venv` or a host Python.
 - **Failure boundary:** a failure before `control_tv.embedded.handle` is entered (Python not starting, `control_tv.embedded` not importing) is `backend_unavailable`, certainly not sent; a failure while or after `handle` runs is the ambiguous `bridge_transport`; nothing is retried (`EmbeddedHandler`).
 - **Threads:** Tauri delivers plugin commands on the Android main thread; Python runs on one worker thread for the whole process (`EmbeddedBridge`), shared by the window and the home-screen widget, so the shared layer stays single-flight as on the desktop and the window never blocks on a discovery or a command.
 - **Home-screen widget (Phase 7b):** a tap reaches the same `control_tv.embedded.handle` request lines as the window, without Tauri or the window (Chaquopy starts Python from the application context). The exported widget provider only draws. Each drawing arms one durable token carried by the buttons' explicit, immutable pending intents; the non-exported tap receiver accepts a token once (consumed with `commit()`), so the same interaction delivered twice is one tap, and the token is the tap's identity in its expedited WorkManager job (one work name per tap, derived from a hash of the token, so a redelivered tap is kept once and an earlier job that never started cannot block later taps; never retried). A rejected token redraws the widget so stale buttons are re-armed; a tap with no TV chosen says so; each boundary is logged under `control-tv` without tokens, device ids or network values, and for a command also the state the TV reported before it (never a media title), the value requested and the shared layer's answer with its confirmation. The job runs as one non-queuing transaction on the shared bridge worker (`BridgeRelay.tryTransaction`): admitted only when the window has nothing running or waiting, otherwise turned down with nothing sent; once admitted, its status read and at most one command run as one task the window's requests cannot interleave with; not started within its bound it is withdrawn for good. It reads the status first and sends at most one command chosen from the observed state (Play/Pause the opposite of the reported playback, Mute the opposite of the reported mute state, Volume -/+ 10 points from the reported level, the window's raise limit). The tap's age and the transaction's "still wanted" are checked again just before the tap's durable claim: a record of every recently claimed tap (`ClaimedTaps`, tap id -> claim time, checked and extended in one atomic `commit()`), so a job WorkManager runs again after a process death never sends again, even after newer taps; an entry is kept 10 min, ten times the tap's 60 s lifetime, or at least 120 s while more than 256 claims are recorded, and only then forgotten, when its tap can no longer run (both rely on the wall clock: a forward-and-back clock jump beyond those times between a claim and a re-run is outside the guarantee; see `DEVELOPMENT_PLAN.md`). The TV it controls is the person's explicit choice, stored by stable device id at once, whatever the first read gives: in the window (`remember_selection` -> the plugin's `rememberSelection`) or in the widget's own TV picker (`WidgetTvPickerActivity`, opened by tapping the TV name; not exported, its own task, works with the main app closed), which asks the shared layer for a read-only `discover_devices` as one non-queuing transaction, stores the TV tapped, stores nothing on Cancel and never replaces a chosen TV that was not found; it has no Cast or discovery code of its own, and what it shows (words, states, the current TV's marking, spoken labels) comes from a pure presentation model (`PickerScreen`) that the activity only draws; reads and commands never change it, and with none, or one no longer found, nothing is sent. The play/pause and mute buttons show only a state the TV reported; after an ambiguous or unchecked command they turn neutral. Resource ids move between builds, so the provider redraws every widget when the app is updated (`MY_PACKAGE_REPLACED`) and the app redraws them when it opens: a widget drawn by an older version would otherwise name a wrong layout and views, and none of its taps would reach the app.
@@ -85,6 +95,17 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 - **Discovery:** the app holds Wi-Fi's multicast lock while in the foreground (mDNS replies are otherwise often filtered) and releases it in the background.
 - **Startup diagnostic:** when the plugin loads, the worker runs `control_tv.embedded.startup_diagnostic()` once: a `ping` through the same `handle` path, logged under the logcat tag `control-tv` with versions only (no device data, no network, no Cast message, no retry).
 - **Limitation:** Python lives in the app process, so the desktop recovery (kill and relaunch the bridge process, PR #29) has no equivalent; a request stuck in Python leaves later requests `bridge_busy` until the app restarts.
+
+## Several remotes on one TV (issue #37)
+
+The desktop window and the Android app are independent remotes: two processes, each with its own `ControlService`, transport and discovery cache, and no link between them (no cross-device synchronization, no shared server). The TV is the only shared state, and the contract, pinned on a simulated TV shared by two `ControlService` instances (`tests/shared_tv.py`, `tests/test_dual_controller.py`), is:
+
+- each remote discovers the TV itself, and keeps no copy of its state: its next `get_status` reads the TV, so it sees the other remote's effect there, and only there;
+- each command is attempted once, by the remote that sent it, and is never resent; an ambiguous failure means the TV may have received it zero or one time; commands from both remotes race at the TV, and the last one actually delivered wins;
+- a command is confirmed only from what the TV reports for the same media session: a change made by the other remote during the confirmation (other media, the same content reloaded in a new session, a new session at the same position, its own opposite command) leaves it unconfirmed.
+- known gap: a media-session switch between a command's pre-command read and its send is not detected before sending (the transport carries no expected session id, and PyChromecast addresses the session it last heard of), so the command acts on the new session; it is never confirmed nor resent. Preventing it needs the transport to send the pre-read session id so the receiver refuses a stale one (outside PR #38).
+
+There is no periodic status refresh (`DEVELOPMENT_PLAN.md`, "Status refresh"), so each remote shows the other's change at its next read. The hardware protocol for Ubuntu + Android is `docs/DUAL_CONTROLLER_VALIDATION.md`.
 
 ## Planned native integrations
 
@@ -94,13 +115,15 @@ control_tv.bridge.handle_line -> ControlService -> PyChromecastTransport (CPytho
 
 Develop incrementally around LAN discovery, device identity, connection/status/recovery, media load/play, pause/resume, stop, seek where supported, volume/mute and receiver/media state. A command successfully sent is not proof that the requested TV state was reached; APIs, tests and real-device validation must preserve sent-versus-confirmed state.
 
+Evidence levels: not sent, unknown, sent, receiver-confirmed, physical effect observed (the last only from a person's observation). The Cast volume and mute are the receiver's logical controls: with `volume_control_type=fixed` the Cast volume does not control the TV's sound, and a receiver-confirmed Cast mute was observed with no audible change (PR #33 phone tests). Cast offers no installed-application inventory, and no universal or guaranteed path to the TV's power or audible volume: such control depends on the hardware (for example HDMI-CEC, which a Cast launch can trigger on some setups, a sound bar, or another endpoint of the TV) and is detected and validated per device (`DEVELOPMENT_PLAN.md`, Phase 5b). On the owner's fixed-volume setup, the Cast volume and mute did not control the audible sound. Discovery also reports, per TV, whether it advertises the Android TV Remote service (`Device.android_tv_remote`, true, false or unknown), the channel of the TV's own remote; it is detected passively on the Cast browser's own zeroconf instance and is not used yet (`src/control_tv/adapters/remote_detection.py`). The adapter for that channel, `src/control_tv/adapters/tv_remote.py` (optional extra `control-tv[tvremote]`), is a separate low-level transport beside the Cast transport: explicit pairing, private client credentials, an allowlist of keys sent once each over one short connection per operation, and the TV's own power and audible volume/mute reports returned as observed. `ControlService` reaches it through the `TvRemote` port (`get_remote_status`, `start_remote_pairing`, `finish_remote_pairing`, `press_remote_key`) at the address of the TV's last discovery, refusing a Cast group or a TV without the channel before anything is sent; a key is `confirmed` only by the TV's own report of the expected volume or mute change, and keys whose effect the TV does not report are `not_checked`. Both hosts build that one service (`bridge.default_service`), and the UI's TV remote panel (`ui/src/remote.ts`) shares the app's single-request rule.
+
 ## Media and service resolution
 
-Media/service resolution is a separate concern from low-level Cast transport where practical. Service-specific metadata or URL resolution may use the technology and libraries best suited to the actual service requirement. Do not impose a language ban on this layer.
+Media/service resolution is a separate concern from low-level Cast transport where practical. Service-specific metadata or URL resolution may use the technology and libraries best suited to the actual service requirement. Do not impose a language ban on this layer. Its purpose is to start content asked for in ChatGPT on the TV, through MCP tools; it has no user interface in control-TV (no search screen, results list or player).
 
 ## MCP and AI independence
 
-MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application.
+MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application. Today only a local stdio server exists, which the ChatGPT app cannot start; a transport ChatGPT can use (and its security review) is planned and unproven (`DEVELOPMENT_PLAN.md`, Phase 6, item O).
 
 ## MCP server (Phase 6; automated tests, and read-only with a real MCP client)
 
@@ -138,4 +161,3 @@ Retain only explicitly useful artifacts. Release deliverables should be copied t
 Never blindly delete global/shared caches or unrelated data: `$CARGO_HOME`, Cargo registry/git caches, `~/.gradle`, Android SDK/NDK, global Python environments/caches, the user's home directory or system `/tmp`. Recursive deletion targets must first be verified as project-owned or explicitly known project-local temporary paths. Global/shared cache cleanup requires explicit owner instruction.
 
 Once build tooling exists, the project must provide documented `clean` and `dist-clean` commands. `clean` removes normal project-owned generated output. `dist-clean` removes all reproducible project-owned generated output while still preserving shared/global caches. If cleanup cannot be completed, the iteration is not complete and the exact remaining path, size and reason must be recorded.
-
