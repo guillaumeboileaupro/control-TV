@@ -112,22 +112,56 @@ attempt; only packet or receiver-side capture can count actual deliveries to the
 Each key opens its own short connection to the TV's remote channel (connect, send once, close),
 so that both remotes can use it and no connection stays open; the cost of that choice is a
 delay per key, measured here. These steps send navigation keys only: run them on the TV's home
-screen, where moving the focus changes nothing.
+screen, alternating → and ← so that every key that reaches the TV moves the focus by one.
 
-| Step | Action | Measure |
+**How a press is handled.** A remote runs one request at a time. While a key request is in
+flight, the pressed key shows a loading indicator and every control of the TV remote panel is marked busy; a
+press made then is **refused** by the remote: nothing is sent and nothing is queued. A press
+made while the remote is idle is **sent**: its key shows the loading indicator at once. The
+**effect** is the focus moving on the TV. The application keeps no request log, so these three
+are told apart on video.
+
+**How to measure.** Film the remote's screen and the TV together (a phone camera at 60 frames
+per second gives about 17 ms per frame). For each sent press, count the frames:
+
+- *send to effect*: from the first frame where the key shows its loading indicator to the first
+  frame where the focus has moved on the TV;
+- *send to ready*: from that same frame to the first frame where the remote is idle again (the
+  loading indicator gone), which sets how fast the owner can navigate.
+
+| Step | Action | Record |
 |---|---|---|
-| K1 | Ubuntu: press → once, wait for the focus to move, ten times | for each press, the time from the click to the focus moving on the TV |
+| K1 | Ubuntu: ten presses, alternating → and ←, each made only once the remote is idle again | per press: sent or refused, the focus move, *send to effect*, *send to ready*; then the median and the slowest of each |
 | K2 | Android: the same ten presses from the phone | as K1 |
-| K3 | Ubuntu: press → five times quickly, without waiting | how many times the focus moved (expected: five, never more), and how long until the last move |
+| K3 | Ubuntu: five presses on → as fast as possible, the first while the remote is idle, the others while it may still be busy | presses made, presses sent (loading indicator shown), presses refused (made while busy), focus moves |
 
-Measure from a video that shows both the remote's screen and the TV (a phone camera at 60
-frames per second gives about 17 ms per frame): count the frames between the click or tap and
-the focus moving. Record the median and the slowest of K1 and K2. The owner judges whether the
-delay is acceptable; as a reference only, a delay under 0.3 s feels immediate and over 1 s makes
-navigation tedious. A focus that moved more times than the key was pressed in K3 is a **FAIL**
-(a key sent twice); fewer moves with a "may or may not have reached the TV" message is recorded,
-not a FAIL. Without a video the step is **NOT RUN**: a delay judged by eye is noted, not
-measured.
+**K1 and K2 outcome.**
+
+- **PASS:** every press made while idle is sent; each sent press moves the focus exactly once;
+  the remote shows an outcome for each; and, once the owner has adopted a latency criterion
+  (below), the median and slowest delays are within it.
+- **FAIL:** a focus move with no sent press, or more moves than sent presses (a key sent
+  twice); a press made while idle that is not sent; a sent press reported as sent while the
+  focus never moves (navigation does not work); or, once adopted, a delay outside the
+  criterion.
+- **NOT RUN:** no video, or the video does not show both the remote's key and the TV.
+- A press answered "may or may not have reached the TV" is recorded with whether the focus
+  moved; on its own it is neither PASS nor FAIL.
+
+**K3 outcome.** Five presses do not mean five commands: the presses made while the remote is
+busy are refused by design, so fewer moves than presses is expected.
+
+- **PASS:** focus moves = presses sent, and every refused press sent nothing (no move without a
+  loading indicator before it).
+- **FAIL:** more focus moves than presses sent (a refused press was sent, or a key was sent
+  twice).
+- **NOT RUN:** without a video showing both the loading indicator and the TV.
+
+**Latency criterion: proposed, not adopted.** Until the owner approves a criterion, K1 and K2
+record their delays and are classified on the functional rules above only, with the latency
+noted as "measured, no criterion adopted". Proposed for approval, from what is measurable here:
+*send to effect* median ≤ 0.5 s and slowest ≤ 1.0 s, and *send to ready* median ≤ 1.0 s, on each
+of Ubuntu and Android. These values are a proposal, not a requirement of the project.
 
 ## What to record for each step
 
