@@ -361,3 +361,12 @@ def test_a_launch_and_its_checks_share_one_budget(tmp_path: Path) -> None:
     assert record["timeouts"][0] == 10.0
     assert all(t <= 10.0 for t in record["timeouts"])
     assert len(record["timeouts"]) < 1 + 4  # the slow TV cut the checks short
+
+
+def test_a_tv_without_the_classic_debugging_port_names_what_is_not_supported(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(UnsupportedOperationError, match="Wireless debugging") as excinfo:
+        inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
+
+    assert "port 5555" in str(excinfo.value)
