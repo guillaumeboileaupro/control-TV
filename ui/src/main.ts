@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { JsonValue } from "./json.ts";
 
 import {
   canDiscover,
@@ -880,7 +881,7 @@ function start(elements: Elements): void {
     const { command, args } = remoteInvocation(request);
     let answer: RemoteAnswer;
     try {
-      answer = { ok: true, result: await invoke<unknown>(command, args) };
+      answer = { ok: true, result: await invoke<JsonValue>(command, args) };
     } catch (error) {
       answer = { ok: false, failure: toBridgeFailure(error) };
     }
@@ -1002,7 +1003,7 @@ function start(elements: Elements): void {
 
   // The tray's quick controls run as the window's own actions (see tray.ts); when one cannot
   // run, nothing is sent and the window comes to the front so the person sees why.
-  void listen<unknown>("tray-action", (event) => {
+  void listen<JsonValue>("tray-action", (event) => {
     if (!isTrayAction(event.payload)) {
       return;
     }

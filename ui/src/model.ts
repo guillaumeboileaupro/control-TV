@@ -1,3 +1,4 @@
+import type { Thrown } from "./json.ts";
 import type { CommandView } from "./playback.ts";
 import { REMOTE_IDLE, type RemoteView } from "./remote.ts";
 
@@ -361,14 +362,14 @@ export function finishStatusRead(
 
 // Anything a rejected `invoke` can carry: the structured failure the shell sends, or a
 // plain string/Error from Tauri itself (unknown command, argument decoding, ...).
-export function toBridgeFailure(error: unknown): BridgeFailure {
-  if (typeof error === "object" && error !== null) {
-    const candidate = error as { code?: unknown; message?: unknown };
-    if (typeof candidate.code === "string" && typeof candidate.message === "string") {
-      return { code: candidate.code, message: candidate.message };
-    }
-    if (error instanceof Error) {
-      return { code: "unexpected", message: error.message };
+export function toBridgeFailure(error: Thrown): BridgeFailure {
+  if (error instanceof Error) {
+    return { code: "unexpected", message: error.message };
+  }
+  if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
+    const { code, message } = error;
+    if (typeof code === "string" && typeof message === "string") {
+      return { code, message };
     }
   }
   return { code: "unexpected", message: String(error) };

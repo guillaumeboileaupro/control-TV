@@ -6,6 +6,7 @@
 // the action cannot run, nothing is sent and the window is brought to the front instead, so the
 // person sees why. `main.ts` performs the I/O.
 
+import type { JsonValue } from "./json.ts";
 import { idle, type AppState } from "./model.ts";
 import { describeControls } from "./playback.ts";
 import { describeRemote, type RemoteAction } from "./remote.ts";
@@ -23,7 +24,7 @@ const KEYS = {
   tv_volume_up: "volume_up",
 } as const;
 
-export function isTrayAction(value: unknown): value is TrayAction {
+export function isTrayAction(value: JsonValue): value is TrayAction {
   return (
     value === "play_pause" ||
     value === "stop" ||

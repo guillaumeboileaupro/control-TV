@@ -7,6 +7,7 @@
 // position the operator is moving the seek control to is a draft, never a reported position.
 // `main.ts` performs the I/O and draws the result; `npm test` covers every rule below.
 
+import type { JsonObject } from "./json.ts";
 import {
   formatClock,
   idle,
@@ -74,8 +75,8 @@ export interface CommandRequest {
 // The arguments the application command takes, as the Tauri boundary expects them. Only the
 // values the operator asked for travel: a volume as a level from 0 to 1 (the slider works in
 // whole percent), a mute as the state to reach.
-export function commandArguments(request: CommandRequest): Record<string, unknown> {
-  const args: Record<string, unknown> = { deviceId: request.deviceId };
+export function commandArguments(request: CommandRequest): JsonObject {
+  const args: JsonObject = { deviceId: request.deviceId };
   switch (request.command) {
     case "seek":
       args["positionSeconds"] = request.positionSeconds;
