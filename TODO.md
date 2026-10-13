@@ -11,7 +11,7 @@
 - [x] **#41, #42, #43** : canal télécommande dans le `.deb` et l'APK, clavier distant, nettoyage du plan. Fusionnées.
 - [x] **#38** : tests de convergence Ubuntu/Android. Corrections P3 déjà faites ; branche remise à jour avec `main`, puis fusionnée (CI `main` 4/4 verte).
 - [x] Code MCP de `main` (PR #31) : **conservé tel quel**, sans développement (décision du propriétaire).
-- Seule PR encore ouverte : **#33** (widget Android, section 4).
+- PR ouvertes : **#33** (widget Android, section 4) et **#49 à #52** (corrections de l'audit de `main`).
 
 ## 1 bis. Qualité du code — terminé le 2026-10-13
 
