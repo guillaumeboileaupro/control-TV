@@ -1,13 +1,16 @@
 """The apps installed on a Google TV, listed over its network debugging (ADB).
 
-The TV's remote channel can open an app but cannot list them. The only way found to list the
-apps really installed is the TV's own debugging service, which the owner turns on in the TV's
-developer options ("USB debugging" on a Google TV also accepts connections on the local
-network, port 5555). The first connection makes the TV ask whether to allow control-TV's key;
-the owner accepts on the TV. This module sends only three fixed commands, built from a checked
-package name where one is needed: the list of launchable apps and the app in front (both
-read-only), and one launch event for an app the person chose. It never installs, removes or
-changes anything.
+The TV's remote channel cannot list the apps, and its app links are unreliable for many apps.
+The only way found to list and open the apps really installed is the TV's own debugging
+service, which the owner turns on in the TV's developer options. Supported: TVs whose "USB
+debugging" also accepts connections on the local network, port 5555 (the classic ADB
+connection). Not supported yet: TVs (Android 13 and later) that only offer "Wireless
+debugging", which pairs with a code on a changing port over TLS; the pinned `adb-shell` does
+not speak that protocol. The first connection makes the TV ask whether to allow control-TV's
+key; the owner accepts on the TV. This module sends only three fixed commands, built from a
+checked package name where one is needed: the list of launchable apps and the app in front
+(both read-only), and one launch event for an app the person chose. It never installs, removes
+or changes anything.
 
 Rules this adapter keeps:
 
@@ -272,8 +275,9 @@ class AdbAppInventory:
             return action(device)
         except (ConnectionRefusedError, errors.TcpTimeoutException):
             raise UnsupportedOperationError(
-                "the TV's network debugging is off: turn on USB debugging in the TV's "
-                "developer options to list and open its apps"
+                "the TV accepts no debugging connection on port 5555: turn on USB debugging "
+                "in the TV's developer options; a TV that only offers Wireless debugging (with "
+                "a pairing code) is not supported yet"
             ) from None
         except errors.AdbTimeoutError:
             raise OperationTimeoutError("the TV did not answer in time") from None
