@@ -366,11 +366,11 @@ def test_check_runs_every_quality_step_in_order(
 
         return run
 
-    for name in ("version_check", "lint", "typecheck", "test", "depcheck"):
+    for name in ("version_check", "type_rules", "lint", "typecheck", "test", "depcheck"):
         monkeypatch.setattr(dev, f"cmd_{name}", step(name))
 
     assert dev.main(["check"], root=repo) == 0
-    assert calls == ["version_check", "lint", "typecheck", "test", "depcheck"]
+    assert calls == ["version_check", "type_rules", "lint", "typecheck", "test", "depcheck"]
 
 
 def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,13 +390,14 @@ def test_check_stops_after_first_failed_step(repo: Path, monkeypatch: pytest.Mon
         return 7
 
     monkeypatch.setattr(dev, "cmd_version_check", successful("version_check"))
+    monkeypatch.setattr(dev, "cmd_type_rules", successful("type_rules"))
     monkeypatch.setattr(dev, "cmd_lint", successful("lint"))
     monkeypatch.setattr(dev, "cmd_typecheck", fail_typecheck)
     monkeypatch.setattr(dev, "cmd_test", successful("test"))
     monkeypatch.setattr(dev, "cmd_depcheck", successful("depcheck"))
 
     assert dev.main(["check"], root=repo) == 7
-    assert calls == ["version_check", "lint", "typecheck"]
+    assert calls == ["version_check", "type_rules", "lint", "typecheck"]
 
 
 def test_rust_check_requires_cargo(
@@ -713,3 +714,29 @@ def test_android_apk_stops_when_the_wheels_cannot_be_prepared(
 
     assert dev.main(["android-apk"], root=repo) == 1
     assert built == []
+
+
+def test_type_rules_find_any_and_unknown_only_in_code() -> None:
+    source = (
+        "// any word in a comment is fine, unknown too\n"
+        'const label = "any unknown"; /* any */\n'
+        "let value: unknown = 1;\n"
+        "function f(x: any): void {}\n"
+        "const many = `unknown ${1}`;\n"
+    )
+
+    assert dev.forbidden_ts_words(source) == [(3, "unknown"), (4, "any")]
+
+
+def test_type_rules_skip_tests_and_report_application_files(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src = repo / "ui" / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "ok.ts").write_text("export const x: number = 1; // any\n", encoding="utf-8")
+    (src / "ok.test.ts").write_text("const y: any = 1;\n", encoding="utf-8")
+    assert dev.cmd_type_rules(repo) == 0
+
+    (src / "bad.ts").write_text("export const z: unknown = 1;\n", encoding="utf-8")
+    assert dev.cmd_type_rules(repo) == 1
+    assert "ui/src/bad.ts:1: `unknown`" in capsys.readouterr().err
