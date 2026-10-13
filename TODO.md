@@ -11,7 +11,7 @@
 - [x] **#41, #42, #43** : canal télécommande dans le `.deb` et l'APK, clavier distant, nettoyage du plan. Fusionnées.
 - [x] **#38** : tests de convergence Ubuntu/Android. Corrections P3 déjà faites ; branche remise à jour avec `main`, puis fusionnée (CI `main` 4/4 verte).
 - [x] Code MCP de `main` (PR #31) : **conservé tel quel**, sans développement (décision du propriétaire).
-- Seule PR encore ouverte : **#33** (widget Android, section 4).
+- [x] **#33** (widget Android) et **#49 à #53** (corrections de l'audit de `main`) : fusionnées le 2026-10-13. Seule PR ouverte : la remise en place de la documentation de #50 (annulée par #53 le temps de fusionner #33).
 
 ## 1 bis. Qualité du code — terminé le 2026-10-13
 
@@ -19,10 +19,10 @@
 
 ## 1 ter. Corrections de l'audit de `main` (2026-10-13)
 
-- [ ] **P3-3** : message d'erreur ADB — code `debugging_off` distinct, aide « débogage USB » seulement dans ce cas ; tests Python et UI. PR ouverte, fusion sur ton accord.
-- [ ] **P2-1, P3-1, P3-2** : README, ARCHITECTURE et TODO actualisés (MCP / Voice / Windows abandonnés, icône système fusionnée) — PR documentaire.
-- [ ] **P3-4** : le bridge dépend du port `TvControl` complété plutôt que du `ControlService` concret — PR distincte.
-- [ ] **P3-6** : mesurer la latence des touches (flèches) pendant la recette matérielle.
+- [x] **P3-3** : message d'erreur ADB — code `debugging_off` distinct, aide « débogage USB » seulement dans ce cas ; tests Python et UI. Fusionnée (#49).
+- [ ] **P2-1, P3-1, P3-2** : README, ARCHITECTURE et TODO actualisés (MCP / Voice / Windows abandonnés, icône système fusionnée) — fusionnée (#50) avant #33 par erreur, annulée (#53), remise en place après #33 (PR en cours).
+- [x] **P3-4** : le bridge dépend du port `TvControl` complété plutôt que du `ControlService` concret. Fusionnée (#51).
+- [ ] **P3-6** : mesurer la latence des touches (flèches) pendant la recette matérielle. Étapes K1–K3 fusionnées (#52) ; mesure à faire.
 
 ## 2. Phase 1 — les deux applications sur la même TV
 
@@ -46,19 +46,19 @@
 - [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. **Si ta TV ne propose que « Débogage sans fil » (avec un code d'appairage), la liste ne marchera pas encore** : c'est le premier point à vérifier demain. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
 - [ ] Commandes concurrentes C1–C7 depuis Ubuntu et Android, avec autorisation.
 
-## 4. Widget Android — PR #33
+## 4. Widget Android — PR #33 (fusionnée le 2026-10-13)
 
 - [x] Conflits résolus et branche remise à jour avec `main` (2026-10-13, CI 4/4 verte) ; description de la PR actualisée ; revue Codex demandée.
 - [x] Documentation du Mute corrigée : mute Cast confirmé par le récepteur, volume fixe, aucun effet audible (le vrai mute passe par le canal télécommande).
 - [ ] Tester sur le téléphone, avec ton accord pour chaque commande : Lecture/Pause, Stop, Volume.
 - [ ] Suite possible : faire passer le Mute du widget par le canal télécommande (le son réellement entendu).
-- [ ] Fusion de la #33 : ta décision, après ces essais.
+- [x] Fusion de la #33 : faite le 2026-10-13, avant les essais sur téléphone (`1b86f47`). Mute sur volume Cast fixe affiché « Muted (Cast) · TV sound may not change ».
 
 ## 5. Phase 3 — livraison
 
 - [ ] Installer le `.deb` et l'APK finaux sur le PC et le téléphone, puis refaire la recette complète.
 - [ ] Documentation d'utilisation : appairage, clavier, limites (par exemple, cette TV ne rapporte pas son volume).
-- [ ] Icône dans la barre système Ubuntu (élément K) : **codée** (branche `feat/linux-tray`) — Ouvrir, Lecture/Pause, Stop, Mute TV, Volume TV −/+, Quitter ; fermer la fenêtre quitte l'application (décision à confirmer). À voir sur ton bureau Ubuntu.
+- [ ] Icône dans la barre système Ubuntu (élément K) : **fusionnée** (#46, 2026-10-13), pas encore vue sur un vrai bureau — Ouvrir, Lecture/Pause, Stop, Mute TV, Volume TV −/+, Quitter ; fermer la fenêtre quitte l'application (décision à confirmer). À voir sur ton bureau Ubuntu.
 
 ## Suivi
 
