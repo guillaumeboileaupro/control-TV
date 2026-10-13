@@ -925,6 +925,8 @@ async fn bridge_launch_tv_app(
 /// wording of what the TV confirmed or not). Closing the window quits the application, as
 /// before: the tray is a quick-control companion while the application runs, not a background
 /// service.
+// A phone has no status area: only the desktop and the tests use this module.
+#[cfg_attr(not(any(desktop, test)), allow(dead_code))]
 mod tray {
     /// The TV actions the tray offers, by the identifier the window handles, and their label.
     pub const ACTIONS: [(&str, &str); 5] = [
