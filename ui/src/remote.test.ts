@@ -17,11 +17,14 @@ import {
 } from "./model.ts";
 import { startTransport } from "./playback.ts";
 import {
+  appLabel,
   describeRemote,
   describeReport,
   finishRemote,
   remoteInvocation,
+  setAppFilter,
   startRemote,
+  toApps,
   toReport,
   type RemoteAction,
   type RemoteAnswer,
@@ -66,13 +69,33 @@ const failure = (code: string, message = "detail"): RemoteAnswer => ({
 });
 
 describe("which TV gets the panel", () => {
-  test("only a TV that advertises its own remote channel", () => {
-    assert.equal(describeRemote(withTv()).visible, true);
+  test("the remote's keys only for a TV that advertises its own remote channel", () => {
+    assert.equal(describeRemote(withTv()).remoteVisible, true);
     for (const androidTvRemote of [false, null, undefined]) {
       const state = withTv({ ...DEVICE, androidTvRemote });
-      assert.equal(describeRemote(state).visible, false);
+      assert.equal(describeRemote(state).remoteVisible, false);
       assert.equal(startRemote(state, { kind: "status" }).request, null);
+      assert.equal(startRemote(state, { kind: "key", key: "home" }).request, null);
     }
+  });
+
+  test("the TV's apps for any TV, whatever discovery saw of its remote channel", () => {
+    for (const androidTvRemote of [true, false, null, undefined]) {
+      const state = withTv({ ...DEVICE, androidTvRemote });
+      assert.equal(describeRemote(state).visible, true);
+      assert.notEqual(startRemote(state, { kind: "list_apps" }).request, null);
+      assert.notEqual(
+        startRemote(state, { kind: "launch_app", package: "a.b", label: "A" }).request,
+        null,
+      );
+    }
+  });
+
+  test("no apps for a speaker", () => {
+    const speaker = withTv({ ...DEVICE, kind: "audio", androidTvRemote: null });
+
+    assert.equal(describeRemote(speaker).visible, false);
+    assert.equal(startRemote(speaker, { kind: "list_apps" }).request, null);
   });
 
   test("never a Cast group, even one that reports the channel", () => {
@@ -80,6 +103,7 @@ describe("which TV gets the panel", () => {
 
     assert.equal(describeRemote(group).visible, false);
     assert.equal(startRemote(group, { kind: "key", key: "volume_up" }).request, null);
+    assert.equal(startRemote(group, { kind: "list_apps" }).request, null);
   });
 });
 
@@ -202,8 +226,8 @@ describe("keys and what the TV reports", () => {
     assert.equal(describeRemote(state).readout, "");
   });
 
-  test("a key whose answer is lost is uncertain and never resent", () => {
-    for (const code of ["timeout", "bridge_timeout", "bridge_transport"]) {
+  test("a key whose answer or connection is lost is uncertain and never resent", () => {
+    for (const code of ["timeout", "bridge_timeout", "bridge_transport", "device_unavailable"]) {
       const { state } = run(withTv(), { kind: "key", key: "volume_up" }, failure(code));
 
       assert.equal(
@@ -452,5 +476,176 @@ describe("typing on the TV", () => {
       key: "delete",
     });
     assert.equal(describeRemote(started.state).progress, "Sending Backspace…");
+  });
+});
+
+describe("the TV's apps", () => {
+  const listed = (apps: unknown): RemoteAnswer => ({ ok: true, result: { apps } });
+  const APPS = [
+    { package: "com.netflix.ninja", name: "Netflix" },
+    { package: "com.example.unknown", name: null },
+    { package: "com.google.android.youtube.tv", name: "YouTube" },
+  ];
+
+  test("listing goes to its own read-only command", () => {
+    const started = startRemote(withTv(), { kind: "list_apps" });
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest), {
+      command: "bridge_list_tv_apps",
+      args: { deviceId: "a" },
+    });
+    assert.equal(describeRemote(started.state).listingApps, true);
+    assert.equal(
+      describeRemote(started.state).progress,
+      "Listing the TV's apps… If the TV asks, allow control-TV.",
+    );
+  });
+
+  test("the list shows what the TV listed, sorted by name, the package when no name is known", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed(APPS));
+
+    assert.deepEqual(describeRemote(state).apps?.map(appLabel), [
+      "com.example.unknown",
+      "Netflix",
+      "YouTube",
+    ]);
+    assert.equal(describeRemote(state).outcome, null);
+  });
+
+  test("nothing listed yet is not an empty list", () => {
+    assert.equal(describeRemote(withTv()).apps, null);
+  });
+
+  test("an empty list says so", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed([]));
+
+    assert.deepEqual(describeRemote(state).apps, []);
+    assert.equal(describeRemote(state).outcome?.text, "The TV listed no app it can open.");
+  });
+
+  test("malformed entries are left out, never guessed", () => {
+    assert.deepEqual(toApps([{ package: "" }, { name: "x" }, 4, { package: "a.b", name: 3 }]), [
+      { package: "a.b", name: null },
+    ]);
+    assert.deepEqual(toApps("nope"), []);
+  });
+
+  test("the filter narrows by name or package and sends nothing", () => {
+    const listedState = run(withTv(), { kind: "list_apps" }, listed(APPS)).state;
+
+    const byName = setAppFilter(listedState, "net");
+    const byPackage = setAppFilter(listedState, "youtube.tv");
+
+    assert.deepEqual(describeRemote(byName).apps?.map(appLabel), ["Netflix"]);
+    assert.deepEqual(describeRemote(byPackage).apps?.map(appLabel), ["YouTube"]);
+    assert.equal(idle(byName), true);
+    assert.equal(setAppFilter(byName, "net"), byName);
+  });
+
+  test("debugging off explains how to turn it on, and does not touch the remote's pairing", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, failure("unsupported_operation"));
+
+    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+    assert.equal(state.remote.pairing, "unknown");
+  });
+
+  test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, failure("pairing_required"));
+
+    assert.equal(
+      describeRemote(state).outcome?.text,
+      "Allow control-TV on the TV when it asks about debugging, then try again.",
+    );
+    assert.equal(state.remote.pairing, "unknown");
+    assert.equal(describeRemote(state).keysEnabled, true);
+  });
+
+  test("apps are listed and opened even while the remote still needs pairing", () => {
+    const needed = { ...withTv(), remote: { ...withTv().remote, pairing: "needed" as const } };
+
+    assert.notEqual(startRemote(needed, { kind: "list_apps" }).request, null);
+    assert.notEqual(
+      startRemote(needed, { kind: "launch_app", package: "a.b", label: "A" }).request,
+      null,
+    );
+    assert.equal(describeRemote(needed).launchEnabled, true);
+  });
+
+  const launched = (confirmation: string, front: string | null): RemoteAnswer => ({
+    ok: true,
+    result: {
+      result: {
+        package: "com.netflix.ninja",
+        deviceId: "a",
+        confirmation,
+        detail: "d",
+        frontApp: front,
+      },
+    },
+  });
+  const open = { kind: "launch_app" as const, package: "com.netflix.ninja", label: "Netflix" };
+
+  test("opening an app sends only its package to its own command", () => {
+    const started = startRemote(withTv(), open);
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest), {
+      command: "bridge_launch_tv_app",
+      args: { deviceId: "a", package: "com.netflix.ninja" },
+    });
+    assert.equal(describeRemote(started.state).pendingApp, "com.netflix.ninja");
+    assert.equal(describeRemote(started.state).progress, "Opening Netflix…");
+  });
+
+  test("an app is open only when the TV reports it in front", () => {
+    const done = run(withTv(), open, launched("confirmed", "com.netflix.ninja")).state;
+    const other = run(withTv(), open, launched("unconfirmed", "com.other")).state;
+    const silent = run(withTv(), open, launched("not_checked", null)).state;
+
+    assert.equal(describeRemote(done).outcome?.text, "Netflix is open on the TV.");
+    assert.equal(describeRemote(done).outcome?.tone, "done");
+    assert.equal(describeRemote(done).readout, "TV app: com.netflix.ninja");
+    assert.equal(done.remote.pairing, "unknown"); // opened over debugging, not the remote
+    assert.equal(
+      describeRemote(other).outcome?.text,
+      "Netflix was sent, but the TV reports another app in front.",
+    );
+    assert.equal(describeRemote(silent).outcome?.text, "Netflix was sent: check the TV.");
+    assert.equal(describeRemote(silent).outcome?.tone, "sent");
+  });
+
+  test("an opening whose answer or connection is lost is uncertain and never resent", () => {
+    for (const code of ["bridge_timeout", "timeout", "device_unavailable"]) {
+      const { state } = run(withTv(), open, failure(code));
+      assert.equal(
+        describeRemote(state).outcome?.text,
+        "Netflix may or may not have opened. It was not sent again: check the TV.",
+      );
+    }
+  });
+
+  test("opening while the TV's debugging is off explains how to turn it on", () => {
+    const { state } = run(withTv(), open, failure("unsupported_operation"));
+
+    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+  });
+
+  test("another TV starts without the previous TV's apps", () => {
+    const other: Device = { ...TV, id: "b", friendlyName: "Device b" };
+    const listedState = run(withTv(), { kind: "list_apps" }, listed(APPS)).state;
+    const found = finishDiscovery(startDiscovery(listedState), [TV, other]);
+
+    assert.equal(selectDevice(found, "b").state.remote.apps, null);
+  });
+});
+
+describe("the app filter belongs to one TV", () => {
+  test("selecting another TV empties the filter, so the field shows no old query", () => {
+    const other: Device = { ...TV, id: "b", friendlyName: "Device b" };
+    const apps = { ok: true, result: { apps: [{ package: "a.b", name: "A" }] } } as const;
+    const filtered = setAppFilter(run(withTv(), { kind: "list_apps" }, apps).state, "zzz");
+    const found = finishDiscovery(startDiscovery(filtered), [TV, other]);
+
+    assert.equal(selectDevice(found, "b").state.remote.appFilter, "");
+    assert.equal(refreshStatus(found).state.remote.appFilter, "zzz"); // same TV keeps it
   });
 });

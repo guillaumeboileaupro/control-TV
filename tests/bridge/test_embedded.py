@@ -28,6 +28,7 @@ def test_ping_answers_with_this_package_version() -> None:
             "status": "ready",
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
+            "tvApps": True,
         },
     }
 

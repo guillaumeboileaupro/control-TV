@@ -10,7 +10,7 @@ Rules this adapter keeps:
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
-  field (`type_text`), never logged or echoed. App launch and voice are not exposed.
+  field (`type_text`), never logged or echoed. App launch and voice are not exposed here.
 - One short connection per operation: connect, act, flush, close. No connection stays open
   and nothing listens, so there is no background session that could drop a key silently.
 - A key is sent once. A failure after the key was handed to the connection is ambiguous: the

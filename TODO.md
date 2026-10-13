@@ -1,6 +1,6 @@
 # control-TV — TODO
 
-État au 2026-10-12 (mis à jour après les fusions). Liste courte des prochaines actions, dans l'ordre. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
+État au 2026-10-13. Aujourd'hui : fin des implémentations ; essais sur TV et téléphone le 2026-10-14. Liste courte des prochaines actions, dans l'ordre. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
 
 **Objectif :** deux télécommandes autonomes, Ubuntu et Android, qui contrôlent la même Google TV en parallèle, sans serveur permanent. MCP, ChatGPT Voice et Windows sont abandonnés depuis le 2026-10-12.
 
@@ -27,11 +27,11 @@
 | Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai |
 | Clavier distant (texte, Backspace, Entrée) | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai : TV allumée, recherche YouTube ouverte |
 | Application active affichée | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai |
-| Applications installées : liste et lancement | ❌ 0 % | ❌ 0 % | **décision ADB** (ci-dessous) |
+| Applications installées : liste et lancement | codé, 0 % confirmé | codé, 0 % confirmé | essai : activer le débogage USB sur la TV, autoriser control-TV, lister, ouvrir |
 | Lecture, pause, stop, seek | partiellement observé | 0 % | essais C1–C7 autorisés |
 
 - [ ] **Téléphone :** le brancher en USB, accepter le débogage, et autoriser l'installation de l'APK de la CI. Si les signatures diffèrent, le widget actuel sera perdu.
-- [ ] **Décision ADB (applications installées, 2E) :** le débogage réseau de la Google TV est la seule méthode fiable trouvée pour lister les applications installées. Il s'active dans les options développeur de la TV et donne un accès complet à la TV depuis le réseau local. Sans ADB, l'alternative est un catalogue d'applications connues, présenté comme tel, jamais comme « installées ».
+- [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. **Si ta TV ne propose que « Débogage sans fil » (avec un code d'appairage), la liste ne marchera pas encore** : c'est le premier point à vérifier demain. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
 - [ ] Commandes concurrentes C1–C7 depuis Ubuntu et Android, avec autorisation.
 
 ## 4. Widget Android — PR #33

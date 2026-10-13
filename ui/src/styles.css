@@ -703,6 +703,16 @@ button {
   border-top: 1px solid var(--line);
 }
 
+.tv-remote-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tv-remote-keys[hidden] {
+  display: none;
+}
+
 .tv-remote-title {
   margin: 0;
   font-weight: 600;
@@ -796,4 +806,45 @@ button {
 
 .tv-remote > .note {
   margin: 0;
+}
+
+/* The TV's apps: a plain list of buttons, the filter above it once the TV listed them. */
+.tv-apps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.tv-apps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tv-apps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  max-height: 22rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.tv-apps-list .btn {
+  width: 100%;
+  justify-content: space-between;
+  font-weight: 500;
+}
+
+.tv-apps-list .app-package {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.85em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
