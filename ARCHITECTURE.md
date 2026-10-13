@@ -2,9 +2,9 @@
 
 ## Product shape
 
-control-TV is two standalone remotes, Ubuntu and Android, over one engine, usable in parallel on the same TV with no permanent server (issue #37; `docs/REQUIREMENTS_TRACEABILITY.md`). The voice entry point restored on 2026-10-08 (issue #34) was abandoned on 2026-10-12 with MCP development and Windows:
+control-TV serves two entry points over one engine (scope restored on 2026-10-08, issue #34; `docs/REQUIREMENTS_TRACEABILITY.md`):
 
-- **Abandoned on 2026-10-12: ChatGPT's own voice (or text) mode** calling control-TV's tools (MCP), which drive the shared control service. The local MCP adapter stays in the code as it is, without further development; whether ChatGPT's voice mode could call custom MCP tools was never observed.
+- **ChatGPT's own voice (or text) mode** calls control-TV's tools (MCP), which drive the shared control service, which drives the TV. Content asked for in ChatGPT starts on the TV; its resolution and launch are backend/MCP operations. ChatGPT never talks to the TV directly, and whether its voice mode can call custom MCP tools on the owner's ChatGPT surface is not established until it is observed.
 - **control-TV, a standalone graphical TV remote** (Debian/Ubuntu and Android; Windows abandoned on 2026-10-12): TVs, the TV's applications launched on the TV, power, audible sound, playback and navigation, each per proven capability. It has no microphone, speech-to-text, voice assistant, intent parser, search interface or video player.
 
 Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency.
@@ -20,8 +20,8 @@ No agent may convert an exploratory technology comparison or its own preference 
 ## Functional boundaries
 
 ```text
-control-TV GUI                          MCP client (adapter kept as is, not developed;
-   |                                       |  ChatGPT voice abandoned on 2026-10-12)
+control-TV GUI                          ChatGPT app (voice or text)
+   |                                       |  integration / MCP tools
    v                                       v
 Application / Tauri boundary            MCP adapter
    |                                       |
@@ -31,9 +31,8 @@ Application / Tauri boundary            MCP adapter
                          |
                          +------> Python Chromecast integration (`pychromecast` / required modules)
                          |
-                         +------> other TV endpoints: power, audible sound, navigation, keyboard
-                         |        (Android TV Remote), applications (ADB); implemented, hardware
-                         |        validation pending except the audible volume and mute from Ubuntu
+                         +------> other TV endpoints: power, audible sound, navigation, applications
+                         |        (planned, only where proven on real hardware)
                          |
                          +------> Rust/native components where justified
                          |
@@ -45,7 +44,7 @@ GUI and MCP must use the same authoritative control/domain behavior. Do not crea
 
 ## Current implementation
 
-What exists in the code today (Ubuntu status-area icon: see "Native integrations"; Android: see "Android"; MCP: see "MCP server"):
+What exists in the code today (the tray does not exist yet; Android: see "Android"; MCP: see "MCP server"):
 
 ```text
 ui/ (vanilla TypeScript + Vite)
@@ -105,10 +104,10 @@ The desktop window and the Android app are independent remotes: two processes, e
 
 There is no periodic status refresh (`DEVELOPMENT_PLAN.md`, "Status refresh"), so each remote shows the other's change at its next read. The hardware protocol for Ubuntu + Android is `docs/DUAL_CONTROLLER_VALIDATION.md`.
 
-## Native integrations
+## Planned native integrations
 
-- **Ubuntu status-area icon (Phase 4b, merged in #46, `src-tauri/src/tray.rs`; not yet seen on a real desktop):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window.
-- **Android home-screen widget (Phase 7b, PR #33 open, not merged):** over the same embedded control layer (see "Android").
+- **Desktop tray (Phase 4b):** a second view over the same Tauri -> bridge -> `ControlService` chain, with no Cast logic in Rust and the same confirmation semantics as the window; structured so a Windows equivalent can follow.
+- **Android home-screen widget (Phase 7b):** after the MCP adapter, over the same embedded control layer (see "Android").
 
 ## Chromecast capabilities
 
@@ -122,9 +121,9 @@ Media/service resolution is a separate concern from low-level Cast transport whe
 
 ## MCP and AI independence
 
-MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application. Today only a local stdio server exists, which the ChatGPT app cannot start; a transport ChatGPT can use (and its security review) was planned, never proven, and abandoned on 2026-10-12 with MCP development (`DEVELOPMENT_PLAN.md`, Phase 6, item O).
+MCP exposes a small typed tool surface over the same product control capabilities used by the manual application. The standalone application does not call the OpenAI API and does not require an OpenAI API key or OpenAI billing. ChatGPT or another compatible MCP client is external to the standalone application. Today only a local stdio server exists, which the ChatGPT app cannot start; a transport ChatGPT can use (and its security review) is planned and unproven (`DEVELOPMENT_PLAN.md`, Phase 6, item O).
 
-## MCP server (Phase 6; kept as is since 2026-10-12; automated tests, and read-only with a real MCP client)
+## MCP server (Phase 6; automated tests, and read-only with a real MCP client)
 
 ```text
 MCP client (Codex CLI, Claude Desktop, ...) launches the server as a subprocess
@@ -137,7 +136,7 @@ control_tv.bridge.dispatch -> ControlService -> PyChromecastTransport (the windo
 ```
 
 - **One engine:** every tool is the same-named bridge method run through `bridge.dispatch`, so the MCP server has exactly the window's validation, confirmation, media-identity guards, shared deadline and error codes; the SDK's schema check is disabled so the shared layer stays the only validator. The server owns its own `ControlService` and discovery cache (a separate process from the window's bridge). It does not depend on Tauri, Rust, the Android plugin or the UI, and neither the bridge, the frozen desktop bridge nor the Android app contains it.
-- **Transport:** local stdio only (spawned by the client; no port, no network listener). ChatGPT web cannot launch a local stdio server; reaching it from ChatGPT (OpenAI's outbound Secure MCP Tunnel or a public HTTPS endpoint) was out of scope for this foundation and was abandoned on 2026-10-12 with MCP development (owner decision); the server is kept as it is.
+- **Transport:** local stdio only (spawned by the client; no port, no network listener). ChatGPT web cannot launch a local stdio server; reaching it from ChatGPT (OpenAI's outbound Secure MCP Tunnel or a public HTTPS endpoint) is out of scope for this foundation (owner decision) and would need its own security review. The tools take no transport-specific input, so another binding can be added without changing them.
 - **Outcomes:** a sent command keeps `confirmation` (`confirmed` / `unconfirmed` / `not_checked`); an error carries its code and a `delivery` that is never stronger than the shared layer proves: `not_sent` only for refusals before any send, otherwise `unknown` (`timeout`, `device_unavailable`, `command_rejected`, `internal_error`), worded "may or may not have reached the TV; do not resend it automatically; call get_status". Nothing is retried. Calls are serialized; a cancelled call that already started completes, so its command may have been sent.
 - **Privacy:** no device address, no media `contentId`, quoted values hidden in command details, fixed error messages per code (except `invalid_argument`), no exception text; device names, ids and media titles are visible to the client and its model. UI-only protections such as the volume raise limit do not apply to MCP (owner decision: `set_volume` is an absolute level 0-1), and `contentId` stays hidden (owner decision).
 
