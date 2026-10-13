@@ -1,8 +1,9 @@
 """Line-delimited JSON bridge exposed over stdio for the Tauri application shell.
 
 This module is the *only* process boundary between the Tauri/Rust shell and the shared
-control layer. It constructs one `ControlService` over one `PyChromecastTransport` and
-dispatches requests to it; no Cast/control logic is duplicated in Rust or TypeScript.
+control layer. It dispatches requests to the `TvControl` port; `default_service` builds the
+one `ControlService` every host runs. No Cast/control logic is duplicated in Rust or
+TypeScript.
 
 Protocol (intentionally minimal - a starting point, expected to grow as more of
 `TvControl` is exposed): the parent process writes one JSON object per line to this
@@ -29,7 +30,7 @@ Read-only methods:
                         "movie", "tv_show", "music_track", "photo", "audiobook_chapter"),
                         `positionSeconds`, `durationSeconds`, `supportsSeek`, `supportsPause`.
 
-Commands, each a plain forward to the same-named `ControlService` method (no Cast
+Commands, each a plain forward to the same-named `TvControl` method (no Cast
 logic, no retry, no replay), all taking the stable `deviceId`:
 - `play`, `pause`, `stop`
 - `seek`             -> also requires `positionSeconds` (a number, not a boolean)
@@ -115,9 +116,10 @@ from control_tv.domain import (
     TvApp,
 )
 from control_tv.json_types import JsonObject, JsonValue
+from control_tv.ports import TvControl
 from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
 
-Handler = Callable[[ControlService, JsonObject], JsonObject]
+Handler = Callable[[TvControl, JsonObject], JsonObject]
 INTERNAL_ERROR_CODE = "internal_error"
 
 
@@ -187,7 +189,7 @@ def _device_id_param(params: JsonObject) -> DeviceId:
     return DeviceId(device_id)
 
 
-def _handle_ping(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_ping(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
     from control_tv.adapters.tv_apps import apps_installed
     from control_tv.adapters.tv_remote import channel_installed
@@ -200,7 +202,7 @@ def _handle_ping(control: ControlService, params: JsonObject) -> JsonObject:
     }
 
 
-def _handle_discover_devices(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_discover_devices(control: TvControl, params: JsonObject) -> JsonObject:
     timeout = params.get("timeoutSeconds", DEFAULT_DISCOVERY_TIMEOUT)
     if not isinstance(timeout, int | float):
         raise InvalidArgumentError(f"timeoutSeconds must be a number: {timeout!r}")
@@ -209,23 +211,23 @@ def _handle_discover_devices(control: ControlService, params: JsonObject) -> Jso
     return {"devices": [_device_to_json(device) for device in devices]}
 
 
-def _handle_get_status(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_get_status(control: TvControl, params: JsonObject) -> JsonObject:
     return {"status": _status_to_json(control.get_status(_device_id_param(params)))}
 
 
-def _handle_play(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_play(control: TvControl, params: JsonObject) -> JsonObject:
     return {"result": _command_result_to_json(control.play(_device_id_param(params)))}
 
 
-def _handle_pause(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_pause(control: TvControl, params: JsonObject) -> JsonObject:
     return {"result": _command_result_to_json(control.pause(_device_id_param(params)))}
 
 
-def _handle_stop(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_stop(control: TvControl, params: JsonObject) -> JsonObject:
     return {"result": _command_result_to_json(control.stop(_device_id_param(params)))}
 
 
-def _handle_seek(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_seek(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     position = params.get("positionSeconds")
     # A JSON boolean is an int in Python; it is never a position.
@@ -235,7 +237,7 @@ def _handle_seek(control: ControlService, params: JsonObject) -> JsonObject:
     return {"result": _command_result_to_json(control.seek(device_id, position))}
 
 
-def _handle_set_volume(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_set_volume(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     level = params.get("level")
     # A JSON boolean is an int in Python; it is never a volume level.
@@ -248,7 +250,7 @@ def _handle_set_volume(control: ControlService, params: JsonObject) -> JsonObjec
     return {"result": _command_result_to_json(control.set_volume(device_id, number))}
 
 
-def _handle_set_muted(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_set_muted(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     muted = params.get("muted")
     # Strictly a boolean: 0, 1 and "true" are not accepted as a mute state.
@@ -297,16 +299,16 @@ def _remote_key_result_to_json(result: RemoteKeyResult) -> JsonObject:
     }
 
 
-def _handle_get_remote_status(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_get_remote_status(control: TvControl, params: JsonObject) -> JsonObject:
     return {"remote": _remote_to_json(control.get_remote_status(_device_id_param(params)))}
 
 
-def _handle_start_remote_pairing(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_start_remote_pairing(control: TvControl, params: JsonObject) -> JsonObject:
     control.start_remote_pairing(_device_id_param(params))
     return {"pairing": "code_shown"}
 
 
-def _handle_finish_remote_pairing(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_finish_remote_pairing(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     code = params.get("code")
     if not isinstance(code, str):
@@ -315,7 +317,7 @@ def _handle_finish_remote_pairing(control: ControlService, params: JsonObject) -
     return {"pairing": "paired"}
 
 
-def _handle_press_remote_key(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_press_remote_key(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     name = params.get("key")
     if not isinstance(name, str) or name not in REMOTE_KEYS:
@@ -335,7 +337,7 @@ def _remote_text_result_to_json(result: RemoteTextResult) -> JsonObject:
     }
 
 
-def _handle_type_remote_text(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_type_remote_text(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     text = params.get("text")
     if not isinstance(text, str):
@@ -357,12 +359,12 @@ def _app_launch_to_json(result: AppLaunchResult) -> JsonObject:
     }
 
 
-def _handle_list_tv_apps(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     apps = control.list_tv_apps(_device_id_param(params))
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
-def _handle_launch_tv_app(control: ControlService, params: JsonObject) -> JsonObject:
+def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     package = params.get("package")
     if not isinstance(package, str):
@@ -394,7 +396,7 @@ def _error_response(request_id: JsonValue, code: str, message: str) -> JsonObjec
     return {"id": request_id, "ok": False, "error": {"code": code, "message": message}}
 
 
-def dispatch(control: ControlService, request: JsonObject) -> JsonObject:
+def dispatch(control: TvControl, request: JsonObject) -> JsonObject:
     """Run one already-parsed request object against `control` and build its response."""
     request_id = request.get("id")
     try:
@@ -414,7 +416,7 @@ def dispatch(control: ControlService, request: JsonObject) -> JsonObject:
     return {"id": request_id, "ok": True, "result": result}
 
 
-def handle_line(control: ControlService, line: str) -> JsonObject:
+def handle_line(control: TvControl, line: str) -> JsonObject:
     """Parse one request line and run it. Never raises: parse failures are error responses."""
     invalid = ErrorCode.INVALID_ARGUMENT.value
     try:
@@ -426,7 +428,7 @@ def handle_line(control: ControlService, line: str) -> JsonObject:
     return dispatch(control, request)
 
 
-def run(control: ControlService, *, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
+def run(control: TvControl, *, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
     """Serve requests until `stdin` is closed. Exactly one response line per request line."""
     for line in stdin:
         line = line.strip()
