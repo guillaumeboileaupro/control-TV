@@ -79,13 +79,6 @@ class FakeRemote:
         return KeyPress(key=key, before=self.before, after=self.after or self.before)
 
     field_reported: bool = True
-    launched_front: str | None = None
-
-    def launch_app(self, host: str, package: str) -> AppLaunch:
-        self.calls.append(("launch_app", host, package))
-        self._maybe_fail()
-        after = dataclasses.replace(self.before, current_app=self.launched_front)
-        return AppLaunch(package=package, before=self.before, after=after)
 
     def type_text(self, host: str, text: str) -> TextEntry:
         self.calls.append(("type_text", host, text))
@@ -449,13 +442,20 @@ def test_bridge_keyboard_keys_are_backspace_and_enter() -> None:
 class FakeApps:
     apps: tuple[TvApp, ...] = (TvApp("com.example.video", "Video"), TvApp("org.example.music"))
     error: Exception | None = None
-    calls: list[str] = field(default_factory=list)
+    front: str | None = None
+    calls: list[tuple[str, ...]] = field(default_factory=list)
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
-        self.calls.append(host)
+        self.calls.append(("list", host))
         if self.error is not None:
             raise self.error
         return self.apps
+
+    def launch_app(self, host: str, package: str) -> AppLaunch:
+        self.calls.append(("launch", host, package))
+        if self.error is not None:
+            raise self.error
+        return AppLaunch(package=package, front_app=self.front)
 
 
 def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
@@ -468,7 +468,7 @@ def test_the_app_list_comes_from_the_discovered_tv() -> None:
     apps = FakeApps()
 
     assert with_apps(apps).list_tv_apps(DEVICE_ID) == list(apps.apps)
-    assert apps.calls == [HOST]
+    assert apps.calls == [("list", HOST)]
 
 
 def test_no_app_list_for_a_group_or_without_the_inventory() -> None:
@@ -496,20 +496,22 @@ def test_no_app_list_for_a_group_or_without_the_inventory() -> None:
 def test_a_launch_is_confirmed_only_by_the_app_the_tv_reports_in_front(
     front: str | None, confirmation: Confirmation, detail: str
 ) -> None:
-    remote = FakeRemote(launched_front=front)
+    apps = FakeApps(front=front)
 
-    result = discovered(remote).launch_tv_app(DEVICE_ID, "com.example.video")
+    result = with_apps(apps).launch_tv_app(DEVICE_ID, "com.example.video")
 
-    assert remote.calls == [("launch_app", HOST, "com.example.video")]
-    assert (result.confirmation, result.detail) == (confirmation, detail)
+    assert apps.calls == [("launch", HOST, "com.example.video")]
+    assert (result.confirmation, result.detail, result.front_app) == (confirmation, detail, front)
 
 
-def test_a_launch_needs_a_package_name_string() -> None:
-    remote = FakeRemote()
+def test_a_launch_needs_a_package_name_string_and_the_inventory() -> None:
+    apps = FakeApps()
 
     with pytest.raises(InvalidArgumentError):
-        discovered(remote).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
-    assert remote.calls == []
+        with_apps(apps).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == []
 
 
 def test_bridge_lists_apps_with_their_known_names() -> None:
@@ -532,20 +534,20 @@ def test_bridge_app_list_errors_keep_their_codes() -> None:
 
 
 def test_bridge_launches_an_app_and_answers_with_what_the_tv_reported() -> None:
-    service = discovered(FakeRemote(launched_front="com.example.video"))
+    service = with_apps(FakeApps(front="com.example.video"))
 
     response = call(service, "launch_tv_app", deviceId=str(DEVICE_ID), package="com.example.video")
 
     result = response["result"]["result"]
     assert result["confirmation"] == "confirmed"
     assert result["package"] == "com.example.video"
-    assert result["after"]["currentApp"] == "com.example.video"
+    assert result["frontApp"] == "com.example.video"
 
 
 def test_bridge_refuses_a_launch_without_a_package_string() -> None:
-    remote = FakeRemote()
+    apps = FakeApps()
 
-    response = call(discovered(remote), "launch_tv_app", deviceId=str(DEVICE_ID), package=7)
+    response = call(with_apps(apps), "launch_tv_app", deviceId=str(DEVICE_ID), package=7)
 
     assert response["error"]["code"] == "invalid_argument"
-    assert remote.calls == []
+    assert apps.calls == []

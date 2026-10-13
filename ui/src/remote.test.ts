@@ -205,8 +205,8 @@ describe("keys and what the TV reports", () => {
     assert.equal(describeRemote(state).readout, "");
   });
 
-  test("a key whose answer is lost is uncertain and never resent", () => {
-    for (const code of ["timeout", "bridge_timeout", "bridge_transport"]) {
+  test("a key whose answer or connection is lost is uncertain and never resent", () => {
+    for (const code of ["timeout", "bridge_timeout", "bridge_transport", "device_unavailable"]) {
       const { state } = run(withTv(), { kind: "key", key: "volume_up" }, failure(code));
 
       assert.equal(
@@ -533,20 +533,21 @@ describe("the TV's apps", () => {
 
     assert.equal(
       describeRemote(state).outcome?.text,
-      "Allow control-TV on the TV when it asks about debugging, then list the apps again.",
+      "Allow control-TV on the TV when it asks about debugging, then try again.",
     );
     assert.equal(state.remote.pairing, "unknown");
     assert.equal(describeRemote(state).keysEnabled, true);
   });
 
-  test("listing works even while the remote still needs pairing", () => {
+  test("apps are listed and opened even while the remote still needs pairing", () => {
     const needed = { ...withTv(), remote: { ...withTv().remote, pairing: "needed" as const } };
 
     assert.notEqual(startRemote(needed, { kind: "list_apps" }).request, null);
-    assert.equal(
+    assert.notEqual(
       startRemote(needed, { kind: "launch_app", package: "a.b", label: "A" }).request,
       null,
     );
+    assert.equal(describeRemote(needed).launchEnabled, true);
   });
 
   const launched = (confirmation: string, front: string | null): RemoteAnswer => ({
@@ -557,7 +558,7 @@ describe("the TV's apps", () => {
         deviceId: "a",
         confirmation,
         detail: "d",
-        after: { isOn: true, currentApp: front, volume: null },
+        frontApp: front,
       },
     },
   });
@@ -581,6 +582,8 @@ describe("the TV's apps", () => {
 
     assert.equal(describeRemote(done).outcome?.text, "Netflix is open on the TV.");
     assert.equal(describeRemote(done).outcome?.tone, "done");
+    assert.equal(describeRemote(done).readout, "TV app: com.netflix.ninja");
+    assert.equal(done.remote.pairing, "unknown"); // opened over debugging, not the remote
     assert.equal(
       describeRemote(other).outcome?.text,
       "Netflix was sent, but the TV reports another app in front.",
@@ -589,13 +592,20 @@ describe("the TV's apps", () => {
     assert.equal(describeRemote(silent).outcome?.tone, "sent");
   });
 
-  test("an opening whose answer is lost is uncertain and never resent", () => {
-    const { state } = run(withTv(), open, failure("bridge_timeout"));
+  test("an opening whose answer or connection is lost is uncertain and never resent", () => {
+    for (const code of ["bridge_timeout", "timeout", "device_unavailable"]) {
+      const { state } = run(withTv(), open, failure(code));
+      assert.equal(
+        describeRemote(state).outcome?.text,
+        "Netflix may or may not have opened. It was not sent again: check the TV.",
+      );
+    }
+  });
 
-    assert.equal(
-      describeRemote(state).outcome?.text,
-      "Netflix may or may not have opened. It was not sent again: check the TV.",
-    );
+  test("opening while the TV's debugging is off explains how to turn it on", () => {
+    const { state } = run(withTv(), open, failure("unsupported_operation"));
+
+    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
   });
 
   test("another TV starts without the previous TV's apps", () => {

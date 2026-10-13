@@ -21,9 +21,11 @@ from control_tv.adapters.tv_apps import (
     LAUNCHER_QUERY,
     AdbAppInventory,
     apps_installed,
+    parse_front_app,
     parse_launcher_apps,
 )
 from control_tv.domain import (
+    CommandRejectedError,
     DeviceUnavailableError,
     InvalidArgumentError,
     OperationTimeoutError,
@@ -218,3 +220,109 @@ def test_the_real_library_objects_are_built_offline(tmp_path: Path) -> None:
     assert signer.public_key.startswith(b"QAAAA")  # Android's RSA public key encoding
     assert len(signer.Sign(b"x" * 20)) == 256
     assert device.available is False  # built, never connected
+
+
+# Opening an app --------------------------------------------------------------------------------
+
+FRONT_NETFLIX = "  topResumedActivity=ActivityRecord{2b4c u0 com.netflix.ninja/.MainActivity t12}\n"
+FRONT_HOME = (
+    "  mResumedActivity: ActivityRecord{6f8 u0 com.google.android.apps.tv.launcherx/"
+    ".home.HomeActivity t3}\n"
+)
+
+
+class LaunchDevice(FakeDevice):
+    def shell(self, command: str, read_timeout_s: float) -> Any:
+        self.record.setdefault("commands", []).append(command)
+        if command.startswith("monkey"):
+            return self.record.get("monkey_output", "Events injected: 1")
+        fronts = self.record.setdefault("fronts", [FRONT_NETFLIX])
+        return fronts.pop(0) if len(fronts) > 1 else fronts[0]
+
+
+def launcher(tmp_path: Path, record: dict[str, Any]) -> AdbAppInventory:
+    def device(host: str, port: int, timeout: float) -> LaunchDevice:
+        return LaunchDevice(record)
+
+    def keygen(path: str) -> None:
+        Path(path).write_bytes(b"private")
+        Path(path + ".pub").write_bytes(b"public")
+
+    return AdbAppInventory(
+        tmp_path / "remote",
+        device_factory=device,
+        signer_factory=lambda key: key,
+        keygen=keygen,
+        sleep=lambda seconds: record.setdefault("sleeps", []).append(seconds),
+    )
+
+
+def test_an_app_is_opened_once_by_its_home_screen_activity_then_read_in_front(
+    tmp_path: Path,
+) -> None:
+    record: dict[str, Any] = {}
+
+    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
+
+    assert record["commands"] == [
+        "monkey -p com.netflix.ninja -c android.intent.category.LEANBACK_LAUNCHER 1",
+        "dumpsys activity activities",
+    ]
+    assert launch.front_app == "com.netflix.ninja"
+    assert record["closed"] == 1
+
+
+def test_the_app_in_front_is_read_again_within_a_short_budget(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"fronts": [FRONT_HOME, FRONT_HOME, FRONT_NETFLIX]}
+
+    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
+
+    assert launch.front_app == "com.netflix.ninja"
+    assert [c for c in record["commands"] if c.startswith("monkey")] == [
+        "monkey -p com.netflix.ninja -c android.intent.category.LEANBACK_LAUNCHER 1"
+    ]
+    assert record["sleeps"] == [0.75, 0.75]
+
+
+def test_an_app_never_reported_in_front_returns_what_the_tv_said_last(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"fronts": [FRONT_HOME]}
+
+    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
+
+    assert launch.front_app == "com.google.android.apps.tv.launcherx"
+    assert len([c for c in record["commands"] if c.startswith("dumpsys")]) == 4
+
+
+def test_a_tv_that_does_not_say_what_is_in_front_is_unknown(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"fronts": ["no activity lines here"]}
+
+    assert launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja").front_app is None
+
+
+def test_an_app_without_a_home_screen_activity_is_refused_by_the_tv(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"monkey_output": "** No activities found to run, monkey aborted."}
+
+    with pytest.raises(CommandRejectedError):
+        launcher(tmp_path, record).launch_app(HOST, "com.example.service")
+
+    assert [c for c in record["commands"] if c.startswith("dumpsys")] == []
+
+
+@pytest.mark.parametrize(
+    "package",
+    ["", "youtube", "com.example;reboot", "com.example && rm", "1com.example", "a" * 256, None],
+)
+def test_only_a_package_name_reaches_the_launch_command(tmp_path: Path, package: Any) -> None:
+    record: dict[str, Any] = {}
+
+    with pytest.raises(InvalidArgumentError):
+        launcher(tmp_path, record).launch_app(HOST, package)
+
+    assert "commands" not in record
+
+
+def test_the_front_app_parser_reads_only_a_resumed_activity_record() -> None:
+    assert parse_front_app(FRONT_NETFLIX) == "com.netflix.ninja"
+    assert parse_front_app(FRONT_HOME) == "com.google.android.apps.tv.launcherx"
+    assert parse_front_app("mFocusedApp=com.netflix.ninja") is None
+    assert parse_front_app(None) is None

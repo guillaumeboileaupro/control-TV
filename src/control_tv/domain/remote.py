@@ -125,11 +125,11 @@ class TvApp:
 
 @dataclass(frozen=True, slots=True)
 class AppLaunch:
-    """An app launch that was sent once, with what the TV reported before and after."""
+    """An app launch that was sent once, and the app the TV reported in front afterwards
+    (`None` when the TV did not say)."""
 
     package: str
-    before: RemoteObservation
-    after: RemoteObservation
+    front_app: str | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -140,4 +140,4 @@ class AppLaunchResult:
     device_id: DeviceId
     confirmation: Confirmation
     detail: str
-    after: RemoteObservation
+    front_app: str | None

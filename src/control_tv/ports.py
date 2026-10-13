@@ -78,17 +78,18 @@ class TvRemote(Protocol):
 
     def type_text(self, host: str, text: str) -> TextEntry: ...
 
-    def launch_app(self, host: str, package: str) -> AppLaunch: ...
-
 
 class TvApps(Protocol):
-    """The apps installed on a TV, reached by the TV's IP address (read-only).
+    """The apps installed on a TV, reached by the TV's IP address.
 
-    Implementations must translate failures into `ControlError` subclasses and list only what
-    the TV itself reported.
+    Implementations must translate failures into `ControlError` subclasses, list only what the
+    TV itself reported, launch an app at most once per call, and report the app in front only
+    as the TV reported it.
     """
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]: ...
+
+    def launch_app(self, host: str, package: str) -> AppLaunch: ...
 
 
 class TvControl(Protocol):

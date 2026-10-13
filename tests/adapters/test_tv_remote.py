@@ -49,7 +49,6 @@ class FakeTv:
         self.connect_delay = 0.0
         self.current_app = ""
         self.field_counter = 0
-        self.opens_launched_app = True
         self.texts: list[str] = []
         self.log: list[tuple[str, ...]] = []
         self.remotes: list[FakeRemote] = []
@@ -89,13 +88,6 @@ class FakeRemote:
             elif key_code == "KEYCODE_VOLUME_MUTE":
                 self.tv.volume["muted"] = not self.tv.volume["muted"]
             self.volume_info = dict(self.tv.volume)
-
-    def send_launch_app_command(self, link: str) -> None:
-        self.tv.log.append(("launch", link))
-        if self.tv.send_error is not None:
-            raise self.tv.send_error
-        if self.tv.opens_launched_app:
-            self.current_app = link.rsplit("=", 1)[1]
 
     def send_text(self, text: str) -> None:
         self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
@@ -570,39 +562,3 @@ def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, t
 
     assert "secret-123" not in str(excinfo.value)
     assert tv.texts == ["secret-123"]  # sent once, not resent
-
-
-# Opening an app ----------------------------------------------------------------------------------
-
-
-def test_an_app_is_opened_once_by_the_remotes_own_app_link(
-    channel: TvRemoteChannel, tv: FakeTv
-) -> None:
-    launch = channel.launch_app(HOST, "com.example.video")
-
-    assert [e for e in tv.log if e[0] == "launch"] == [
-        ("launch", "market://launch?id=com.example.video")
-    ]
-    assert launch.after.current_app == "com.example.video"
-    assert tv.log[-1] == ("disconnect",)
-
-
-def test_a_tv_that_does_not_report_the_app_in_front_is_returned_as_it_said(
-    channel: TvRemoteChannel, tv: FakeTv
-) -> None:
-    tv.opens_launched_app = False
-
-    assert channel.launch_app(HOST, "com.example.video").after.current_app is None
-
-
-@pytest.mark.parametrize(
-    "package",
-    ["", "youtube", "com.example/../x", "com.example;reboot", "1com.example", "a" * 256, None],
-)
-def test_only_a_package_name_can_be_opened(
-    channel: TvRemoteChannel, tv: FakeTv, package: Any
-) -> None:
-    with pytest.raises(InvalidArgumentError):
-        channel.launch_app(HOST, package)
-
-    assert tv.log == []

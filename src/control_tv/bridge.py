@@ -79,10 +79,11 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              display name control-TV knows, or `null`. `unsupported_operation`
                              when the TV's debugging is off, `pairing_required` until the
                              owner allows control-TV on the TV. Read-only.
-- `launch_tv_app`         -> also requires `package`: opens that app once through the remote
-                             channel. Answers {"result": {"package", "deviceId",
-                             "confirmation", "detail", "after"}}: `confirmed` only when the TV
-                             then reports that app in front, `not_checked` when it does not say.
+- `launch_tv_app`         -> also requires `package`: opens that app once, over the same
+                             network debugging as the list (the app's home-screen activity).
+                             Answers {"result": {"package", "deviceId", "confirmation",
+                             "detail", "frontApp"}}: `confirmed` only when the TV then reports
+                             that app in front, `not_checked` when it does not say.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -351,7 +352,7 @@ def _app_launch_to_json(result: AppLaunchResult) -> dict[str, Any]:
         "deviceId": str(result.device_id),
         "confirmation": result.confirmation.value,
         "detail": result.detail,
-        "after": _remote_to_json(result.after),
+        "frontApp": result.front_app,
     }
 
 

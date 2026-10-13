@@ -4,14 +4,16 @@ The TV's remote channel can open an app but cannot list them. The only way found
 apps really installed is the TV's own debugging service, which the owner turns on in the TV's
 developer options ("USB debugging" on a Google TV also accepts connections on the local
 network, port 5555). The first connection makes the TV ask whether to allow control-TV's key;
-the owner accepts on the TV. This module only lists: it runs one read-only query and never
-installs, starts or changes anything through ADB (apps are opened through the remote channel).
+the owner accepts on the TV. This module sends only three fixed commands, built from a checked
+package name where one is needed: the list of launchable apps and the app in front (both
+read-only), and one launch event for an app the person chose. It never installs, removes or
+changes anything.
 
 Rules this adapter keeps:
 
 - The key that identifies control-TV to the TV lives in the same private directory as the
   remote channel's credentials (0700), its private half 0600.
-- One short connection per listing, always closed.
+- One short connection per listing or launch, always closed; a launch is sent once.
 - Only the apps the TV's home screen can launch (the Leanback launcher activities) are
   listed, by package name, sorted, without duplicates.
 - Error messages never contain a TV address.
@@ -23,12 +25,15 @@ import importlib.util
 import ipaddress
 import os
 import re
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from control_tv.domain import (
+    AppLaunch,
+    CommandRejectedError,
     DeviceUnavailableError,
     InvalidArgumentError,
     OperationTimeoutError,
@@ -36,6 +41,8 @@ from control_tv.domain import (
     TvApp,
     UnsupportedOperationError,
 )
+
+T = TypeVar("T")
 
 ADB_PORT = 5555
 KEY_FILE = "adbkey"
@@ -48,6 +55,19 @@ LAUNCHER_QUERY = (
     "cmd package query-activities --brief "
     "-a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER"
 )
+# Opens the app's home-screen activity, as the home screen does: one event, nothing else.
+LAUNCH_COMMAND = "monkey -p {package} -c android.intent.category.LEANBACK_LAUNCHER 1"
+# Which activity is in front (read-only).
+FRONT_QUERY = "dumpsys activity activities"
+DEFAULT_FRONT_READS = 4
+DEFAULT_FRONT_INTERVAL = 0.75
+_FRONT = re.compile(
+    r"(?:topResumedActivity|mResumedActivity|ResumedActivity)[:=]\s*ActivityRecord\{\S+ \S+ "
+    r"([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/"
+)
+# An Android package name: dot-separated segments of letters, digits and underscores, the first
+# starting with a letter. Anything else is refused before a command is built from it.
+PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 _COMPONENT = re.compile(r"^([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/[A-Za-z0-9_.$]+$")
 
 # Display names control-TV knows for common packages; any other app shows its package name.
@@ -89,6 +109,21 @@ def parse_launcher_apps(output: str) -> tuple[TvApp, ...]:
         if match:
             packages.add(match.group(1))
     return tuple(TvApp(package=p, name=KNOWN_NAMES.get(p)) for p in sorted(packages))
+
+
+def checked_package(package: object) -> str:
+    """A well-formed Android package name, never a free command or a shell fragment."""
+    if not isinstance(package, str) or len(package) > 255 or not PACKAGE_NAME.fullmatch(package):
+        raise InvalidArgumentError("not an Android package name")
+    return package
+
+
+def parse_front_app(output: object) -> str | None:
+    """The package of the activity the TV reports in front, or None when it does not say."""
+    if not isinstance(output, str):
+        return None
+    match = _FRONT.search(output)
+    return match.group(1) if match else None
 
 
 def apps_installed() -> bool:
@@ -148,6 +183,9 @@ class AdbAppInventory:
         device_factory: DeviceFactory = _default_device,
         signer_factory: SignerFactory = _default_signer,
         keygen: KeyGenerator = _default_keygen,
+        front_reads: int = DEFAULT_FRONT_READS,
+        front_interval: float = DEFAULT_FRONT_INTERVAL,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._dir = Path(credentials_dir)
         self._port = port
@@ -157,14 +195,57 @@ class AdbAppInventory:
         self._device_factory = device_factory
         self._signer_factory = signer_factory
         self._keygen = keygen
+        self._front_reads = max(1, front_reads)
+        self._front_interval = front_interval
+        self._sleep = sleep
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         """The TV's launchable apps. Raises a control error with a plain reason otherwise."""
+
+        def query(device: Any) -> tuple[TvApp, ...]:
+            output = device.shell(LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
+            if not isinstance(output, str):
+                raise DeviceUnavailableError("the TV returned no list of apps")
+            return parse_launcher_apps(output)
+
+        return self._session(host, query)
+
+    def launch_app(self, host: str, package: str) -> AppLaunch:
+        """Open the app's home-screen activity once, then read which app the TV has in front.
+
+        The launch is one `monkey` event for the Leanback launcher activity of `package`, the
+        way the TV's own home screen opens it. The TV says when it has no such activity, and
+        then nothing was opened. The app in front is read (read-only) a few times within a
+        short budget; whatever the TV reports last is returned.
+        """
+        package = checked_package(package)
+
+        def launch(device: Any) -> AppLaunch:
+            output = device.shell(
+                LAUNCH_COMMAND.format(package=package), read_timeout_s=self._read_timeout
+            )
+            if isinstance(output, str) and "No activities found" in output:
+                raise CommandRejectedError("the TV has no home-screen activity for this app")
+            front: str | None = None
+            for attempt in range(self._front_reads):
+                if attempt:
+                    self._sleep(self._front_interval)
+                front = parse_front_app(
+                    device.shell(FRONT_QUERY, read_timeout_s=self._read_timeout)
+                )
+                if front == package:
+                    break
+            return AppLaunch(package=package, front_app=front)
+
+        return self._session(host, launch)
+
+    def _session(self, host: str, action: Callable[[Any], T]) -> T:
+        """One short connection: connect (the owner may have to allow control-TV), act, close."""
         host = _checked_host(host)
         errors = _library()
         signer = self._signer_factory(str(self._key()))
         device = self._device_factory(host, self._port, self._connect_timeout)
-        allow = "allow control-TV on the TV when it asks, then list the apps again"
+        allow = "allow control-TV on the TV when it asks, then try again"
         try:
             try:
                 # A TV that asks the owner to allow the key waits up to `auth_timeout`; no
@@ -173,11 +254,11 @@ class AdbAppInventory:
                     raise PairingRequiredError(allow)
             except (errors.DeviceAuthError, errors.AdbTimeoutError):
                 raise PairingRequiredError(allow) from None
-            output = device.shell(LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
+            return action(device)
         except (ConnectionRefusedError, errors.TcpTimeoutException):
             raise UnsupportedOperationError(
                 "the TV's network debugging is off: turn on USB debugging in the TV's "
-                "developer options to list its apps"
+                "developer options to list and open its apps"
             ) from None
         except errors.AdbTimeoutError:
             raise OperationTimeoutError("the TV did not answer in time") from None
@@ -188,9 +269,6 @@ class AdbAppInventory:
         finally:
             with suppress(OSError):
                 device.close()
-        if not isinstance(output, str):
-            raise DeviceUnavailableError("the TV returned no list of apps")
-        return parse_launcher_apps(output)
 
     def _key(self) -> Path:
         """control-TV's ADB key, created once in the private directory."""

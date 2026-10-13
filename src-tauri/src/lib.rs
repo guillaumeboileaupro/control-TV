@@ -906,10 +906,12 @@ async fn bridge_launch_tv_app(
     device_id: String,
     package: String,
 ) -> Result<Value, BridgeFailure> {
-    send_remote(
+    // Over the TV's debugging, like the list: the owner may first have to allow control-TV.
+    call_bridge(
         state.inner().clone(),
         "launch_tv_app",
         app_request(&device_id, &package),
+        APPS_TIMEOUT,
     )
     .await
 }

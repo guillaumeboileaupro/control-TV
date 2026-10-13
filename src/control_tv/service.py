@@ -570,12 +570,16 @@ class ControlService:
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports
-        that app in front; the TV often does not say, which is `NOT_CHECKED`."""
+        that app in front; `NOT_CHECKED` when it does not say."""
         if not isinstance(package, str):
             raise InvalidArgumentError("the app must be a package name", device_id=device_id)
-        remote, host = self._remote_target(device_id)
-        launch = remote.launch_app(host, package)
-        front = launch.after.current_app
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot open the TV's apps", device_id=device_id
+            )
+        launch = self._apps.launch_app(host, package)
+        front = launch.front_app
         if front == launch.package:
             confirmation, detail = Confirmation.CONFIRMED, "the TV reports the app in front"
         elif front is not None:
@@ -589,7 +593,7 @@ class ControlService:
             device_id=device_id,
             confirmation=confirmation,
             detail=detail,
-            after=launch.after,
+            front_app=front,
         )
 
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:

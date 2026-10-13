@@ -180,8 +180,12 @@ export function startRemote(
     return { state, request: null };
   }
   // Listing apps uses the TV's debugging, not its remote: a pairing step does not block it.
+  // Apps go through the TV's debugging, not its remote: a pairing step blocks neither.
   const needsRemote =
-    action.kind !== "show_code" && action.kind !== "pair" && action.kind !== "list_apps";
+    action.kind !== "show_code" &&
+    action.kind !== "pair" &&
+    action.kind !== "list_apps" &&
+    action.kind !== "launch_app";
   if (needsRemote && !keysAllowed(state)) {
     return { state, request: null };
   }
@@ -248,18 +252,18 @@ export function toReport(value: unknown): RemoteReport | null {
 
 function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOutcome {
   const technical = `${failure.code}: ${failure.message}`;
-  if (action.kind === "list_apps") {
+  if (action.kind === "list_apps" || action.kind === "launch_app") {
     if (failure.code === "unsupported_operation") {
       return {
         tone: "failed",
-        text: "To list the TV's apps, turn on USB debugging on the TV: Settings › System › About, select “Android TV OS build” 7 times, then Settings › System › Developer options › USB debugging. Then list the apps again and allow control-TV when the TV asks.",
+        text: "To list and open the TV's apps, turn on USB debugging on the TV: Settings › System › About, select “Android TV OS build” 7 times, then Settings › System › Developer options › USB debugging. Then list the apps again and allow control-TV when the TV asks.",
         technical,
       };
     }
     if (failure.code === "pairing_required") {
       return {
         tone: "failed",
-        text: "Allow control-TV on the TV when it asks about debugging, then list the apps again.",
+        text: "Allow control-TV on the TV when it asks about debugging, then try again.",
         technical,
       };
     }
@@ -286,6 +290,9 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
         text: "This version of control-TV can't use the TV's own remote.",
         technical,
       };
+    // A lost connection may have come after the request was sent: for anything that acts on
+    // the TV, the outcome is uncertain, never "try again".
+    case "device_unavailable":
     case "timeout":
     case "bridge_timeout":
     case "bridge_transport":
@@ -360,8 +367,8 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
   if (!answer.ok) {
     const failure = answer.failure;
     let pairing = remote.pairing;
-    if (action.kind === "list_apps") {
-      // The app list's own "allow control-TV on the TV" is not the remote's pairing.
+    if (action.kind === "list_apps" || action.kind === "launch_app") {
+      // The apps' own "allow control-TV on the TV" is not the remote's pairing.
       return { ...state, remote: { ...remote, outcome: failureOutcome(action, failure) } };
     }
     if (failure.code === "pairing_required") {
@@ -457,13 +464,20 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         ...state,
         remote: {
           ...remote,
-          pairing: "paired",
-          report: toReport(launched["after"]) ?? remote.report,
+          report: withFrontApp(remote.report, launched["frontApp"]),
           outcome,
         },
       };
     }
   }
+}
+
+// The report with the app the TV said it has in front, when it said one.
+function withFrontApp(report: RemoteReport | null, front: unknown): RemoteReport | null {
+  if (typeof front !== "string" || front === "") {
+    return report;
+  }
+  return { isOn: report?.isOn ?? null, volume: report?.volume ?? null, currentApp: front };
 }
 
 // An app list as the control layer sends it; malformed entries are left out, never guessed.
@@ -611,7 +625,7 @@ export function describeRemote(state: AppState): RemoteDescription {
     apps: filteredApps(remote.apps, remote.appFilter),
     appsEnabled: !busy,
     listingApps: pending !== null && pending.action.kind === "list_apps",
-    launchEnabled: !busy && keysAllowed(state),
+    launchEnabled: !busy,
     pendingApp:
       pending !== null && pending.action.kind === "launch_app" ? pending.action.package : null,
     busy,
