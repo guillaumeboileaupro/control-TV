@@ -1,13 +1,13 @@
 # control-TV
 
-Control the TV by voice from the ChatGPT app, and with a standalone graphical remote, both over one control layer.
+A standalone graphical remote for a Google TV, on Ubuntu and on Android, both over one shared control layer and usable in parallel on the same TV, with no permanent server.
 
 ## Goals
 
-- **By voice, in the existing ChatGPT app:** you speak in ChatGPT's voice mode ("lance-moi ce documentaire sur la TV") and ChatGPT carries the request out on the TV through control-TV's tools (MCP), including starting the requested content on the TV. Whether ChatGPT's voice mode can call these tools on your ChatGPT app is not yet established and is to be verified first.
-- **control-TV, a graphical TV remote** (Linux desktop and Android): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation, each where the TV supports it. It has no microphone, voice assistant, search interface or video player.
+- **Abandoned on 2026-10-12 (issue #37): by voice, in the ChatGPT app,** through control-TV's tools (MCP). The local MCP adapter stays in the code as it is, without further development; whether ChatGPT's voice mode could call these tools was never established.
+- **control-TV, a graphical TV remote** (Ubuntu/Debian and Android, two standalone remotes on the same TV): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation, each where the TV supports it. It has no microphone, voice assistant, search interface or video player.
 - Standalone manual TV control that works without ChatGPT, MCP, an OpenAI API key or any cloud dependency.
-- One authoritative control/domain layer shared by the manual application and the MCP adapter.
+- One authoritative control/domain layer shared by the Ubuntu window, the Android app and the MCP adapter (kept as is, not developed).
 - Python for the Chromecast integration (`pychromecast` where it matches the required Cast capabilities); Rust only for native or performance-sensitive components that justify it.
 - Tauri 2 as the cross-platform application and packaging shell, with an HTML/CSS UI written in JavaScript or TypeScript as the implementation requires.
 - Target packages: Android APK (personal sideloading only, no Google Play publication), and Debian/Ubuntu package (Windows was abandoned on 2026-10-12).
@@ -18,7 +18,7 @@ Control the TV by voice from the ChatGPT app, and with a standalone graphical re
 ```text
 Manual UI  -> Tauri boundary -+
                               +-> shared control/domain layer -> Chromecast / Google TV
-MCP client -> MCP adapter ----+   (MCP adapter: local stdio server, python -m control_tv.mcp_server)
+MCP client -> MCP adapter ----+   (kept as is, not developed: local stdio server, python -m control_tv.mcp_server)
 ```
 
 Today the manual UI is a vanilla TypeScript page in a Tauri 2 window. Its Rust side only forwards requests, on a worker thread with a time bound, to a long-lived Python process (`python -m control_tv.bridge`) that speaks line-delimited JSON over stdin/stdout and calls `ControlService`, which drives the TV through `PyChromecastTransport`. No Cast logic lives in Rust or TypeScript.
@@ -27,7 +27,7 @@ The UI and the MCP adapter are thin. Device discovery, validation and state belo
 
 Priority (owner, issue #37, 2026-10-08): the standalone Ubuntu and Android remotes, usable in parallel on the same TV; MCP, ChatGPT Voice and Windows were abandoned on 2026-10-12.
 
-Today: Cast playback control and the receiver's volume and mute are implemented and automation-validated in the window and the local MCP server. From the window, some commands were sent to a real TV (see the plan); through MCP, only read-only calls were made with a real client, and no MCP control command has been validated on hardware. When a TV's Cast volume is fixed, the window says so, says that Mute may not silence it, and names the TV's own remote-control channel (Android TV Remote) when discovery finds it; control-TV does not use that channel yet. ChatGPT is not connected yet, and the TV's applications, power, audible sound and navigation are not implemented (they depend on what each TV exposes, to be checked on real hardware).
+Today: in the window (Ubuntu) and the Android app, Cast playback control and the receiver's volume and mute; the TV's own remote channel (Android TV Remote: pairing, power, navigation keys, the audible volume and mute, the remote keyboard, the app in front); the TV's installed apps, listed and opened over the TV's debugging (ADB); and, on Ubuntu, a status-area icon. All are automation-validated. On real hardware, the audible volume and mute were validated from Ubuntu on 2026-10-12, and some Cast commands were sent from the window (see the plan); power, navigation, the keyboard, the apps, the status-area icon and every command from Android are not yet tried on a TV. The MCP server is kept as it is: only read-only calls were made with a real client, and no MCP control command was validated on hardware.
 
 ## Development
 
@@ -101,7 +101,7 @@ The TV's installed apps (`DEVELOPMENT_PLAN.md` 2E, implemented, not yet tried on
 
 Status-area icon (Ubuntu, `DEVELOPMENT_PLAN.md` Phase 4b, not yet seen on a real desktop): Open control-TV, Play / Pause, Stop, Mute the TV, TV volume − and +, Quit. Each TV action runs as the window's own button (same selected TV, one request at a time, the same wording of what the TV confirmed); when it cannot run, the window comes to the front. Closing the window quits the application. The `.deb` depends on `libayatana-appindicator3-1`; a stock GNOME shows the icon with the AppIndicator extension (installed by default on Ubuntu).
 
-MCP server (`DEVELOPMENT_PLAN.md` Phase 6): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency for development (`uv sync --locked --extra mcp`: `control-tv[mcp]`, the official MCP Python SDK `mcp==1.30.0`). The SDK stays optional at run time: the frozen desktop bridge (`bridge-build`) and the Android app (`android-python`) are built from their own environments without it. The client starts it; for Codex, in `~/.codex/config.toml`:
+MCP server (`DEVELOPMENT_PLAN.md` Phase 6; kept as is since 2026-10-12, without further development): a local stdio MCP server over the same control layer, for an MCP client such as Codex CLI. `setup` installs its optional dependency for development (`uv sync --locked --extra mcp`: `control-tv[mcp]`, the official MCP Python SDK `mcp==1.30.0`). The SDK stays optional at run time: the frozen desktop bridge (`bridge-build`) and the Android app (`android-python`) are built from their own environments without it. The client starts it; for Codex, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.control-tv]
