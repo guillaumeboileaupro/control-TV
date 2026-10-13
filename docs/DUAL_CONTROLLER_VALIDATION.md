@@ -107,6 +107,28 @@ state and refreshed status may still be recorded as recovery evidence, but ident
 are not countable from their final state. App-side instrumentation proves one local send
 attempt; only packet or receiver-side capture can count actual deliveries to the receiver.
 
+## Key latency steps (TV remote channel, each with the owner's go-ahead)
+
+Each key opens its own short connection to the TV's remote channel (connect, send once, close),
+so that both remotes can use it and no connection stays open; the cost of that choice is a
+delay per key, measured here. These steps send navigation keys only: run them on the TV's home
+screen, where moving the focus changes nothing.
+
+| Step | Action | Measure |
+|---|---|---|
+| K1 | Ubuntu: press → once, wait for the focus to move, ten times | for each press, the time from the click to the focus moving on the TV |
+| K2 | Android: the same ten presses from the phone | as K1 |
+| K3 | Ubuntu: press → five times quickly, without waiting | how many times the focus moved (expected: five, never more), and how long until the last move |
+
+Measure from a video that shows both the remote's screen and the TV (a phone camera at 60
+frames per second gives about 17 ms per frame): count the frames between the click or tap and
+the focus moving. Record the median and the slowest of K1 and K2. The owner judges whether the
+delay is acceptable; as a reference only, a delay under 0.3 s feels immediate and over 1 s makes
+navigation tedious. A focus that moved more times than the key was pressed in K3 is a **FAIL**
+(a key sent twice); fewer moves with a "may or may not have reached the TV" message is recorded,
+not a FAIL. Without a video the step is **NOT RUN**: a delay judged by eye is noted, not
+measured.
+
 ## What to record for each step
 
 Date and time; remote (Ubuntu or Android) and build (commit); action; the acting remote's wording (sent, confirmed, not confirmed, may or may not have reached the TV, refused) and its state shown; what was seen and heard on the TV (physical effect: yes, no, not checked); the other remote's state before and after its refresh; any second command observed on the TV; and, for C6/C7, the required instrumentation records. Classify each step as **PASS**, **FAIL** (contract broken: instrumentation shows a second send attempt, a remote shows a state the TV did not report after refresh, or a confirmation uses another proven session) or **NOT RUN**. Do not infer a send or delivery count from final TV state alone.

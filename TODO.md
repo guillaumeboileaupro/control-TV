@@ -28,7 +28,7 @@
 |---|---|---|---|
 | Volume +/−, Mute (son réel) | ✅ validé le 2026-10-12 | codé, 0 % confirmé | installer l'APK de #41 |
 | Power (veille / réveil) | codé, 0 % confirmé | codé, 0 % confirmé | essai |
-| Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai |
+| Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai, et mesure de la latence par touche (étapes K1–K3 de `docs/DUAL_CONTROLLER_VALIDATION.md`, vidéo) |
 | Clavier distant (texte, Backspace, Entrée) | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai : TV allumée, recherche YouTube ouverte |
 | Application active affichée | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai |
 | Applications installées : liste et lancement | codé, 0 % confirmé | codé, 0 % confirmé | essai : activer le débogage USB sur la TV, autoriser control-TV, lister, ouvrir |

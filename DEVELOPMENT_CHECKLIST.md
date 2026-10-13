@@ -127,7 +127,7 @@
 - [ ] Retour/Back depuis Ubuntu et Android.
 - [ ] Accueil/Home depuis Ubuntu et Android.
 - [ ] Vérifier répétition et maintien de touche, si pertinent et pris en charge.
-- [ ] Vérifier les changements de focus et la latence.
+- [ ] Vérifier les changements de focus et la latence (étapes K1–K3 de `docs/DUAL_CONTROLLER_VALIDATION.md` : délai médian et maximal par touche, mesuré sur vidéo, depuis Ubuntu et Android ; aucune touche envoyée deux fois).
 - [ ] Vérifier l'effet dans l'accueil Google TV et au moins deux applications représentatives.
 - [ ] Signaler les commandes non prises en charge, sans succès fictif.
 
