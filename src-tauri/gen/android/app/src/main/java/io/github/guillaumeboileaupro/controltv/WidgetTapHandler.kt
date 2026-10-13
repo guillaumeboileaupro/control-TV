@@ -9,7 +9,7 @@ package io.github.guillaumeboileaupro.controltv
  * anything is queued; the same interaction delivered again carries the same, already consumed
  * token and is ignored. The token becomes the tap's identity in the job, so a job run again
  * by WorkManager is caught by [TapGuard]. Only the action name (a closed set) and the token
- * come from the intent: never a device, a level or any other value.
+ * come from the intent: never a device, a level or another value.
  *
  * [enqueue] returns only once the job is recorded (it may throw): a tap whose job could not be
  * recorded says that nothing was sent instead of staying on "Working…".
@@ -17,7 +17,7 @@ package io.github.guillaumeboileaupro.controltv
  * Nothing here is silent: a rejected token redraws the widget (so buttons left with an old
  * token by the launcher are armed again; the rejected tap itself still does nothing), a tap
  * with no TV chosen says so in words that differ from the widget's first drawing, and every
- * step is logged through [log] without any token, device or network value.
+ * step is logged through [log] without a token, device or network value.
  */
 class WidgetTapHandler(
     private val store: WidgetStore,
@@ -27,11 +27,11 @@ class WidgetTapHandler(
     private val render: () -> Unit,
     private val log: (String) -> Unit = {},
 ) {
-    /** Returns true when the tap was accepted (it may still end without any command). */
+    /** Returns true when the tap was accepted (it may still end without a command). */
     fun handle(actionName: String?, token: String?): Boolean {
         val action = WidgetAction.entries.firstOrNull { it.name == actionName }
         if (action == null) {
-            log("widget tap ignored: unknown action")
+            log("widget tap ignored: unrecognised action")
             return false
         }
         log("widget tap received: ${action.name}")

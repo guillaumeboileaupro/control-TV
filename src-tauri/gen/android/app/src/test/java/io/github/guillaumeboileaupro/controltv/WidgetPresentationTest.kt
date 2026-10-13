@@ -29,6 +29,7 @@ class WidgetPresentationTest {
         assertEquals("Nothing playing · 45%", WidgetPresentation.summary(state(playback = null)))
         assertEquals("Playing · A film", WidgetPresentation.summary(state(level = null, muted = null)))
         assertEquals("Not connected.", WidgetPresentation.summary(state(connected = false)))
+        assertEquals("Status undetermined · 45%", WidgetPresentation.summary(state(playback = "future_state")))
     }
 
     @Test

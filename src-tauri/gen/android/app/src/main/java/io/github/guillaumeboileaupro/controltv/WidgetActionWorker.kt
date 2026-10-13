@@ -31,7 +31,7 @@ class WidgetActionWorker(context: Context, params: WorkerParameters) : Worker(co
         val lock = (context.getSystemService(Context.WIFI_SERVICE) as WifiManager)
             .createMulticastLock("control-tv-widget")
             .apply { setReferenceCounted(false) }
-        Log.i(TAG, "widget job started: ${action?.name ?: "unknown action"}")
+        Log.i(TAG, "widget job started: ${action?.name ?: "unrecognised action"}")
         try {
             if (action == null || tapId.isNullOrBlank()) {
                 store.saveView(WidgetPresentation.present(WidgetOutcome.Expired, selection))

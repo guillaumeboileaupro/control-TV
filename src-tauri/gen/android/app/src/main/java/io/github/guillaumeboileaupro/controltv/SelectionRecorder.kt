@@ -9,7 +9,7 @@ import org.json.JSONObject
  * stable device id the moment it is chosen, whether or not its first status read succeeds.
  * Nothing else changes the target: the window's bridge traffic ([observe]) only refreshes
  * display names (from its discoveries), and the widget's own requests never reach this class.
- * Selecting sends nothing to any TV.
+ * Selecting sends nothing to a TV.
  */
 class SelectionRecorder(private val store: WidgetStore) {
     /** Returns true when the stored target changed. */

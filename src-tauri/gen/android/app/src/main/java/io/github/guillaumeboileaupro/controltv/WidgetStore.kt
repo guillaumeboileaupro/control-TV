@@ -6,7 +6,7 @@ import android.content.SharedPreferences
 /** The TV the window last worked with: what the home-screen widget controls. */
 data class Selection(val deviceId: String, val name: String)
 
-/** What the widget shows, kept so it can be drawn again without any network access. */
+/** What the widget shows, kept so it can be drawn again without network access. */
 data class WidgetView(
     val title: String,
     val line: String,
@@ -122,7 +122,7 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
     }
 
     private companion object {
-        val LOCK = Any()
+        val LOCK = Object()
     }
 
     private fun optionalBoolean(key: String): Boolean? = prefs.getString(key, null)?.toBooleanStrictOrNull()

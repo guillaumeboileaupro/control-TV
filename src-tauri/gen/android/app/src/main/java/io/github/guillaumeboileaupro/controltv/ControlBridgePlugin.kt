@@ -100,7 +100,7 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Called by the window when the person explicitly chooses a TV: the widget's target
      * becomes that stable device id at once, before and whatever its first status read gives.
-     * It only writes the app's private preferences; nothing reaches the bridge or any TV.
+     * It only writes the app's private preferences; nothing reaches the bridge or a TV.
      */
     @Command
     fun rememberSelection(invoke: Invoke) {

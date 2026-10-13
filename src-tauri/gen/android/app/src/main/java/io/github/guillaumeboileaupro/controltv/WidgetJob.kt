@@ -3,7 +3,7 @@ package io.github.guillaumeboileaupro.controltv
 /** One widget tap handed to the background job: its stable identity and when it happened. */
 /**
  * One widget tap. [deviceId] is the TV that was selected when it was tapped: the job sends
- * nothing to any other TV (the selection may change before WorkManager runs the job).
+ * nothing to another TV (the selection may change before WorkManager runs the job).
  */
 data class TapSpec(
     val action: WidgetAction,
@@ -56,7 +56,7 @@ class WidgetJob(
             is TransactionResult.Done -> result.value
             TransactionResult.Busy -> WidgetOutcome.Busy
             TransactionResult.NotStarted -> WidgetOutcome.Expired
-            // Started, still running: no command can be claimed any more, but one may already
+            // Started, still running: no further command can be claimed, but one may already
             // have been handed over. A refresh only reads: its status is just unreadable.
             TransactionResult.TimedOutAfterStart ->
                 if (tap.action == WidgetAction.REFRESH) WidgetOutcome.StatusUnreadable
@@ -74,7 +74,7 @@ class WidgetJob(
     }
 
     companion object {
-        // Longer than any single shared-layer call (discovery 5 s, a command's confirmation
+        // Longer than each single shared-layer call (discovery 5 s, a command's confirmation
         // window) and shorter than the tap's lifetime.
         const val TRANSACTION_TIMEOUT_MILLIS = 45_000L
     }

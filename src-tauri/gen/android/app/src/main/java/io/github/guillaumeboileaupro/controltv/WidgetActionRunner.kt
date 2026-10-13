@@ -55,7 +55,7 @@ class TapGuard(private val store: WidgetStore, private val now: () -> Long = Sys
  * the outcome stays ambiguous ([WidgetOutcome.MaybeSent]).
  *
  * [log] gets, for a command, what the TV reported before it, the exact value requested and
- * how the shared layer answered (confirmed, unconfirmed, not checked, refused or unknown):
+ * how the shared layer answered (confirmed, unconfirmed, not checked, refused or undetermined):
  * enough to tell a command the TV ignored from one it was never asked for. Never a device id,
  * name, address or media title.
  */
@@ -94,9 +94,9 @@ class WidgetActionRunner(
         if (!mayCommand()) return WidgetOutcome.Expired
         // Claimed durably before the send: a re-run of this tap never sends a second time.
         if (!guard.claim(tapId)) return WidgetOutcome.MaybeSent(command.method)
-        val requested = command.params.entries.joinToString(" ") { "${it.key}=${it.value}" }
+        val requested = command.params.description
         log("widget command: ${command.method} $requested".trimEnd() + " (TV reported ${reported(state)})")
-        val params = JSONObject(command.params).put("deviceId", selection.deviceId)
+        val params = command.params.toJson().put("deviceId", selection.deviceId)
         val response = try {
             JSONObject(bridge(request(command.method, params)))
         } catch (error: PythonUnavailable) {
@@ -123,8 +123,8 @@ class WidgetActionRunner(
     /** The reported state a command was chosen from or checked against; no media title. */
     private fun reported(state: TvState): String {
         if (!state.connected) return "not connected"
-        val volume = if (state.volumeFixed) "fixed" else state.volumeLevel?.let { "$it" } ?: "unknown"
-        return "playback=${state.playback ?: "none"} muted=${state.muted ?: "unknown"} volume=$volume"
+        val volume = if (state.volumeFixed) "fixed" else state.volumeLevel?.let { "$it" } ?: "undetermined"
+        return "playback=${state.playback ?: "none"} muted=${state.muted ?: "undetermined"} volume=$volume"
     }
 
     private sealed interface StatusRead {
@@ -141,7 +141,13 @@ class WidgetActionRunner(
                 val discovered = JSONObject(bridge(request("discover_devices", JSONObject())))
                 if (!discovered.optBoolean("ok", false)) return StatusRead.Failed(WidgetOutcome.StatusUnreadable)
                 val devices = discovered.getJSONObject("result").getJSONArray("devices")
-                val found = (0 until devices.length()).any { devices.getJSONObject(it).optString("id") == deviceId }
+                var found = false
+                for (index in 0 until devices.length()) {
+                    if (devices.getJSONObject(index).optString("id") == deviceId) {
+                        found = true
+                        break
+                    }
+                }
                 if (!found) return StatusRead.Failed(WidgetOutcome.NotFound)
                 response = JSONObject(bridge(request("get_status", JSONObject().put("deviceId", deviceId))))
             }
@@ -158,8 +164,28 @@ class WidgetActionRunner(
     }
 
     private sealed interface Choice {
-        data class Send(val method: String, val params: Map<String, Any> = emptyMap()) : Choice
+        data class Send(val method: String, val params: CommandParams = CommandParams.None) : Choice
         data class Skip(val reason: String) : Choice
+    }
+
+    private sealed interface CommandParams {
+        val description: String
+        fun toJson(): JSONObject
+
+        object None : CommandParams {
+            override val description = ""
+            override fun toJson() = JSONObject()
+        }
+
+        data class Muted(val value: Boolean) : CommandParams {
+            override val description = "muted=$value"
+            override fun toJson() = JSONObject().put("muted", value)
+        }
+
+        data class Volume(val level: Double) : CommandParams {
+            override val description = "level=$level"
+            override fun toJson() = JSONObject().put("level", level)
+        }
     }
 
     private fun choose(action: WidgetAction, state: TvState): Choice {
@@ -170,15 +196,15 @@ class WidgetActionRunner(
                     if (state.supportsPause == false) Choice.Skip(REASON_NO_PAUSE) else Choice.Send("pause")
                 "paused" -> Choice.Send("play")
                 null, "idle" -> Choice.Skip(REASON_NOTHING_PLAYING)
-                else -> Choice.Skip(REASON_PLAYBACK_UNKNOWN)
+                else -> Choice.Skip(REASON_PLAYBACK_UNDETERMINED)
             }
             WidgetAction.STOP -> when (state.playback) {
                 null, "idle" -> Choice.Skip(REASON_NOTHING_PLAYING)
                 else -> Choice.Send("stop")
             }
             // set_muted is an absolute state: the opposite of the one the TV reported.
-            WidgetAction.MUTE -> state.muted?.let { Choice.Send("set_muted", mapOf("muted" to !it)) }
-                ?: Choice.Skip(REASON_MUTE_UNKNOWN)
+            WidgetAction.MUTE -> state.muted?.let { Choice.Send("set_muted", CommandParams.Muted(!it)) }
+                ?: Choice.Skip(REASON_MUTE_UNDETERMINED)
             WidgetAction.VOLUME_DOWN -> volume(state, -VOLUME_STEP)
             WidgetAction.VOLUME_UP -> volume(state, +VOLUME_STEP)
             WidgetAction.REFRESH -> Choice.Skip("")
@@ -187,12 +213,12 @@ class WidgetActionRunner(
 
     private fun volume(state: TvState, step: Double): Choice {
         if (state.volumeFixed) return Choice.Skip(REASON_VOLUME_FIXED)
-        val level = state.volumeLevel ?: return Choice.Skip(REASON_VOLUME_UNKNOWN)
+        val level = state.volumeLevel ?: return Choice.Skip(REASON_VOLUME_UNDETERMINED)
         // From the level the TV reported, never from a guess; one step is the window's own
         // limit for one raise (10 points), applied the same way down.
         val target = ((level + step).coerceIn(0.0, 1.0) * 100).roundToInt() / 100.0
         if (target == level) return Choice.Skip(if (step > 0) REASON_VOLUME_MAX else REASON_VOLUME_MIN)
-        return Choice.Send("set_volume", mapOf("level" to target))
+        return Choice.Send("set_volume", CommandParams.Volume(target))
     }
 
     private fun request(method: String, params: JSONObject): String =
@@ -222,9 +248,9 @@ class WidgetActionRunner(
         const val REASON_NOT_CONNECTED = "The TV isn't connected."
         const val REASON_NOTHING_PLAYING = "Nothing is playing."
         const val REASON_NO_PAUSE = "This media can't be paused."
-        const val REASON_PLAYBACK_UNKNOWN = "The TV didn't say what is playing."
-        const val REASON_MUTE_UNKNOWN = "The TV didn't report its mute state."
-        const val REASON_VOLUME_UNKNOWN = "The TV didn't report its volume."
+        const val REASON_PLAYBACK_UNDETERMINED = "The TV didn't say what is playing."
+        const val REASON_MUTE_UNDETERMINED = "The TV didn't report its mute state."
+        const val REASON_VOLUME_UNDETERMINED = "The TV didn't report its volume."
         const val REASON_VOLUME_FIXED = "This TV's volume can't be changed here."
         const val REASON_VOLUME_MAX = "Already at full volume."
         const val REASON_VOLUME_MIN = "Already at the lowest volume."

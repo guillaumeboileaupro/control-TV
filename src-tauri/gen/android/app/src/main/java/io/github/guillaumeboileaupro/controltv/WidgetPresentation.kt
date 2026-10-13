@@ -69,7 +69,7 @@ object WidgetPresentation {
             "buffering" -> "Loading"
             "paused" -> "Paused"
             null, "idle" -> "Nothing playing"
-            else -> "Status unknown"
+            else -> "Status undetermined"
         }
         val parts = mutableListOf(playback)
         if (state.playback in setOf("playing", "buffering", "paused")) state.title?.let { parts += it }
