@@ -17,6 +17,13 @@
 
 - [x] Compétence `code-solid` appliquée ; plus de `Any` ni de `unknown` dans le code (les tests peuvent en garder) ; mypy refuse désormais tout `Any` explicite hors tests.
 
+## 1 ter. Corrections de l'audit de `main` (2026-10-13)
+
+- [ ] **P3-3** : message d'erreur ADB — code `debugging_off` distinct, aide « débogage USB » seulement dans ce cas ; tests Python et UI. PR ouverte, fusion sur ton accord.
+- [ ] **P2-1, P3-1, P3-2** : README, ARCHITECTURE et TODO actualisés (MCP / Voice / Windows abandonnés, icône système fusionnée) — PR documentaire.
+- [ ] **P3-4** : le bridge dépend du port `TvControl` complété plutôt que du `ControlService` concret — PR distincte.
+- [ ] **P3-6** : mesurer la latence des touches (flèches) pendant la recette matérielle.
+
 ## 2. Phase 1 — les deux applications sur la même TV
 
 - [ ] **R1 à R4** (lecture seule) : Ubuntu et le téléphone ouverts en même temps, sur la même TV. Résultat PASS/FAIL/NOT RUN pour chaque test. Avancement : partiel, non classé.
