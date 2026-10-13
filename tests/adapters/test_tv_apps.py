@@ -137,11 +137,12 @@ def test_the_key_is_created_once_and_kept_private(tmp_path: Path) -> None:
     ("where", "raised", "expected"),
     [
         ("connect_error", ConnectionRefusedError(f"refused by {HOST}"), UnsupportedOperationError),
-        ("connect_error", adb.TcpTimeoutException(f"{HOST}:5555"), UnsupportedOperationError),
+        ("connect_error", adb.TcpTimeoutException(f"{HOST}:5555"), PairingRequiredError),
         ("connect_error", adb.DeviceAuthError("not allowed"), PairingRequiredError),
         ("connect_error", adb.AdbTimeoutError("no answer to AUTH"), PairingRequiredError),
         ("connect_error", OSError(f"unreachable {HOST}"), DeviceUnavailableError),
         ("shell_error", adb.AdbTimeoutError("slow"), OperationTimeoutError),
+        ("shell_error", adb.TcpTimeoutException("slow read"), OperationTimeoutError),
         ("shell_error", adb.AdbConnectionError("closed"), DeviceUnavailableError),
         ("shell_error", adb.InvalidResponseError("garbage"), DeviceUnavailableError),
     ],

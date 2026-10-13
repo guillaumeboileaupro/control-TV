@@ -43,11 +43,13 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 /// `control_tv.adapters.tv_remote`); this is generous on top of it, so only a stuck bridge
 /// exceeds it. A key is never resent on a timeout: its delivery is then ambiguous.
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
-/// Outer bound on listing or opening the TV's apps over its network debugging: the control
-/// layer allows 5s to connect, up to 30s for the owner to allow control-TV on the TV, then 10s
-/// for the list, or one 15s budget shared by a launch and its checks of the app in front
-/// (`control_tv.adapters.tv_apps`); this is generous on top of those 45s and 50s.
-const APPS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Outer bound on listing or opening the TV's apps over its network debugging. A first,
+/// slow authorization in the pinned adb-shell runs in stages: up to 5s to open the socket, up
+/// to 5s for each of its two first handshake answers, then up to 30s for the owner to allow
+/// control-TV on the TV; then 10s for the list, or one 15s budget shared by a launch and its
+/// checks of the app in front (`control_tv.adapters.tv_apps`). That is 70s at most before
+/// bridge overhead; this bound leaves margin above it.
+const APPS_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -2044,9 +2046,8 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
 
     #[test]
     fn the_app_list_bound_covers_the_owner_allowing_control_tv_on_the_tv() {
-        // connect 5 + allow 30 + the launch's shared 15s budget, with a margin
-        assert!(APPS_TIMEOUT >= Duration::from_secs(5 + 30 + 15) + Duration::from_secs(10));
-        assert!(APPS_TIMEOUT <= COMMAND_TIMEOUT);
+        // socket 5 + two 5s handshake reads + allow 30 + the launch's 15s budget, with a margin
+        assert!(APPS_TIMEOUT >= Duration::from_secs(5 + 5 + 5 + 30 + 15) + Duration::from_secs(10));
     }
 
     #[test]

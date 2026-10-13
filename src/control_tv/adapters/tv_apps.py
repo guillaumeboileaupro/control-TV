@@ -267,19 +267,22 @@ class AdbAppInventory:
         try:
             try:
                 # A TV that asks the owner to allow the key waits up to `auth_timeout`; no
-                # answer in time is the owner not having allowed it (yet), not a dead TV.
+                # answer in time is the owner not having allowed it (yet), not a dead TV. Once
+                # the socket is open, adb-shell reports a slow answer as TcpTimeoutException.
                 if not device.connect(rsa_keys=[signer], auth_timeout_s=self._auth_timeout):
                     raise PairingRequiredError(allow)
-            except (errors.DeviceAuthError, errors.AdbTimeoutError):
+            except (errors.DeviceAuthError, errors.AdbTimeoutError, errors.TcpTimeoutException):
                 raise PairingRequiredError(allow) from None
             return action(device)
-        except (ConnectionRefusedError, errors.TcpTimeoutException):
+        except ConnectionRefusedError:
+            # Nothing listens on the port: the classic network debugging is off.
             raise UnsupportedOperationError(
                 "the TV accepts no debugging connection on port 5555: turn on USB debugging "
                 "in the TV's developer options; a TV that only offers Wireless debugging (with "
                 "a pairing code) is not supported yet"
             ) from None
-        except errors.AdbTimeoutError:
+        except (errors.AdbTimeoutError, errors.TcpTimeoutException):
+            # Connected and allowed, then a command was slow: for a launch it may have run.
             raise OperationTimeoutError("the TV did not answer in time") from None
         except (errors.AdbConnectionError, errors.InvalidResponseError, OSError):
             raise DeviceUnavailableError(
