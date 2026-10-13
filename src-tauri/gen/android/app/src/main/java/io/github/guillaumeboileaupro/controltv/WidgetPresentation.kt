@@ -22,12 +22,17 @@ object WidgetPresentation {
     fun noSelectionAfterTap(): WidgetView = WidgetView(title = APP_NAME, line = NO_TV_CHOSEN)
 
     fun busy(previous: WidgetView?, selection: Selection): WidgetView =
-        (previous ?: WidgetView(title(selection), "")).copy(title = title(selection), line = WORKING, busy = true)
+        (previous?.takeIf { it.deviceId == selection.deviceId } ?: WidgetView(title(selection), ""))
+            .copy(title = title(selection), line = WORKING, busy = true, deviceId = selection.deviceId)
 
     fun present(outcome: WidgetOutcome, selection: Selection?): WidgetView {
         if (selection == null) return noSelection()
-        val title = title(selection)
-        return when (outcome) {
+        if (outcome == WidgetOutcome.NoSelection) return noSelection()
+        return describe(outcome, title(selection)).copy(deviceId = selection.deviceId)
+    }
+
+    private fun describe(outcome: WidgetOutcome, title: String): WidgetView =
+        when (outcome) {
             WidgetOutcome.NoSelection -> noSelection()
             WidgetOutcome.Expired -> WidgetView(title, "That tap waited too long. Nothing was sent.")
             WidgetOutcome.Busy -> WidgetView(title, "control-TV was busy. Nothing was sent. Tap again.")
@@ -54,7 +59,6 @@ object WidgetPresentation {
                 else -> WidgetView(title, "Sent. Tap ↻ to check.")
             }
         }
-    }
 
     /** "Playing · Title · 45%", "Paused · Muted", "Nothing playing · 30%". */
     fun summary(state: TvState): String {

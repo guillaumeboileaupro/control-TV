@@ -14,6 +14,9 @@ data class WidgetView(
     val playing: Boolean? = null,
     val muted: Boolean? = null,
     val busy: Boolean = false,
+    // The TV this view describes: it is drawn only while that TV is the selected one, so the
+    // widget never shows one TV while its buttons target another.
+    val deviceId: String? = null,
 )
 
 /** The widget's small persistent state (app-private preferences). */
@@ -79,6 +82,7 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
             playing = optionalBoolean("view_playing"),
             muted = optionalBoolean("view_muted"),
             busy = prefs.getBoolean("view_busy", false),
+            deviceId = prefs.getString("view_device", null),
         )
     }
 
@@ -89,6 +93,7 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
             .putString("view_playing", view.playing?.toString())
             .putString("view_muted", view.muted?.toString())
             .putBoolean("view_busy", view.busy)
+            .putString("view_device", view.deviceId)
             .apply()
     }
 

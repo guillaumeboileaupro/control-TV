@@ -43,8 +43,10 @@ class WidgetJob(
             TransactionResult.Busy -> WidgetOutcome.Busy
             TransactionResult.NotStarted -> WidgetOutcome.Expired
             // Started, still running: no command can be claimed any more, but one may already
-            // have been handed over.
-            TransactionResult.TimedOutAfterStart -> WidgetOutcome.MaybeSent("command")
+            // have been handed over. A refresh only reads: its status is just unreadable.
+            TransactionResult.TimedOutAfterStart ->
+                if (tap.action == WidgetAction.REFRESH) WidgetOutcome.StatusUnreadable
+                else WidgetOutcome.MaybeSent("command")
         }
         log("widget transaction ${describe(result)}: ${tap.action.name} -> ${outcome::class.simpleName}")
         return outcome

@@ -63,7 +63,8 @@ class ControlTvWidget : AppWidgetProvider() {
             val selection = store.selection()
             val view = when {
                 selection == null -> WidgetPresentation.noSelection()
-                else -> store.view() ?: WidgetView(
+                // A view saved for another TV (the selection changed since) is never drawn.
+                else -> store.view()?.takeIf { it.deviceId == selection.deviceId } ?: WidgetView(
                     selection.name.ifBlank { WidgetPresentation.UNNAMED_TV },
                     "Tap ↻ to check the TV.",
                 )
