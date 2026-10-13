@@ -80,10 +80,13 @@ class WidgetPresentationTest {
 
     @Test
     fun whileWorkingItKeepsTheLastIconsAndSaysSo() {
-        val previous = WidgetView("Living room", "Playing", playing = true, muted = false)
+        val previous = WidgetView("Living room", "Playing", playing = true, muted = false, deviceId = TV)
 
         val busy = WidgetPresentation.busy(previous, SELECTED)
 
-        assertEquals(WidgetView("Living room", "Working…", playing = true, muted = false, busy = true), busy)
+        assertEquals(
+            WidgetView("Living room", "Working…", playing = true, muted = false, busy = true, deviceId = TV),
+            busy,
+        )
     }
 }
