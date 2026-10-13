@@ -43,12 +43,14 @@ class WidgetWorkTest {
     }
 
     @Test
-    fun theJobGetsOnlyTheActionTheTapIdentityAndItsTime() {
+    fun theJobGetsOnlyTheActionTheTapIdentityItsTimeAndItsTv() {
         val data = WidgetWork.request(tap).workSpec.input
 
         assertEquals("REFRESH", data.getString(WidgetActionWorker.KEY_ACTION))
         assertEquals(tap.tapId, data.getString(WidgetActionWorker.KEY_TAP))
         assertEquals(1_000L, data.getLong(WidgetActionWorker.KEY_TAPPED_AT, 0L))
-        assertEquals(3, data.keyValueMap.size)
+        // The stable device id the app already keeps privately: no name, address or value.
+        assertEquals(TV, data.getString(WidgetActionWorker.KEY_DEVICE))
+        assertEquals(4, data.keyValueMap.size)
     }
 }
