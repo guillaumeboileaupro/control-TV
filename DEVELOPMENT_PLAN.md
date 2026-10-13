@@ -245,6 +245,7 @@ Exit criteria:
 ## Phase 4 - Lightweight Tauri UI
 
 Deliverables:
+- [ ] remote-first redesign (owner request, 2026-10-13, branch `feat/ui-redesign`): the TV's own remote leads (round navigation pad, TV volume rocker with Mute, Back and Home, power in the remote's header), the TV's apps as a grid of tiles (letter and stable colour per package, filter), the keyboard on demand, the Cast sound last; light and dark themes from the system, 48px minimum targets, WCAG AA text contrast, every icon-only key labelled; same element ids and state logic, so behaviour is unchanged. Checked on screenshots against a fake bridge (light and dark, 412px wide); not yet seen on the phone or on Ubuntu;
 - [x] device discovery view (discovered devices are listed and selectable);
 - [x] device selection by stable id (UI state; kept across a rediscovery that reports the same id, dropped with a notice otherwise);
 - [x] current receiver/media state view for the selected device (read-only; implemented and automation-validated);
