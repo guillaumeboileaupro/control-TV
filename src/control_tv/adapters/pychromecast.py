@@ -17,7 +17,6 @@ from pychromecast.controllers.media import (
     MEDIA_PLAYER_STATE_IDLE,
     MEDIA_PLAYER_STATE_PAUSED,
     MEDIA_PLAYER_STATE_PLAYING,
-    MEDIA_PLAYER_STATE_UNKNOWN,
     TYPE_GET_STATUS,
     TYPE_MEDIA_STATUS,
 )
@@ -33,6 +32,14 @@ from pychromecast.error import (
 )
 from pychromecast.response_handler import WaitResponse
 
+from control_tv.adapters.cast_replies import (
+    checked_media_entry,
+    reported_details,
+    reported_muted,
+    reported_standby,
+    reported_volume_control_type,
+    reported_volume_level,
+)
 from control_tv.adapters.remote_detection import (
     NoRemoteDetection,
     RemoteDetector,
@@ -56,7 +63,6 @@ from control_tv.domain import (
     PlaybackState,
     ReceiverStatus,
     StreamType,
-    VolumeControlType,
 )
 
 Discoverer = Callable[[float], tuple[list[Chromecast], object]]
@@ -67,6 +73,8 @@ _KIND_MAP = {
     "audio": DeviceKind.AUDIO,
     "group": DeviceKind.GROUP,
 }
+# The player state PyChromecast fills in when the receiver reports none.
+_STATE_NOT_REPORTED = PyMediaStatus().player_state
 _STATE_MAP = {
     MEDIA_PLAYER_STATE_IDLE: PlaybackState.IDLE,
     MEDIA_PLAYER_STATE_PLAYING: PlaybackState.PLAYING,
@@ -81,199 +89,6 @@ def _default_discoverer(timeout: float) -> tuple[list[Chromecast], object]:
         raise DiscoveryError("PyChromecast unexpectedly started non-blocking discovery")
     devices, browser = result
     return devices, browser
-
-
-def _finite_number(value: object) -> bool:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:  # an integer too large for a float
-        return False
-
-
-def _non_negative_number(value: object) -> bool:
-    return _finite_number(value) and isinstance(value, int | float) and value >= 0
-
-
-def _non_negative_integer(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
-
-
-def _text(value: object) -> bool:
-    return isinstance(value, str)
-
-
-def _unusable_to_null(
-    fields: dict[str, object], checks: tuple[tuple[str, Callable[[object], bool]], ...]
-) -> dict[str, object]:
-    """A copy of `fields` where each checked value that is present but unusable is null."""
-    checked = dict(fields)
-    for key, usable in checks:
-        if checked.get(key) is not None and not usable(checked[key]):
-            checked[key] = None
-    return checked
-
-
-def _checked_media_block(block: object) -> dict[str, object] | None:
-    if not isinstance(block, dict):
-        return None
-    checked = _unusable_to_null(
-        block,
-        (
-            ("contentId", _text),
-            ("contentType", _text),
-            ("streamType", _text),
-            ("duration", _non_negative_number),
-            ("metadata", lambda value: isinstance(value, dict)),
-        ),
-    )
-    metadata = checked.get("metadata")
-    if isinstance(metadata, dict):
-        checked["metadata"] = _unusable_to_null(
-            metadata,
-            (("title", _text), ("artist", _text), ("metadataType", _non_negative_integer)),
-        )
-    return checked
-
-
-_STREAM_TYPES = {"BUFFERED": StreamType.BUFFERED, "LIVE": StreamType.LIVE}
-_METADATA_TYPES = {
-    0: MetadataType.GENERIC,
-    1: MetadataType.MOVIE,
-    2: MetadataType.TV_SHOW,
-    3: MetadataType.MUSIC_TRACK,
-    4: MetadataType.PHOTO,
-    5: MetadataType.AUDIOBOOK_CHAPTER,
-}
-
-
-def _reported_details(
-    entry: dict[str, object],
-) -> tuple[str | None, StreamType | None, MetadataType | None]:
-    """Artist, stream type and metadata type exactly as the checked entry reports them.
-
-    They are read here rather than from PyChromecast, whose defaults would invent a value for
-    an omitted field (`stream_type` "UNKNOWN", an empty metadata dict). An omitted, null, blank
-    or unrecognized value is unknown (`None`): Cast's "NONE" stream type and metadata types
-    beyond the known ones name nothing the product can use.
-    """
-    media = entry.get("media")
-    media = media if isinstance(media, dict) else {}
-    metadata = media.get("metadata")
-    metadata = metadata if isinstance(metadata, dict) else {}
-    artist = metadata.get("artist")
-    stream = media.get("streamType")
-    kind = metadata.get("metadataType")
-    return (
-        artist.strip() if isinstance(artist, str) and artist.strip() else None,
-        _STREAM_TYPES.get(stream) if isinstance(stream, str) else None,
-        _METADATA_TYPES.get(kind) if isinstance(kind, int) and not isinstance(kind, bool) else None,
-    )
-
-
-def _checked_media_entry(reply: dict[str, object], device_id: DeviceId) -> dict[str, object] | None:
-    """The first media session of a MEDIA_STATUS reply, checked before PyChromecast parses it.
-
-    A reply that is not shaped like a media status (no status list, an entry that is not an
-    object) fails the read. Inside a well-shaped entry, a field whose value cannot be what the
-    Cast protocol defines (wrong JSON type, negative or non-finite number) is set to null, so
-    it is reported as unknown exactly like an omitted field: never as a plausible value and
-    never as a crash. The media block may come from `extendedStatus`, as PyChromecast reads it;
-    the media-channel volume is not mapped and is dropped when it is not an object.
-    Returns None when the reply reports no media session (an empty status list).
-    """
-    entries = reply.get("status")
-    if not isinstance(entries, list) or (entries and not isinstance(entries[0], dict)):
-        raise DeviceUnavailableError(
-            f"device {device_id} sent a malformed media status", device_id=device_id
-        )
-    if not entries:
-        return None
-    entry = _unusable_to_null(
-        entries[0],
-        (
-            ("currentTime", _non_negative_number),
-            ("playbackRate", _finite_number),
-            ("playerState", _text),
-            ("supportedMediaCommands", _non_negative_integer),
-            ("mediaSessionId", _non_negative_integer),
-            ("currentItemId", _non_negative_integer),
-        ),
-    )
-    media = _checked_media_block(entry.get("media"))
-    if media is None:
-        extended = entry.get("extendedStatus")
-        media = _checked_media_block(extended.get("media")) if isinstance(extended, dict) else None
-    entry.pop("extendedStatus", None)
-    entry.pop("media", None)
-    if media is not None:
-        entry["media"] = media
-    if not isinstance(entry.get("volume", {}), dict):
-        del entry["volume"]
-    return entry
-
-
-_VOLUME_CONTROL_TYPES = {
-    "attenuation": VolumeControlType.ATTENUATION,
-    "fixed": VolumeControlType.FIXED,
-    "master": VolumeControlType.MASTER,
-}
-
-
-def _reported_volume(reply: dict[str, object] | None) -> dict[str, object]:
-    """The `status.volume` object of a raw receiver status reply, or an empty one."""
-    status = reply.get("status") if isinstance(reply, dict) else None
-    volume = status.get("volume") if isinstance(status, dict) else None
-    return volume if isinstance(volume, dict) else {}
-
-
-def _reported_volume_control_type(reply: dict[str, object] | None) -> VolumeControlType | None:
-    """The volume control type exactly as the receiver status reply reports it.
-
-    Read from the raw reply because PyChromecast's `CastStatus` substitutes "attenuation"
-    when the receiver omits `controlType`; an omitted or unrecognized value is unknown.
-    """
-    kind = _reported_volume(reply).get("controlType")
-    return _VOLUME_CONTROL_TYPES.get(kind) if isinstance(kind, str) else None
-
-
-def _reported_volume_level(reply: dict[str, object] | None) -> float | None:
-    """The volume level exactly as the receiver status reply reports it.
-
-    PyChromecast's `CastStatus` substitutes 1.0 when the receiver omits `level`, which would
-    show a full volume nobody reported and could confirm a request for 100%. An omitted or
-    null level, a boolean, a non-number and a number outside 0-1 (or not finite) are unknown.
-    """
-    level = _reported_volume(reply).get("level")
-    if isinstance(level, bool) or not isinstance(level, int | float):
-        return None
-    if not (0 <= level <= 1):  # also false for NaN
-        return None
-    return float(level)
-
-
-def _reported_muted(reply: dict[str, object] | None) -> bool | None:
-    """The mute state exactly as the receiver status reply reports it.
-
-    PyChromecast's `CastStatus` substitutes False when the receiver omits `muted`, which
-    would show "not muted" nobody reported and could confirm an unmute. Anything but an
-    explicit JSON boolean is unknown.
-    """
-    muted = _reported_volume(reply).get("muted")
-    return muted if isinstance(muted, bool) else None
-
-
-def _reported_standby(reply: dict[str, object] | None) -> bool | None:
-    """The standby state exactly as the receiver status reply reports it (`status.isStandBy`).
-
-    PyChromecast's `CastStatus` substitutes True when a video device (cast type "cast") omits
-    `isStandBy`, which would show a standby nobody reported. Anything but an explicit JSON
-    boolean is unknown.
-    """
-    status = reply.get("status") if isinstance(reply, dict) else None
-    standby = status.get("isStandBy") if isinstance(status, dict) else None
-    return standby if isinstance(standby, bool) else None
 
 
 class PyChromecastTransport:
@@ -399,10 +214,10 @@ class PyChromecastTransport:
             receiver=ReceiverStatus(
                 app_id=receiver.app_id if receiver is not None else None,
                 app_name=receiver.display_name if receiver is not None else None,
-                volume_level=_reported_volume_level(receiver_reply),
-                muted=_reported_muted(receiver_reply),
-                standby=_reported_standby(receiver_reply),
-                volume_control_type=_reported_volume_control_type(receiver_reply),
+                volume_level=reported_volume_level(receiver_reply),
+                muted=reported_muted(receiver_reply),
+                standby=reported_standby(receiver_reply),
+                volume_control_type=reported_volume_control_type(receiver_reply),
             ),
             media=media,
         )
@@ -503,9 +318,9 @@ class PyChromecastTransport:
     @staticmethod
     def _device(cast_device: Chromecast, remote_hosts: frozenset[str] | None = None) -> Device:
         info = cast_device.cast_info
-        kind = _KIND_MAP.get(info.cast_type or "", DeviceKind.UNKNOWN)
+        kind = _KIND_MAP.get(info.cast_type or "", DeviceKind.OTHER)
         # A Cast group's address is one of its member TVs': matching it would credit the group
-        # with that TV's remote channel, so a group's stays unknown.
+        # with that TV's remote channel, so a group's stays not reported.
         android_tv_remote = (
             None if remote_hosts is None or kind is DeviceKind.GROUP else info.host in remote_hosts
         )
@@ -662,7 +477,7 @@ class PyChromecastTransport:
         ignored and a field a message omits keeps its previous value, so the cache can still
         describe a session that ended, or carry an old content id into a new state. The reply
         is parsed into a new `MediaStatus` instead, and a field the reply omits is reported as
-        unknown rather than as that new object's default (a position of 0, no supported
+        not reported rather than as that new object's default (a position of 0, no supported
         command). The request is sent with `send_message_nocheck`, which never launches an
         application: when the running application has no media namespace there is no media
         session to report.
@@ -692,15 +507,15 @@ class PyChromecastTransport:
                 f"device {device_id} answered the media status request with {reply_type!r}",
                 device_id=device_id,
             )
-        entry = _checked_media_entry(reply, device_id)
+        entry = checked_media_entry(reply, device_id)
         if entry is None:
             return None
         fresh = PyMediaStatus()
         fresh.update({"status": [entry]})
-        # After the check an omitted, null or unusable field is absent or null: unknown.
+        # After the check an omitted, null or unusable field is absent or null: not reported.
         # PyChromecast 14.0.10 does not parse currentItemId: it is read from the checked entry.
         item = entry.get("currentItemId")
-        artist, stream_type, metadata_type = _reported_details(entry)
+        artist, stream_type, metadata_type = reported_details(entry)
         return self._media_status(
             fresh,
             position_reported=entry.get("currentTime") is not None,
@@ -738,13 +553,13 @@ class PyChromecastTransport:
         stream_type: StreamType | None = None,
         metadata_type: MetadataType | None = None,
     ) -> MediaStatus | None:
-        """Map a PyChromecast status; a field marked as not reported is unknown (`None`)."""
+        """Map a PyChromecast status; a field marked as not reported is `None`."""
         if status.content_id is None and status.player_state in (
             MEDIA_PLAYER_STATE_IDLE,
-            MEDIA_PLAYER_STATE_UNKNOWN,
+            _STATE_NOT_REPORTED,
         ):
             return None
-        playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNKNOWN)
+        playback_state = _STATE_MAP.get(status.player_state, PlaybackState.UNDETERMINED)
         # Extrapolating a playing position needs the playback rate; without one (a null
         # rate), the position is the one the receiver reported.
         extrapolate = playback_state is PlaybackState.PLAYING and isinstance(

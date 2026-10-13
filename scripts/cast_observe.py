@@ -16,7 +16,7 @@ instead of from memory:
 It sends no control command at all: the only requests are discovery and media GET_STATUS, sent
 with `send_message_nocheck`, which never launches an application. There is no retry and no
 replay. Every record is written as one JSON line, with a timestamp, under the git-ignored
-`.ai-private/hardware/` directory (directory mode 700, file mode 600); the tool refuses any
+`.ai-private/hardware/` directory (directory mode 700, file mode 600); the tool refuses every
 other location. Device identifiers, addresses and content ids stay in those private files.
 """
 
@@ -32,14 +32,19 @@ from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from control_tv.adapters import PyChromecastTransport
+    from control_tv.domain import DeviceId
+    from control_tv.service import ControlService
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_ROOT = REPO_ROOT / ".ai-private" / "hardware"
 MEDIA_NAMESPACE = "urn:x-cast:com.google.cast.media"
 RECEIVER_NAMESPACE = "urn:x-cast:com.google.cast.receiver"
 
-Sink = Callable[[dict[str, Any]], None]
+Sink = Callable[[dict[str, object]], None]
 
 
 def private_run_dir(root: Path, run: str, *, repo: Path = REPO_ROOT) -> Path:
@@ -64,7 +69,7 @@ def private_run_dir(root: Path, run: str, *, repo: Path = REPO_ROOT) -> Path:
     return directory
 
 
-def message_record(namespace: str, data: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+def message_record(namespace: str, data: dict[str, object], *, now: datetime) -> dict[str, object]:
     """One received Cast message as a record: when, which namespace, its type and requestId
     (0 or absent for a broadcast, our own id for a reply), and the raw payload."""
     return {
@@ -78,7 +83,7 @@ def message_record(namespace: str, data: dict[str, Any], *, now: datetime) -> di
 
 
 def file_sink(path: Path) -> Sink:
-    def write(record: dict[str, Any]) -> None:
+    def write(record: dict[str, object]) -> None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, default=str) + "\n")
         os.chmod(path, 0o600)
@@ -96,7 +101,9 @@ def _git_head() -> str:
     ).stdout.strip()
 
 
-def _snapshot(control: Any, transport: Any, device_id: Any, sink: Sink) -> None:
+def _snapshot(
+    control: ControlService, transport: PyChromecastTransport, device_id: DeviceId, sink: Sink
+) -> None:
     from pychromecast.response_handler import WaitResponse
 
     cast_device = transport._casts[device_id]  # the transport's own connection, read-only use
@@ -121,13 +128,15 @@ def _snapshot(control: Any, transport: Any, device_id: Any, sink: Sink) -> None:
     sink({"at": _now().isoformat(), "event": "domain_status", "status": asdict(status)})
 
 
-def _watch(transport: Any, device_id: Any, seconds: float, sink: Sink) -> int:
+def _watch(
+    transport: PyChromecastTransport, device_id: DeviceId, seconds: float, sink: Sink
+) -> int:
     from pychromecast.controllers import BaseController
 
     class Recorder(BaseController):
         """Passive: it only receives what the receiver sends, and never answers."""
 
-        def receive_message(self, _message: object, data: dict[str, Any]) -> bool:
+        def receive_message(self, _message: object, data: dict[str, object]) -> bool:
             sink(message_record(self.namespace, data, now=_now()))
             return False
 

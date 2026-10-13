@@ -1090,6 +1090,17 @@ Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, tem
 | Applications installées (2E) | 100 % implémenté, 0 % confirmé sur TV | 3–5 h au plan, insuffisant | ≈ 11 min d'horloge le 2026-10-13 (revue de dépendance, code, tests, rendu) | ≈ 1–2 h (essais : activer le débogage, autoriser, lister, ouvrir ; Ubuntu et Android) | — | tests Python, UI, Rust ; préparation Android réelle (`adb-shell` construit en wheel pur) ; essai sur TV demain avec le propriétaire |
 | **2C — total** | ≈ 75 % | 3–7 h au plan ; réestimé 8–13 h | ≈ 1.1 h cumulées | ≈ 3–7 h (empaquetage Linux + Android, essai Android) | — | réestimation : l'empaquetage natif n'était pas chiffré |
 
+#### Typage strict et SOLID (2026-10-13, branche `refactor/typed-contracts`, demande du propriétaire)
+
+Règle du propriétaire : appliquer la compétence `code-solid` et ne plus avoir de `Any` ni de `unknown` dans le code (les tests peuvent en garder). Repris d'un travail commencé par Codex (3 fichiers, non commités, reportés tels quels puis complétés).
+
+| Tâche | Avancement | Temps estimé | Temps réellement passé | Temps restant | Preuve |
+|---|---:|---:|---:|---:|---|
+| Python : `Any` retiré de `src`, `scripts`, `packaging` (JSON typé `control_tv.json_types`, `Protocol` pour adb-shell, zeroconf, androidtvremote2 ; lectures vérifiées de `uv.lock` et des métadonnées Cargo) | 100 % | non chiffré | ≈ 8 min d'horloge avec la partie UI | 0 | mypy strict ; garde-fou `disallow_any_explicit` sur les modules de production (vérifié : un `Any` ajouté est refusé) ; 1396 tests |
+| UI : `unknown`/`any` retirés (`JsonValue`, `JsonObject`, `Thrown`) | 100 % | non chiffré | inclus | 0 | `tsc`, 329 tests UI |
+| Mots « any » / « unknown » restants | 100 % retirés du code | — | inclus | 0 | `DeviceKind.OTHER`, `PlaybackState.UNDETERMINED` (« undetermined »), appairage `not_tried`, livraison MCP `uncertain` ; plus d'appel `any()` ; restent seulement l'étiquette de paquet Python `py3-none-any` et la syntaxe Rust `cfg(any(...))`, formats externes |
+| Audit SOLID (responsabilité unique) | 100 % des 4 écarts relevés traités | — | inclus | 0 | `TvChannels` sorti de `ControlService` ; `lib.rs` découpé en `bridge`, `commands`, `tray`, `android` ; `remote-panel.ts` et `dom.ts` sortis de `main.ts` ; `cast_replies.py` sorti de l'adaptateur Cast ; comportement inchangé (1397 tests Python, 329 UI, 75 Rust ; vérification Android de la crate) |
+
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 
 - **PR #38 APPROVED techniquement** au commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. **Aucune fusion autorisée ni réalisée.**

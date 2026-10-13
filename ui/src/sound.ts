@@ -62,7 +62,7 @@ export interface SoundDescription {
   // Why a control is not offered.
   note: string | null;
   // A request is in flight (a command or a discovery): nothing may be sent, so the controls look
-  // unavailable. `pendingCommand` says which command it is, if any.
+  // unavailable. `pendingCommand` says which command it is, if there is one.
   busy: boolean;
   pendingCommand: CommandName | null;
 }

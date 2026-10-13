@@ -51,7 +51,7 @@
         <symbol id="i-idle" viewBox="0 0 24 24">
           <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
         </symbol>
-        <symbol id="i-unknown" viewBox="0 0 24 24">
+        <symbol id="i-undetermined" viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="8" />
           <path d="M12 16.5h.01M9.8 9.6a2.4 2.4 0 1 1 3.4 2.2c-.7.4-1.2.9-1.2 1.7" />
         </symbol>
@@ -148,7 +148,7 @@
             <p id="seek-note" class="note" hidden></p>
           </div>
 
-          <!-- Sound: mute and volume for any connected device, playing or not. Static elements
+          <!-- Sound: mute and volume for every connected device, playing or not. Static elements
                updated in place. The volume control works on a draft and sends once it settles;
                the mute button offers the opposite of the state the TV reported. -->
           <div id="sound" class="sound" role="group" aria-label="Sound" hidden>
@@ -310,7 +310,7 @@
               </div>
             </div>
             <!-- The TV's installed apps: listed and opened over the TV's debugging (which the
-                 owner turns on), a service separate from the remote: shown for any TV. -->
+                 owner turns on), a service separate from the remote: shown for every TV. -->
             <div class="tv-apps" role="group" aria-labelledby="tv-apps-title">
               <div class="tv-apps-head">
                 <p id="tv-apps-title" class="tv-remote-title">TV apps</p>

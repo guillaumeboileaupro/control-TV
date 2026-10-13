@@ -69,6 +69,13 @@ files = ["src", "tests", "scripts", "packaging"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
+# No explicit Any in the application, scripts or packaging (tests may still use it, owner
+# decision of 2026-10-13): external data is narrowed from `object` or typed JSON
+# (`control_tv.json_types`), and libraries are reached through Protocols.
+module = ["control_tv", "control_tv.*", "android_icon", "android_python", "bridge_entry", "build_bridge", "cast_observe", "dev", "release_linux"]
+disallow_any_explicit = true
+
+[[tool.mypy.overrides]]
 # PyInstaller ships no type information and is installed only by `dev.py bridge-build`.
 module = ["PyInstaller", "PyInstaller.*"]
 ignore_missing_imports = true

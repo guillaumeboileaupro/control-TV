@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { DEVICE, readyWith, statusOf } from "./fixtures.ts";
+import type { JsonValue } from "./json.ts";
 import {
   finishDiscovery,
   idle,
@@ -55,13 +56,16 @@ const report = (level: number, muted = false) => ({
   volume: { level, max: 100, muted },
 });
 
-const keyAnswer = (confirmation: string, after: unknown, detail = "the TV reports volume 11/100") =>
-  ({
-    ok: true,
-    result: {
-      result: { key: "volume_up", deviceId: "a", confirmation, detail, before: report(10), after },
-    },
-  }) as const;
+const keyAnswer = (
+  confirmation: string,
+  after: JsonValue,
+  detail = "the TV reports volume 11/100",
+): RemoteAnswer => ({
+  ok: true,
+  result: {
+    result: { key: "volume_up", deviceId: "a", confirmation, detail, before: report(10), after },
+  },
+});
 
 const failure = (code: string, message = "detail"): RemoteAnswer => ({
   ok: false,
@@ -382,7 +386,7 @@ describe("the panel belongs to one TV", () => {
     assert.equal(refreshed.remote.pairing, "paired");
 
     const switched = selectDevice(listed, "b").state;
-    assert.equal(switched.remote.pairing, "unknown");
+    assert.equal(switched.remote.pairing, "not_tried");
     assert.equal(switched.remote.report, null);
   });
 
@@ -396,7 +400,7 @@ describe("the panel belongs to one TV", () => {
     const gone = finishDiscovery(startDiscovery(paired), []);
 
     assert.equal(gone.remote.report, null);
-    assert.equal(gone.remote.pairing, "unknown");
+    assert.equal(gone.remote.pairing, "not_tried");
   });
 });
 
@@ -480,7 +484,7 @@ describe("typing on the TV", () => {
 });
 
 describe("the TV's apps", () => {
-  const listed = (apps: unknown): RemoteAnswer => ({ ok: true, result: { apps } });
+  const listed = (apps: JsonValue): RemoteAnswer => ({ ok: true, result: { apps } });
   const APPS = [
     { package: "com.netflix.ninja", name: "Netflix" },
     { package: "com.example.unknown", name: null },
@@ -546,7 +550,7 @@ describe("the TV's apps", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("unsupported_operation"));
 
     assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
-    assert.equal(state.remote.pairing, "unknown");
+    assert.equal(state.remote.pairing, "not_tried");
   });
 
   test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
@@ -556,7 +560,7 @@ describe("the TV's apps", () => {
       describeRemote(state).outcome?.text,
       "Allow control-TV on the TV when it asks about debugging, then try again.",
     );
-    assert.equal(state.remote.pairing, "unknown");
+    assert.equal(state.remote.pairing, "not_tried");
     assert.equal(describeRemote(state).keysEnabled, true);
   });
 
@@ -604,7 +608,7 @@ describe("the TV's apps", () => {
     assert.equal(describeRemote(done).outcome?.text, "Netflix is open on the TV.");
     assert.equal(describeRemote(done).outcome?.tone, "done");
     assert.equal(describeRemote(done).readout, "TV app: com.netflix.ninja");
-    assert.equal(done.remote.pairing, "unknown"); // opened over debugging, not the remote
+    assert.equal(done.remote.pairing, "not_tried"); // opened over debugging, not the remote
     assert.equal(
       describeRemote(other).outcome?.text,
       "Netflix was sent, but the TV reports another app in front.",
@@ -641,7 +645,7 @@ describe("the TV's apps", () => {
 describe("the app filter belongs to one TV", () => {
   test("selecting another TV empties the filter, so the field shows no old query", () => {
     const other: Device = { ...TV, id: "b", friendlyName: "Device b" };
-    const apps = { ok: true, result: { apps: [{ package: "a.b", name: "A" }] } } as const;
+    const apps: RemoteAnswer = { ok: true, result: { apps: [{ package: "a.b", name: "A" }] } };
     const filtered = setAppFilter(run(withTv(), { kind: "list_apps" }, apps).state, "zzz");
     const found = finishDiscovery(startDiscovery(filtered), [TV, other]);
 

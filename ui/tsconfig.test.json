@@ -12,6 +12,7 @@
   },
   "include": [
     "src/fixtures.ts",
+    "src/json.ts",
     "src/model.ts",
     "src/model.test.ts",
     "src/playback.ts",

@@ -39,7 +39,7 @@ def make_device(**overrides: object) -> Device:
 def test_device_defaults_to_unknown_kind_and_no_model() -> None:
     device = make_device()
 
-    assert device.kind is DeviceKind.UNKNOWN
+    assert device.kind is DeviceKind.OTHER
     assert device.model_name is None
 
 
@@ -158,7 +158,7 @@ def test_receiver_rejects_an_invalid_volume_control_type(control_type: object) -
 def test_media_status_defaults_to_unknown() -> None:
     media = MediaStatus()
 
-    assert media.playback_state is PlaybackState.UNKNOWN
+    assert media.playback_state is PlaybackState.UNDETERMINED
     assert media.supports_seek is None
 
 

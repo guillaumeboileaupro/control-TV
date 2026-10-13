@@ -115,7 +115,7 @@ def test_loaded_reports_the_wrong_content_distinctly_from_the_wrong_state() -> N
     assert observation.description == f"loaded content is 'http://other/clip.mp4', not {URL!r}"
 
 
-@pytest.mark.parametrize("state", [PlaybackState.IDLE, PlaybackState.UNKNOWN])
+@pytest.mark.parametrize("state", [PlaybackState.IDLE, PlaybackState.UNDETERMINED])
 def test_loaded_reports_right_content_but_not_yet_playable_state(state: PlaybackState) -> None:
     observation = _loaded(URL)(status(media=MediaStatus(content_id=URL, playback_state=state)))
 

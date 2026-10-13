@@ -150,7 +150,7 @@ describe("controls offered by the observed state", () => {
   });
 
   test("an unreported playback state offers no transport control and says why", () => {
-    const controls = describeControls(ready(statusWith({ playbackState: "unknown" })));
+    const controls = describeControls(ready(statusWith({ playbackState: "undetermined" })));
 
     assert.equal(controls.primary, null);
     assert.match(controls.unavailable ?? "", /didn't report its playback state/);

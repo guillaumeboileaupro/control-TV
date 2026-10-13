@@ -352,7 +352,7 @@ def test_every_host_runs_the_same_service_with_the_remote_channel(
 
     service = default_service()
 
-    assert isinstance(service._remote, TvRemoteChannel)
+    assert isinstance(service._channels._remote, TvRemoteChannel)
     assert default_credentials_dir() == tmp_path / "control-tv" / "tv-remote"
     assert not (tmp_path / "control-tv").exists()  # nothing is written until it is used
 
@@ -562,3 +562,17 @@ def test_apps_do_not_depend_on_what_discovery_saw_of_the_remote() -> None:
     assert service.launch_tv_app(DEVICE_ID, "com.example.video").front_app == "com.example.video"
     with pytest.raises(UnsupportedOperationError):
         service.press_remote_key(DEVICE_ID, RemoteKey.HOME)
+
+
+def test_the_tv_channels_need_only_a_device_lookup_not_the_cast_service() -> None:
+    from control_tv.tv_channels import TvChannels
+
+    tv = Device(id=DEVICE_ID, friendly_name="Living room", host=HOST, port=8009)
+    remote = FakeRemote()
+    channels = TvChannels({DEVICE_ID: tv}.get, remote=remote, apps=FakeApps())
+
+    assert channels.get_remote_status(DEVICE_ID) == volume(10)
+    assert channels.list_tv_apps(DEVICE_ID)[0].package == "com.example.video"
+    assert remote.calls == [("observe", HOST)]
+    with pytest.raises(DeviceNotFoundError):
+        channels.get_remote_status(DeviceId("uuid-other"))

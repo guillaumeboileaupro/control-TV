@@ -12,6 +12,7 @@
 // - one request at a time, shared with every other request of the app (see `idle`).
 // `main.ts` performs the I/O and draws the result; `npm test` covers every rule below.
 
+import { isJsonObject, type JsonObject, type JsonValue } from "./json.ts";
 import { describeFailure, idle, type AppState, type BridgeFailure } from "./model.ts";
 
 export type RemoteKeyName =
@@ -69,9 +70,9 @@ export type RemoteAction =
   | { kind: "list_apps" }
   | { kind: "launch_app"; package: string; label: string };
 
-// `unknown`: not tried yet. `needed`: the TV answered that it must be paired first.
+// `not_tried`: not tried yet. `needed`: the TV answered that it must be paired first.
 // `code_shown`: the TV was asked to show a code. `paired`: the TV accepted this app.
-export type PairingStep = "unknown" | "needed" | "code_shown" | "paired";
+export type PairingStep = "not_tried" | "needed" | "code_shown" | "paired";
 
 export interface RemoteOutcome {
   // `done`: the TV reported the expected result. `sent`: sent, effect not reported by the TV.
@@ -103,7 +104,7 @@ export interface RemoteView {
 export const REMOTE_IDLE: RemoteView = {
   report: null,
   pending: null,
-  pairing: "unknown",
+  pairing: "not_tried",
   outcome: null,
   apps: null,
   appFilter: "",
@@ -119,7 +120,7 @@ export interface RemoteRequest {
   action: RemoteAction;
 }
 
-export type RemoteAnswer = { ok: true; result: unknown } | { ok: false; failure: BridgeFailure };
+export type RemoteAnswer = { ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure };
 
 const PAIRING_CODE = /^[0-9a-fA-F]{6}$/;
 export const MAX_TEXT_LENGTH = 256;
@@ -136,7 +137,7 @@ function textAllowed(text: string): boolean {
 // The application command and its arguments, as the Tauri boundary expects them.
 export function remoteInvocation(request: RemoteRequest): {
   command: string;
-  args: Record<string, unknown>;
+  args: JsonObject;
 } {
   const deviceId = request.deviceId;
   const action = request.action;
@@ -158,13 +159,13 @@ export function remoteInvocation(request: RemoteRequest): {
   }
 }
 
-// Only a TV that advertises its own remote channel; never a group, never an unknown.
+// Only a TV that advertises its own remote channel; never a group, never an undetermined one.
 export function remoteAvailable(state: AppState): boolean {
   const selected = state.selected;
   return selected !== null && selected.kind !== "group" && selected.androidTvRemote === true;
 }
 
-// The TV's apps go through its debugging, a separate service: any TV (a Cast video device), not
+// The TV's apps go through its debugging, a separate service: every TV (a Cast video device), not
 // a group or a speaker, whatever discovery saw of its remote channel.
 export function appsAvailable(state: AppState): boolean {
   return state.selected !== null && state.selected.kind === "cast";
@@ -234,13 +235,9 @@ export function startRemote(
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 // A report as the control layer sends it; anything malformed is "the TV did not say".
-export function toReport(value: unknown): RemoteReport | null {
-  if (!isObject(value)) {
+export function toReport(value: JsonValue | undefined): RemoteReport | null {
+  if (!isJsonObject(value)) {
     return null;
   }
   const isOn = typeof value["isOn"] === "boolean" ? value["isOn"] : null;
@@ -249,7 +246,7 @@ export function toReport(value: unknown): RemoteReport | null {
   const raw = value["volume"];
   let volume: AudibleVolume | null = null;
   if (
-    isObject(raw) &&
+    isJsonObject(raw) &&
     typeof raw["level"] === "number" &&
     typeof raw["max"] === "number" &&
     typeof raw["muted"] === "boolean" &&
@@ -336,7 +333,7 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
   return { tone: "failed", text: `${described.title}. ${described.hint}`, technical };
 }
 
-function keyOutcome(key: RemoteKeyName, result: Record<string, unknown>): RemoteOutcome {
+function keyOutcome(key: RemoteKeyName, result: JsonObject): RemoteOutcome {
   const label = KEY_LABELS[key];
   const detail = typeof result["detail"] === "string" ? result["detail"] : "";
   switch (result["confirmation"]) {
@@ -366,7 +363,7 @@ function keyOutcome(key: RemoteKeyName, result: Record<string, unknown>): Remote
   }
 }
 
-// Applies the answer of the request that is still pending; any other answer is ignored.
+// Applies the answer of the request that is still pending; every other answer is ignored.
 export function finishRemote(state: AppState, requestId: number, answer: RemoteAnswer): AppState {
   const pending = state.remote.pending;
   if (pending === null || pending.requestId !== requestId) {
@@ -388,7 +385,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
     }
     return { ...state, remote: { ...remote, pairing, outcome: failureOutcome(action, failure) } };
   }
-  const result = isObject(answer.result) ? answer.result : {};
+  const result = isJsonObject(answer.result) ? answer.result : {};
   switch (action.kind) {
     case "status":
       return {
@@ -396,7 +393,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         remote: { ...remote, pairing: "paired", report: toReport(result["remote"]), outcome: null },
       };
     case "key": {
-      const pressed = isObject(result["result"]) ? result["result"] : {};
+      const pressed = isJsonObject(result["result"]) ? result["result"] : {};
       return {
         ...state,
         remote: {
@@ -420,7 +417,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         },
       };
     case "text": {
-      const typed = isObject(result["result"]) ? result["result"] : {};
+      const typed = isJsonObject(result["result"]) ? result["result"] : {};
       const fieldReported = typed["fieldReported"] === true;
       return {
         ...state,
@@ -453,7 +450,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
       };
     }
     case "launch_app": {
-      const launched = isObject(result["result"]) ? result["result"] : {};
+      const launched = isJsonObject(result["result"]) ? result["result"] : {};
       const label = action.label;
       let outcome: RemoteOutcome;
       switch (launched["confirmation"]) {
@@ -483,7 +480,10 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
 }
 
 // The report with the app the TV said it has in front, when it said one.
-function withFrontApp(report: RemoteReport | null, front: unknown): RemoteReport | null {
+function withFrontApp(
+  report: RemoteReport | null,
+  front: JsonValue | undefined,
+): RemoteReport | null {
   if (typeof front !== "string" || front === "") {
     return report;
   }
@@ -491,13 +491,13 @@ function withFrontApp(report: RemoteReport | null, front: unknown): RemoteReport
 }
 
 // An app list as the control layer sends it; malformed entries are left out, never guessed.
-export function toApps(value: unknown): TvApp[] {
+export function toApps(value: JsonValue | undefined): TvApp[] {
   if (!Array.isArray(value)) {
     return [];
   }
   const apps: TvApp[] = [];
   for (const entry of value) {
-    if (isObject(entry) && typeof entry["package"] === "string" && entry["package"] !== "") {
+    if (isJsonObject(entry) && typeof entry["package"] === "string" && entry["package"] !== "") {
       const name = typeof entry["name"] === "string" && entry["name"] !== "" ? entry["name"] : null;
       apps.push({ package: entry["package"], name });
     }

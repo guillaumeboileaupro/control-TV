@@ -4,7 +4,7 @@
 Run with the development environment's interpreter after
 `uv sync --locked --group packaging --python <release version>` (`python3 scripts/dev.py
 bridge-build` and `bridge-smoke` do both). Releases embed exactly the CPython version in
-`packaging/release-python-version`; the build refuses any other interpreter.
+`packaging/release-python-version`; the build refuses every other interpreter.
 
   build  freeze `packaging/bridge_entry.py` with PyInstaller (`--onedir`) into
          `dist/python-bridge/` with its third-party license notices under `licenses/`, refuse
@@ -68,7 +68,7 @@ NEUTRAL_PREFIX = "/install"
 
 SMOKE_REQUESTS = (
     {"id": 1, "method": "ping", "params": {}},
-    # Rejected by the shared control layer before any network access.
+    # Rejected by the shared control layer before a network access.
     {"id": 2, "method": "get_status", "params": {"deviceId": "never-discovered"}},
 )
 SMOKE_TIMEOUT_SECONDS = 30
@@ -310,13 +310,17 @@ def frozen_distributions(
     return [importlib.metadata.distribution(name) for name in names]
 
 
+_LICENSE_NAME = re.compile("|".join(re.escape(hint) for hint in LICENSE_FILE_HINTS))
+
+
+def _names_license(file_name: str) -> bool:
+    """Whether a file name looks like a license or notice (LICENSE, COPYING, NOTICE, ...)."""
+    return _LICENSE_NAME.search(file_name.upper()) is not None
+
+
 def _license_files(distribution: importlib.metadata.Distribution) -> list[Path]:
     files = distribution.files or []
-    found = [
-        Path(str(distribution.locate_file(f)))
-        for f in files
-        if any(hint in f.name.upper() for hint in LICENSE_FILE_HINTS)
-    ]
+    found = [Path(str(distribution.locate_file(f))) for f in files if _names_license(f.name)]
     return sorted(found, key=lambda path: path.name)
 
 

@@ -122,7 +122,7 @@ def test_a_socket_write_failure_after_bytes_left_is_reported_as_possibly_deliver
     # device_unavailable. The command bytes had already been handed to the socket.
     assert len(socket.writes) == 1 and b"PAUSE" in socket.writes[0]
     assert result.isError is True
-    assert (body["error"]["code"], body["delivery"]) == ("device_unavailable", "unknown")
+    assert (body["error"]["code"], body["delivery"]) == ("device_unavailable", "uncertain")
     assert "may or may not have reached the TV" in text
     assert "Do not resend it automatically" in text and "get_status" in text
     assert "Nothing was sent" not in text
@@ -143,7 +143,7 @@ def test_a_library_error_raised_before_writing_never_claims_the_tv_received_it(
     # UnsupportedNamespace was raised by the socket client before any write; the shared
     # adapter maps it to command_rejected, which therefore does not prove receipt.
     assert socket.writes == []
-    assert (body["error"]["code"], body["delivery"]) == ("command_rejected", "unknown")
+    assert (body["error"]["code"], body["delivery"]) == ("command_rejected", "uncertain")
     assert "received the command" not in text
     assert "The command reached the TV" not in text and "Nothing was sent" not in text
     assert "may or may not have reached the TV" in text

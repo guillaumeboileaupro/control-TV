@@ -13,6 +13,10 @@
 - [x] Code MCP de `main` (PR #31) : **conservé tel quel**, sans développement (décision du propriétaire).
 - Seule PR encore ouverte : **#33** (widget Android, section 4).
 
+## 1 bis. Qualité du code — terminé le 2026-10-13
+
+- [x] Compétence `code-solid` appliquée ; plus de `Any` ni de `unknown` dans le code (les tests peuvent en garder) ; mypy refuse désormais tout `Any` explicite hors tests.
+
 ## 2. Phase 1 — les deux applications sur la même TV
 
 - [ ] **R1 à R4** (lecture seule) : Ubuntu et le téléphone ouverts en même temps, sur la même TV. Résultat PASS/FAIL/NOT RUN pour chaque test. Avancement : partiel, non classé.

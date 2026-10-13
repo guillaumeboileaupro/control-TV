@@ -30,9 +30,9 @@ import os
 import re
 import stat
 import threading
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from control_tv.domain import (
     CommandRejectedError,
@@ -62,7 +62,27 @@ PAIRING_CODE = re.compile(r"[0-9A-Fa-f]{6}")
 _SETTLE_STEP = 0.05
 
 T = TypeVar("T")
-RemoteFactory = Callable[[str, str, str, str], Any]
+
+
+class RemoteClient(Protocol):
+    @property
+    def is_on(self) -> object: ...
+
+    @property
+    def current_app(self) -> object: ...
+
+    @property
+    def volume_info(self) -> object: ...
+
+    async def async_start_pairing(self) -> None: ...
+    async def async_finish_pairing(self, code: str) -> None: ...
+    async def async_connect(self) -> None: ...
+    def disconnect(self) -> None: ...
+    def send_key_command(self, key: str) -> None: ...
+    def send_text(self, text: str) -> None: ...
+
+
+RemoteFactory = Callable[[str, str, str, str], RemoteClient]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
 
 
@@ -84,8 +104,8 @@ def default_credentials_dir() -> Path:
     return Path(base) / "control-tv" / "tv-remote"
 
 
-def _volume(info: Any) -> AudibleVolume | None:
-    if not isinstance(info, dict):
+def _volume(info: object) -> AudibleVolume | None:
+    if not isinstance(info, Mapping):
         return None
     level, maximum, muted = info.get("level"), info.get("max"), info.get("muted")
     if (
@@ -101,7 +121,7 @@ def _volume(info: Any) -> AudibleVolume | None:
     return AudibleVolume(level=level, maximum=maximum, muted=muted)
 
 
-def _observe(remote: Any) -> RemoteObservation:
+def _observe(remote: RemoteClient) -> RemoteObservation:
     is_on = remote.is_on
     app = remote.current_app
     return RemoteObservation(
@@ -111,7 +131,7 @@ def _observe(remote: Any) -> RemoteObservation:
     )
 
 
-def _field_reported(remote: Any) -> bool:
+def _field_reported(remote: RemoteClient) -> bool:
     """Whether the TV reported an active text field (its input-method edit counters).
 
     The library keeps them on its protocol object only; `androidtvremote2` is pinned, and a
@@ -122,13 +142,16 @@ def _field_reported(remote: Any) -> bool:
     return isinstance(counter, int) and not isinstance(counter, bool) and counter > 0
 
 
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def _checked_text(text: object) -> str:
     """Printable text only, 1 to MAX_TEXT_LENGTH characters. Never echoed in a message."""
     if not isinstance(text, str) or not text:
         raise InvalidArgumentError("the text to type must be a non-empty string")
     if len(text) > MAX_TEXT_LENGTH:
         raise InvalidArgumentError(f"the text to type is limited to {MAX_TEXT_LENGTH} characters")
-    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+    if _CONTROL_CHARACTER.search(text):
         raise InvalidArgumentError("the text to type cannot contain control characters")
     return text
 
@@ -151,12 +174,17 @@ def _library_errors() -> tuple[type[Exception], type[Exception], type[Exception]
     return CannotConnect, ConnectionClosed, InvalidAuth
 
 
-def _default_remote_factory(client_name: str, certfile: str, keyfile: str, host: str) -> Any:
+def _default_remote_factory(
+    client_name: str, certfile: str, keyfile: str, host: str
+) -> RemoteClient:
     from androidtvremote2 import AndroidTVRemote
 
     # Built inside the running loop, which the library requires. The input method is on: it
     # carries text to the TV's active field and reports the app in front.
-    return AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True)
+    return cast(
+        RemoteClient,
+        AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True),
+    )
 
 
 def _default_cert_generator(client_name: str) -> tuple[bytes, bytes]:
@@ -190,7 +218,7 @@ class TvRemoteChannel:
         self._cert_generator = cert_generator
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._pairing: dict[str, Any] = {}
+        self._pairing: dict[str, RemoteClient] = {}
 
     # Public operations ---------------------------------------------------------------------
 
@@ -234,7 +262,7 @@ class TvRemoteChannel:
         """Connect, read what the TV reports (power, audible volume), and close."""
         host = _checked_host(host)
 
-        async def read(remote: Any) -> RemoteObservation:
+        async def read(remote: RemoteClient) -> RemoteObservation:
             await self._wait_for(lambda: remote.volume_info is not None)
             return _observe(remote)
 
@@ -250,7 +278,7 @@ class TvRemoteChannel:
         if not isinstance(key, RemoteKey):
             raise InvalidArgumentError(f"not an allowed key: {key!r}")
 
-        async def send(remote: Any) -> KeyPress:
+        async def send(remote: RemoteClient) -> KeyPress:
             if key in VOLUME_KEYS:  # the volume it changes; other keys are not delayed
                 await self._wait_for(lambda: remote.volume_info is not None)
             before = _observe(remote)
@@ -271,7 +299,7 @@ class TvRemoteChannel:
         host = _checked_host(host)
         text = _checked_text(text)
 
-        async def send(remote: Any) -> TextEntry:
+        async def send(remote: RemoteClient) -> TextEntry:
             await self._wait_for(lambda: _field_reported(remote))
             reported = _field_reported(remote)
             remote.send_text(text)
@@ -295,7 +323,7 @@ class TvRemoteChannel:
 
     # Internals ---------------------------------------------------------------------------
 
-    async def _session(self, host: str, action: Callable[[Any], Awaitable[T]]) -> T:
+    async def _session(self, host: str, action: Callable[[RemoteClient], Awaitable[T]]) -> T:
         remote = self._remote_factory(self._client_name, *self._credentials(), host)
         try:
             await remote.async_connect()
@@ -329,7 +357,7 @@ class TvRemoteChannel:
                 os.chmod(path, 0o600)
         return str(cert), str(key)
 
-    def _run(self, make: Callable[[], Coroutine[Any, Any, T]]) -> T:
+    def _run(self, make: Callable[[], Coroutine[object, object, T]]) -> T:
         cannot_connect, connection_closed, invalid_auth = _library_errors()
         future = asyncio.run_coroutine_threadsafe(make(), self._event_loop())
         try:
@@ -356,7 +384,7 @@ class TvRemoteChannel:
 
 
 def _write_private(path: Path, content: bytes) -> None:
-    """Write a file readable by its owner only, replacing any older one atomically."""
+    """Write a file readable by its owner only, replacing an older one atomically."""
     partial = path.with_name(path.name + ".partial")
     partial.unlink(missing_ok=True)
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

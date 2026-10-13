@@ -18,6 +18,7 @@ from zeroconf import ServiceStateChange
 from control_tv.adapters import remote_detection
 from control_tv.adapters.remote_detection import (
     SERVICE_TYPE,
+    ChangeHandler,
     NoRemoteDetection,
     ZeroconfRemoteDetector,
 )
@@ -34,7 +35,7 @@ class SharedZeroconf:
 
 
 class FakeBrowser:
-    def __init__(self, zc: Any, service_type: str, *, handlers: list[Any]) -> None:
+    def __init__(self, zc: object, service_type: str, *, handlers: list[ChangeHandler]) -> None:
         assert service_type == SERVICE_TYPE
         self.zc = zc
         self.handler = handlers[0]
@@ -96,7 +97,9 @@ def run(
     browsers: list[FakeBrowser] = []
     waits: list[float] = []
 
-    def make_browser(zc: Any, service_type: str, *, handlers: list[Any]) -> FakeBrowser:
+    def make_browser(
+        zc: object, service_type: str, *, handlers: list[ChangeHandler]
+    ) -> FakeBrowser:
         if browser_error is not None:
             raise browser_error
         browsers.append(FakeBrowser(zc, service_type, handlers=handlers))
@@ -196,7 +199,9 @@ def test_an_error_while_resolving_leaves_the_answer_unknown_and_the_browse_cance
 def test_an_error_while_browsing_leaves_the_answer_unknown_and_still_cancels_the_browse() -> None:
     browsers: list[FakeBrowser] = []
 
-    def make_browser(zc: Any, service_type: str, *, handlers: list[Any]) -> FakeBrowser:
+    def make_browser(
+        zc: object, service_type: str, *, handlers: list[ChangeHandler]
+    ) -> FakeBrowser:
         browsers.append(FakeBrowser(zc, service_type, handlers=handlers))
         return browsers[-1]
 
