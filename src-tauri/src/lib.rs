@@ -959,7 +959,9 @@ mod tray {
             _ => ACTIONS
                 .iter()
                 .find(|(action, _)| *action == id)
-                .map_or(TrayEvent::Unrecognized, |(action, _)| TrayEvent::Action(action)),
+                .map_or(TrayEvent::Unrecognized, |(action, _)| {
+                    TrayEvent::Action(action)
+                }),
         }
     }
 
