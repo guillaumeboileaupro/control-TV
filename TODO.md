@@ -11,7 +11,7 @@
 - [x] **#41, #42, #43** : canal télécommande dans le `.deb` et l'APK, clavier distant, nettoyage du plan. Fusionnées.
 - [x] **#38** : tests de convergence Ubuntu/Android. Corrections P3 déjà faites ; branche remise à jour avec `main`, puis fusionnée (CI `main` 4/4 verte).
 - [x] Code MCP de `main` (PR #31) : **conservé tel quel**, sans développement (décision du propriétaire).
-- PR ouvertes : **#33** (widget Android, section 4) et **#49 à #52** (corrections de l'audit de `main`).
+- Seule PR encore ouverte : **#33** (widget Android, section 4).
 
 ## 1 bis. Qualité du code — terminé le 2026-10-13
 
@@ -58,7 +58,7 @@
 
 - [ ] Installer le `.deb` et l'APK finaux sur le PC et le téléphone, puis refaire la recette complète.
 - [ ] Documentation d'utilisation : appairage, clavier, limites (par exemple, cette TV ne rapporte pas son volume).
-- [ ] Icône dans la barre système Ubuntu (élément K) : **fusionnée** (#46, 2026-10-13), pas encore vue sur un vrai bureau — Ouvrir, Lecture/Pause, Stop, Mute TV, Volume TV −/+, Quitter ; fermer la fenêtre quitte l'application (décision à confirmer). À voir sur ton bureau Ubuntu.
+- [ ] Icône dans la barre système Ubuntu (élément K) : **codée** (branche `feat/linux-tray`) — Ouvrir, Lecture/Pause, Stop, Mute TV, Volume TV −/+, Quitter ; fermer la fenêtre quitte l'application (décision à confirmer). À voir sur ton bureau Ubuntu.
 
 ## Suivi
 
