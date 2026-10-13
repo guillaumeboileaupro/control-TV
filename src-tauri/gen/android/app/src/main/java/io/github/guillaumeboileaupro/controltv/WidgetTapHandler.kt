@@ -51,7 +51,7 @@ class WidgetTapHandler(
         store.saveView(WidgetPresentation.busy(store.view(), selection))
         render()
         try {
-            enqueue(TapSpec(action, token, now()))
+            enqueue(TapSpec(action, token, now(), selection.deviceId))
         } catch (error: Exception) {
             // The token is spent and no job will run: say so instead of "Working…" forever.
             log("widget job not enqueued: ${action.name} (${error::class.simpleName})")

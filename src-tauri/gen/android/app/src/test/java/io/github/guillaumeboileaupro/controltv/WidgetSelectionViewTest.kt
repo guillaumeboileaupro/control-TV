@@ -57,7 +57,7 @@ class WidgetSelectionViewTest {
     private fun run(action: WidgetAction): WidgetOutcome {
         val store = MemoryWidgetStore().apply { selected = SELECTED }
         val now = 1_000_000L
-        return WidgetJob(store, TimingOut(), { now }).run(TapSpec(action, "tap-1", now))
+        return WidgetJob(store, TimingOut(), { now }).run(TapSpec(action, "tap-1", now, deviceId = TV))
     }
 
     @Test
@@ -94,5 +94,57 @@ class WidgetEnqueueFailureTest {
         assertEquals("control-TV couldn't start. Nothing was sent.", store.lastView?.line)
         assertEquals(false, store.lastView?.busy)
         assertEquals(2, renders)
+    }
+}
+
+/** A tap made for one TV never reaches another (Codex review of #33, ae14c42). */
+class WidgetTapTargetTest {
+    private class NeverRuns : TransactionRunner {
+        var calls = 0
+        override fun <T> tryTransaction(
+            timeoutMillis: Long,
+            body: (BridgeTransaction) -> T,
+        ): TransactionResult<T> {
+            calls++
+            return TransactionResult.Busy
+        }
+    }
+
+    @Test
+    fun theTapRecordsTheTvSelectedWhenTapped() {
+        val store = MemoryWidgetStore().apply { selected = SELECTED }
+        val queued = mutableListOf<TapSpec>()
+        val handler = WidgetTapHandler(store, { 1_000_000L }, { "token-1" }, { queued += it }, {})
+
+        handler.handle("STOP", store.armedToken { "token-0" })
+
+        assertEquals(TV, queued.single().deviceId)
+    }
+
+    @Test
+    fun aJobForATvNoLongerSelectedSendsNothing() {
+        val store = MemoryWidgetStore().apply { selected = Selection("tv-2", "Bedroom") }
+        val bridge = NeverRuns()
+        val now = 1_000_000L
+
+        val outcome = WidgetJob(store, bridge, { now }).run(TapSpec(WidgetAction.STOP, "t", now, deviceId = TV))
+
+        assertEquals(WidgetOutcome.SelectionChanged, outcome)
+        assertEquals(0, bridge.calls)
+        assertEquals(
+            "The TV changed before that tap ran. Nothing was sent.",
+            WidgetPresentation.present(outcome, store.selected).line,
+        )
+    }
+
+    @Test
+    fun aJobQueuedWithoutATvSendsNothing() {
+        val store = MemoryWidgetStore().apply { selected = SELECTED }
+        val bridge = NeverRuns()
+
+        val outcome = WidgetJob(store, bridge, { 1L }).run(TapSpec(WidgetAction.STOP, "t", 1L, deviceId = null))
+
+        assertEquals(WidgetOutcome.SelectionChanged, outcome)
+        assertEquals(0, bridge.calls)
     }
 }

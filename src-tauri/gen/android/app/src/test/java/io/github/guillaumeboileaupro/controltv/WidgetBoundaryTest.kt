@@ -99,7 +99,7 @@ class WidgetBoundaryTest {
     fun aJobRunAgainByWorkManagerSendsItsCommandOnlyOnce() {
         val bridge = tvBridge()
         val relay = BridgeRelay(bridge)
-        val tap = TapSpec(WidgetAction.MUTE, "token-1", clock.get())
+        val tap = TapSpec(WidgetAction.MUTE, "token-1", clock.get(), deviceId = TV)
 
         val first = WidgetJob(store, relay, clock::get).run(tap)
         val again = WidgetJob(store, relay, clock::get).run(tap)
@@ -115,7 +115,7 @@ class WidgetBoundaryTest {
         val dying = FakeBridge { method, _ ->
             if (method == "get_status") statusAnswer() else throw IllegalStateException("process died")
         }
-        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get())
+        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get(), deviceId = TV)
         WidgetJob(store, BridgeRelay(dying), clock::get).run(tap)
         val afterRestart = tvBridge()
 
@@ -142,7 +142,7 @@ class WidgetBoundaryTest {
         )
         assertTrue(started.await(5, TimeUnit.SECONDS))
 
-        val outcome = WidgetJob(store, relay, clock::get).run(TapSpec(WidgetAction.STOP, "token-1", clock.get()))
+        val outcome = WidgetJob(store, relay, clock::get).run(TapSpec(WidgetAction.STOP, "token-1", clock.get(), deviceId = TV))
         release.countDown()
         Thread.sleep(200)
 
@@ -160,7 +160,7 @@ class WidgetBoundaryTest {
             clock.addAndGet(70_000)
             if (method == "get_status") statusAnswer() else commandAnswer(method, "confirmed")
         }
-        val tap = TapSpec(WidgetAction.PLAY_PAUSE, "token-1", clock.get())
+        val tap = TapSpec(WidgetAction.PLAY_PAUSE, "token-1", clock.get(), deviceId = TV)
 
         val outcome = WidgetJob(store, BridgeRelay(bridge), clock::get).run(tap)
 
@@ -172,7 +172,7 @@ class WidgetBoundaryTest {
     @Test
     fun aJobStartedAfterTheTapsLifetimeDoesNothing() {
         val bridge = tvBridge()
-        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get() - WidgetActionRunner.MAX_TAP_AGE_MILLIS - 1)
+        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get() - WidgetActionRunner.MAX_TAP_AGE_MILLIS - 1, deviceId = TV)
 
         val outcome = WidgetJob(store, BridgeRelay(bridge), clock::get).run(tap)
 
@@ -190,7 +190,7 @@ class WidgetBoundaryTest {
         }
 
         val outcome = WidgetJob(store, BridgeRelay(bridge), clock::get)
-            .run(TapSpec(WidgetAction.STOP, "token-1", clock.get()))
+            .run(TapSpec(WidgetAction.STOP, "token-1", clock.get(), deviceId = TV))
 
         assertEquals(WidgetOutcome.NotFound, outcome)
         assertEquals(listOf("get_status", "discover_devices"), bridge.methods)
@@ -202,7 +202,7 @@ class WidgetBoundaryTest {
         val bridge = tvBridge()
 
         val outcome = WidgetJob(store, BridgeRelay(bridge), clock::get)
-            .run(TapSpec(WidgetAction.PLAY_PAUSE, "token-1", clock.get()))
+            .run(TapSpec(WidgetAction.PLAY_PAUSE, "token-1", clock.get(), deviceId = TV))
 
         assertEquals(WidgetOutcome.NoSelection, outcome)
         assertEquals(emptyList<String>(), bridge.methods)
@@ -278,7 +278,7 @@ class WidgetBoundaryTest {
 
     @Test
     fun aBusyOrLateTransactionIsLoggedWithoutDetail() {
-        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get() - WidgetActionRunner.MAX_TAP_AGE_MILLIS - 1)
+        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get() - WidgetActionRunner.MAX_TAP_AGE_MILLIS - 1, deviceId = TV)
 
         WidgetJob(store, BridgeRelay(tvBridge()), clock::get) { logs += it }.run(tap)
 

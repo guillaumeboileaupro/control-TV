@@ -13,7 +13,7 @@ import org.junit.Test
  * tap (with KEEP) let a never-started job drop all later taps.
  */
 class WidgetWorkTest {
-    private val tap = TapSpec(WidgetAction.REFRESH, "4f9e1c2a-token", 1_000L)
+    private val tap = TapSpec(WidgetAction.REFRESH, "4f9e1c2a-token", 1_000L, deviceId = TV)
 
     @Test
     fun aTapIsExpeditedWorkSoItStartsNow() {

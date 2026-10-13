@@ -35,6 +35,7 @@ object WidgetPresentation {
         when (outcome) {
             WidgetOutcome.NoSelection -> noSelection()
             WidgetOutcome.Expired -> WidgetView(title, "That tap waited too long. Nothing was sent.")
+            WidgetOutcome.SelectionChanged -> WidgetView(title, "The TV changed before that tap ran. Nothing was sent.")
             WidgetOutcome.Busy -> WidgetView(title, "control-TV was busy. Nothing was sent. Tap again.")
             WidgetOutcome.NotFound -> WidgetView(title, "TV not found on this network. Nothing was sent.")
             WidgetOutcome.Unavailable -> WidgetView(title, "control-TV couldn't start. Nothing was sent.")

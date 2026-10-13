@@ -21,6 +21,7 @@ data class TvState(
 sealed interface WidgetOutcome {
     object NoSelection : WidgetOutcome
     object Expired : WidgetOutcome
+    object SelectionChanged : WidgetOutcome
     object Busy : WidgetOutcome
     object NotFound : WidgetOutcome
     object Unavailable : WidgetOutcome

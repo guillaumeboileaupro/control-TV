@@ -1,7 +1,16 @@
 package io.github.guillaumeboileaupro.controltv
 
 /** One widget tap handed to the background job: its stable identity and when it happened. */
-data class TapSpec(val action: WidgetAction, val tapId: String, val tappedAtMillis: Long)
+/**
+ * One widget tap. [deviceId] is the TV that was selected when it was tapped: the job sends
+ * nothing to any other TV (the selection may change before WorkManager runs the job).
+ */
+data class TapSpec(
+    val action: WidgetAction,
+    val tapId: String,
+    val tappedAtMillis: Long,
+    val deviceId: String?,
+)
 
 /**
  * The background job's work for one tap, kept free of Android types so it can be tested.
@@ -22,6 +31,11 @@ class WidgetJob(
         if (selection == null) {
             log("widget transaction: no TV chosen")
             return WidgetOutcome.NoSelection
+        }
+        if (tap.deviceId != selection.deviceId) {
+            // Tapped for another TV (or by a version that did not record it): nothing is sent.
+            log("widget transaction: the TV changed since the tap (${tap.action.name})")
+            return WidgetOutcome.SelectionChanged
         }
         val age = { now() - tap.tappedAtMillis }
         if (age() !in 0..WidgetActionRunner.MAX_TAP_AGE_MILLIS) {

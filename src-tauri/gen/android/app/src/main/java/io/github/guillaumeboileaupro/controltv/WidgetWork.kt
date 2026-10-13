@@ -37,6 +37,7 @@ object WidgetWork {
                     WidgetActionWorker.KEY_ACTION to tap.action.name,
                     WidgetActionWorker.KEY_TAP to tap.tapId,
                     WidgetActionWorker.KEY_TAPPED_AT to tap.tappedAtMillis,
+                    WidgetActionWorker.KEY_DEVICE to tap.deviceId,
                 ),
             )
             .build()

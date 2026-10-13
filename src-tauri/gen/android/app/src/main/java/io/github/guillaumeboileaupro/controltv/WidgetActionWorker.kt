@@ -38,7 +38,7 @@ class WidgetActionWorker(context: Context, params: WorkerParameters) : Worker(co
                 return Result.success()
             }
             lock.acquire()
-            val tap = TapSpec(action, tapId, inputData.getLong(KEY_TAPPED_AT, 0L))
+            val tap = TapSpec(action, tapId, inputData.getLong(KEY_TAPPED_AT, 0L), inputData.getString(KEY_DEVICE))
             val outcome = WidgetJob(store, EmbeddedBridge.relay(context), System::currentTimeMillis) {
                 Log.i(TAG, it)
             }.run(tap)
@@ -81,6 +81,7 @@ class WidgetActionWorker(context: Context, params: WorkerParameters) : Worker(co
         const val KEY_ACTION = "action"
         const val KEY_TAP = "tap"
         const val KEY_TAPPED_AT = "tapped_at"
+        const val KEY_DEVICE = "device"
         private const val TAG = "control-tv"
     }
 }
