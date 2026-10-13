@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from control_tv.domain import (
+    AppLaunchResult,
     Command,
     CommandResult,
     Confirmation,
@@ -39,10 +40,11 @@ from control_tv.domain import (
     RemoteKeyResult,
     RemoteObservation,
     RemoteTextResult,
+    TvApp,
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import CastTransport, TvRemote
+from control_tv.ports import CastTransport, TvApps, TvRemote
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +347,7 @@ class ControlService:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         remote: TvRemote | None = None,
+        apps: TvApps | None = None,
     ) -> None:
         _require(
             confirm_timeout is None or (_is_finite(confirm_timeout) and confirm_timeout >= 0),
@@ -375,6 +378,7 @@ class ControlService:
         self._clock = clock
         self._sleep = sleep
         self._remote = remote
+        self._apps = apps
         self._devices: dict[DeviceId, Device] = {}
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
@@ -555,12 +559,49 @@ class ControlService:
             observed=entry.observed,
         )
 
+    def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
+        """The apps installed on the TV that its home screen can launch, as the TV lists them."""
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot list the TV's apps", device_id=device_id
+            )
+        return list(self._apps.list_apps(host))
+
+    def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
+        """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports
+        that app in front; the TV often does not say, which is `NOT_CHECKED`."""
+        if not isinstance(package, str):
+            raise InvalidArgumentError("the app must be a package name", device_id=device_id)
+        remote, host = self._remote_target(device_id)
+        launch = remote.launch_app(host, package)
+        front = launch.after.current_app
+        if front == launch.package:
+            confirmation, detail = Confirmation.CONFIRMED, "the TV reports the app in front"
+        elif front is not None:
+            confirmation = Confirmation.UNCONFIRMED
+            detail = f"sent; the TV still reports {front} in front"
+        else:
+            confirmation = Confirmation.NOT_CHECKED
+            detail = "sent; the TV did not report the app in front; check the TV"
+        return AppLaunchResult(
+            package=launch.package,
+            device_id=device_id,
+            confirmation=confirmation,
+            detail=detail,
+            after=launch.after,
+        )
+
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
-        device_id = _checked_id(device_id)
         if self._remote is None:
             raise UnsupportedOperationError(
                 "this application has no TV remote channel", device_id=device_id
             )
+        return self._remote, self._tv_host(device_id)
+
+    def _tv_host(self, device_id: DeviceId) -> str:
+        """The address of a Google TV found by the last discovery, never a group or a guess."""
+        device_id = _checked_id(device_id)
         device = self._devices.get(device_id)
         if device is None:
             raise DeviceNotFoundError(
@@ -574,7 +615,7 @@ class ControlService:
             raise UnsupportedOperationError(
                 "this TV does not offer its own remote channel", device_id=device_id
             )
-        return self._remote, device.host
+        return device.host
 
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout

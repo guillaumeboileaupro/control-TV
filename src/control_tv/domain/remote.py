@@ -109,3 +109,35 @@ class RemoteTextResult:
     detail: str
     field_reported: bool
     observed: RemoteObservation
+
+
+@dataclass(frozen=True, slots=True)
+class TvApp:
+    """An app installed on the TV that its home screen can launch.
+
+    `package` is the Android package name, as the TV listed it; `name` is a display name
+    control-TV knows for that package, or `None` (the TV's own labels are not available).
+    """
+
+    package: str
+    name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AppLaunch:
+    """An app launch that was sent once, with what the TV reported before and after."""
+
+    package: str
+    before: RemoteObservation
+    after: RemoteObservation
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AppLaunchResult:
+    """An app launch, and whether the TV reported that app in front afterwards."""
+
+    package: str
+    device_id: DeviceId
+    confirmation: Confirmation
+    detail: str
+    after: RemoteObservation

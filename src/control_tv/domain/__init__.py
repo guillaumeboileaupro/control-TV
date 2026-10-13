@@ -32,6 +32,8 @@ from control_tv.domain.models import (
     VolumeControlType,
 )
 from control_tv.domain.remote import (
+    AppLaunch,
+    AppLaunchResult,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -39,11 +41,14 @@ from control_tv.domain.remote import (
     RemoteObservation,
     RemoteTextResult,
     TextEntry,
+    TvApp,
 )
 from control_tv.domain.results import Command, CommandResult, Confirmation
 
 __all__ = [
     "AmbiguousTargetError",
+    "AppLaunch",
+    "AppLaunchResult",
     "AudibleVolume",
     "Command",
     "CommandRejectedError",
@@ -74,6 +79,7 @@ __all__ = [
     "RemoteTextResult",
     "StreamType",
     "TextEntry",
+    "TvApp",
     "UnsupportedMediaError",
     "UnsupportedOperationError",
     "VolumeControlType",

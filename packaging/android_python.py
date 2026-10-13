@@ -54,8 +54,9 @@ OUTPUT = REPO_ROOT / "dist" / "android-python"
 WHEELS = OUTPUT / "wheels"
 REQUIREMENTS = OUTPUT / "requirements.txt"
 PROJECT = "control-tv"
-# Built from source as pure Python: the only runtime dependency without a pure wheel.
-FROM_SDIST = {"zeroconf"}
+# Built from source as pure Python: the runtime dependencies that publish no pure wheel
+# (zeroconf, whose Cython extensions are optional; adb-shell, which publishes an sdist only).
+FROM_SDIST = {"zeroconf", "adb-shell"}
 COMPILED_SUFFIXES = (".so", ".pyd", ".dll", ".dylib")
 # The build backends of the two wheels built here, installed from the `android` group:
 # setuptools for control-tv (and for the distutils that zeroconf's build script imports),
@@ -228,6 +229,9 @@ def build_pure_from_sdist(sdist: Path, destination: Path) -> Path:
         compiled = compiled_members(built)
         if compiled:
             raise RuntimeError(f"{built.name} still contains compiled modules: {compiled}")
+        if built.name.endswith("-py3-none-any.whl"):
+            # Already tagged pure Python: retagging to the same name would remove it.
+            return Path(shutil.copy2(built, destination / built.name))
         subprocess.run(
             [
                 sys.executable,

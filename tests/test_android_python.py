@@ -192,6 +192,36 @@ def test_zeroconf_is_built_offline_without_cython_and_retagged(
     assert len(calls) == 2
 
 
+def test_an_sdist_that_already_builds_a_pure_wheel_is_kept_without_retagging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], check: bool, env: dict[str, str] | None = None) -> None:
+        calls.append(command)
+        out = Path(command[command.index("--wheel-dir") + 1])
+        _write_wheel(out / "adb_shell-0.4.4-py3-none-any.whl", {"adb_shell/a.py": b""})
+
+    monkeypatch.setattr(android.subprocess, "run", run)
+    destination = tmp_path / "wheels"
+    destination.mkdir()
+
+    built = android.build_pure_from_sdist(tmp_path / "adb_shell-0.4.4.tar.gz", destination)
+
+    assert built == destination / "adb_shell-0.4.4-py3-none-any.whl"
+    assert built.is_file()
+    assert len(calls) == 1  # no `wheel tags`, which would remove a file it renames to itself
+
+
+def test_adb_shell_is_built_from_its_locked_sdist_as_pure_python() -> None:
+    lock = real_lock()
+    entry = android.runtime_packages(lock, extras=android.EXTRAS)["adb-shell"]
+
+    assert "adb-shell" in android.FROM_SDIST
+    assert android.pure_wheel(entry) is None
+    assert entry["sdist"]["hash"].startswith("sha256:")
+
+
 def test_a_zeroconf_build_that_still_compiles_modules_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -287,6 +317,7 @@ def test_the_app_embeds_the_tv_remote_extra_and_never_the_mcp_server() -> None:
 
     assert android.EXTRAS == ("tvremote",)
     assert {"androidtvremote2", "aiofiles", "cryptography", "cffi", "pycparser"} <= names
+    assert {"adb-shell", "rsa", "pyasn1"} <= names
     assert {"pychromecast", "zeroconf", "protobuf"} <= names
     assert not names & {"mcp", "starlette", "uvicorn", "pydantic", "pyjwt"}
 

@@ -300,6 +300,25 @@
                 Enter
               </button>
             </div>
+            <!-- The TV's installed apps: listed by the TV over its debugging (which the owner
+                 turns on), opened through the remote channel. -->
+            <div class="tv-apps" role="group" aria-labelledby="tv-apps-title">
+              <div class="tv-apps-head">
+                <p id="tv-apps-title" class="tv-remote-title">TV apps</p>
+                <button id="remote-apps-list" class="btn" type="button">Show TV apps</button>
+              </div>
+              <input
+                id="remote-apps-filter"
+                class="remote-text"
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Find an app"
+                aria-label="Find an app"
+                hidden
+              />
+              <ul id="remote-apps" class="tv-apps-list" aria-label="Apps installed on the TV"></ul>
+            </div>
             <p id="remote-readout" class="sound-readout is-empty"></p>
             <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>
           </div>

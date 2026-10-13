@@ -43,6 +43,10 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 /// `control_tv.adapters.tv_remote`); this is generous on top of it, so only a stuck bridge
 /// exceeds it. A key is never resent on a timeout: its delivery is then ambiguous.
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Outer bound on listing the TV's apps over its network debugging: the control layer allows
+/// 5s to connect, up to 30s for the owner to allow control-TV on the TV, and 10s for the
+/// answer (`control_tv.adapters.tv_apps`); this is generous on top of that 45s.
+const APPS_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -795,6 +799,12 @@ fn remote_text_request(device_id: &str, text: &str) -> Value {
     json!({ "deviceId": device_id, "text": text })
 }
 
+/// The request that opens an installed app on the TV: the stable device id and the app's
+/// package name, checked by the control layer before anything is sent.
+fn app_request(device_id: &str, package: &str) -> Value {
+    json!({ "deviceId": device_id, "package": package })
+}
+
 /// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
 /// no retry, no state of its own, and the answer is data.
 async fn send_remote(
@@ -871,6 +881,35 @@ async fn bridge_type_remote_text(
         state.inner().clone(),
         "type_remote_text",
         remote_text_request(&device_id, &text),
+    )
+    .await
+}
+
+/// Read-only: the apps installed on the TV, listed over its network debugging.
+#[tauri::command]
+async fn bridge_list_tv_apps(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "list_tv_apps",
+        status_request(&device_id),
+        APPS_TIMEOUT,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bridge_launch_tv_app(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    package: String,
+) -> Result<Value, BridgeFailure> {
+    send_remote(
+        state.inner().clone(),
+        "launch_tv_app",
+        app_request(&device_id, &package),
     )
     .await
 }
@@ -987,7 +1026,9 @@ pub fn run() {
             bridge_start_remote_pairing,
             bridge_finish_remote_pairing,
             bridge_press_remote_key,
-            bridge_type_remote_text
+            bridge_type_remote_text,
+            bridge_list_tv_apps,
+            bridge_launch_tv_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1828,6 +1869,20 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     }
 
     #[test]
+    fn an_app_request_carries_the_package_name_as_given() {
+        assert_eq!(
+            app_request("uuid-1", "com.example.video"),
+            json!({"deviceId": "uuid-1", "package": "com.example.video"})
+        );
+    }
+
+    #[test]
+    fn the_app_list_bound_covers_the_owner_allowing_control_tv_on_the_tv() {
+        assert!(APPS_TIMEOUT >= Duration::from_secs(45) + Duration::from_secs(10));
+        assert!(APPS_TIMEOUT <= COMMAND_TIMEOUT);
+    }
+
+    #[test]
     fn a_pairing_code_request_carries_the_code_as_typed() {
         assert_eq!(
             pairing_code_request("uuid-1", " a1b2c3 "),
@@ -2065,6 +2120,18 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
             .unwrap_err();
         assert_eq!(text.code, "device_not_found");
         assert!(!text.message.contains("hello"));
+
+        let apps = bridge
+            .call("list_tv_apps", status_request("never-discovered"))
+            .unwrap_err();
+        let launch = bridge
+            .call(
+                "launch_tv_app",
+                app_request("never-discovered", "com.example.video"),
+            )
+            .unwrap_err();
+        assert_eq!(apps.code, "device_not_found");
+        assert_eq!(launch.code, "device_not_found");
     }
 
     #[test]

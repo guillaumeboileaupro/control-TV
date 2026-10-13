@@ -71,6 +71,7 @@ def test_ping_reports_readiness_and_version(control: ControlService) -> None:
             "status": "ready",
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
+            "tvApps": True,
         },
     }
 
@@ -392,6 +393,7 @@ def test_main_serves_a_ping_over_real_stdio() -> None:
             "status": "ready",
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
+            "tvApps": True,
         },
     }
 

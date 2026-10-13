@@ -16,8 +16,8 @@ Response: {"id": <same as request, or null if the request itself could not be re
 `id` is opaque to this module: it is only ever echoed back, never interpreted.
 
 Read-only methods:
-- `ping`             -> {"status", "controlTvVersion", "tvRemote"}: `tvRemote` says whether
-                        this build embeds the TV's own remote channel
+- `ping`             -> {"status", "controlTvVersion", "tvRemote", "tvApps"}: whether this
+                        build embeds the TV's own remote channel and its app list
 - `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`. Each device
                         carries `androidTvRemote`: whether it advertises the Android TV
                         Remote service (`true`/`false`), or `null` when unknown
@@ -73,6 +73,16 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              back); `fieldReported` says whether the TV reported an active
                              field. The text is never echoed in an answer or an error: it may
                              be a password.
+- `list_tv_apps`          -> {"apps": [{"package", "name"}]}: the apps installed on the TV
+                             that its home screen can launch, as the TV lists them over its
+                             network debugging (ADB), which the owner turns on; `name` is a
+                             display name control-TV knows, or `null`. `unsupported_operation`
+                             when the TV's debugging is off, `pairing_required` until the
+                             owner allows control-TV on the TV. Read-only.
+- `launch_tv_app`         -> also requires `package`: opens that app once through the remote
+                             channel. Answers {"result": {"package", "deviceId",
+                             "confirmation", "detail", "after"}}: `confirmed` only when the TV
+                             then reports that app in front, `not_checked` when it does not say.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -89,6 +99,7 @@ from typing import Any, TextIO
 
 import control_tv
 from control_tv.domain import (
+    AppLaunchResult,
     CommandResult,
     ControlError,
     Device,
@@ -100,6 +111,7 @@ from control_tv.domain import (
     RemoteKeyResult,
     RemoteObservation,
     RemoteTextResult,
+    TvApp,
 )
 from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
 
@@ -175,12 +187,14 @@ def _device_id_param(params: dict[str, Any]) -> DeviceId:
 
 def _handle_ping(control: ControlService, params: dict[str, Any]) -> Any:
     del control, params
+    from control_tv.adapters.tv_apps import apps_installed
     from control_tv.adapters.tv_remote import channel_installed
 
     return {
         "status": "ready",
         "controlTvVersion": control_tv.__version__,
         "tvRemote": channel_installed(),
+        "tvApps": apps_installed(),
     }
 
 
@@ -327,6 +341,33 @@ def _handle_type_remote_text(control: ControlService, params: dict[str, Any]) ->
     return {"result": _remote_text_result_to_json(control.type_remote_text(device_id, text))}
 
 
+def _app_to_json(app: TvApp) -> dict[str, Any]:
+    return {"package": app.package, "name": app.name}
+
+
+def _app_launch_to_json(result: AppLaunchResult) -> dict[str, Any]:
+    return {
+        "package": result.package,
+        "deviceId": str(result.device_id),
+        "confirmation": result.confirmation.value,
+        "detail": result.detail,
+        "after": _remote_to_json(result.after),
+    }
+
+
+def _handle_list_tv_apps(control: ControlService, params: dict[str, Any]) -> Any:
+    apps = control.list_tv_apps(_device_id_param(params))
+    return {"apps": [_app_to_json(app) for app in apps]}
+
+
+def _handle_launch_tv_app(control: ControlService, params: dict[str, Any]) -> Any:
+    device_id = _device_id_param(params)
+    package = params.get("package")
+    if not isinstance(package, str):
+        raise InvalidArgumentError("package must be a string")
+    return {"result": _app_launch_to_json(control.launch_tv_app(device_id, package))}
+
+
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
@@ -342,6 +383,8 @@ _HANDLERS: dict[str, Handler] = {
     "finish_remote_pairing": _handle_finish_remote_pairing,
     "press_remote_key": _handle_press_remote_key,
     "type_remote_text": _handle_type_remote_text,
+    "list_tv_apps": _handle_list_tv_apps,
+    "launch_tv_app": _handle_launch_tv_app,
 }
 
 
@@ -393,12 +436,16 @@ def run(control: ControlService, *, stdin: TextIO = sys.stdin, stdout: TextIO = 
 
 
 def default_service() -> ControlService:
-    """The service every host runs: Cast, plus the TV's own remote channel."""
+    """The service every host runs: Cast, plus the TV's own remote channel and app list."""
     from control_tv.adapters import PyChromecastTransport
+    from control_tv.adapters.tv_apps import AdbAppInventory
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
 
+    credentials = default_credentials_dir()
     return ControlService(
-        PyChromecastTransport(), remote=TvRemoteChannel(default_credentials_dir())
+        PyChromecastTransport(),
+        remote=TvRemoteChannel(credentials),
+        apps=AdbAppInventory(credentials),
     )
 
 

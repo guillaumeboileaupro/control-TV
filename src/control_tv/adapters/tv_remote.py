@@ -10,7 +10,8 @@ Rules this adapter keeps:
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
-  field (`type_text`), never logged or echoed. App launch and voice are not exposed.
+  field (`type_text`), never logged or echoed, and apps only by a checked package name
+  (`launch_app`). Voice is not exposed.
 - One short connection per operation: connect, act, flush, close. No connection stays open
   and nothing listens, so there is no background session that could drop a key silently.
 - A key is sent once. A failure after the key was handed to the connection is ambiguous: the
@@ -46,6 +47,7 @@ from control_tv.domain import (
 from control_tv.domain.remote import (
     MAX_TEXT_LENGTH,
     VOLUME_KEYS,
+    AppLaunch,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -120,6 +122,18 @@ def _field_reported(remote: Any) -> bool:
     protocol = getattr(remote, "_remote_message_protocol", None)
     counter = getattr(protocol, "ime_field_counter", 0)
     return isinstance(counter, int) and not isinstance(counter, bool) and counter > 0
+
+
+# An Android package name: dot-separated segments of letters, digits and underscores, the first
+# starting with a letter. Anything else is refused before a link is built from it.
+PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
+
+
+def checked_package(package: object) -> str:
+    """A well-formed Android package name, never a free link or a shell fragment."""
+    if not isinstance(package, str) or len(package) > 255 or not PACKAGE_NAME.fullmatch(package):
+        raise InvalidArgumentError("not an Android package name")
+    return package
 
 
 def _checked_text(text: object) -> str:
@@ -276,6 +290,24 @@ class TvRemoteChannel:
             reported = _field_reported(remote)
             remote.send_text(text)
             return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
+
+        return self._run(lambda: self._session(host, send))
+
+    def launch_app(self, host: str, package: str) -> AppLaunch:
+        """Ask the TV once to open the app `package`, and report what it said after.
+
+        The request is the Google TV remote's own app link (`market://launch?id=`), which opens
+        an installed app. The adapter waits a short time for the TV to report that app in
+        front; whatever the TV reports is returned, changed or not.
+        """
+        host = _checked_host(host)
+        package = checked_package(package)
+
+        async def send(remote: Any) -> AppLaunch:
+            before = _observe(remote)
+            remote.send_launch_app_command(f"market://launch?id={package}")
+            await self._wait_for(lambda: _observe(remote).current_app == package)
+            return AppLaunch(package=package, before=before, after=_observe(remote))
 
         return self._run(lambda: self._session(host, send))
 

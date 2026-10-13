@@ -65,7 +65,9 @@ export type RemoteAction =
   | { kind: "show_code" }
   | { kind: "pair"; code: string }
   // Text for the TV's active field. It may be a password: it is never put in an outcome.
-  | { kind: "text"; text: string };
+  | { kind: "text"; text: string }
+  | { kind: "list_apps" }
+  | { kind: "launch_app"; package: string; label: string };
 
 // `unknown`: not tried yet. `needed`: the TV answered that it must be paired first.
 // `code_shown`: the TV was asked to show a code. `paired`: the TV accepted this app.
@@ -80,11 +82,22 @@ export interface RemoteOutcome {
   technical: string | null;
 }
 
+// An app installed on the TV, as the TV listed it: its package, and a display name control-TV
+// knows for it or null.
+export interface TvApp {
+  package: string;
+  name: string | null;
+}
+
 export interface RemoteView {
   report: RemoteReport | null;
   pending: { requestId: number; action: RemoteAction } | null;
   pairing: PairingStep;
   outcome: RemoteOutcome | null;
+  // The TV's apps from its last listing; null until listed.
+  apps: TvApp[] | null;
+  // What the person typed to narrow the app list.
+  appFilter: string;
 }
 
 export const REMOTE_IDLE: RemoteView = {
@@ -92,7 +105,13 @@ export const REMOTE_IDLE: RemoteView = {
   pending: null,
   pairing: "unknown",
   outcome: null,
+  apps: null,
+  appFilter: "",
 };
+
+export function appLabel(app: TvApp): string {
+  return app.name ?? app.package;
+}
 
 export interface RemoteRequest {
   requestId: number;
@@ -132,6 +151,10 @@ export function remoteInvocation(request: RemoteRequest): {
       return { command: "bridge_finish_remote_pairing", args: { deviceId, code: action.code } };
     case "text":
       return { command: "bridge_type_remote_text", args: { deviceId, text: action.text } };
+    case "list_apps":
+      return { command: "bridge_list_tv_apps", args: { deviceId } };
+    case "launch_app":
+      return { command: "bridge_launch_tv_app", args: { deviceId, package: action.package } };
   }
 }
 
@@ -156,7 +179,10 @@ export function startRemote(
   if (selected === null || !remoteAvailable(state) || !idle(state)) {
     return { state, request: null };
   }
-  if (action.kind !== "show_code" && action.kind !== "pair" && !keysAllowed(state)) {
+  // Listing apps uses the TV's debugging, not its remote: a pairing step does not block it.
+  const needsRemote =
+    action.kind !== "show_code" && action.kind !== "pair" && action.kind !== "list_apps";
+  if (needsRemote && !keysAllowed(state)) {
     return { state, request: null };
   }
   if (action.kind === "text" && !textAllowed(action.text)) {
@@ -222,6 +248,22 @@ export function toReport(value: unknown): RemoteReport | null {
 
 function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOutcome {
   const technical = `${failure.code}: ${failure.message}`;
+  if (action.kind === "list_apps") {
+    if (failure.code === "unsupported_operation") {
+      return {
+        tone: "failed",
+        text: "To list the TV's apps, turn on USB debugging on the TV: Settings › System › About, select “Android TV OS build” 7 times, then Settings › System › Developer options › USB debugging. Then list the apps again and allow control-TV when the TV asks.",
+        technical,
+      };
+    }
+    if (failure.code === "pairing_required") {
+      return {
+        tone: "failed",
+        text: "Allow control-TV on the TV when it asks about debugging, then list the apps again.",
+        technical,
+      };
+    }
+  }
   switch (failure.code) {
     case "pairing_required":
       return {
@@ -247,6 +289,13 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
     case "timeout":
     case "bridge_timeout":
     case "bridge_transport":
+      if (action.kind === "launch_app") {
+        return {
+          tone: "failed",
+          text: `${action.label} may or may not have opened. It was not sent again: check the TV.`,
+          technical,
+        };
+      }
       if (action.kind === "text") {
         return {
           tone: "failed",
@@ -311,6 +360,10 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
   if (!answer.ok) {
     const failure = answer.failure;
     let pairing = remote.pairing;
+    if (action.kind === "list_apps") {
+      // The app list's own "allow control-TV on the TV" is not the remote's pairing.
+      return { ...state, remote: { ...remote, outcome: failureOutcome(action, failure) } };
+    }
     if (failure.code === "pairing_required") {
       pairing = "needed";
     } else if (action.kind === "pair" && failure.code === "command_rejected") {
@@ -368,7 +421,71 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         },
       };
     }
+    case "list_apps": {
+      const apps = toApps(result["apps"]);
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          apps,
+          outcome:
+            apps.length === 0
+              ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
+              : null,
+        },
+      };
+    }
+    case "launch_app": {
+      const launched = isObject(result["result"]) ? result["result"] : {};
+      const label = action.label;
+      let outcome: RemoteOutcome;
+      switch (launched["confirmation"]) {
+        case "confirmed":
+          outcome = { tone: "done", text: `${label} is open on the TV.`, technical: null };
+          break;
+        case "unconfirmed":
+          outcome = {
+            tone: "sent",
+            text: `${label} was sent, but the TV reports another app in front.`,
+            technical: typeof launched["detail"] === "string" ? launched["detail"] : null,
+          };
+          break;
+        default:
+          outcome = { tone: "sent", text: `${label} was sent: check the TV.`, technical: null };
+      }
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          pairing: "paired",
+          report: toReport(launched["after"]) ?? remote.report,
+          outcome,
+        },
+      };
+    }
   }
+}
+
+// An app list as the control layer sends it; malformed entries are left out, never guessed.
+export function toApps(value: unknown): TvApp[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const apps: TvApp[] = [];
+  for (const entry of value) {
+    if (isObject(entry) && typeof entry["package"] === "string" && entry["package"] !== "") {
+      const name = typeof entry["name"] === "string" && entry["name"] !== "" ? entry["name"] : null;
+      apps.push({ package: entry["package"], name });
+    }
+  }
+  return apps;
+}
+
+// Narrows the app list as the person types; sends nothing.
+export function setAppFilter(state: AppState, filter: string): AppState {
+  return state.remote.appFilter === filter
+    ? state
+    : { ...state, remote: { ...state.remote, appFilter: filter } };
 }
 
 export interface RemoteDescription {
@@ -386,6 +503,12 @@ export interface RemoteDescription {
   pendingKey: RemoteKeyName | null;
   // Text for the TV's field is on its way.
   sendingText: boolean;
+  // The TV's apps matching the filter, sorted by label; null until the TV listed them.
+  apps: TvApp[] | null;
+  appsEnabled: boolean;
+  listingApps: boolean;
+  launchEnabled: boolean;
+  pendingApp: string | null;
   busy: boolean;
   outcome: RemoteOutcome | null;
 }
@@ -399,6 +522,11 @@ const HIDDEN: RemoteDescription = {
   progress: null,
   pendingKey: null,
   sendingText: false,
+  apps: null,
+  appsEnabled: false,
+  listingApps: false,
+  launchEnabled: false,
+  pendingApp: null,
   busy: false,
   outcome: null,
 };
@@ -415,7 +543,26 @@ function progressOf(action: RemoteAction): string {
       return "Pairing…";
     case "text":
       return "Sending text…";
+    case "list_apps":
+      return "Listing the TV's apps… If the TV asks, allow control-TV.";
+    case "launch_app":
+      return `Opening ${action.label}…`;
   }
+}
+
+function filteredApps(apps: TvApp[] | null, filter: string): TvApp[] | null {
+  if (apps === null) {
+    return null;
+  }
+  const needle = filter.trim().toLowerCase();
+  return apps
+    .filter(
+      (app) =>
+        needle === "" ||
+        appLabel(app).toLowerCase().includes(needle) ||
+        app.package.toLowerCase().includes(needle),
+    )
+    .sort((a, b) => appLabel(a).localeCompare(appLabel(b)));
 }
 
 export function describeReport(report: RemoteReport | null): string {
@@ -461,6 +608,12 @@ export function describeRemote(state: AppState): RemoteDescription {
     progress: pending === null ? null : progressOf(pending.action),
     pendingKey: pending !== null && pending.action.kind === "key" ? pending.action.key : null,
     sendingText: pending !== null && pending.action.kind === "text",
+    apps: filteredApps(remote.apps, remote.appFilter),
+    appsEnabled: !busy,
+    listingApps: pending !== null && pending.action.kind === "list_apps",
+    launchEnabled: !busy && keysAllowed(state),
+    pendingApp:
+      pending !== null && pending.action.kind === "launch_app" ? pending.action.package : null,
     busy,
     outcome: remote.outcome,
   };

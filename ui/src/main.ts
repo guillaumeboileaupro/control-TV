@@ -42,9 +42,11 @@ import {
   type CommandResult,
 } from "./playback.ts";
 import {
+  appLabel,
   describeRemote,
   finishRemote,
   remoteInvocation,
+  setAppFilter,
   startRemote,
   type RemoteAction,
   type RemoteAnswer,
@@ -118,6 +120,9 @@ interface Elements {
   remoteTextForm: HTMLFormElement;
   remoteText: HTMLInputElement;
   remoteTextSend: HTMLButtonElement;
+  remoteAppsList: HTMLButtonElement;
+  remoteAppsFilter: HTMLInputElement;
+  remoteApps: HTMLElement;
   remoteReadout: HTMLElement;
   remoteFeedback: HTMLElement;
   muteButton: HTMLButtonElement;
@@ -235,6 +240,7 @@ function start(elements: Elements): void {
   let contextKey = "";
   let feedbackKey = "";
   let remoteFeedbackKey = "";
+  let appsKey = "";
   let seekTimer: number | undefined;
   // A range control disabled by its command loses keyboard focus. Return it after the answer
   // only while the user has not intentionally focused another control in the meantime.
@@ -608,6 +614,7 @@ function start(elements: Elements): void {
     setBusy(el.remoteRead, !remote.readEnabled);
     setBusy(el.remoteTextSend, !remote.keysEnabled);
     el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
+    renderApps(remote);
     el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
 
     el.remotePairing.hidden = remote.pairing === null;
@@ -651,6 +658,47 @@ function start(elements: Elements): void {
       if (outcome.technical !== null) {
         el.remoteFeedback.append(disclosure(outcome.technical));
       }
+    }
+  }
+
+  // The TV's apps: the list button, the filter once listed, one button per app. The list is
+  // rebuilt only when what it shows changed, keeping focus on the same app.
+  function renderApps(remote: ReturnType<typeof describeRemote>): void {
+    const el = elements;
+    setBusy(el.remoteAppsList, !remote.appsEnabled);
+    el.remoteAppsList.classList.toggle("is-loading", remote.listingApps);
+    el.remoteAppsList.setAttribute("aria-busy", String(remote.listingApps));
+    el.remoteAppsList.textContent = remote.apps === null ? "Show TV apps" : "List again";
+    el.remoteAppsFilter.hidden = remote.apps === null;
+    const key = JSON.stringify([remote.apps, remote.launchEnabled, remote.pendingApp]);
+    if (key === appsKey) {
+      return;
+    }
+    appsKey = key;
+    const focused = document.activeElement?.getAttribute("data-package") ?? null;
+    el.remoteApps.replaceChildren();
+    for (const app of remote.apps ?? []) {
+      const item = document.createElement("li");
+      const button = text("button", "btn", "") as HTMLButtonElement;
+      button.type = "button";
+      button.dataset["package"] = app.package;
+      button.setAttribute("aria-label", `Open ${appLabel(app)} on the TV`);
+      button.append(text("span", "", appLabel(app)));
+      if (app.name !== null) {
+        button.append(text("span", "app-package", app.package));
+      }
+      const opening = remote.pendingApp === app.package;
+      setBusy(button, !remote.launchEnabled);
+      button.classList.toggle("is-loading", opening);
+      button.setAttribute("aria-busy", String(opening));
+      button.addEventListener("click", () =>
+        onRemote({ kind: "launch_app", package: app.package, label: appLabel(app) }),
+      );
+      item.append(button);
+      el.remoteApps.append(item);
+    }
+    if (focused !== null) {
+      el.remoteApps.querySelector<HTMLElement>(`[data-package="${CSS.escape(focused)}"]`)?.focus();
     }
   }
 
@@ -921,6 +969,10 @@ function start(elements: Elements): void {
     );
   }
   elements.remoteRead.addEventListener("click", () => onRemote({ kind: "status" }));
+  elements.remoteAppsList.addEventListener("click", () => onRemote({ kind: "list_apps" }));
+  elements.remoteAppsFilter.addEventListener("input", () =>
+    update(setAppFilter(state, elements.remoteAppsFilter.value)),
+  );
   elements.remoteTextForm.addEventListener("submit", (event) => {
     event.preventDefault();
     onRemote({ kind: "text", text: elements.remoteText.value });
@@ -980,6 +1032,9 @@ window.addEventListener("DOMContentLoaded", () => {
     remoteTextForm: byId<HTMLFormElement>("remote-text-form"),
     remoteText: byId<HTMLInputElement>("remote-text"),
     remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
+    remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+    remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
+    remoteApps: byId("remote-apps"),
     remoteReadout: byId("remote-readout"),
     remoteFeedback: byId("remote-feedback"),
     muteButton: byId<HTMLButtonElement>("mute-button"),
