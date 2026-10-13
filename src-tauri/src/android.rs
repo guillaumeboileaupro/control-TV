@@ -18,6 +18,13 @@ struct HandleResponse {
     line: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectionArgs {
+    device_id: String,
+    name: String,
+}
+
 /// The registered Kotlin plugin, shared by every launch of the bridge.
 pub(super) struct EmbeddedBridge(pub(super) Arc<PluginHandle<tauri::Wry>>);
 
@@ -48,4 +55,34 @@ pub(super) fn launcher(handle: Arc<PluginHandle<tauri::Wry>>) -> BridgeLauncher 
                 })
         })))
     })
+}
+
+/// Stores the window's explicit TV choice for the home-screen widget. This is app-private
+/// Android state only: it does not cross the Python bridge and sends nothing to a TV.
+fn store_selection(
+    handle: &PluginHandle<tauri::Wry>,
+    device_id: String,
+    name: String,
+) -> Result<(), String> {
+    handle
+        .run_mobile_plugin::<serde_json::Value>(
+            "rememberSelection",
+            SelectionArgs { device_id, name },
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Remembers the window's explicit TV choice for the Android widget. The plugin call is
+/// blocking, so it runs off the async/main thread. No bridge request or TV command is sent.
+#[tauri::command]
+pub(crate) async fn remember_selection(
+    app: tauri::AppHandle,
+    device_id: String,
+    name: String,
+) -> Result<(), String> {
+    let handle = Arc::clone(&app.state::<EmbeddedBridge>().0);
+    tauri::async_runtime::spawn_blocking(move || store_selection(&handle, device_id, name))
+        .await
+        .map_err(|error| error.to_string())?
 }

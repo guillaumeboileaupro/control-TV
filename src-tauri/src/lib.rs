@@ -25,7 +25,11 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
+#[cfg(target_os = "android")]
+use android::remember_selection;
 use bridge::*;
+#[cfg(not(target_os = "android"))]
+use commands::remember_selection;
 #[cfg(test)]
 use commands::*;
 /// How this build starts the bridge, the first time and on every recovery.
@@ -79,7 +83,8 @@ pub fn run() {
             commands::bridge_type_remote_text,
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
-            commands::show_main_window
+            commands::show_main_window,
+            remember_selection
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

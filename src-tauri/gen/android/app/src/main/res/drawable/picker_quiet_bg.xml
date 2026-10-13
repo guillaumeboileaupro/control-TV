@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The widget TV picker, in the window's style (ui/src/styles.css): one surface, thin lines, 8dp radius. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_hover" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+    <item><color android:color="@android:color/transparent" /></item>
+</selector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- One control of the widget's button row: equal widths, 48dp touch height. -->
+    <style name="ControlTvWidgetButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:background">@drawable/widget_button</item>
+        <item name="android:scaleType">center</item>
+    </style>
+</resources>
