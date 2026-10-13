@@ -9,8 +9,8 @@ This module only listens: it browses and resolves mDNS records and never connect
 service. It runs right after Cast discovery, on that discovery's own zeroconf instance: a
 second instance on the same host would compete with it for the mDNS replies sent to one
 socket only, and either could then miss a device. It never closes that instance, which
-belongs to Cast discovery. Any failure, or a service seen but not resolved, makes the answer
-unknown (`None`), never a false "not offered".
+belongs to Cast discovery. A failure, or a service seen but not resolved, makes the answer
+`None` (cannot tell), never a false "not offered".
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class RemoteDetector(Protocol):
 
 
 class NoRemoteDetection:
-    """A detector that never looks: every device's remote channel stays unknown."""
+    """A detector that never looks: every device's remote channel stays undetermined."""
 
     def detect(self, zeroconf: object) -> frozenset[str] | None:
         return None

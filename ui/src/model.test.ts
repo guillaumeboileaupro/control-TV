@@ -516,7 +516,7 @@ describe("status wording", () => {
       ...FULL_STATUS,
       receiver: { appId: null, appName: null, volumeLevel: null, muted: null, standby: null },
       media: {
-        playbackState: "unknown",
+        playbackState: "undetermined",
         contentId: null,
         contentType: null,
         title: null,
@@ -533,7 +533,7 @@ describe("status wording", () => {
     assert.equal(description.muted, null);
     assert.equal(description.mutedText, "Mute state not reported");
     assert.equal(description.soundText, "Volume not reported · Mute state not reported");
-    assert.deepEqual(description.playback, { kind: "unknown", label: "State unknown" });
+    assert.deepEqual(description.playback, { kind: "undetermined", label: "State not reported" });
     assert.equal(description.position?.text, "Position not reported");
     assert.equal(description.position?.fraction, null);
     assert.equal(description.note, null);
@@ -614,7 +614,7 @@ describe("status wording", () => {
     assert.equal(kindOf("paused"), "paused");
     assert.equal(kindOf("buffering"), "buffering");
     assert.equal(kindOf("idle"), "idle");
-    assert.equal(kindOf("something-new"), "unknown");
+    assert.equal(kindOf("something-new"), "undetermined");
   });
 
   test("formats clock values, and nothing for a missing or invalid one", () => {

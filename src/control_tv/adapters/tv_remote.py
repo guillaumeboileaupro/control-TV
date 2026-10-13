@@ -142,13 +142,16 @@ def _field_reported(remote: RemoteClient) -> bool:
     return isinstance(counter, int) and not isinstance(counter, bool) and counter > 0
 
 
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def _checked_text(text: object) -> str:
     """Printable text only, 1 to MAX_TEXT_LENGTH characters. Never echoed in a message."""
     if not isinstance(text, str) or not text:
         raise InvalidArgumentError("the text to type must be a non-empty string")
     if len(text) > MAX_TEXT_LENGTH:
         raise InvalidArgumentError(f"the text to type is limited to {MAX_TEXT_LENGTH} characters")
-    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+    if _CONTROL_CHARACTER.search(text):
         raise InvalidArgumentError("the text to type cannot contain control characters")
     return text
 
@@ -381,7 +384,7 @@ class TvRemoteChannel:
 
 
 def _write_private(path: Path, content: bytes) -> None:
-    """Write a file readable by its owner only, replacing any older one atomically."""
+    """Write a file readable by its owner only, replacing an older one atomically."""
     partial = path.with_name(path.name + ".partial")
     partial.unlink(missing_ok=True)
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

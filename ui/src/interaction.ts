@@ -16,7 +16,7 @@ import { setVolumeDraft, startMute, startVolume } from "./sound.ts";
 // end of a gesture, so a short wait is enough. A key press is not: the first press of a held key
 // is followed by a pause (commonly 500 to 660 ms) before it starts repeating, and the wait must
 // outlast that pause or the hold would be sent as two commands. Whatever is driving the control
-// is unknown until it declares itself, so the longer, safe wait is the default.
+// is undetermined until it declares itself, so the longer, safe wait is the default.
 export const VOLUME_SETTLE_POINTER_MS = 300;
 export const VOLUME_SETTLE_KEYBOARD_MS = 800;
 
@@ -34,7 +34,7 @@ export interface Settler {
 }
 
 // A disabled range control loses focus while its command is in flight. Remember that loss so
-// keyboard use can continue when the control is enabled again, but let any later, deliberate
+// keyboard use can continue when the control is enabled again, but let a later, deliberate
 // focus move cancel the return. The DOM wiring reports that move; keeping the state here makes
 // the intent and every command outcome deterministic under test.
 export interface FocusReturn {
@@ -102,7 +102,7 @@ export interface SoundController {
   // a raise beyond the limit would never be sent.
   volumePointerUp(): void;
   volumeKeyUp(): void;
-  // The volume control moved: update the draft, send nothing, and forget any wait in progress
+  // The volume control moved: update the draft, send nothing, and forget the wait in progress
   // (the control is still moving).
   volumeInput(percent: number): void;
   // The volume control was released or a key step was made: send the draft once it has settled.

@@ -17,7 +17,7 @@ The TV remote channel needs `cryptography`, which is native. Android cannot use 
 build: it takes the arm64 wheels Chaquopy publishes for its own Python (`CHAQUOPY_WHEELS`:
 `cryptography`, `cffi`, and the `libffi` that `cffi` needs), each pinned here by its exact
 file name and SHA-256 and checked on download. Their versions differ from the desktop lock
-(`cryptography` 42.0.8 on Android). Any other dependency that has no pure-Python form fails
+(`cryptography` 42.0.8 on Android). Every other dependency that has no pure-Python form fails
 the preparation: nothing native is substituted unless it is listed and pinned here.
 
 Network boundary: the only network access is `uv sync --locked --group android` (run by
@@ -204,7 +204,7 @@ def pip_wheel_command(source: Path, out_dir: Path) -> list[str]:
     """Build one wheel offline with the build backends already installed in this environment.
 
     `--isolated` ignores pip's environment variables and configuration files, `--no-index`
-    forbids any index, `--no-deps` resolves nothing, `--no-build-isolation` uses the
+    forbids every index, `--no-deps` resolves nothing, `--no-build-isolation` uses the
     installed backends instead of fetching the source's `build-system.requires`, and
     `--no-cache-dir` neither reuses nor stores a wheel in pip's shared user cache.
     """
@@ -308,7 +308,7 @@ def requirements_lines(
     for name, package in packages.items():
         version = CHAQUOPY_WHEELS[name].version if name in CHAQUOPY_WHEELS else package["version"]
         lines.append(f"{package['name']}=={version}")
-    if any(name in CHAQUOPY_WHEELS for name in packages):
+    if CHAQUOPY_WHEELS.keys() & packages.keys():
         lines += [f"{wheel.name}=={wheel.version}" for wheel in CHAQUOPY_ADDITIONS]
     return lines
 
@@ -346,7 +346,7 @@ def prepare(output: Path = OUTPUT) -> Path:
         wheel_url = _text(wheel.get("url"), f"the {name} wheel url")
         download(wheel_url, expected_hash(wheel), wheels / wheel_url.rsplit("/", 1)[1])
 
-    if any(name in CHAQUOPY_WHEELS for name in packages):
+    if CHAQUOPY_WHEELS.keys() & packages.keys():
         for chaquopy in CHAQUOPY_ADDITIONS:
             download(chaquopy.url, chaquopy.sha256, wheels / chaquopy.filename)
 

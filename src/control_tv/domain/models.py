@@ -24,7 +24,7 @@ class DeviceKind(StrEnum):
     CAST = "cast"
     AUDIO = "audio"
     GROUP = "group"
-    UNKNOWN = "unknown"
+    OTHER = "other"  # a Cast device type control-TV does not recognize
 
 
 class ConnectionState(StrEnum):
@@ -46,7 +46,7 @@ class PlaybackState(StrEnum):
     PLAYING = "playing"
     PAUSED = "paused"
     BUFFERING = "buffering"
-    UNKNOWN = "unknown"
+    UNDETERMINED = "undetermined"  # not reported, or not one of the states above
 
 
 class StreamType(StrEnum):
@@ -78,8 +78,12 @@ _MEDIA_TYPE_RE = re.compile(
 )
 
 
+_WHITESPACE = re.compile(r"\s")
+_LINE_BREAK_OR_NUL = re.compile(r"[\r\n\0]")
+
+
 def _valid_media_url(value: str) -> bool:
-    if value != value.strip() or any(character.isspace() for character in value):
+    if value != value.strip() or _WHITESPACE.search(value):
         return False
     try:
         parsed = urlsplit(value)
@@ -90,7 +94,7 @@ def _valid_media_url(value: str) -> bool:
 
 
 def _valid_content_type(value: str) -> bool:
-    if value != value.strip() or any(character in value for character in "\r\n\0"):
+    if value != value.strip() or _LINE_BREAK_OR_NUL.search(value):
         return False
     media_type, separator, parameters = value.partition(";")
     if _MEDIA_TYPE_RE.fullmatch(media_type.rstrip()) is None:
@@ -112,12 +116,12 @@ class Device:
     friendly_name: str
     host: str
     port: int
-    kind: DeviceKind = DeviceKind.UNKNOWN
+    kind: DeviceKind = DeviceKind.OTHER
     model_name: str | None = None
     android_tv_remote: bool | None = None
     """Whether the device advertises the Android TV Remote service (protocol v2), the channel
     its own remote uses for keys such as volume and power: True or False when discovery looked
-    for it, None when unknown (not looked for, the look failed, or a Cast group). control-TV
+    for it, None when undetermined (not looked for, the look failed, or a Cast group). control-TV
     does not use that channel; it only reports it."""
 
     def __post_init__(self) -> None:
@@ -168,9 +172,9 @@ class ReceiverStatus:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MediaStatus:
-    """Media session state reported by the TV. `None` means unknown, not false."""
+    """Media session state reported by the TV. `None` means not reported, not false."""
 
-    playback_state: PlaybackState = PlaybackState.UNKNOWN
+    playback_state: PlaybackState = PlaybackState.UNDETERMINED
     content_id: str | None = None
     media_session_id: int | None = None
     """The receiver's mediaSessionId: it names a playback session, which can hold several
@@ -182,7 +186,7 @@ class MediaStatus:
     title: str | None = None
     artist: str | None = None
     """Who the receiver names as the media's artist (for a video, often the channel); never
-    blank: an absent, null or blank value is unknown."""
+    blank: an absent, null or blank value is not reported."""
     stream_type: StreamType | None = None
     metadata_type: MetadataType | None = None
     position_seconds: float | None = None
@@ -272,6 +276,6 @@ class MediaRequest:
         )
         _require(
             self.title is None
-            or (bool(self.title.strip()) and not any(c in self.title for c in "\r\n\0")),
+            or (bool(self.title.strip()) and not _LINE_BREAK_OR_NUL.search(self.title)),
             "media title must be non-blank and contain no control characters",
         )

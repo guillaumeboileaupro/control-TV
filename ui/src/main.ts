@@ -177,7 +177,7 @@ const PLAYBACK_ICONS: Record<PlaybackKind, string> = {
   paused: "pause",
   buffering: "buffering",
   idle: "idle",
-  unknown: "unknown",
+  undetermined: "undetermined",
 };
 
 const KIND_ICONS: Record<string, string> = { audio: "volume" };
@@ -253,7 +253,7 @@ function start(elements: Elements): void {
   document.addEventListener("focusin", (event) => {
     const target = event.target;
     // Losing focus to the document because a range was disabled is not a new user intention.
-    // Any real element other than that range is.
+    // Every real element other than that range is.
     if (target !== document.body && target !== document.documentElement) {
       if (target !== elements.seekInput) {
         seekFocus.cancel();

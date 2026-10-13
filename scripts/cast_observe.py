@@ -16,7 +16,7 @@ instead of from memory:
 It sends no control command at all: the only requests are discovery and media GET_STATUS, sent
 with `send_message_nocheck`, which never launches an application. There is no retry and no
 replay. Every record is written as one JSON line, with a timestamp, under the git-ignored
-`.ai-private/hardware/` directory (directory mode 700, file mode 600); the tool refuses any
+`.ai-private/hardware/` directory (directory mode 700, file mode 600); the tool refuses every
 other location. Device identifiers, addresses and content ids stay in those private files.
 """
 

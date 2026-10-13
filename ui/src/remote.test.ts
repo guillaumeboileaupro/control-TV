@@ -386,7 +386,7 @@ describe("the panel belongs to one TV", () => {
     assert.equal(refreshed.remote.pairing, "paired");
 
     const switched = selectDevice(listed, "b").state;
-    assert.equal(switched.remote.pairing, "unknown");
+    assert.equal(switched.remote.pairing, "not_tried");
     assert.equal(switched.remote.report, null);
   });
 
@@ -400,7 +400,7 @@ describe("the panel belongs to one TV", () => {
     const gone = finishDiscovery(startDiscovery(paired), []);
 
     assert.equal(gone.remote.report, null);
-    assert.equal(gone.remote.pairing, "unknown");
+    assert.equal(gone.remote.pairing, "not_tried");
   });
 });
 
@@ -550,7 +550,7 @@ describe("the TV's apps", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("unsupported_operation"));
 
     assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
-    assert.equal(state.remote.pairing, "unknown");
+    assert.equal(state.remote.pairing, "not_tried");
   });
 
   test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
@@ -560,7 +560,7 @@ describe("the TV's apps", () => {
       describeRemote(state).outcome?.text,
       "Allow control-TV on the TV when it asks about debugging, then try again.",
     );
-    assert.equal(state.remote.pairing, "unknown");
+    assert.equal(state.remote.pairing, "not_tried");
     assert.equal(describeRemote(state).keysEnabled, true);
   });
 
@@ -608,7 +608,7 @@ describe("the TV's apps", () => {
     assert.equal(describeRemote(done).outcome?.text, "Netflix is open on the TV.");
     assert.equal(describeRemote(done).outcome?.tone, "done");
     assert.equal(describeRemote(done).readout, "TV app: com.netflix.ninja");
-    assert.equal(done.remote.pairing, "unknown"); // opened over debugging, not the remote
+    assert.equal(done.remote.pairing, "not_tried"); // opened over debugging, not the remote
     assert.equal(
       describeRemote(other).outcome?.text,
       "Netflix was sent, but the TV reports another app in front.",

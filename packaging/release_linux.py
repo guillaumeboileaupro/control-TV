@@ -9,7 +9,7 @@ Run with the development environment's interpreter after `build_bridge.py build`
 2. build the release `.deb` with the release overlay (`src-tauri/tauri.release.conf.json`),
    remapping the build machine's Cargo, rustup and checkout directories in compiled paths
    (`--remap-path-prefix`, stable rustc) so the binary does not name them;
-3. unpack the `.deb` and refuse it if any file or archive member still names a build-machine
+3. unpack the `.deb` and refuse it if a file or archive member still names a build-machine
    path, or if the application, the bundled bridge, `libpython` or the notices are missing or
    not executable where they must be;
 4. copy the `.deb` to `dist/` and write `dist/SHA256SUMS` for it and the bridge inventory.
@@ -106,16 +106,20 @@ def linked_crates(metadata: Mapping[str, object]) -> list[Mapping[str, object]]:
     nodes = {_text(node.get("id"), "a node id"): node for node in _tables(resolve.get("nodes"))}
 
     def proc_macro(package_id: str) -> bool:
-        return any(
-            isinstance(kind := target.get("kind"), list) and "proc-macro" in kind
+        target_kinds = {
+            kind
             for target in _tables(packages[package_id].get("targets"))
-        )
+            if isinstance(kinds := target.get("kind"), list)
+            for kind in kinds
+        }
+        return "proc-macro" in target_kinds
 
     seen: set[str] = set()
     pending = [_text(resolve.get("root"), "the resolve root")]
     while pending:
         for dependency in _tables(nodes[pending.pop()].get("deps")):
-            linked = any(kind.get("kind") is None for kind in _tables(dependency.get("dep_kinds")))
+            # A normal (linked) dependency has a dep_kind whose "kind" is null.
+            linked = None in (kind.get("kind") for kind in _tables(dependency.get("dep_kinds")))
             package_id = _text(dependency.get("pkg"), "a dependency id")
             if linked and package_id not in seen and not proc_macro(package_id):
                 seen.add(package_id)
@@ -144,7 +148,7 @@ def _crate_license_files(package: Mapping[str, object]) -> list[Path]:
 def write_rust_notices(
     crates: Iterable[Mapping[str, object]], std_docs: Path | None, destination: Path
 ) -> tuple[Path, list[str]]:
-    """Copy each linked crate's license files; return the notices and crates without any."""
+    """Copy each linked crate's license files; return the notices and the crates that have none."""
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)

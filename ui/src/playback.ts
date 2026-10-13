@@ -125,10 +125,10 @@ export interface ControlsDescription {
   seekNote: string | null;
   // Why pausing is not offered although the media is playing: the TV said it can't pause.
   pauseNote: string | null;
-  // Why no transport control is offered although there is media (idle or unknown state).
+  // Why no transport control is offered although there is media (idle or undetermined state).
   unavailable: string | null;
   // A request is in flight (a command or a discovery): nothing may be sent, so the controls
-  // look unavailable. `pendingCommand` says which command it is, if any.
+  // look unavailable. `pendingCommand` says which command it is, if there is one.
   busy: boolean;
   pendingCommand: CommandName | null;
 }
@@ -175,13 +175,13 @@ export function describeControls(state: AppState): ControlsDescription {
   if (status.connection !== "connected" || media === null) {
     return HIDDEN;
   }
-  // Busy is any request in flight, not only a command: while a discovery runs the controls stay
+  // Busy is a request in flight, not only a command: while a discovery runs the controls stay
   // on screen but every interaction is refused, so they must look unavailable, not enabled.
   const busy = !idle(state);
   const pendingCommand = state.command.kind === "pending" ? state.command.command : null;
   const kind = playbackKind(media.playbackState);
 
-  if (kind === "idle" || kind === "unknown") {
+  if (kind === "idle" || kind === "undetermined") {
     return {
       ...HIDDEN,
       visible: true,
@@ -194,7 +194,7 @@ export function describeControls(state: AppState): ControlsDescription {
     };
   }
 
-  // Pause is not offered when the TV explicitly says this media can't be paused; unknown still
+  // Pause is not offered when the TV explicitly says this media can't be paused; not reported still
   // offers it (the TV then answers for itself), exactly as before pause support was read.
   const pausable = media.supportsPause !== false;
   const primary: PrimaryControl | null =
@@ -234,7 +234,7 @@ export function clampSeek(seconds: number, max: number): number {
 
 // --- sending a command ---------------------------------------------------------------------
 
-// Starts a command: it becomes the one request in flight, and any position or volume still being
+// Starts a command: it becomes the one request in flight, and a position or volume still being
 // composed is dropped (it was never sent, so nothing pretends it was).
 export function begin(
   state: AppState,
@@ -311,7 +311,7 @@ export function startSeek(state: AppState): {
   return begin(state, "seek", target) ?? { state, request: null };
 }
 
-// Applies the answer to the command that is in flight; any other answer is ignored. The TV's
+// Applies the answer to the command that is in flight; every other answer is ignored. The TV's
 // state changes only through the status the answer carries (a real observation). A command that
 // was sent but not confirmed keeps the last observation and says so; it is never shown as done.
 export function finishCommand(

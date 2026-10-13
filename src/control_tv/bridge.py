@@ -8,7 +8,7 @@ Protocol (intentionally minimal - a starting point, expected to grow as more of
 `TvControl` is exposed): the parent process writes one JSON object per line to this
 process's stdin and reads one JSON object per line from its stdout, matched by "id".
 
-Request:  {"id": <any>, "method": <str>, "params": {...}}
+Request:  {"id": <a JSON value>, "method": <str>, "params": {...}}
 Response: {"id": <same as request, or null if the request itself could not be read>,
            "ok": true, "result": {...}}
        or {"id": ..., "ok": false, "error": {"code": <str>, "message": <str>}}
@@ -20,10 +20,10 @@ Read-only methods:
                         build embeds the TV's own remote channel and its app list
 - `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`. Each device
                         carries `androidTvRemote`: whether it advertises the Android TV
-                        Remote service (`true`/`false`), or `null` when unknown
+                        Remote service (`true`/`false`), or `null` when undetermined
 - `get_status`       -> {"status": {...}}; required param `deviceId` (the stable id from
                         discovery, never a display name). Fields the TV did not report are
-                        `null`, never a default: `null` means unknown, not "off" or "zero".
+                        `null`, never a default: `null` means not reported, not "off" or "zero".
                         `media` carries `playbackState`, `contentId`, `contentType`, `title`,
                         `artist`, `streamType` ("buffered"/"live"), `metadataType` ("generic",
                         "movie", "tv_show", "music_track", "photo", "audiobook_chapter"),
@@ -400,7 +400,7 @@ def dispatch(control: ControlService, request: JsonObject) -> JsonObject:
     try:
         method = request.get("method")
         if not isinstance(method, str) or method not in _HANDLERS:
-            raise InvalidArgumentError(f"unknown method: {method!r}")
+            raise InvalidArgumentError(f"not a bridge method: {method!r}")
         params = request.get("params", {})
         if not isinstance(params, dict):
             raise InvalidArgumentError("params must be an object")

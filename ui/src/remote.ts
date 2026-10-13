@@ -70,9 +70,9 @@ export type RemoteAction =
   | { kind: "list_apps" }
   | { kind: "launch_app"; package: string; label: string };
 
-// `unknown`: not tried yet. `needed`: the TV answered that it must be paired first.
+// `not_tried`: not tried yet. `needed`: the TV answered that it must be paired first.
 // `code_shown`: the TV was asked to show a code. `paired`: the TV accepted this app.
-export type PairingStep = "unknown" | "needed" | "code_shown" | "paired";
+export type PairingStep = "not_tried" | "needed" | "code_shown" | "paired";
 
 export interface RemoteOutcome {
   // `done`: the TV reported the expected result. `sent`: sent, effect not reported by the TV.
@@ -104,7 +104,7 @@ export interface RemoteView {
 export const REMOTE_IDLE: RemoteView = {
   report: null,
   pending: null,
-  pairing: "unknown",
+  pairing: "not_tried",
   outcome: null,
   apps: null,
   appFilter: "",
@@ -159,13 +159,13 @@ export function remoteInvocation(request: RemoteRequest): {
   }
 }
 
-// Only a TV that advertises its own remote channel; never a group, never an unknown.
+// Only a TV that advertises its own remote channel; never a group, never an undetermined one.
 export function remoteAvailable(state: AppState): boolean {
   const selected = state.selected;
   return selected !== null && selected.kind !== "group" && selected.androidTvRemote === true;
 }
 
-// The TV's apps go through its debugging, a separate service: any TV (a Cast video device), not
+// The TV's apps go through its debugging, a separate service: every TV (a Cast video device), not
 // a group or a speaker, whatever discovery saw of its remote channel.
 export function appsAvailable(state: AppState): boolean {
   return state.selected !== null && state.selected.kind === "cast";
@@ -363,7 +363,7 @@ function keyOutcome(key: RemoteKeyName, result: JsonObject): RemoteOutcome {
   }
 }
 
-// Applies the answer of the request that is still pending; any other answer is ignored.
+// Applies the answer of the request that is still pending; every other answer is ignored.
 export function finishRemote(state: AppState, requestId: number, answer: RemoteAnswer): AppState {
   const pending = state.remote.pending;
   if (pending === null || pending.requestId !== requestId) {

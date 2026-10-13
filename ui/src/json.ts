@@ -10,7 +10,7 @@ export interface JsonObject {
   [key: string]: JsonValue;
 }
 
-// Whatever a `catch` clause or a rejected promise can hold: any value except none at all.
+// Whatever a `catch` clause or a rejected promise can hold: a value of every kind, or none.
 export type Thrown = {} | null | undefined;
 
 export function isJsonObject(value: JsonValue | undefined): value is JsonObject {

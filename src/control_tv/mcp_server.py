@@ -7,12 +7,12 @@ parameter validation, the same `ControlService` calls and the same JSON shapes. 
 validation, confirmation, discovery or media-identity logic lives here; this module only
 adapts the bridge's answers for an assistant:
 
-- privacy: device addresses (`host`, `port`) and media content ids (`contentId`, and any
+- privacy: device addresses (`host`, `port`) and media content ids (`contentId`, and every
   quoted value in a command's `detail`) are never returned; error messages are fixed per
   code (the bridge's own text can carry library exception text, addresses or ids), except
   `invalid_argument`, whose message is about the caller's own arguments;
 - delivery: a command error says `not_sent` only when the shared layer proves nothing left
-  (validation, an unknown device, an unsupported operation, ...) and otherwise `unknown`: a
+  (validation, a device not discovered, an unsupported operation, ...) and otherwise `uncertain`: a
   `timeout`, `device_unavailable` (an `OSError` while writing to the socket ends there),
   `command_rejected` (it also covers library errors raised before anything was written) and
   `internal_error` may or may not have reached the TV. A sent command keeps its
@@ -55,20 +55,20 @@ COMMAND_TOOLS = ("play", "pause", "stop", "seek", "set_volume", "set_muted")
 
 NOT_SENT = "not_sent"
 SENT = "sent"
-UNKNOWN = "unknown"
+UNCERTAIN = "uncertain"
 
-# What a failed command means for delivery, per error code: `unknown` unless the shared
-# layer proves nothing was sent. Unlisted codes are refused before any send (validation,
-# unknown device, unsupported operation or media, discovery).
+# What a failed command means for delivery, per error code: `uncertain` unless the shared
+# layer proves nothing was sent. Unlisted codes are refused before a send (validation,
+# a device not discovered, unsupported operation or media, discovery).
 _COMMAND_DELIVERY = {
-    "timeout": UNKNOWN,  # delivery timed out: it may or may not have arrived
+    "timeout": UNCERTAIN,  # delivery timed out: it may or may not have arrived
     # The PyChromecast adapter maps an OSError raised while writing to the socket (part of
     # the command may already be out) to device_unavailable.
-    "device_unavailable": UNKNOWN,
-    # Any other PyChromecast error becomes command_rejected, including ones raised before
+    "device_unavailable": UNCERTAIN,
+    # Every other PyChromecast error becomes command_rejected, including ones raised before
     # anything was written (UnsupportedNamespace): it does not prove the TV received it.
-    "command_rejected": UNKNOWN,
-    INTERNAL_ERROR_CODE: UNKNOWN,  # an unexpected failure may have happened after sending
+    "command_rejected": UNCERTAIN,
+    INTERNAL_ERROR_CODE: UNCERTAIN,  # an unexpected failure may have happened after sending
 }
 
 _ERROR_MESSAGES = {
@@ -87,7 +87,7 @@ _ERROR_MESSAGES = {
 
 _DELIVERY_NOTES = {
     NOT_SENT: "Nothing was sent to the TV.",
-    UNKNOWN: "The command may or may not have reached the TV. Do not resend it "
+    UNCERTAIN: "The command may or may not have reached the TV. Do not resend it "
     "automatically: call get_status to see what the TV reports.",
 }
 
@@ -335,7 +335,7 @@ class ControlTvTools:
 
     async def _call(self, tool: str, arguments: JsonObject) -> types.CallToolResult:
         if tool not in _ALLOWED_ARGUMENTS:
-            return present_error(tool, "invalid_argument", f"unknown tool: {tool!r}")
+            return present_error(tool, "invalid_argument", f"not a tool of this server: {tool!r}")
         unexpected = sorted(set(arguments) - _ALLOWED_ARGUMENTS[tool])
         if unexpected:
             return present_error(

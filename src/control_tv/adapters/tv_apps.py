@@ -77,7 +77,7 @@ _FRONT = re.compile(
 PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 _COMPONENT = re.compile(r"^([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/[A-Za-z0-9_.$]+$")
 
-# Display names control-TV knows for common packages; any other app shows its package name.
+# Display names control-TV knows for common packages; every other app shows its package name.
 KNOWN_NAMES = {
     "com.google.android.youtube.tv": "YouTube",
     "com.google.android.youtube.tvkids": "YouTube Kids",

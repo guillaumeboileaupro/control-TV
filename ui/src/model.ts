@@ -18,8 +18,8 @@ export interface Device {
   kind: string;
   modelName: string | null;
   // Whether the TV advertises its own remote-control channel (Android TV Remote): true or
-  // false when discovery looked for it, null when unknown. Optional: an older control backend
-  // does not send it, which reads as unknown. Only `true` offers the TV remote panel.
+  // false when discovery looked for it, null when undetermined. Optional: an older control backend
+  // does not send it, which reads as undetermined. Only `true` offers the TV remote panel.
   androidTvRemote?: boolean | null;
 }
 
@@ -48,7 +48,7 @@ export interface MediaStatus {
   supportsPause?: boolean | null;
 }
 
-// `null` means the device did not report it - unknown, never "zero" or "off".
+// `null` means the device did not report it - not reported, never "zero" or "off".
 export interface DeviceStatus {
   deviceId: string;
   connection: string;
@@ -117,7 +117,7 @@ export function isServiceFailure(failure: BridgeFailure): boolean {
   return failure.code !== "bridge_busy";
 }
 
-// Failures the app reports without any answer from the background service: it was not
+// Failures the app reports without an answer from the background service: it was not
 // running, the exchange broke, it did not answer in time, or it was busy with another request.
 const NO_ANSWER_CODES: ReadonlySet<string> = new Set([
   "backend_unavailable",
@@ -308,7 +308,7 @@ function beginStatusRead(
 }
 
 // Selects by the device's stable id, never by its display name (two devices can share a
-// friendly name). An id the backend did not just report is ignored, and so is any
+// friendly name). An id the backend did not just report is ignored, and so is every
 // selection while a request is already in flight (see `canSelect`).
 export function selectDevice(
   state: AppState,
@@ -361,7 +361,7 @@ export function finishStatusRead(
 }
 
 // Anything a rejected `invoke` can carry: the structured failure the shell sends, or a
-// plain string/Error from Tauri itself (unknown command, argument decoding, ...).
+// plain string/Error from Tauri itself (a command it does not have, argument decoding, ...).
 export function toBridgeFailure(error: Thrown): BridgeFailure {
   if (error instanceof Error) {
     return { code: "unexpected", message: error.message };
@@ -493,7 +493,7 @@ export function describeDevice(device: Device, all: Device[]): DeviceDescription
   };
 }
 
-export type PlaybackKind = "playing" | "paused" | "buffering" | "idle" | "unknown";
+export type PlaybackKind = "playing" | "paused" | "buffering" | "idle" | "undetermined";
 
 export interface StatusDescription {
   connected: boolean;
@@ -506,7 +506,7 @@ export interface StatusDescription {
   byline: string | null;
   hasMedia: boolean;
   playback: { kind: PlaybackKind; label: string } | null;
-  // `fraction` is null when the duration is unknown, so no progress bar is drawn.
+  // `fraction` is null when the duration is not reported, so no progress bar is drawn.
   position: { text: string; fraction: number | null } | null;
   volumeText: string;
   muted: boolean | null;
@@ -525,7 +525,7 @@ const PLAYBACK_LABELS: Record<PlaybackKind, string> = {
   paused: "Paused",
   buffering: "Buffering",
   idle: "Idle",
-  unknown: "State unknown",
+  undetermined: "State not reported",
 };
 
 // A reported text with something to read, else null: blank is not a value worth showing.
@@ -544,7 +544,7 @@ function connectionLabel(connection: string): string {
 export function playbackKind(state: string): PlaybackKind {
   return state === "playing" || state === "paused" || state === "buffering" || state === "idle"
     ? state
-    : "unknown";
+    : "undetermined";
 }
 
 export function formatClock(seconds: number | null): string {

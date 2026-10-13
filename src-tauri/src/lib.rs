@@ -444,7 +444,7 @@ impl BridgeSlot {
         }
     }
 
-    /// Stop the current process, if any, and leave the slot unavailable for `reason`.
+    /// Stop the current process, if there is one, and leave the slot unavailable for `reason`.
     fn retire(&mut self, reason: String) {
         if let BridgeState::Ready(bridge) = &self.state {
             bridge.process.terminate();
@@ -785,7 +785,7 @@ async fn bridge_set_muted(
 
 /// The request for one key on the TV's own remote channel: the stable device id and the key's
 /// name (`volume_up`, `mute`, `power`, `ok`, ...). Which names exist is decided by the control
-/// layer, which refuses any other before anything is sent.
+/// layer, which refuses every other name before anything is sent.
 fn remote_key_request(device_id: &str, key: &str) -> Value {
     json!({ "deviceId": device_id, "key": key })
 }
@@ -948,7 +948,7 @@ mod tray {
         Open,
         Quit,
         Action(&'static str),
-        Unknown,
+        Unrecognized,
     }
 
     /// What a click on a tray menu item means. Pure, so it is tested without a desktop.
@@ -959,7 +959,7 @@ mod tray {
             _ => ACTIONS
                 .iter()
                 .find(|(action, _)| *action == id)
-                .map_or(TrayEvent::Unknown, |(action, _)| TrayEvent::Action(action)),
+                .map_or(TrayEvent::Unrecognized, |(action, _)| TrayEvent::Action(action)),
         }
     }
 
@@ -1018,7 +1018,7 @@ mod tray {
                     let _ = app.emit_to("main", EVENT, action);
                 }
             }
-            TrayEvent::Unknown => {}
+            TrayEvent::Unrecognized => {}
         }
     }
 
@@ -1045,8 +1045,8 @@ fn show_main_window(app: tauri::AppHandle) {
 }
 
 /// The failure of an embedded (Android) bridge call. The Android side rejects with
-/// `backend_unavailable` only when the embedded Python could not start, before any request
-/// reached the shared control layer (certainly not sent); any other rejection may have come
+/// `backend_unavailable` only when the embedded Python could not start, before a request
+/// reached the shared control layer (certainly not sent); every other rejection may have come
 /// after the request was handled, so it is the ambiguous `bridge_transport`.
 #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
 fn embedded_rejection(code: Option<&str>, message: Option<&str>) -> BridgeFailure {
@@ -1401,7 +1401,7 @@ mod tests {
     }
 
     /// The real bridge, real `ControlService`, real `PyChromecastTransport`: a device that
-    /// was never discovered is rejected before any network I/O, so this proves the Rust
+    /// was never discovered is rejected before a network I/O, so this proves the Rust
     /// -> Python `get_status` path and its error code end to end without a Chromecast.
     #[test]
     fn the_real_bridge_answers_get_status_for_an_undiscovered_device_with_its_code() {
@@ -2015,8 +2015,8 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
         for (id, _) in tray::ACTIONS {
             assert_eq!(event_for(id), TrayEvent::Action(id));
         }
-        assert_eq!(event_for("set_volume"), TrayEvent::Unknown);
-        assert_eq!(event_for(""), TrayEvent::Unknown);
+        assert_eq!(event_for("set_volume"), TrayEvent::Unrecognized);
+        assert_eq!(event_for(""), TrayEvent::Unrecognized);
     }
 
     #[test]
@@ -2216,7 +2216,7 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
     }
 
     /// The real bridge, real `ControlService`, real `PyChromecastTransport`: an id that was
-    /// never discovered is refused before any network I/O. Reaching `device_not_found` (and
+    /// never discovered is refused before a network I/O. Reaching `device_not_found` (and
     /// not `invalid_argument`) proves the method names and the `level`/`muted` parameter
     /// names this shell sends are the ones the bridge accepts, without a Chromecast.
     #[test]

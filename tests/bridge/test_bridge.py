@@ -103,7 +103,7 @@ def test_discover_devices_returns_transport_devices_as_json(control: ControlServ
             "friendlyName": "Living room",
             "host": "192.168.1.20",
             "port": 8009,
-            "kind": "unknown",
+            "kind": "other",
             "modelName": None,
             "androidTvRemote": None,
         }
@@ -193,7 +193,7 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
             connection=ConnectionState.CONNECTED,
             observed_at=OBSERVED_AT,
             receiver=ReceiverStatus(app_name="Default Media Receiver"),
-            media=MediaStatus(playback_state=PlaybackState.UNKNOWN),
+            media=MediaStatus(playback_state=PlaybackState.UNDETERMINED),
         )
     )
 
@@ -208,7 +208,7 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
         "volumeControlType": None,
     }
     assert status["media"] == {
-        "playbackState": "unknown",
+        "playbackState": "undetermined",
         "contentId": None,
         "contentType": None,
         "title": None,
@@ -334,7 +334,7 @@ def test_unknown_method_is_rejected(control: ControlService) -> None:
     assert response == {
         "id": 6,
         "ok": False,
-        "error": {"code": "invalid_argument", "message": "unknown method: 'levitate'"},
+        "error": {"code": "invalid_argument", "message": "not a bridge method: 'levitate'"},
     }
 
 
