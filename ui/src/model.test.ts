@@ -407,7 +407,7 @@ describe("failure wording", () => {
     ["bridge_timeout", "backend_timeout", "retry"],
     ["bridge_busy", "backend_timeout", "retry"],
     ["device_unavailable", "device_unavailable", "retry"],
-    ["device_not_found", "device_unknown", "discover"],
+    ["device_not_found", "device_lost", "discover"],
     ["timeout", "device_timeout", "retry"],
     ["internal_error", "error", "retry"],
     ["invalid_argument", "error", "retry"],
