@@ -190,7 +190,6 @@ export function startRemote(
   if (selected === null || !available || !idle(state)) {
     return { state, request: null };
   }
-  // Listing apps uses the TV's debugging, not its remote: a pairing step does not block it.
   // Apps go through the TV's debugging, not its remote: a pairing step blocks neither.
   const needsRemote =
     action.kind !== "show_code" &&
