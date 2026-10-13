@@ -1,30 +1,60 @@
-/* One light surface, thin separators instead of cards, one radius, no shadows and no
-   decorative gradients (the logo keeps its own). Colors carry meaning only: accent = action
-   or selection, red = a problem. State is never shown by color alone: it also has an icon
-   or a word. */
+/* A remote first: soft surfaces group what acts on the same thing (the media, the TV's own
+   remote, its apps, the Cast sound). One accent for actions and selection, red for a problem.
+   State is never shown by color alone: it also has an icon or a word. Light and dark follow the
+   system; every text and control color meets WCAG AA contrast on its surface. */
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   font-family:
     system-ui,
     -apple-system,
     "Segoe UI",
+    Roboto,
     sans-serif;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.45;
 
-  --bg: #ffffff;
-  --text: #1d2733;
-  --muted: #5a6672;
-  --line: #dfe4ea;
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --surface-3: #e2e7ee;
+  --text: #17202b;
+  --muted: #55606c;
+  --line: #d9dfe6;
   --accent: #1760ff;
   --accent-hover: #0f4fd6;
-  --accent-tint: #eef3ff;
+  --accent-text: #ffffff;
+  --accent-tint: #e7eeff;
   --error: #b42318;
-  --hover: #f3f5f8;
-  --radius: 8px;
-  /* Fluid rather than breakpointed: page gutter and headline scale with the width. */
-  --gap: clamp(12px, 4vw, 16px);
+  --error-tint: #fdecea;
+  --power: #c4320a;
+  --hover: #e9edf2;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --radius: 14px;
+  --radius-small: 10px;
+  --gap: clamp(12px, 4vw, 20px);
+  --target: 48px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1218;
+    --surface: #171c24;
+    --surface-2: #202733;
+    --surface-3: #2a3240;
+    --text: #e8edf3;
+    --muted: #a3afbd;
+    --line: #2c3442;
+    --accent: #5b8cff;
+    --accent-hover: #7aa2ff;
+    --accent-text: #0b1020;
+    --accent-tint: #1d2a4a;
+    --error: #ff8a7a;
+    --error-tint: #3a1a17;
+    --power: #ff7a59;
+    --hover: #252d3a;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  }
 }
 
 * {
@@ -40,6 +70,7 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .sprite {
@@ -51,11 +82,11 @@ body {
 
 .icon {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.75;
+  stroke-width: 1.85;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -66,16 +97,20 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* Layout: a single column that is the same model on a desktop window and a phone. */
+h2 {
+  margin: 0;
+}
+
+/* Layout: a single column, the same model on a desktop window and a phone. */
 
 .app {
-  max-width: 640px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: 0 var(--gap) 32px;
+  padding: 0 var(--gap) 40px;
 }
 
 .appbar {
@@ -83,49 +118,82 @@ button {
   align-items: center;
   gap: 10px;
   min-height: 56px;
-  border-bottom: 1px solid var(--line);
 }
 
 .logo {
   display: block;
-  height: 27px;
+  height: 26px;
   width: auto;
 }
 
 .wordmark {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .main {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding-top: var(--gap);
+  gap: 16px;
 }
 
 .notice {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: var(--gap);
-  padding: 10px 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--error);
+  border-radius: var(--radius-small);
+  background: var(--error-tint);
+}
+
+/* Surfaces */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
   border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
-.notice[hidden] {
-  display: none;
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--target);
 }
 
-/* Buttons */
+.card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* Buttons: every control is at least 48px, for a finger, a mouse and a keyboard alike. */
 
 .btn,
 .btn-icon,
+.btn-pill,
+.btn-round,
+.dpad-key,
+.dpad-ok,
+.rocker-key,
 .device,
-.picker-summary {
+.app-tile,
+.picker-summary,
+.keyboard-summary {
   cursor: pointer;
 }
 
@@ -134,11 +202,11 @@ button {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 0 16px;
+  min-height: var(--target);
+  padding: 0 18px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
+  border-radius: 999px;
+  background: var(--surface);
   font-weight: 600;
 }
 
@@ -146,10 +214,15 @@ button {
   background: var(--hover);
 }
 
+.btn-small {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
 .btn-primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #ffffff;
+  color: var(--accent-text);
 }
 
 .btn-primary:hover {
@@ -161,11 +234,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: var(--target);
+  height: var(--target);
   padding: 0;
   border: 0;
-  border-radius: var(--radius);
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
 }
@@ -175,15 +248,53 @@ button {
   color: var(--text);
 }
 
+.btn-round {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.btn-power {
+  color: var(--power);
+}
+
+.btn-power:hover {
+  background: var(--surface-3);
+}
+
+.btn-pill {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.btn-pill:hover {
+  background: var(--surface-3);
+}
+
 /* Busy controls stay focusable (aria-disabled, not disabled) so keyboard focus is never
    dropped; the app ignores their activation. */
 [aria-disabled="true"] {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .btn[aria-disabled="true"]:hover {
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .btn-primary[aria-disabled="true"]:hover {
@@ -195,6 +306,13 @@ button {
 .device[aria-disabled="true"]:hover {
   background: transparent;
   color: var(--muted);
+}
+
+.btn-pill[aria-disabled="true"]:hover,
+.btn-round[aria-disabled="true"]:hover,
+.rocker-key[aria-disabled="true"]:hover,
+.dpad-key[aria-disabled="true"]:hover {
+  background: var(--surface-2);
 }
 
 .is-loading .icon {
@@ -210,6 +328,23 @@ button {
 
 .btn-icon.is-loading {
   color: var(--accent);
+}
+
+/* A remote key being sent: a ring of the accent, so the press is visible at once. */
+.dpad-key.is-loading,
+.dpad-ok.is-loading,
+.rocker-key.is-loading,
+.btn-pill.is-loading,
+.btn-round.is-loading,
+.app-tile.is-loading {
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+
+.dpad-key.is-loading .icon,
+.rocker-key.is-loading .icon,
+.btn-pill.is-loading .icon,
+.btn-round.is-loading .icon {
+  animation: none;
 }
 
 @keyframes spin {
@@ -231,16 +366,18 @@ button {
 /* Device picker: the selected device is the row you see; the list is the disclosure. */
 
 .picker {
-  border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .picker-summary {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
-  padding: 8px 12px;
+  min-height: 64px;
+  padding: 8px 16px;
   list-style: none;
 }
 
@@ -250,6 +387,15 @@ button {
 
 .picker-summary:hover {
   background: var(--hover);
+}
+
+.picker-summary > .icon:first-child {
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .picker[open] > .picker-summary {
@@ -266,7 +412,7 @@ button {
 .summary-title {
   display: -webkit-box;
   overflow: hidden;
-  font-weight: 600;
+  font-weight: 700;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -276,7 +422,7 @@ button {
 .meta,
 .device-sub {
   color: var(--muted);
-  font-size: 0.867rem;
+  font-size: 0.875rem;
 }
 
 .chevron {
@@ -284,7 +430,8 @@ button {
   transition: transform 0.15s;
 }
 
-.picker[open] .chevron {
+.picker[open] .chevron,
+.keyboard[open] .chevron {
   transform: rotate(180deg);
 }
 
@@ -292,7 +439,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px;
+  padding: 16px;
 }
 
 .picker-body > .btn {
@@ -329,7 +476,7 @@ button {
 }
 
 .devices {
-  margin: 0 -12px -12px;
+  margin: 0 -16px -16px;
   padding: 0;
   border-top: 1px solid var(--line);
   list-style: none;
@@ -348,8 +495,8 @@ button {
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 56px;
-  padding: 8px 12px;
+  min-height: 60px;
+  padding: 8px 16px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -365,7 +512,7 @@ button {
 }
 
 .device[aria-current="true"] .device-name {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .device-text {
@@ -387,16 +534,16 @@ button {
   color: var(--accent);
 }
 
-/* Current device state: media first, secondary facts after, no containers. */
+/* Now playing: the media first, its controls under it, quiet facts last. */
 
 .context {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 16px;
 }
 
-.context[hidden] {
-  display: none;
+.now-card {
+  gap: 4px;
 }
 
 .context-head {
@@ -404,7 +551,8 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 44px;
+  min-height: 40px;
+  margin: -8px -8px 0 0;
 }
 
 .context-head .meta {
@@ -413,15 +561,15 @@ button {
 
 .headline {
   margin: 0;
-  font-size: clamp(1.2rem, 4.6vw, 1.333rem);
-  font-weight: 600;
+  font-size: clamp(1.2rem, 5vw, 1.4rem);
+  font-weight: 700;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
 .headline.is-empty {
   color: var(--muted);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* The artist the TV names (for a video, often its channel): quiet, under the title. */
@@ -451,24 +599,26 @@ button {
 .progress {
   display: block;
   width: 100%;
-  height: 4px;
+  height: 6px;
   margin-top: 12px;
   border: 0;
-  border-radius: var(--radius);
-  background: var(--line);
+  border-radius: 999px;
+  background: var(--surface-3);
   appearance: none;
   overflow: hidden;
 }
 
 .progress::-webkit-progress-bar {
-  background: var(--line);
+  background: var(--surface-3);
 }
 
 .progress::-webkit-progress-value {
+  border-radius: 999px;
   background: var(--accent);
 }
 
 .progress::-moz-progress-bar {
+  border-radius: 999px;
   background: var(--accent);
 }
 
@@ -476,9 +626,9 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 24px;
-  margin: 24px 0 0;
-  padding: 16px 0 0;
+  gap: 8px 20px;
+  margin: 12px 0 0;
+  padding: 12px 0 0;
   border-top: 1px solid var(--line);
   color: var(--muted);
   list-style: none;
@@ -494,8 +644,9 @@ button {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 12px 0 0;
+  margin: 8px 0 0;
   color: var(--muted);
+  font-size: 0.9375rem;
 }
 
 .problem {
@@ -521,11 +672,11 @@ button {
 
 .diagnostic {
   color: var(--muted);
-  font-size: 0.867rem;
+  font-size: 0.875rem;
 }
 
 .diagnostic summary {
-  padding: 13px 0;
+  padding: 12px 0;
   cursor: pointer;
 }
 
@@ -536,15 +687,16 @@ button {
   font-family: ui-monospace, monospace;
 }
 
-/* Icons sit on the first line of text that may wrap (20px icon, 21.75px line). */
+/* Icons sit on the first line of text that may wrap. */
 .fact .icon,
 .note .icon,
-.problem-title .icon {
-  margin-top: 1px;
+.problem-title .icon,
+.feedback .icon {
+  margin-top: 0;
 }
 
 /* Playback controls: one dominant toggle, a quieter Stop, a slider only when seeking is
-   possible. Everything is at least 44px so it works with a mouse, a keyboard and a finger. */
+   possible. */
 
 .controls {
   display: flex;
@@ -559,10 +711,10 @@ button {
   gap: 2px;
 }
 
-/* One look for every slider: a 44px-high hit area, the accent for the thumb and the filled part. */
+/* One look for every slider: a 48px-high hit area, the accent for the thumb and the filled part. */
 .range {
   width: 100%;
-  height: 44px;
+  height: var(--target);
   margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
@@ -570,7 +722,7 @@ button {
 
 .range:disabled {
   cursor: progress;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .seek-label {
@@ -586,15 +738,18 @@ button {
 
 .transport {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 12px;
 }
 
 .btn-transport {
-  min-width: 9rem;
+  flex: 2;
   min-height: 56px;
-  font-size: 1.067rem;
+  font-size: 1.0625rem;
+}
+
+.btn-transport-secondary {
+  flex: 1;
+  min-height: 56px;
 }
 
 .controls .note {
@@ -607,10 +762,6 @@ button {
   gap: 8px;
   margin: 0;
   color: var(--muted);
-}
-
-.feedback .icon {
-  margin-top: 1px;
 }
 
 .feedback-warning {
@@ -632,25 +783,336 @@ button {
   margin-top: 12px;
 }
 
-/* Sound: a mute button and a volume slider on one line, the level (or what is being set) under
-   them. The line is kept in the layout so composing a level never moves what is below. */
+/* The TV's own remote: a round pad in the middle, Back and Home under it, the volume rocker,
+   then the keyboard on demand. */
 
-.sound {
+.tv-remote {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-top: 20px;
+  gap: 16px;
+}
+
+.readout {
+  min-height: 1.45em;
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+  text-wrap: balance;
+}
+
+.readout.is-empty {
+  display: none;
+}
+
+.pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-small);
+  background: var(--accent-tint);
+}
+
+.pairing-text {
+  margin: 0;
+}
+
+.pairing-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--target);
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+.remote-code {
+  flex: 0 0 9ch;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.pad-area {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+/* The pad: one ring cut in four keys, OK in the middle. */
+.dpad {
+  --pad: min(240px, 68vw);
+  position: relative;
+  width: var(--pad);
+  height: var(--pad);
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.dpad-key {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 33%;
+  height: 33%;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+}
+
+.dpad-key .icon {
+  width: 28px;
+  height: 28px;
+}
+
+.dpad-key:hover {
+  background: var(--surface-3);
+}
+
+.dpad-up {
+  top: 2%;
+  left: 33.5%;
+}
+
+.dpad-down {
+  bottom: 2%;
+  left: 33.5%;
+}
+
+.dpad-left {
+  top: 33.5%;
+  left: 2%;
+}
+
+.dpad-right {
+  top: 33.5%;
+  right: 2%;
+}
+
+.dpad-ok {
+  position: absolute;
+  top: 31%;
+  left: 31%;
+  width: 38%;
+  height: 38%;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 1.125rem;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.dpad-ok:hover {
+  background: var(--accent-hover);
+}
+
+.dpad-ok[aria-disabled="true"]:hover {
+  background: var(--accent);
+}
+
+.remote-row {
+  display: flex;
+  gap: 10px;
+}
+
+/* The TV's volume: one rocker, − and + at its ends, Mute in the middle. */
+.volume-rocker {
+  display: flex;
+  align-items: stretch;
+  min-height: 56px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.rocker-key {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+}
+
+.rocker-key:hover {
+  background: var(--surface-3);
+}
+
+.rocker-key .icon {
+  width: 26px;
+  height: 26px;
+}
+
+.rocker-mute {
+  flex: 1.4;
+  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+/* The keyboard: on demand, under the remote. */
+.keyboard {
+  border-top: 1px solid var(--line);
+  margin: 0 -16px -16px;
+  padding: 0 16px;
+}
+
+.keyboard[open] {
+  padding-bottom: 16px;
+}
+
+.keyboard-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.keyboard-summary::-webkit-details-marker {
+  display: none;
+}
+
+.keyboard-summary span {
+  flex: 1;
+}
+
+.hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.keyboard-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* The TV's apps: a grid of tiles, the filter above it once the TV listed them. */
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  max-height: 26rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.app-grid:empty {
+  display: none;
+}
+
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 104px;
+  padding: 12px 6px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.app-tile:hover {
+  background: var(--surface-3);
+}
+
+.app-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: hsl(var(--hue, 220) 70% 34%);
+  color: #ffffff;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.app-name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The outcome of the last remote action, kept in view at the bottom while the remote scrolls. */
+.remote-feedback {
+  position: sticky;
+  bottom: 12px;
+  z-index: 1;
+}
+
+.remote-feedback:empty {
+  display: none;
+}
+
+.remote-feedback > .feedback {
+  padding: 12px 14px;
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow:
+    0 4px 16px rgb(16 24 40 / 16%),
+    0 0 0 1px var(--line);
+}
+
+.remote-feedback > .diagnostic {
+  margin-top: 4px;
+  padding: 0 14px;
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+/* Cast sound: a mute button and a volume slider on one line, the level under them. */
+
+.sound {
+  gap: 4px;
 }
 
 .sound-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 8px;
 }
 
 .btn-mute {
   flex: none;
-  width: 44px;
+  width: var(--target);
   padding: 0;
 }
 
@@ -661,10 +1123,7 @@ button {
   color: var(--accent);
 }
 
-.btn-mute.is-muted:hover {
-  background: var(--accent-tint);
-}
-
+.btn-mute.is-muted:hover,
 .btn-mute[aria-disabled="true"].is-muted:hover {
   background: var(--accent-tint);
 }
@@ -675,176 +1134,16 @@ button {
   width: auto;
 }
 
+/* Kept in the layout (not removed) so composing a level never moves what is below. */
 .sound-readout {
-  min-height: 1.45em;
   margin: 0;
-  color: var(--muted);
-  /* The limit hint may need two lines on a phone; keep them even rather than leaving one word. */
-  text-wrap: balance;
 }
 
 .sound-readout.is-empty {
+  display: block;
   visibility: hidden;
 }
 
 .sound .note {
   margin: 4px 0 0;
-}
-
-/* The TV's own remote: rows of keys and a small cross for navigation, the TV's last report under
-   them. Text labels, the same buttons as everywhere else; no device-like decoration. */
-
-.tv-remote {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
-.tv-remote-keys {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tv-remote-keys[hidden] {
-  display: none;
-}
-
-.tv-remote-title {
-  margin: 0;
-  font-weight: 600;
-}
-
-.tv-remote-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tv-remote-pairing {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tv-remote-pairing .note {
-  margin: 0;
-}
-
-.remote-code {
-  width: 8ch;
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font: inherit;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-}
-
-.dpad {
-  display: grid;
-  grid-template-columns: repeat(3, 56px);
-  grid-template-areas:
-    ". up ."
-    "left ok right"
-    ". down .";
-  gap: 6px;
-}
-
-.dpad .btn {
-  padding: 0;
-}
-
-.dpad-up {
-  grid-area: up;
-}
-
-.dpad-left {
-  grid-area: left;
-}
-
-.dpad-ok {
-  grid-area: ok;
-}
-
-.dpad-right {
-  grid-area: right;
-}
-
-.dpad-down {
-  grid-area: down;
-}
-
-.tv-remote .btn.is-loading {
-  border-color: var(--accent);
-}
-
-.remote-feedback .feedback,
-.remote-feedback .problem {
-  margin: 0;
-}
-
-/* The text for the TV's active field: one line, the field takes the width the button leaves. */
-.tv-remote-text {
-  display: flex;
-  gap: 8px;
-}
-
-.remote-text {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font: inherit;
-}
-
-.tv-remote > .note {
-  margin: 0;
-}
-
-/* The TV's apps: a plain list of buttons, the filter above it once the TV listed them. */
-.tv-apps {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.tv-apps-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.tv-apps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  max-height: 22rem;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.tv-apps-list .btn {
-  width: 100%;
-  justify-content: space-between;
-  font-weight: 500;
-}
-
-.tv-apps-list .app-package {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.85em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
