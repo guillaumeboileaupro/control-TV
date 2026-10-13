@@ -11,6 +11,7 @@ from typing import Protocol
 
 from control_tv.domain import (
     AppLaunch,
+    AppLaunchResult,
     CommandResult,
     Device,
     DeviceId,
@@ -18,7 +19,9 @@ from control_tv.domain import (
     KeyPress,
     MediaRequest,
     RemoteKey,
+    RemoteKeyResult,
     RemoteObservation,
+    RemoteTextResult,
     TextEntry,
     TvApp,
 )
@@ -93,7 +96,8 @@ class TvApps(Protocol):
 
 
 class TvControl(Protocol):
-    """The authoritative control surface. The manual UI and the MCP adapter both call this.
+    """The authoritative control surface. The bridge (window, Android app) and the MCP adapter
+    call this, never a concrete service.
 
     Every command returns a `CommandResult` once the command was sent, and raises a
     `ControlError` when it could not be sent. `CommandResult.confirmation` says whether the TV
@@ -117,3 +121,19 @@ class TvControl(Protocol):
     def set_volume(self, device_id: DeviceId, level: float) -> CommandResult: ...
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> CommandResult: ...
+
+    # The TV's own remote channel and its installed apps, beside Cast.
+
+    def get_remote_status(self, device_id: DeviceId) -> RemoteObservation: ...
+
+    def start_remote_pairing(self, device_id: DeviceId) -> None: ...
+
+    def finish_remote_pairing(self, device_id: DeviceId, code: str) -> None: ...
+
+    def press_remote_key(self, device_id: DeviceId, key: RemoteKey) -> RemoteKeyResult: ...
+
+    def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult: ...
+
+    def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]: ...
+
+    def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult: ...

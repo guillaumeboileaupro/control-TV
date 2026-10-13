@@ -1101,6 +1101,7 @@ Règle du propriétaire : appliquer la compétence `code-solid` et ne plus avoir
 | UI : `unknown`/`any` retirés (`JsonValue`, `JsonObject`, `Thrown`) | 100 % | non chiffré | inclus | 0 | `tsc`, 329 tests UI |
 | Mots « any » / « unknown » restants | 100 % retirés du code | — | inclus | 0 | `DeviceKind.OTHER`, `PlaybackState.UNDETERMINED` (« undetermined »), appairage `not_tried`, livraison MCP `uncertain` ; plus d'appel `any()` ; restent seulement l'étiquette de paquet Python `py3-none-any` et la syntaxe Rust `cfg(any(...))`, formats externes |
 | Audit SOLID (responsabilité unique) | 100 % des 4 écarts relevés traités | — | inclus | 0 | `TvChannels` sorti de `ControlService` ; `lib.rs` découpé en `bridge`, `commands`, `tray`, `android` ; `remote-panel.ts` et `dom.ts` sortis de `main.ts` ; `cast_replies.py` sorti de l'adaptateur Cast ; comportement inchangé (1397 tests Python, 329 UI, 75 Rust ; vérification Android de la crate) |
+| Inversion de dépendance du bridge (audit de `main`, P3-4, 2026-10-13) | 100 % | — | inclus | 0 | le port `TvControl` couvre aussi le canal télécommande et les applications ; les handlers, `dispatch`, `handle_line` et `run` dépendent de `TvControl`, `default_service` reste le seul point qui construit `ControlService` ; test `tests/bridge/test_bridge_port.py` (une implémentation qui n'est pas `ControlService`) ; aucun changement de comportement |
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 
