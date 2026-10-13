@@ -393,7 +393,7 @@ export type FailureKind =
   | "backend_unavailable"
   | "backend_timeout"
   | "device_unavailable"
-  | "device_unknown"
+  | "device_lost"
   | "device_timeout"
   | "error";
 
@@ -450,7 +450,7 @@ export function describeFailure(
       };
     case "device_not_found":
       return {
-        kind: "device_unknown",
+        kind: "device_lost",
         title: "This device needs to be found again",
         hint: "Find devices again, then select it.",
         recovery: "discover",

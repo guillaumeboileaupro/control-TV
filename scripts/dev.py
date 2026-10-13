@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -367,8 +368,109 @@ def cmd_version_check(root: Path) -> int:
     return 1
 
 
+# TypeScript has no compiler switch against `any` / `unknown`; Python's explicit `Any` is refused by
+# mypy (`disallow_any_explicit`). The owner's rule: neither type in the application code; tests
+# may keep them. Comments and string contents are blanked before the words are looked for; the
+# `${...}` expressions of template literals are code and stay.
+_FORBIDDEN_TS_WORD = re.compile(r"\b(any|unknown)\b")
+
+
+def _blank(character: str) -> str:
+    # Line breaks stay, so that line numbers stay right.
+    return character if character == "\n" else " "
+
+
+def typescript_code_only(source: str) -> str:
+    """`source` with comments and string contents blanked; template expressions kept."""
+    out: list[str] = []
+    mode = "code"  # code, line comment, block comment, a quote, or "`" for template text
+    expressions: list[int] = []  # open `${` expressions: their nesting depth of `{`
+    i, size = 0, len(source)
+    while i < size:
+        char, following = source[i], source[i + 1 : i + 2]
+        if mode == "code":
+            if char == "/" and following in ("/", "*"):
+                mode = "//" if following == "/" else "/*"
+                out.append("  ")
+                i += 2
+                continue
+            if char in "\"'`":
+                mode = char
+            elif expressions and char == "{":
+                expressions[-1] += 1
+            elif expressions and char == "}":
+                if expressions[-1] == 0:
+                    expressions.pop()
+                    mode = "`"  # back to the template text this expression was in
+                else:
+                    expressions[-1] -= 1
+            out.append(char)
+            i += 1
+        elif mode == "//":
+            if char == "\n":
+                mode = "code"
+            out.append(_blank(char))
+            i += 1
+        elif mode == "/*":
+            if char == "*" and following == "/":
+                mode = "code"
+                out.append("  ")
+                i += 2
+            else:
+                out.append(_blank(char))
+                i += 1
+        elif char == "\\":
+            out.append(" " + _blank(following))
+            i += 2
+        elif char == mode:  # the closing quote or backtick
+            mode = "code"
+            out.append(char)
+            i += 1
+        elif mode == "`" and char == "$" and following == "{":
+            expressions.append(0)
+            mode = "code"
+            out.append("${")
+            i += 2
+        else:
+            out.append(_blank(char))
+            i += 1
+    return "".join(out)
+
+
+def forbidden_ts_words(source: str) -> list[tuple[int, str]]:
+    """(line, word) of every `any` or `unknown` in code: not in comments or string contents."""
+    code = typescript_code_only(source)
+    return [
+        (code.count("\n", 0, found.start()) + 1, found.group(1))
+        for found in _FORBIDDEN_TS_WORD.finditer(code)
+    ]
+
+
+def cmd_type_rules(root: Path) -> int:
+    """No `any` / `unknown` in the window's TypeScript outside its tests."""
+    found = [
+        (path.relative_to(root), line, word)
+        for path in sorted((root / "ui" / "src").rglob("*.ts"))
+        if not path.name.endswith(".test.ts")
+        for line, word in forbidden_ts_words(path.read_text(encoding="utf-8"))
+    ]
+    if not found:
+        print("no any or unknown in the application TypeScript")
+        return 0
+    for path, line, word in found:
+        print(f"error: {path}:{line}: `{word}` in application code", file=sys.stderr)
+    return 1
+
+
 def cmd_check(root: Path) -> int:
-    for step in (cmd_version_check, cmd_lint, cmd_typecheck, cmd_test, cmd_depcheck):
+    for step in (
+        cmd_version_check,
+        cmd_type_rules,
+        cmd_lint,
+        cmd_typecheck,
+        cmd_test,
+        cmd_depcheck,
+    ):
         code = step(root)
         if code != 0:
             return code
@@ -481,6 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
         "depcheck",
         "check",
         "version-check",
+        "type-rules",
         "rust-check",
         "ui-check",
         "bridge-build",
@@ -513,6 +616,7 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "depcheck": cmd_depcheck,
         "check": cmd_check,
         "version-check": cmd_version_check,
+        "type-rules": cmd_type_rules,
         "rust-check": cmd_rust_check,
         "ui-check": cmd_ui_check,
         "bridge-build": cmd_bridge_build,
