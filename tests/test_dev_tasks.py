@@ -740,3 +740,26 @@ def test_type_rules_skip_tests_and_report_application_files(
     (src / "bad.ts").write_text("export const z: unknown = 1;\n", encoding="utf-8")
     assert dev.cmd_type_rules(repo) == 1
     assert "ui/src/bad.ts:1: `unknown`" in capsys.readouterr().err
+
+
+def test_type_rules_scan_template_expressions_but_not_template_text() -> None:
+    source = (
+        "const a = `any text ${value as any} and unknown text`;\n"
+        "const b = `${`nested ${x as unknown}`} ${'any'}`;\n"
+        "const c = `${ { key: 1 }.key } fine`;\n"
+        'const d = "escaped \\" any";\n'
+        "/* a block\n   comment with any */ const e: number = 1;\n"
+    )
+
+    assert dev.forbidden_ts_words(source) == [(1, "any"), (2, "unknown")]
+
+
+def test_type_rules_scan_subdirectories(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    nested = repo / "ui" / "src" / "panels"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "panel.test.ts").write_text("const t: any = 1;\n", encoding="utf-8")
+    assert dev.cmd_type_rules(repo) == 0
+
+    (nested / "panel.ts").write_text("export const p = (x: any): void => {};\n", encoding="utf-8")
+    assert dev.cmd_type_rules(repo) == 1
+    assert "ui/src/panels/panel.ts:1: `any`" in capsys.readouterr().err
