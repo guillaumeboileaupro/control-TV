@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   canDiscover,
@@ -54,6 +55,7 @@ import {
   type RemoteRequest,
 } from "./remote.ts";
 import { describeSound } from "./sound.ts";
+import { isTrayAction, trayRequest } from "./tray.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
 // through the shared control layer. This file performs the I/O and draws the DOM; the
@@ -993,6 +995,22 @@ function start(elements: Elements): void {
       elements.pickerSummary.focus();
     }
   });
+
+  // The tray's quick controls run as the window's own actions (see tray.ts); when one cannot
+  // run, nothing is sent and the window comes to the front so the person sees why.
+  void listen<unknown>("tray-action", (event) => {
+    if (!isTrayAction(event.payload)) {
+      return;
+    }
+    const request = trayRequest(state, event.payload);
+    if (request.kind === "transport") {
+      onTransport(request.command);
+    } else if (request.kind === "remote") {
+      onRemote(request.action);
+    } else {
+      void invoke("show_main_window").catch(() => undefined);
+    }
+  }).catch(() => undefined);
 
   render();
   void checkBackend();

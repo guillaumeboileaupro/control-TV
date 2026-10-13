@@ -270,19 +270,19 @@ Exit criteria:
 
 Critical-path item K: after the Android widget.
 
-A system tray / status indicator gives quick access to the essential controls without the main window. Decided during the UI review of 2026-09-26; not started. The tray is a second view over the same chain as the window (Tauri -> Python bridge -> `ControlService`), never a second control engine.
+A system tray / status indicator gives quick access to the essential controls without the main window. Decided during the UI review of 2026-09-26. **Implemented on 2026-10-13 (branch `feat/linux-tray`, not merged), automation-validated only; not yet seen on a real GNOME desktop.** Decision recorded here: closing the main window quits the application, as before; the tray is a quick-control companion while the application runs, not a background service. The tray is a second view over the same chain as the window (Tauri -> Python bridge -> `ControlService`), never a second control engine.
 
 Deliverables:
-- [ ] native system tray / status indicator for the desktop application, using the validated control-TV icon (`assets/logo.svg` and the existing `src-tauri/icons/`);
+- [ ] native system tray / status indicator for the desktop application, using the validated control-TV icon (`assets/logo.svg` and the existing `src-tauri/icons/`): implemented (Tauri `tray-icon`, the application's own icon); the `.deb` now depends on `libayatana-appindicator3-1`; without a status area the window works as before (the error is logged);
 - [ ] GNOME/Linux support, including the status-indicator (AppIndicator) behavior of a stock GNOME desktop, with the limits of the desktop environment documented;
-- [ ] "Open control-TV" reopens and focuses the main window;
-- [ ] "Quit" really stops the application and its Python bridge;
-- [ ] explicit, documented behavior for closing the main window versus quitting the application (closing the window keeps the tray running, or quits, by an explicit decision);
-- [ ] quick controls for the selected device: play/pause, stop, mute/unmute;
-- [ ] volume control only if the platform tray integration allows an appropriate UX (otherwise "Open control-TV" is the path to volume);
-- [ ] no Cast business logic in the Rust/Tauri tray code: every action goes through the existing bridge commands and `ControlService`;
+- [ ] "Open control-TV" reopens and focuses the main window: implemented, not seen on a desktop yet;
+- [ ] "Quit" really stops the application and its Python bridge: implemented (`app.exit`; ending the application closes the bridge's stdin, which ends the bridge), not observed yet;
+- [x] explicit, documented behavior for closing the main window versus quitting the application: closing the window quits (decision of 2026-10-13, above; the owner can ask for the other behavior);
+- [ ] quick controls for the selected device: play/pause, stop, and the TV's own mute (its remote channel, the sound actually heard) — implemented; each runs as the window's own action (`ui/src/tray.ts`), or brings the window to the front when it cannot run;
+- [ ] volume control only if the platform tray integration allows an appropriate UX: implemented as two menu items, TV volume − and +, one remote key each (no slider in a menu);
+- [x] no Cast business logic in the Rust/Tauri tray code: the Rust tray only emits `tray-action` to the window, which runs its own commands (tests: Rust mapping, UI `tray.test.ts`);
 - [ ] tray labels and states follow the same evidence as the window: a command is shown as confirmed only when `confirmation` is `confirmed`; `unconfirmed`, `not_checked`, errors and unreported fields are never shown as success or as a default value; one command at a time, no automatic retry;
-- [ ] the selected device and state shared between the window and the tray have one owner, so both views stay consistent;
+- [x] the selected device and state shared between the window and the tray have one owner: the window's state; the tray holds none;
 
 Exit criteria:
 - [ ] tray behavior automation-validated against a fake transport (actions, confirmation states, window close versus quit);

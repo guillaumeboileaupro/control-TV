@@ -43,7 +43,7 @@
 
 - [ ] Installer le `.deb` et l'APK finaux sur le PC et le téléphone, puis refaire la recette complète.
 - [ ] Documentation d'utilisation : appairage, clavier, limites (par exemple, cette TV ne rapporte pas son volume).
-- [ ] Icône dans la barre système Ubuntu (élément K), après le widget.
+- [ ] Icône dans la barre système Ubuntu (élément K) : **codée** (branche `feat/linux-tray`) — Ouvrir, Lecture/Pause, Stop, Mute TV, Volume TV −/+, Quitter ; fermer la fenêtre quitte l'application (décision à confirmer). À voir sur ton bureau Ubuntu.
 
 ## Suivi
 

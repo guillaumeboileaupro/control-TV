@@ -917,6 +917,129 @@ async fn bridge_launch_tv_app(
     .await
 }
 
+/// The status-area icon (tray) of the desktop application: a second view over the window.
+///
+/// The tray owns no state and no control logic. "Open" and "Quit" act on the application; every
+/// TV action is handed to the window as a `tray-action` event, and the window runs it exactly
+/// like its own button (the same selected TV, the same single request in flight, the same
+/// wording of what the TV confirmed or not). Closing the window quits the application, as
+/// before: the tray is a quick-control companion while the application runs, not a background
+/// service.
+mod tray {
+    /// The TV actions the tray offers, by the identifier the window handles, and their label.
+    pub const ACTIONS: [(&str, &str); 5] = [
+        ("play_pause", "Play / Pause"),
+        ("stop", "Stop"),
+        ("tv_mute", "Mute the TV"),
+        ("tv_volume_down", "TV volume −"),
+        ("tv_volume_up", "TV volume +"),
+    ];
+    pub const OPEN: &str = "open";
+    pub const QUIT: &str = "quit";
+    /// The event the window listens to; its payload is one identifier of `ACTIONS`.
+    pub const EVENT: &str = "tray-action";
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum TrayEvent {
+        Open,
+        Quit,
+        Action(&'static str),
+        Unknown,
+    }
+
+    /// What a click on a tray menu item means. Pure, so it is tested without a desktop.
+    pub fn event_for(id: &str) -> TrayEvent {
+        match id {
+            OPEN => TrayEvent::Open,
+            QUIT => TrayEvent::Quit,
+            _ => ACTIONS
+                .iter()
+                .find(|(action, _)| *action == id)
+                .map_or(TrayEvent::Unknown, |(action, _)| TrayEvent::Action(action)),
+        }
+    }
+
+    #[cfg(desktop)]
+    pub fn install(app: &tauri::App) -> tauri::Result<()> {
+        use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+        use tauri::tray::TrayIconBuilder;
+
+        let open = MenuItem::with_id(app, OPEN, "Open control-TV", true, None::<&str>)?;
+        let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
+            Box::new(open),
+            Box::new(PredefinedMenuItem::separator(app)?),
+        ];
+        for (id, label) in ACTIONS {
+            items.push(Box::new(MenuItem::with_id(
+                app,
+                id,
+                label,
+                true,
+                None::<&str>,
+            )?));
+        }
+        items.push(Box::new(PredefinedMenuItem::separator(app)?));
+        items.push(Box::new(MenuItem::with_id(
+            app,
+            QUIT,
+            "Quit control-TV",
+            true,
+            None::<&str>,
+        )?));
+        let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+            items.iter().map(|item| item.as_ref()).collect();
+        let menu = Menu::with_items(app, &refs)?;
+        let mut builder = TrayIconBuilder::with_id("control-tv")
+            .tooltip("control-TV")
+            .menu(&menu)
+            .show_menu_on_left_click(true)
+            .on_menu_event(|app, event| handle(app, event.id().as_ref()));
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+        builder.build(app)?;
+        Ok(())
+    }
+
+    #[cfg(desktop)]
+    fn handle(app: &tauri::AppHandle, id: &str) {
+        use tauri::{Emitter, Manager};
+
+        match event_for(id) {
+            TrayEvent::Open => show_main_window(app),
+            // Ending the application closes the bridge's stdin, which ends the bridge too.
+            TrayEvent::Quit => app.exit(0),
+            TrayEvent::Action(action) => {
+                if app.get_webview_window("main").is_some() {
+                    let _ = app.emit_to("main", EVENT, action);
+                }
+            }
+            TrayEvent::Unknown => {}
+        }
+    }
+
+    #[cfg(desktop)]
+    pub fn show_main_window(app: &tauri::AppHandle) {
+        use tauri::Manager;
+
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+/// Brings the window to the front: the window calls it when a tray action cannot run (no TV
+/// selected, another request in flight), so the person sees why. Nothing on a phone.
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    tray::show_main_window(&app);
+    #[cfg(not(desktop))]
+    let _ = app;
+}
+
 /// The failure of an embedded (Android) bridge call. The Android side rejects with
 /// `backend_unavailable` only when the embedded Python could not start, before any request
 /// reached the shared control layer (certainly not sent); any other rejection may have come
@@ -1013,6 +1136,11 @@ pub fn run() {
         .setup(|app| {
             let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
+            // Without a status area (or its AppIndicator support) the window works as before.
+            #[cfg(desktop)]
+            if let Err(error) = tray::install(app) {
+                eprintln!("control-TV: no status-area icon: {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1031,7 +1159,8 @@ pub fn run() {
             bridge_press_remote_key,
             bridge_type_remote_text,
             bridge_list_tv_apps,
-            bridge_launch_tv_app
+            bridge_launch_tv_app,
+            show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1869,6 +1998,38 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
             remote_text_request("uuid-1", "héllo wörld"),
             json!({"deviceId": "uuid-1", "text": "héllo wörld"})
         );
+    }
+
+    // --- the status-area icon (tray): pure mapping, no desktop needed ----------------------
+
+    #[test]
+    fn tray_items_mean_open_quit_or_one_window_action() {
+        use tray::{event_for, TrayEvent};
+
+        assert_eq!(event_for("open"), TrayEvent::Open);
+        assert_eq!(event_for("quit"), TrayEvent::Quit);
+        for (id, _) in tray::ACTIONS {
+            assert_eq!(event_for(id), TrayEvent::Action(id));
+        }
+        assert_eq!(event_for("set_volume"), TrayEvent::Unknown);
+        assert_eq!(event_for(""), TrayEvent::Unknown);
+    }
+
+    #[test]
+    fn tray_actions_are_the_quick_controls_and_never_a_level_or_a_free_command() {
+        let ids: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
+
+        assert_eq!(
+            ids,
+            [
+                "play_pause",
+                "stop",
+                "tv_mute",
+                "tv_volume_down",
+                "tv_volume_up"
+            ]
+        );
+        assert_eq!(tray::EVENT, "tray-action");
     }
 
     #[test]
