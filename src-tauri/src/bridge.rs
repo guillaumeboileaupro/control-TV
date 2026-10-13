@@ -11,6 +11,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+// `app.path()`, used only by the packaged (release) bridge resolution.
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
