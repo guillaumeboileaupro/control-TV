@@ -11,6 +11,9 @@ package io.github.guillaumeboileaupro.controltv
  * by WorkManager is caught by [TapGuard]. Only the action name (a closed set) and the token
  * come from the intent: never a device, a level or any other value.
  *
+ * [enqueue] returns only once the job is recorded (it may throw): a tap whose job could not be
+ * recorded says that nothing was sent instead of staying on "Working…".
+ *
  * Nothing here is silent: a rejected token redraws the widget (so buttons left with an old
  * token by the launcher are armed again; the rejected tap itself still does nothing), a tap
  * with no TV chosen says so in words that differ from the widget's first drawing, and every
@@ -47,7 +50,15 @@ class WidgetTapHandler(
         }
         store.saveView(WidgetPresentation.busy(store.view(), selection))
         render()
-        enqueue(TapSpec(action, token, now()))
+        try {
+            enqueue(TapSpec(action, token, now()))
+        } catch (error: Exception) {
+            // The token is spent and no job will run: say so instead of "Working…" forever.
+            log("widget job not enqueued: ${action.name} (${error::class.simpleName})")
+            store.saveView(WidgetPresentation.present(WidgetOutcome.Unavailable, selection))
+            render()
+            return true
+        }
         log("widget job enqueued: ${action.name}")
         return true
     }

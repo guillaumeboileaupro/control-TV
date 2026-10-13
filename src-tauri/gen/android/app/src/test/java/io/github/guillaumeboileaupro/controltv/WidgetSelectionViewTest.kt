@@ -72,3 +72,27 @@ class WidgetSelectionViewTest {
         }
     }
 }
+
+/** A tap whose background job could not be recorded never leaves the widget on "Working…". */
+class WidgetEnqueueFailureTest {
+    @Test
+    fun aJobThatCannotBeRecordedSaysNothingWasSent() {
+        val store = MemoryWidgetStore().apply { selected = SELECTED }
+        val token = store.armedToken { "token-0" }
+        var renders = 0
+        val handler = WidgetTapHandler(
+            store = store,
+            now = { 1_000_000L },
+            newToken = { "token-1" },
+            enqueue = { throw IllegalStateException("WorkManager unavailable") },
+            render = { renders++ },
+        )
+
+        val accepted = handler.handle("PLAY_PAUSE", token)
+
+        assertEquals(true, accepted)
+        assertEquals("control-TV couldn't start. Nothing was sent.", store.lastView?.line)
+        assertEquals(false, store.lastView?.busy)
+        assertEquals(2, renders)
+    }
+}
