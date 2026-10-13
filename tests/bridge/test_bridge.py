@@ -19,7 +19,8 @@ from typing import Any
 import pytest
 
 import control_tv
-from control_tv.bridge import dispatch, handle_line, run
+from control_tv import bridge
+from control_tv.bridge import run
 from control_tv.domain import (
     CommandRejectedError,
     ConnectionState,
@@ -37,6 +38,15 @@ from control_tv.domain import (
 )
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeClock, FakeTransport
+
+
+# The bridge answers typed JSON; these tests read deep into it, so they see it as Any.
+def dispatch(control: ControlService, request: dict[str, Any]) -> Any:
+    return bridge.dispatch(control, request)
+
+
+def handle_line(control: ControlService, line: str) -> Any:
+    return bridge.handle_line(control, line)
 
 
 @dataclass

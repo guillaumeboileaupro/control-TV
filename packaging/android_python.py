@@ -46,7 +46,6 @@ import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCK = REPO_ROOT / "uv.lock"
@@ -118,38 +117,62 @@ CHAQUOPY_ADDITIONS = (
 )
 
 
+def _tables(value: object) -> list[Mapping[str, object]]:
+    """The tables of a parsed array; a missing array is empty, other items are left out."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
+
+
+def _table(value: object) -> Mapping[str, object]:
+    """A parsed table, or an empty one when it is missing."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _text(value: object, what: str) -> str:
+    """A parsed string; anything else is a document this script cannot trust."""
+    if not isinstance(value, str):
+        raise RuntimeError(f"{what} is not a string: {type(value).__name__}")
+    return value
+
+
 def normalized(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
 
 def runtime_packages(
-    lock: Mapping[str, Any], project: str = PROJECT, extras: Sequence[str] = ()
-) -> dict[str, Mapping[str, Any]]:
+    lock: Mapping[str, object], project: str = PROJECT, extras: Sequence[str] = ()
+) -> dict[str, Mapping[str, object]]:
     """The locked packages the project needs at run time (its dependencies and those of
     `extras`, transitively)."""
-    packages = {normalized(p["name"]): p for p in lock["package"]}
+    packages = {
+        normalized(_text(p.get("name"), "a uv.lock package name")): p
+        for p in _tables(lock.get("package"))
+    }
     root = packages[normalized(project)]
-    optional = root.get("optional-dependencies", {})
-    roots = list(root.get("dependencies", []))
+    optional = _table(root.get("optional-dependencies"))
+    roots = _tables(root.get("dependencies"))
     for extra in extras:
         if extra not in optional:
             raise RuntimeError(f"{project} has no optional extra {extra!r} in uv.lock")
-        roots += optional[extra]
-    needed: dict[str, Mapping[str, Any]] = {}
-    pending = [normalized(d["name"]) for d in roots]
+        roots += _tables(optional[extra])
+    needed: dict[str, Mapping[str, object]] = {}
+    pending = [normalized(_text(d.get("name"), "a dependency name")) for d in roots]
     while pending:
         name = pending.pop()
         if name in needed:
             continue
         needed[name] = packages[name]
-        pending += [normalized(d["name"]) for d in packages[name].get("dependencies", [])]
+        pending += [
+            normalized(_text(d.get("name"), "a dependency name"))
+            for d in _tables(packages[name].get("dependencies"))
+        ]
     return dict(sorted(needed.items()))
 
 
-def pure_wheel(package: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    wheels: list[Mapping[str, Any]] = package.get("wheels", [])
-    for wheel in wheels:
-        if str(wheel["url"]).endswith("-none-any.whl"):
+def pure_wheel(package: Mapping[str, object]) -> Mapping[str, object] | None:
+    for wheel in _tables(package.get("wheels")):
+        if _text(wheel.get("url"), "a wheel url").endswith("-none-any.whl"):
             return wheel
     return None
 
@@ -165,7 +188,7 @@ def download(url: str, sha256: str, destination: Path) -> Path:
     return destination
 
 
-def expected_hash(entry: Mapping[str, Any]) -> str:
+def expected_hash(entry: Mapping[str, object]) -> str:
     algorithm, _, digest = str(entry["hash"]).partition(":")
     if algorithm != "sha256" or not digest:
         raise RuntimeError(f"uv.lock entry without a SHA-256: {entry}")
@@ -202,11 +225,14 @@ def pip_wheel_command(source: Path, out_dir: Path) -> list[str]:
 
 
 def check_build_backends(
-    lock: Mapping[str, Any],
+    lock: Mapping[str, object],
     installed: Callable[[str], str] = importlib.metadata.version,
 ) -> None:
     """Refuse to build unless every build backend is installed at its `uv.lock` version."""
-    locked = {normalized(p["name"]): str(p["version"]) for p in lock["package"]}
+    locked = {
+        normalized(_text(p.get("name"), "a uv.lock package name")): str(p.get("version"))
+        for p in _tables(lock.get("package"))
+    }
     for name in BUILD_BACKENDS:
         if name not in locked:
             raise RuntimeError(f"build backend {name} is not in uv.lock")
@@ -275,7 +301,7 @@ def _environment() -> dict[str, str]:
 
 
 def requirements_lines(
-    packages: Mapping[str, Mapping[str, Any]], project_version: str
+    packages: Mapping[str, Mapping[str, object]], project_version: str
 ) -> list[str]:
     """Exact pins: the locked version, or Chaquopy's for a package it replaces or adds."""
     lines = [f"{PROJECT}=={project_version}"]
@@ -303,20 +329,22 @@ def prepare(output: Path = OUTPUT) -> Path:
             continue
         if name in FROM_SDIST:
             sdist = package.get("sdist")
-            if sdist is None:
+            if not isinstance(sdist, Mapping):
                 raise RuntimeError(f"{name} has no locked sdist to build from")
+            sdist_url = _text(sdist.get("url"), f"the {name} sdist url")
             with tempfile.TemporaryDirectory(prefix="control-tv-sdist-") as scratch:
                 archive = download(
-                    sdist["url"],
+                    sdist_url,
                     expected_hash(sdist),
-                    Path(scratch) / sdist["url"].rsplit("/", 1)[1],
+                    Path(scratch) / sdist_url.rsplit("/", 1)[1],
                 )
                 build_pure_from_sdist(archive, wheels)
             continue
         wheel = pure_wheel(package)
         if wheel is None:
             raise RuntimeError(f"{name} {package['version']} has no pure-Python wheel in uv.lock")
-        download(wheel["url"], expected_hash(wheel), wheels / wheel["url"].rsplit("/", 1)[1])
+        wheel_url = _text(wheel.get("url"), f"the {name} wheel url")
+        download(wheel_url, expected_hash(wheel), wheels / wheel_url.rsplit("/", 1)[1])
 
     if any(name in CHAQUOPY_WHEELS for name in packages):
         for chaquopy in CHAQUOPY_ADDITIONS:

@@ -215,8 +215,8 @@ def test_the_real_library_objects_are_built_offline(tmp_path: Path) -> None:
     key = tmp_path / "adbkey"
 
     tv_apps._default_keygen(str(key))
-    signer = tv_apps._default_signer(str(key))
-    device = tv_apps._default_device(HOST, 5555, 1.0)
+    signer: Any = tv_apps._default_signer(str(key))
+    device: Any = tv_apps._default_device(HOST, 5555, 1.0)
 
     assert signer.public_key.startswith(b"QAAAA")  # Android's RSA public key encoding
     assert len(signer.Sign(b"x" * 20)) == 256

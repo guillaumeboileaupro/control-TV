@@ -26,7 +26,6 @@ import sys
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import build_bridge as bridge
 
@@ -78,44 +77,72 @@ def encoded_rustflags(environment: Mapping[str, str], prefixes: Sequence[tuple[P
     return "\x1f".join(flags)
 
 
-def linked_crates(metadata: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def _tables(value: object) -> list[Mapping[str, object]]:
+    """The tables of a parsed array; a missing array is empty, other items are left out."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
+
+
+def _table(value: object) -> Mapping[str, object]:
+    """A parsed table, or an empty one when it is missing."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _text(value: object, what: str) -> str:
+    """A parsed string; anything else is a document this script cannot trust."""
+    if not isinstance(value, str):
+        raise RuntimeError(f"{what} is not a string: {type(value).__name__}")
+    return value
+
+
+def linked_crates(metadata: Mapping[str, object]) -> list[Mapping[str, object]]:
     """Crates compiled into the application binary: normal dependencies, no proc-macros."""
-    packages = {package["id"]: package for package in metadata["packages"]}
-    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+    packages = {
+        _text(package.get("id"), "a crate id"): package
+        for package in _tables(metadata.get("packages"))
+    }
+    resolve = _table(metadata.get("resolve"))
+    nodes = {_text(node.get("id"), "a node id"): node for node in _tables(resolve.get("nodes"))}
 
     def proc_macro(package_id: str) -> bool:
-        return any("proc-macro" in t["kind"] for t in packages[package_id]["targets"])
+        return any(
+            isinstance(kind := target.get("kind"), list) and "proc-macro" in kind
+            for target in _tables(packages[package_id].get("targets"))
+        )
 
     seen: set[str] = set()
-    pending = [metadata["resolve"]["root"]]
+    pending = [_text(resolve.get("root"), "the resolve root")]
     while pending:
-        for dependency in nodes[pending.pop()]["deps"]:
-            linked = any(kind["kind"] is None for kind in dependency["dep_kinds"])
-            package_id = dependency["pkg"]
+        for dependency in _tables(nodes[pending.pop()].get("deps")):
+            linked = any(kind.get("kind") is None for kind in _tables(dependency.get("dep_kinds")))
+            package_id = _text(dependency.get("pkg"), "a dependency id")
             if linked and package_id not in seen and not proc_macro(package_id):
                 seen.add(package_id)
                 pending.append(package_id)
     return sorted(
-        (packages[package_id] for package_id in seen), key=lambda p: (p["name"], p["version"])
+        (packages[package_id] for package_id in seen),
+        key=lambda p: (str(p.get("name")), str(p.get("version"))),
     )
 
 
-def _crate_license_files(package: Mapping[str, Any]) -> list[Path]:
-    directory = Path(package["manifest_path"]).parent
+def _crate_license_files(package: Mapping[str, object]) -> list[Path]:
+    directory = Path(_text(package.get("manifest_path"), "a crate manifest path")).parent
     found = {
         path
         for path in directory.iterdir()
         if path.is_file() and path.name.upper().startswith(RUST_LICENSE_HINTS)
     }
-    if package.get("license_file"):
-        declared = directory / package["license_file"]
+    license_file = package.get("license_file")
+    if isinstance(license_file, str) and license_file:
+        declared = directory / license_file
         if declared.is_file():
             found.add(declared)
     return sorted(found, key=lambda path: path.name)
 
 
 def write_rust_notices(
-    crates: Iterable[Mapping[str, Any]], std_docs: Path | None, destination: Path
+    crates: Iterable[Mapping[str, object]], std_docs: Path | None, destination: Path
 ) -> tuple[Path, list[str]]:
     """Copy each linked crate's license files; return the notices and crates without any."""
     if destination.exists():
@@ -157,7 +184,7 @@ def write_rust_notices(
     return notices, without
 
 
-def cargo_metadata() -> Mapping[str, Any]:
+def cargo_metadata() -> Mapping[str, object]:
     host = (
         subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True)
         .stdout.split("host: ")[1]
@@ -170,7 +197,7 @@ def cargo_metadata() -> Mapping[str, Any]:
         text=True,
         check=True,
     )
-    metadata: Mapping[str, Any] = json.loads(completed.stdout)
+    metadata: Mapping[str, object] = json.loads(completed.stdout)
     return metadata
 
 

@@ -35,7 +35,6 @@ import logging
 import re
 import sys
 from collections.abc import Callable, Mapping
-from typing import Any
 
 import anyio
 from mcp import types
@@ -44,6 +43,7 @@ from mcp.server.stdio import stdio_server
 
 import control_tv
 from control_tv.bridge import INTERNAL_ERROR_CODE, dispatch
+from control_tv.json_types import JsonObject, JsonValue, as_list, as_object
 from control_tv.service import ControlService
 
 LOGGER = logging.getLogger("control_tv.mcp")
@@ -91,7 +91,7 @@ _DELIVERY_NOTES = {
     "automatically: call get_status to see what the TV reports.",
 }
 
-_DEVICE_ID = {
+_DEVICE_ID: JsonObject = {
     "type": "string",
     "minLength": 1,
     "description": "The stable deviceId returned by discover_devices (never a display name).",
@@ -104,9 +104,7 @@ _COMMAND_NOTE = (
 )
 
 
-def _tool(
-    name: str, description: str, properties: dict[str, Any], required: list[str]
-) -> types.Tool:
+def _tool(name: str, description: str, properties: JsonObject, required: list[str]) -> types.Tool:
     read_only = name in READ_TOOLS
     return types.Tool(
         name=name,
@@ -200,15 +198,13 @@ _QUOTED = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
 # --- Privacy filtering -------------------------------------------------------------------
 
 
-def public_device(device: Mapping[str, Any]) -> dict[str, Any]:
+def public_device(device: Mapping[str, JsonValue]) -> JsonObject:
     """A discovered device without its network address."""
     return {key: value for key, value in device.items() if key not in {"host", "port"}}
 
 
-def public_status(status: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def public_status(status: Mapping[str, JsonValue]) -> JsonObject:
     """A device status without the media content id (often a private media URL)."""
-    if status is None:
-        return None
     public = dict(status)
     media = status.get("media")
     if isinstance(media, Mapping):
@@ -224,7 +220,7 @@ def redact_detail(detail: str | None) -> str | None:
 # --- Presentation of bridge answers --------------------------------------------------------
 
 
-def _text_result(text: str, structured: dict[str, Any], *, is_error: bool) -> types.CallToolResult:
+def _text_result(text: str, structured: JsonObject, *, is_error: bool) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=text)],
         structuredContent=structured,
@@ -239,7 +235,7 @@ def present_error(tool: str, code: str, message: str) -> types.CallToolResult:
         if code == "invalid_argument"
         else _ERROR_MESSAGES.get(code, _ERROR_MESSAGES[INTERNAL_ERROR_CODE])
     )
-    structured: dict[str, Any] = {"error": {"code": code, "message": public_message}}
+    structured: JsonObject = {"error": {"code": code, "message": public_message}}
     text = f"{tool} failed ({code}): {public_message}"
     if tool in COMMAND_TOOLS:
         delivery = _COMMAND_DELIVERY.get(code, NOT_SENT)
@@ -248,19 +244,21 @@ def present_error(tool: str, code: str, message: str) -> types.CallToolResult:
     return _text_result(text, structured, is_error=True)
 
 
-def present_command(result: Mapping[str, Any]) -> types.CallToolResult:
+def present_command(result: Mapping[str, JsonValue]) -> types.CallToolResult:
     """A sent command: confirmed, unconfirmed (not a success) or not checked."""
-    confirmation = result["confirmation"]
-    detail = redact_detail(result.get("detail"))
-    structured = {
-        "command": result["command"],
-        "deviceId": result["deviceId"],
+    confirmation = result.get("confirmation")
+    raw_detail = result.get("detail")
+    detail = redact_detail(raw_detail if isinstance(raw_detail, str) else None)
+    observed = result.get("observed")
+    structured: JsonObject = {
+        "command": result.get("command"),
+        "deviceId": result.get("deviceId"),
         "delivery": SENT,
         "confirmation": confirmation,
         "detail": detail,
-        "observed": public_status(result.get("observed")),
+        "observed": public_status(observed) if isinstance(observed, dict) else None,
     }
-    command = result["command"]
+    command = result.get("command")
     if confirmation == "confirmed":
         text = f"{command} was sent and confirmed: the TV reports the requested state."
     elif confirmation == "unconfirmed":
@@ -273,24 +271,33 @@ def present_command(result: Mapping[str, Any]) -> types.CallToolResult:
     return _text_result(text, structured, is_error=False)
 
 
-def present(tool: str, response: Mapping[str, Any]) -> types.CallToolResult:
+def present(tool: str, response: Mapping[str, JsonValue]) -> types.CallToolResult:
     """Turn one bridge response into the MCP tool answer."""
     if not response.get("ok"):
-        error = response.get("error") or {}
+        error = as_object(response.get("error"))
         return present_error(
             tool, str(error.get("code", INTERNAL_ERROR_CODE)), str(error.get("message", ""))
         )
-    result = response["result"]
+    result = as_object(response.get("result"))
     if tool == "discover_devices":
-        devices = [public_device(device) for device in result["devices"]]
-        names = ", ".join(f"{d['friendlyName']} (deviceId {d['id']})" for d in devices)
+        devices: list[JsonValue] = [
+            public_device(device)
+            for device in as_list(result.get("devices"))
+            if isinstance(device, dict)
+        ]
+        names = ", ".join(
+            f"{d.get('friendlyName')} (deviceId {d.get('id')})"
+            for d in devices
+            if isinstance(d, dict)
+        )
         text = f"Found {len(devices)} device(s)" + (f": {names}." if devices else ".")
         return _text_result(text, {"devices": devices}, is_error=False)
     if tool == "get_status":
-        status = public_status(result["status"])
-        return _text_result(json.dumps(status, indent=2), {"status": status}, is_error=False)
+        status = result.get("status")
+        public = public_status(status) if isinstance(status, dict) else None
+        return _text_result(json.dumps(public, indent=2), {"status": public}, is_error=False)
     # A command answers {"result": {command, deviceId, confirmation, detail, observed}}.
-    return present_command(result["result"])
+    return present_command(as_object(result.get("result")))
 
 
 # --- Serialized execution ------------------------------------------------------------------
@@ -307,14 +314,16 @@ class ControlTvTools:
     def __init__(
         self,
         control: ControlService,
-        dispatcher: Callable[[ControlService, dict[str, Any]], dict[str, Any]] = dispatch,
+        dispatcher: Callable[[ControlService, JsonObject], JsonObject] = dispatch,
     ) -> None:
         self._control = control
         self._dispatch = dispatcher
         self._lock = anyio.Lock()
         self._ids = itertools.count(1)
 
-    async def call(self, tool: str, arguments: Mapping[str, Any] | None) -> types.CallToolResult:
+    async def call(
+        self, tool: str, arguments: Mapping[str, JsonValue] | None
+    ) -> types.CallToolResult:
         """Never raises: every outcome, including an unexpected failure, is a tool result."""
         try:
             return await self._call(tool, dict(arguments or {}))
@@ -324,7 +333,7 @@ class ControlTvTools:
             LOGGER.error("tool %s: unexpected %s", tool, type(error).__name__)
             return present_error(tool, INTERNAL_ERROR_CODE, "")
 
-    async def _call(self, tool: str, arguments: dict[str, Any]) -> types.CallToolResult:
+    async def _call(self, tool: str, arguments: JsonObject) -> types.CallToolResult:
         if tool not in _ALLOWED_ARGUMENTS:
             return present_error(tool, "invalid_argument", f"unknown tool: {tool!r}")
         unexpected = sorted(set(arguments) - _ALLOWED_ARGUMENTS[tool])
@@ -332,7 +341,7 @@ class ControlTvTools:
             return present_error(
                 tool, "invalid_argument", f"unexpected argument(s): {', '.join(unexpected)}"
             )
-        request = {"id": next(self._ids), "method": tool, "params": arguments}
+        request: JsonObject = {"id": next(self._ids), "method": tool, "params": arguments}
         async with self._lock:
             # Not abandoned on cancellation: the call runs to completion, so the lock is
             # held until the shared layer is free again and nothing runs concurrently.
@@ -341,18 +350,18 @@ class ControlTvTools:
         return present(tool, response)
 
 
-def _outcome(response: Mapping[str, Any]) -> str:
+def _outcome(response: Mapping[str, JsonValue]) -> str:
     """What the log records about a call: the error code or the confirmation, nothing else."""
     if not response.get("ok"):
-        return str((response.get("error") or {}).get("code", INTERNAL_ERROR_CODE))
-    inner = (response.get("result") or {}).get("result")
-    return str(inner.get("confirmation")) if isinstance(inner, Mapping) else "ok"
+        return str(as_object(response.get("error")).get("code", INTERNAL_ERROR_CODE))
+    inner = as_object(response.get("result")).get("result")
+    return str(inner.get("confirmation")) if isinstance(inner, dict) else "ok"
 
 
-def build_server(control: ControlService) -> Server[Any, Any]:
+def build_server(control: ControlService) -> Server[object, object]:
     """The MCP server over `control`; the transport (stdio, in-memory) is chosen by the caller."""
     tools = ControlTvTools(control)
-    server: Server[Any, Any] = Server(
+    server: Server[object, object] = Server(
         SERVER_NAME,
         version=control_tv.__version__,
         instructions=(
@@ -369,7 +378,7 @@ def build_server(control: ControlService) -> Server[Any, Any]:
     # Arguments are validated by the shared bridge and service (exact window semantics,
     # error codes included), not by the SDK's schema check.
     @server.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
-    async def call_tool(name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
+    async def call_tool(name: str, arguments: JsonObject | None) -> types.CallToolResult:
         return await tools.call(name, arguments)
 
     return server

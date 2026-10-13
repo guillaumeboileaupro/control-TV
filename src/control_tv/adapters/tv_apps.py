@@ -31,8 +31,9 @@ import re
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Protocol, TypeVar
 
 from control_tv.domain import (
     AppLaunch,
@@ -102,8 +103,31 @@ KNOWN_NAMES = {
     "com.mubi": "MUBI",
 }
 
-DeviceFactory = Callable[[str, int, float], Any]
-SignerFactory = Callable[[str], Any]
+
+class AdbDevice(Protocol):
+    """The part of adb-shell's `AdbDeviceTcp` this module uses."""
+
+    def connect(self, rsa_keys: list[object], auth_timeout_s: float) -> bool: ...
+
+    def shell(self, command: str, read_timeout_s: float) -> object: ...
+
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class AdbErrors:
+    """adb-shell's exception classes, loaded with the optional library."""
+
+    device_auth: type[Exception]
+    adb_timeout: type[Exception]
+    tcp_timeout: type[Exception]
+    adb_connection: type[Exception]
+    invalid_response: type[Exception]
+
+
+# The signer is opaque here: adb-shell builds it from the key file and uses it itself.
+DeviceFactory = Callable[[str, int, float], AdbDevice]
+SignerFactory = Callable[[str], object]
 KeyGenerator = Callable[[str], None]
 
 
@@ -147,23 +171,30 @@ def _checked_host(host: str) -> str:
         raise InvalidArgumentError("the TV address is not an IP address") from None
 
 
-def _library() -> Any:
+def _library() -> AdbErrors:
     try:
         import adb_shell.exceptions as exceptions
     except ImportError:
         raise UnsupportedOperationError(
             "listing the TV's apps is not installed (control-tv[tvremote])"
         ) from None
-    return exceptions
+    return AdbErrors(
+        device_auth=exceptions.DeviceAuthError,
+        adb_timeout=exceptions.AdbTimeoutError,
+        tcp_timeout=exceptions.TcpTimeoutException,
+        adb_connection=exceptions.AdbConnectionError,
+        invalid_response=exceptions.InvalidResponseError,
+    )
 
 
-def _default_device(host: str, port: int, timeout: float) -> Any:
+def _default_device(host: str, port: int, timeout: float) -> AdbDevice:
     from adb_shell.adb_device import AdbDeviceTcp
 
-    return AdbDeviceTcp(host, port, default_transport_timeout_s=timeout)
+    device: AdbDevice = AdbDeviceTcp(host, port, default_transport_timeout_s=timeout)
+    return device
 
 
-def _default_signer(key_path: str) -> Any:
+def _default_signer(key_path: str) -> object:
     from adb_shell.auth.sign_cryptography import CryptographySigner
 
     return CryptographySigner(key_path)
@@ -212,7 +243,7 @@ class AdbAppInventory:
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         """The TV's launchable apps. Raises a control error with a plain reason otherwise."""
 
-        def query(device: Any) -> tuple[TvApp, ...]:
+        def query(device: AdbDevice) -> tuple[TvApp, ...]:
             output = device.shell(LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
             if not isinstance(output, str):
                 raise DeviceUnavailableError("the TV returned no list of apps")
@@ -231,7 +262,7 @@ class AdbAppInventory:
         """
         package = checked_package(package)
 
-        def launch(device: Any) -> AppLaunch:
+        def launch(device: AdbDevice) -> AppLaunch:
             deadline = self._clock() + self._launch_budget
 
             def budget() -> float:
@@ -257,7 +288,7 @@ class AdbAppInventory:
 
         return self._session(host, launch)
 
-    def _session(self, host: str, action: Callable[[Any], T]) -> T:
+    def _session(self, host: str, action: Callable[[AdbDevice], T]) -> T:
         """One short connection: connect (the owner may have to allow control-TV), act, close."""
         host = _checked_host(host)
         errors = _library()
@@ -271,7 +302,7 @@ class AdbAppInventory:
                 # the socket is open, adb-shell reports a slow answer as TcpTimeoutException.
                 if not device.connect(rsa_keys=[signer], auth_timeout_s=self._auth_timeout):
                     raise PairingRequiredError(allow)
-            except (errors.DeviceAuthError, errors.AdbTimeoutError, errors.TcpTimeoutException):
+            except (errors.device_auth, errors.adb_timeout, errors.tcp_timeout):
                 raise PairingRequiredError(allow) from None
             return action(device)
         except ConnectionRefusedError:
@@ -281,10 +312,10 @@ class AdbAppInventory:
                 "in the TV's developer options; a TV that only offers Wireless debugging (with "
                 "a pairing code) is not supported yet"
             ) from None
-        except (errors.AdbTimeoutError, errors.TcpTimeoutException):
+        except (errors.adb_timeout, errors.tcp_timeout):
             # Connected and allowed, then a command was slow: for a launch it may have run.
             raise OperationTimeoutError("the TV did not answer in time") from None
-        except (errors.AdbConnectionError, errors.InvalidResponseError, OSError):
+        except (errors.adb_connection, errors.invalid_response, OSError):
             raise DeviceUnavailableError(
                 "the TV's debugging service could not be reached"
             ) from None
