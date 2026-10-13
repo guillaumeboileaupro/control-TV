@@ -76,9 +76,10 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
 - `list_tv_apps`          -> {"apps": [{"package", "name"}]}: the apps installed on the TV
                              that its home screen can launch, as the TV lists them over its
                              network debugging (ADB), which the owner turns on; `name` is a
-                             display name control-TV knows, or `null`. `unsupported_operation`
-                             when the TV's debugging is off, `pairing_required` until the
-                             owner allows control-TV on the TV. Read-only.
+                             display name control-TV knows, or `null`. `debugging_off` when
+                             the TV's debugging is off, `pairing_required` until the owner
+                             allows control-TV on the TV, `unsupported_operation` for a Cast
+                             group or a build without the app list. Read-only.
 - `launch_tv_app`         -> also requires `package`: opens that app once, over the same
                              network debugging as the list (the app's home-screen activity).
                              Answers {"result": {"package", "deviceId", "confirmation",

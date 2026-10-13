@@ -22,6 +22,7 @@ class ErrorCode(StrEnum):
     COMMAND_REJECTED = "command_rejected"
     TIMEOUT = "timeout"
     PAIRING_REQUIRED = "pairing_required"
+    DEBUGGING_OFF = "debugging_off"
 
 
 class ControlError(Exception):
@@ -93,3 +94,9 @@ class PairingRequiredError(ControlError):
     """The TV's own remote-control channel needs this application to be paired with it first."""
 
     code = ErrorCode.PAIRING_REQUIRED
+
+
+class DebuggingOffError(ControlError):
+    """The TV accepts no debugging connection: its network debugging (ADB) is turned off."""
+
+    code = ErrorCode.DEBUGGING_OFF

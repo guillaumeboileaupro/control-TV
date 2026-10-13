@@ -547,10 +547,22 @@ describe("the TV's apps", () => {
   });
 
   test("debugging off explains how to turn it on, and does not touch the remote's pairing", () => {
-    const { state } = run(withTv(), { kind: "list_apps" }, failure("unsupported_operation"));
+    const { state } = run(withTv(), { kind: "list_apps" }, failure("debugging_off"));
 
     assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
     assert.equal(state.remote.pairing, "not_tried");
+  });
+
+  test("apps that can't be listed for another reason do not send the owner to the TV's debugging", () => {
+    const open = { kind: "launch_app" as const, package: "com.netflix.ninja", label: "Netflix" };
+    for (const action of [{ kind: "list_apps" } as const, open]) {
+      const { state } = run(withTv(), action, failure("unsupported_operation"));
+      const outcome = describeRemote(state).outcome;
+
+      assert.equal(outcome?.text, "control-TV can't list or open the apps of this device.");
+      assert.doesNotMatch(outcome?.text ?? "", /debugging|remote/);
+      assert.match(outcome?.technical ?? "", /^unsupported_operation: /);
+    }
   });
 
   test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
@@ -628,7 +640,7 @@ describe("the TV's apps", () => {
   });
 
   test("opening while the TV's debugging is off explains how to turn it on", () => {
-    const { state } = run(withTv(), open, failure("unsupported_operation"));
+    const { state } = run(withTv(), open, failure("debugging_off"));
 
     assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
   });

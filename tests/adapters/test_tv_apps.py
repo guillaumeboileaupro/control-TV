@@ -26,6 +26,7 @@ from control_tv.adapters.tv_apps import (
 )
 from control_tv.domain import (
     CommandRejectedError,
+    DebuggingOffError,
     DeviceUnavailableError,
     InvalidArgumentError,
     OperationTimeoutError,
@@ -136,7 +137,7 @@ def test_the_key_is_created_once_and_kept_private(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("where", "raised", "expected"),
     [
-        ("connect_error", ConnectionRefusedError(f"refused by {HOST}"), UnsupportedOperationError),
+        ("connect_error", ConnectionRefusedError(f"refused by {HOST}"), DebuggingOffError),
         ("connect_error", adb.TcpTimeoutException(f"{HOST}:5555"), PairingRequiredError),
         ("connect_error", adb.DeviceAuthError("not allowed"), PairingRequiredError),
         ("connect_error", adb.AdbTimeoutError("no answer to AUTH"), PairingRequiredError),
@@ -160,7 +161,7 @@ def test_each_failure_says_what_to_do_without_the_tv_address(
 
 
 def test_debugging_off_explains_how_to_turn_it_on(tmp_path: Path) -> None:
-    with pytest.raises(UnsupportedOperationError, match="developer options"):
+    with pytest.raises(DebuggingOffError, match="developer options"):
         inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
 
 
@@ -367,7 +368,7 @@ def test_a_launch_and_its_checks_share_one_budget(tmp_path: Path) -> None:
 def test_a_tv_without_the_classic_debugging_port_names_what_is_not_supported(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(UnsupportedOperationError, match="Wireless debugging") as excinfo:
+    with pytest.raises(DebuggingOffError, match="Wireless debugging") as excinfo:
         inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
 
     assert "port 5555" in str(excinfo.value)

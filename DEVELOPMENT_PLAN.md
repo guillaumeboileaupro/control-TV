@@ -967,6 +967,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Lancer une application installée **depuis Android**, confirmer l'ouverture sur TV réelle.
 - [ ] Tester YouTube, Netflix, Spotify ou autres applications **réellement présentes**, sans supposer qu'elles sont installées.
 - [ ] Tester application absente, non lançable, TV déconnectée et refus d'autorisation.
+  - Note (2026-10-13, audit de `main`, P3-3) : un débogage désactivé sur la TV (port 5555 fermé) répond désormais `debugging_off`, seul cas où l'interface montre l'aide « débogage USB » ; un groupe Cast ou une version sans liste d'applications répond `unsupported_operation` avec un message générique. Tests Python et UI ; non essayé sur TV.
 - [ ] Vérifier que les deux interfaces voient l'application active après lancement par l'autre.
 - [ ] **Critère de sortie : liste issue de la TV + lancement effectif depuis chacune des deux applications**, ou limite matérielle précisément documentée et décision du propriétaire sur une alternative.
 
