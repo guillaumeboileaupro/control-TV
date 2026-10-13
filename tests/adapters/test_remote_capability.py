@@ -81,7 +81,7 @@ def test_a_cast_group_never_borrows_its_member_tvs_remote_channel() -> None:
     assert discover_with(frozenset({"192.0.2.10"}))[GROUP] is None
 
 
-def test_a_scan_that_cannot_tell_leaves_every_device_unknown() -> None:
+def test_a_scan_that_cannot_tell_leaves_every_device_lost() -> None:
     assert set(discover_with(None).values()) == {None}
 
 
