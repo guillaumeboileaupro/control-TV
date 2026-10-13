@@ -260,7 +260,7 @@ export function toReport(value: JsonValue | undefined): RemoteReport | null {
 function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOutcome {
   const technical = `${failure.code}: ${failure.message}`;
   if (action.kind === "list_apps" || action.kind === "launch_app") {
-    if (failure.code === "unsupported_operation") {
+    if (failure.code === "debugging_off") {
       return {
         tone: "failed",
         text: "To list and open the TV's apps, turn on USB debugging on the TV: Settings › System › About, select “Android TV OS build” 7 times, then Settings › System › Developer options › USB debugging. Then list the apps again and allow control-TV when the TV asks. A TV that only offers “Wireless debugging” (with a pairing code) can't list its apps here yet.",
@@ -271,6 +271,14 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
       return {
         tone: "failed",
         text: "Allow control-TV on the TV when it asks about debugging, then try again.",
+        technical,
+      };
+    }
+    // Not the TV's debugging: a Cast group, or a build of control-TV without the app list.
+    if (failure.code === "unsupported_operation") {
+      return {
+        tone: "failed",
+        text: "control-TV can't list or open the apps of this device.",
         technical,
       };
     }

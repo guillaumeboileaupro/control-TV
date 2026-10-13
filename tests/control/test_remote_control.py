@@ -21,6 +21,7 @@ from control_tv.domain import (
     AudibleVolume,
     CommandRejectedError,
     Confirmation,
+    DebuggingOffError,
     Device,
     DeviceId,
     DeviceKind,
@@ -531,6 +532,22 @@ def test_bridge_app_list_errors_keep_their_codes() -> None:
     response = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
 
     assert response["error"]["code"] == "pairing_required"
+
+
+@pytest.mark.parametrize("method", ["list_tv_apps", "launch_tv_app"])
+def test_bridge_says_when_the_tv_debugging_is_off(method: str) -> None:
+    apps = FakeApps(error=DebuggingOffError("turn on USB debugging"))
+    params = {"package": "com.example.video"} if method == "launch_tv_app" else {}
+
+    response = call(with_apps(apps), method, deviceId=str(DEVICE_ID), **params)
+
+    assert response["error"]["code"] == "debugging_off"
+
+
+def test_bridge_app_list_without_the_channel_is_not_reported_as_debugging_off() -> None:
+    response = call(discovered(FakeRemote()), "list_tv_apps", deviceId=str(DEVICE_ID))
+
+    assert response["error"]["code"] == "unsupported_operation"
 
 
 def test_bridge_launches_an_app_and_answers_with_what_the_tv_reported() -> None:

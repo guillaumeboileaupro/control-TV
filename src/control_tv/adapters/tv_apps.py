@@ -38,6 +38,7 @@ from typing import Protocol, TypeVar
 from control_tv.domain import (
     AppLaunch,
     CommandRejectedError,
+    DebuggingOffError,
     DeviceUnavailableError,
     InvalidArgumentError,
     OperationTimeoutError,
@@ -307,7 +308,7 @@ class AdbAppInventory:
             return action(device)
         except ConnectionRefusedError:
             # Nothing listens on the port: the classic network debugging is off.
-            raise UnsupportedOperationError(
+            raise DebuggingOffError(
                 "the TV accepts no debugging connection on port 5555: turn on USB debugging "
                 "in the TV's developer options; a TV that only offers Wireless debugging (with "
                 "a pairing code) is not supported yet"
