@@ -637,3 +637,15 @@ describe("the TV's apps", () => {
     assert.equal(selectDevice(found, "b").state.remote.apps, null);
   });
 });
+
+describe("the app filter belongs to one TV", () => {
+  test("selecting another TV empties the filter, so the field shows no old query", () => {
+    const other: Device = { ...TV, id: "b", friendlyName: "Device b" };
+    const apps = { ok: true, result: { apps: [{ package: "a.b", name: "A" }] } } as const;
+    const filtered = setAppFilter(run(withTv(), { kind: "list_apps" }, apps).state, "zzz");
+    const found = finishDiscovery(startDiscovery(filtered), [TV, other]);
+
+    assert.equal(selectDevice(found, "b").state.remote.appFilter, "");
+    assert.equal(refreshStatus(found).state.remote.appFilter, "zzz"); // same TV keeps it
+  });
+});

@@ -674,6 +674,10 @@ function start(elements: Elements): void {
     el.remoteAppsList.setAttribute("aria-busy", String(remote.listingApps));
     el.remoteAppsList.textContent = remote.apps === null ? "Show TV apps" : "List again";
     el.remoteAppsFilter.hidden = remote.apps === null;
+    // The field shows the filter the state holds: another TV starts with an empty one.
+    if (el.remoteAppsFilter.value !== state.remote.appFilter) {
+      el.remoteAppsFilter.value = state.remote.appFilter;
+    }
     const key = JSON.stringify([remote.apps, remote.launchEnabled, remote.pendingApp]);
     if (key === appsKey) {
       return;
