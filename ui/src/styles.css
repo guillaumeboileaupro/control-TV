@@ -703,6 +703,16 @@ button {
   border-top: 1px solid var(--line);
 }
 
+.tv-remote-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tv-remote-keys[hidden] {
+  display: none;
+}
+
 .tv-remote-title {
   margin: 0;
   font-weight: 600;

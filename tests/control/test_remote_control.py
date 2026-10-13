@@ -551,3 +551,14 @@ def test_bridge_refuses_a_launch_without_a_package_string() -> None:
 
     assert response["error"]["code"] == "invalid_argument"
     assert apps.calls == []
+
+
+def test_apps_do_not_depend_on_what_discovery_saw_of_the_remote() -> None:
+    apps = FakeApps(front="com.example.video")
+
+    service = with_apps(apps, NoRemoteTransport())
+
+    assert service.list_tv_apps(DEVICE_ID) == list(apps.apps)
+    assert service.launch_tv_app(DEVICE_ID, "com.example.video").front_app == "com.example.video"
+    with pytest.raises(UnsupportedOperationError):
+        service.press_remote_key(DEVICE_ID, RemoteKey.HOME)

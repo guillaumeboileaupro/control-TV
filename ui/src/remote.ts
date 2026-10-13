@@ -164,6 +164,16 @@ export function remoteAvailable(state: AppState): boolean {
   return selected !== null && selected.kind !== "group" && selected.androidTvRemote === true;
 }
 
+// The TV's apps go through its debugging, a separate service: any TV (a Cast video device), not
+// a group or a speaker, whatever discovery saw of its remote channel.
+export function appsAvailable(state: AppState): boolean {
+  return state.selected !== null && state.selected.kind === "cast";
+}
+
+function isAppAction(action: RemoteAction): boolean {
+  return action.kind === "list_apps" || action.kind === "launch_app";
+}
+
 function keysAllowed(state: AppState): boolean {
   return state.remote.pairing !== "needed" && state.remote.pairing !== "code_shown";
 }
@@ -176,7 +186,8 @@ export function startRemote(
   action: RemoteAction,
 ): { state: AppState; request: RemoteRequest | null } {
   const selected = state.selected;
-  if (selected === null || !remoteAvailable(state) || !idle(state)) {
+  const available = isAppAction(action) ? appsAvailable(state) : remoteAvailable(state);
+  if (selected === null || !available || !idle(state)) {
     return { state, request: null };
   }
   // Listing apps uses the TV's debugging, not its remote: a pairing step does not block it.
@@ -504,6 +515,8 @@ export function setAppFilter(state: AppState, filter: string): AppState {
 
 export interface RemoteDescription {
   visible: boolean;
+  // The remote's own keys, pairing and text: only for a TV that advertises its remote channel.
+  remoteVisible: boolean;
   // The TV's report can be read: nothing in flight and no pairing step in the way.
   readEnabled: boolean;
   // Keys can be pressed: nothing in flight and no pairing step in the way.
@@ -529,6 +542,7 @@ export interface RemoteDescription {
 
 const HIDDEN: RemoteDescription = {
   visible: false,
+  remoteVisible: false,
   readEnabled: false,
   keysEnabled: false,
   pairing: null,
@@ -601,7 +615,7 @@ export function describeReport(report: RemoteReport | null): string {
 }
 
 export function describeRemote(state: AppState): RemoteDescription {
-  if (!remoteAvailable(state)) {
+  if (!remoteAvailable(state) && !appsAvailable(state)) {
     return HIDDEN;
   }
   const remote = state.remote;
@@ -615,6 +629,7 @@ export function describeRemote(state: AppState): RemoteDescription {
   const pending = remote.pending;
   return {
     visible: true,
+    remoteVisible: remoteAvailable(state),
     readEnabled: !busy && keysAllowed(state),
     keysEnabled: !busy && keysAllowed(state),
     pairing,

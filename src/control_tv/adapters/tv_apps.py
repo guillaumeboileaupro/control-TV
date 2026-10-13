@@ -60,6 +60,9 @@ LAUNCH_COMMAND = "monkey -p {package} -c android.intent.category.LEANBACK_LAUNCH
 # Which activity is in front (read-only).
 FRONT_QUERY = "dumpsys activity activities"
 DEFAULT_FRONT_READS = 4
+# Everything a launch does once connected (the launch event and the reads of the app in front)
+# shares this one budget, so that connect + allow + launch stays within the caller's bound.
+DEFAULT_LAUNCH_BUDGET = 15.0
 DEFAULT_FRONT_INTERVAL = 0.75
 _FRONT = re.compile(
     r"(?:topResumedActivity|mResumedActivity|ResumedActivity)[:=]\s*ActivityRecord\{\S+ \S+ "
@@ -186,6 +189,8 @@ class AdbAppInventory:
         front_reads: int = DEFAULT_FRONT_READS,
         front_interval: float = DEFAULT_FRONT_INTERVAL,
         sleep: Callable[[float], None] = time.sleep,
+        launch_budget: float = DEFAULT_LAUNCH_BUDGET,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._dir = Path(credentials_dir)
         self._port = port
@@ -198,6 +203,8 @@ class AdbAppInventory:
         self._front_reads = max(1, front_reads)
         self._front_interval = front_interval
         self._sleep = sleep
+        self._launch_budget = launch_budget
+        self._clock = clock
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         """The TV's launchable apps. Raises a control error with a plain reason otherwise."""
@@ -215,24 +222,32 @@ class AdbAppInventory:
 
         The launch is one `monkey` event for the Leanback launcher activity of `package`, the
         way the TV's own home screen opens it. The TV says when it has no such activity, and
-        then nothing was opened. The app in front is read (read-only) a few times within a
-        short budget; whatever the TV reports last is returned.
+        then nothing was opened. The app in front is read (read-only) a few times; the launch
+        and those reads share one budget (`launch_budget`), and whatever the TV reported last
+        is returned when it runs out.
         """
         package = checked_package(package)
 
         def launch(device: Any) -> AppLaunch:
+            deadline = self._clock() + self._launch_budget
+
+            def budget() -> float:
+                return min(self._read_timeout, deadline - self._clock())
+
             output = device.shell(
-                LAUNCH_COMMAND.format(package=package), read_timeout_s=self._read_timeout
+                LAUNCH_COMMAND.format(package=package), read_timeout_s=max(budget(), 0.1)
             )
             if isinstance(output, str) and "No activities found" in output:
                 raise CommandRejectedError("the TV has no home-screen activity for this app")
             front: str | None = None
             for attempt in range(self._front_reads):
                 if attempt:
+                    if budget() <= self._front_interval:
+                        break  # the launch was sent; what the TV said last is the answer
                     self._sleep(self._front_interval)
-                front = parse_front_app(
-                    device.shell(FRONT_QUERY, read_timeout_s=self._read_timeout)
-                )
+                if budget() <= 0:
+                    break
+                front = parse_front_app(device.shell(FRONT_QUERY, read_timeout_s=budget()))
                 if front == package:
                     break
             return AppLaunch(package=package, front_app=front)

@@ -326,3 +326,38 @@ def test_the_front_app_parser_reads_only_a_resumed_activity_record() -> None:
     assert parse_front_app(FRONT_HOME) == "com.google.android.apps.tv.launcherx"
     assert parse_front_app("mFocusedApp=com.netflix.ninja") is None
     assert parse_front_app(None) is None
+
+
+def test_a_launch_and_its_checks_share_one_budget(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"fronts": [FRONT_HOME]}
+    now = [100.0]
+
+    def device(host: str, port: int, timeout: float) -> LaunchDevice:
+        class Slow(LaunchDevice):
+            def shell(self, command: str, read_timeout_s: float) -> Any:
+                record.setdefault("timeouts", []).append(read_timeout_s)
+                now[0] += 6.0  # each read takes 6 s on this slow TV
+                return super().shell(command, read_timeout_s)
+
+        return Slow(record)
+
+    def keygen(path: str) -> None:
+        Path(path).write_bytes(b"private")
+        Path(path + ".pub").write_bytes(b"public")
+
+    apps = AdbAppInventory(
+        tmp_path / "remote",
+        device_factory=device,
+        signer_factory=lambda key: key,
+        keygen=keygen,
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        clock=lambda: now[0],
+    )
+
+    launch = apps.launch_app(HOST, "com.netflix.ninja")
+
+    assert launch.front_app == "com.google.android.apps.tv.launcherx"
+    assert now[0] - 100.0 <= 15.0 + 6.0  # never starts a read past the budget
+    assert record["timeouts"][0] == 10.0
+    assert all(t <= 10.0 for t in record["timeouts"])
+    assert len(record["timeouts"]) < 1 + 4  # the slow TV cut the checks short

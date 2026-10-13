@@ -69,13 +69,33 @@ const failure = (code: string, message = "detail"): RemoteAnswer => ({
 });
 
 describe("which TV gets the panel", () => {
-  test("only a TV that advertises its own remote channel", () => {
-    assert.equal(describeRemote(withTv()).visible, true);
+  test("the remote's keys only for a TV that advertises its own remote channel", () => {
+    assert.equal(describeRemote(withTv()).remoteVisible, true);
     for (const androidTvRemote of [false, null, undefined]) {
       const state = withTv({ ...DEVICE, androidTvRemote });
-      assert.equal(describeRemote(state).visible, false);
+      assert.equal(describeRemote(state).remoteVisible, false);
       assert.equal(startRemote(state, { kind: "status" }).request, null);
+      assert.equal(startRemote(state, { kind: "key", key: "home" }).request, null);
     }
+  });
+
+  test("the TV's apps for any TV, whatever discovery saw of its remote channel", () => {
+    for (const androidTvRemote of [true, false, null, undefined]) {
+      const state = withTv({ ...DEVICE, androidTvRemote });
+      assert.equal(describeRemote(state).visible, true);
+      assert.notEqual(startRemote(state, { kind: "list_apps" }).request, null);
+      assert.notEqual(
+        startRemote(state, { kind: "launch_app", package: "a.b", label: "A" }).request,
+        null,
+      );
+    }
+  });
+
+  test("no apps for a speaker", () => {
+    const speaker = withTv({ ...DEVICE, kind: "audio", androidTvRemote: null });
+
+    assert.equal(describeRemote(speaker).visible, false);
+    assert.equal(startRemote(speaker, { kind: "list_apps" }).request, null);
   });
 
   test("never a Cast group, even one that reports the channel", () => {
@@ -83,6 +103,7 @@ describe("which TV gets the panel", () => {
 
     assert.equal(describeRemote(group).visible, false);
     assert.equal(startRemote(group, { kind: "key", key: "volume_up" }).request, null);
+    assert.equal(startRemote(group, { kind: "list_apps" }).request, null);
   });
 });
 

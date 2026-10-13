@@ -121,6 +121,7 @@ interface Elements {
   remoteText: HTMLInputElement;
   remoteTextSend: HTMLButtonElement;
   remoteAppsList: HTMLButtonElement;
+  remoteKeys: HTMLElement;
   remoteAppsFilter: HTMLInputElement;
   remoteApps: HTMLElement;
   remoteReadout: HTMLElement;
@@ -599,6 +600,7 @@ function start(elements: Elements): void {
     const active = document.activeElement;
     const hadFocus = active !== null && el.tvRemote.contains(active);
     el.tvRemote.hidden = !remote.visible;
+    el.remoteKeys.hidden = !remote.remoteVisible;
     if (!remote.visible) {
       if (hadFocus) {
         (el.refreshButton.hidden ? el.pickerSummary : el.refreshButton).focus();
@@ -1033,6 +1035,7 @@ window.addEventListener("DOMContentLoaded", () => {
     remoteText: byId<HTMLInputElement>("remote-text"),
     remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
     remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+    remoteKeys: byId("remote-keys"),
     remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
     remoteApps: byId("remote-apps"),
     remoteReadout: byId("remote-readout"),

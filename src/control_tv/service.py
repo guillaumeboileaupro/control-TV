@@ -601,10 +601,15 @@ class ControlService:
             raise UnsupportedOperationError(
                 "this application has no TV remote channel", device_id=device_id
             )
-        return self._remote, self._tv_host(device_id)
+        return self._remote, self._tv_host(device_id, remote=True)
 
-    def _tv_host(self, device_id: DeviceId) -> str:
-        """The address of a Google TV found by the last discovery, never a group or a guess."""
+    def _tv_host(self, device_id: DeviceId, *, remote: bool = False) -> str:
+        """The address of a TV found by the last discovery, never a group or a guess.
+
+        `remote`: the TV's own remote channel is needed, so a TV whose discovery saw that it
+        does not offer it is refused. The apps go through the TV's debugging, a separate
+        service, so they do not depend on what discovery saw of the remote.
+        """
         device_id = _checked_id(device_id)
         device = self._devices.get(device_id)
         if device is None:
@@ -613,9 +618,9 @@ class ControlService:
             )
         if device.kind is DeviceKind.GROUP:
             raise UnsupportedOperationError(
-                "a Cast group has no remote channel of its own", device_id=device_id
+                "a Cast group is not a TV of its own", device_id=device_id
             )
-        if device.android_tv_remote is False:
+        if remote and device.android_tv_remote is False:
             raise UnsupportedOperationError(
                 "this TV does not offer its own remote channel", device_id=device_id
             )
