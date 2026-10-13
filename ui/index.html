@@ -51,7 +51,7 @@
         <symbol id="i-idle" viewBox="0 0 24 24">
           <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
         </symbol>
-        <symbol id="i-unknown" viewBox="0 0 24 24">
+        <symbol id="i-undetermined" viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="8" />
           <path d="M12 16.5h.01M9.8 9.6a2.4 2.4 0 1 1 3.4 2.2c-.7.4-1.2.9-1.2 1.7" />
         </symbol>
@@ -148,7 +148,7 @@
             <p id="seek-note" class="note" hidden></p>
           </div>
 
-          <!-- Sound: mute and volume for any connected device, playing or not. Static elements
+          <!-- Sound: mute and volume for every connected device, playing or not. Static elements
                updated in place. The volume control works on a draft and sends once it settles;
                the mute button offers the opposite of the state the TV reported. -->
           <div id="sound" class="sound" role="group" aria-label="Sound" hidden>
@@ -180,125 +180,153 @@
           <!-- The TV's own remote (Google TV remote protocol): the volume the TV itself sets, mute,
                power and navigation. Only for a TV that advertises it. Each press sends one key
                once; what is shown of the TV is its own last report. -->
-          <div
-            id="tv-remote"
-            class="tv-remote"
-            role="group"
-            aria-labelledby="tv-remote-title"
-            hidden
-          >
-            <p id="tv-remote-title" class="tv-remote-title">TV remote</p>
-            <div id="remote-pairing" class="tv-remote-pairing" hidden>
-              <p id="remote-pairing-text" class="note"></p>
+          <div id="tv-remote" class="tv-remote" role="group" aria-label="TV remote and apps" hidden>
+            <!-- The remote's own keys: only for a TV that advertises its remote channel. -->
+            <div id="remote-keys" class="tv-remote-keys">
+              <p id="tv-remote-title" class="tv-remote-title">TV remote</p>
+              <div id="remote-pairing" class="tv-remote-pairing" hidden>
+                <p id="remote-pairing-text" class="note"></p>
+                <div class="tv-remote-row">
+                  <input
+                    id="remote-code"
+                    class="remote-code"
+                    type="text"
+                    inputmode="text"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    maxlength="6"
+                    aria-label="Code shown on the TV"
+                    hidden
+                  />
+                  <button id="remote-pair" class="btn btn-primary" type="button" hidden>
+                    Pair
+                  </button>
+                  <button id="remote-show-code" class="btn" type="button">Show code on TV</button>
+                </div>
+              </div>
               <div class="tv-remote-row">
+                <button
+                  class="btn"
+                  type="button"
+                  data-remote-key="volume_down"
+                  aria-label="TV volume down"
+                >
+                  Vol −
+                </button>
+                <button
+                  class="btn"
+                  type="button"
+                  data-remote-key="volume_up"
+                  aria-label="TV volume up"
+                >
+                  Vol +
+                </button>
+                <button
+                  class="btn"
+                  type="button"
+                  data-remote-key="mute"
+                  aria-label="TV mute or unmute"
+                >
+                  Mute
+                </button>
+                <button class="btn" type="button" data-remote-key="power" aria-label="TV power">
+                  Power
+                </button>
+              </div>
+              <div class="dpad">
+                <button class="btn dpad-up" type="button" data-remote-key="up" aria-label="Up">
+                  ↑
+                </button>
+                <button
+                  class="btn dpad-left"
+                  type="button"
+                  data-remote-key="left"
+                  aria-label="Left"
+                >
+                  ←
+                </button>
+                <button class="btn dpad-ok" type="button" data-remote-key="ok">OK</button>
+                <button
+                  class="btn dpad-right"
+                  type="button"
+                  data-remote-key="right"
+                  aria-label="Right"
+                >
+                  →
+                </button>
+                <button
+                  class="btn dpad-down"
+                  type="button"
+                  data-remote-key="down"
+                  aria-label="Down"
+                >
+                  ↓
+                </button>
+              </div>
+              <div class="tv-remote-row">
+                <button class="btn" type="button" data-remote-key="back">Back</button>
+                <button class="btn" type="button" data-remote-key="home">Home</button>
+                <button id="remote-read" class="btn" type="button">Read TV state</button>
+              </div>
+              <!-- The TV's active text field: the text replaces what the field holds; it is
+                 sent once and never kept or logged (it may be a password). -->
+              <form id="remote-text-form" class="tv-remote-text">
                 <input
-                  id="remote-code"
-                  class="remote-code"
+                  id="remote-text"
+                  class="remote-text"
                   type="text"
-                  inputmode="text"
                   autocomplete="off"
-                  autocapitalize="characters"
+                  autocapitalize="off"
                   spellcheck="false"
-                  maxlength="6"
-                  aria-label="Code shown on the TV"
-                  hidden
+                  maxlength="256"
+                  enterkeyhint="send"
+                  placeholder="Text for the TV"
+                  aria-label="Text to type in the TV's active field"
+                  aria-describedby="remote-text-hint"
                 />
-                <button id="remote-pair" class="btn btn-primary" type="button" hidden>Pair</button>
-                <button id="remote-show-code" class="btn" type="button">Show code on TV</button>
+                <button id="remote-text-send" class="btn" type="submit">Send text</button>
+              </form>
+              <p id="remote-text-hint" class="note">
+                Open a search or text field on the TV first. The text replaces what the field holds.
+              </p>
+              <div class="tv-remote-row">
+                <button
+                  class="btn"
+                  type="button"
+                  data-remote-key="delete"
+                  aria-label="Backspace on the TV"
+                >
+                  ⌫ Backspace
+                </button>
+                <button
+                  class="btn"
+                  type="button"
+                  data-remote-key="enter"
+                  aria-label="Enter on the TV"
+                >
+                  Enter
+                </button>
               </div>
             </div>
-            <div class="tv-remote-row">
-              <button
-                class="btn"
-                type="button"
-                data-remote-key="volume_down"
-                aria-label="TV volume down"
-              >
-                Vol −
-              </button>
-              <button
-                class="btn"
-                type="button"
-                data-remote-key="volume_up"
-                aria-label="TV volume up"
-              >
-                Vol +
-              </button>
-              <button
-                class="btn"
-                type="button"
-                data-remote-key="mute"
-                aria-label="TV mute or unmute"
-              >
-                Mute
-              </button>
-              <button class="btn" type="button" data-remote-key="power" aria-label="TV power">
-                Power
-              </button>
-            </div>
-            <div class="dpad">
-              <button class="btn dpad-up" type="button" data-remote-key="up" aria-label="Up">
-                ↑
-              </button>
-              <button class="btn dpad-left" type="button" data-remote-key="left" aria-label="Left">
-                ←
-              </button>
-              <button class="btn dpad-ok" type="button" data-remote-key="ok">OK</button>
-              <button
-                class="btn dpad-right"
-                type="button"
-                data-remote-key="right"
-                aria-label="Right"
-              >
-                →
-              </button>
-              <button class="btn dpad-down" type="button" data-remote-key="down" aria-label="Down">
-                ↓
-              </button>
-            </div>
-            <div class="tv-remote-row">
-              <button class="btn" type="button" data-remote-key="back">Back</button>
-              <button class="btn" type="button" data-remote-key="home">Home</button>
-              <button id="remote-read" class="btn" type="button">Read TV state</button>
-            </div>
-            <!-- The TV's active text field: the text replaces what the field holds; it is
-                 sent once and never kept or logged (it may be a password). -->
-            <form id="remote-text-form" class="tv-remote-text">
+            <!-- The TV's installed apps: listed and opened over the TV's debugging (which the
+                 owner turns on), a service separate from the remote: shown for every TV. -->
+            <div class="tv-apps" role="group" aria-labelledby="tv-apps-title">
+              <div class="tv-apps-head">
+                <p id="tv-apps-title" class="tv-remote-title">TV apps</p>
+                <button id="remote-apps-list" class="btn" type="button">Show TV apps</button>
+              </div>
               <input
-                id="remote-text"
+                id="remote-apps-filter"
                 class="remote-text"
-                type="text"
+                type="search"
                 autocomplete="off"
-                autocapitalize="off"
                 spellcheck="false"
-                maxlength="256"
-                enterkeyhint="send"
-                placeholder="Text for the TV"
-                aria-label="Text to type in the TV's active field"
-                aria-describedby="remote-text-hint"
+                placeholder="Find an app"
+                aria-label="Find an app"
+                hidden
               />
-              <button id="remote-text-send" class="btn" type="submit">Send text</button>
-            </form>
-            <p id="remote-text-hint" class="note">
-              Open a search or text field on the TV first. The text replaces what the field holds.
-            </p>
-            <div class="tv-remote-row">
-              <button
-                class="btn"
-                type="button"
-                data-remote-key="delete"
-                aria-label="Backspace on the TV"
-              >
-                ⌫ Backspace
-              </button>
-              <button
-                class="btn"
-                type="button"
-                data-remote-key="enter"
-                aria-label="Enter on the TV"
-              >
-                Enter
-              </button>
+              <ul id="remote-apps" class="tv-apps-list" aria-label="Apps installed on the TV"></ul>
             </div>
             <p id="remote-readout" class="sound-readout is-empty"></p>
             <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>

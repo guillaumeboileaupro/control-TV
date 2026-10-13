@@ -9,8 +9,8 @@ This module only listens: it browses and resolves mDNS records and never connect
 service. It runs right after Cast discovery, on that discovery's own zeroconf instance: a
 second instance on the same host would compete with it for the mDNS replies sent to one
 socket only, and either could then miss a device. It never closes that instance, which
-belongs to Cast discovery. Any failure, or a service seen but not resolved, makes the answer
-unknown (`None`), never a false "not offered".
+belongs to Cast discovery. A failure, or a service seen but not resolved, makes the answer
+`None` (cannot tell), never a false "not offered".
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any, Protocol
+from typing import Protocol, cast
 
 from zeroconf import Error as ZeroconfError
 from zeroconf import ServiceBrowser, ServiceInfo, ServiceStateChange
@@ -30,15 +30,49 @@ DEFAULT_RESOLVE_TIMEOUT = 1.0
 
 
 class RemoteDetector(Protocol):
-    def detect(self, zeroconf: Any) -> frozenset[str] | None:
+    def detect(self, zeroconf: object) -> frozenset[str] | None:
         """The addresses advertising the service, or None when it cannot tell."""
 
 
 class NoRemoteDetection:
-    """A detector that never looks: every device's remote channel stays unknown."""
+    """A detector that never looks: every device's remote channel stays undetermined."""
 
-    def detect(self, zeroconf: Any) -> frozenset[str] | None:
+    def detect(self, zeroconf: object) -> frozenset[str] | None:
         return None
+
+
+class Browser(Protocol):
+    def cancel(self) -> None: ...
+
+
+class ChangeHandler(Protocol):
+    def __call__(
+        self,
+        zeroconf: object,
+        service_type: str,
+        name: str,
+        state_change: ServiceStateChange,
+    ) -> None: ...
+
+
+class BrowserFactory(Protocol):
+    def __call__(
+        self, zc: object, service_type: str, *, handlers: list[ChangeHandler]
+    ) -> Browser: ...
+
+
+class ServiceRecord(Protocol):
+    def load_from_cache(self, zeroconf: object) -> bool: ...
+    def request(self, zeroconf: object, timeout: int) -> bool: ...
+    def parsed_addresses(self) -> list[str]: ...
+
+
+class InfoFactory(Protocol):
+    def __call__(self, service_type: str, name: str) -> ServiceRecord: ...
+
+
+DEFAULT_BROWSER_FACTORY = cast(BrowserFactory, ServiceBrowser)
+DEFAULT_INFO_FACTORY = cast(InfoFactory, ServiceInfo)
 
 
 class ZeroconfRemoteDetector:
@@ -49,8 +83,8 @@ class ZeroconfRemoteDetector:
         *,
         browse_seconds: float = DEFAULT_BROWSE_SECONDS,
         resolve_timeout: float = DEFAULT_RESOLVE_TIMEOUT,
-        browser_factory: Callable[..., Any] = ServiceBrowser,
-        info_factory: Callable[[str, str], Any] = ServiceInfo,
+        browser_factory: BrowserFactory = DEFAULT_BROWSER_FACTORY,
+        info_factory: InfoFactory = DEFAULT_INFO_FACTORY,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -61,14 +95,14 @@ class ZeroconfRemoteDetector:
         self._sleep = sleep
         self._clock = clock
 
-    def detect(self, zeroconf: Any) -> frozenset[str] | None:
+    def detect(self, zeroconf: object) -> frozenset[str] | None:
         if zeroconf is None:
             return None
         names: set[str] = set()
         lock = threading.Lock()
 
         def on_change(
-            zeroconf: Any, service_type: str, name: str, state_change: ServiceStateChange
+            zeroconf: object, service_type: str, name: str, state_change: ServiceStateChange
         ) -> None:
             with lock:
                 if state_change is ServiceStateChange.Removed:
@@ -76,7 +110,7 @@ class ZeroconfRemoteDetector:
                 else:
                     names.add(name)
 
-        browser: Any = None
+        browser: Browser | None = None
         try:
             browser = self._browser_factory(zeroconf, SERVICE_TYPE, handlers=[on_change])
             self._sleep(self._browse_seconds)
@@ -92,7 +126,7 @@ class ZeroconfRemoteDetector:
                 with suppress(OSError, RuntimeError, ZeroconfError):
                     browser.cancel()
 
-    def _resolve(self, zeroconf: Any, names: list[str]) -> frozenset[str] | None:
+    def _resolve(self, zeroconf: object, names: list[str]) -> frozenset[str] | None:
         deadline = self._clock() + self._resolve_timeout
         addresses: set[str] = set()
         for name in names:

@@ -19,7 +19,8 @@ from typing import Any
 import pytest
 
 import control_tv
-from control_tv.bridge import dispatch, handle_line, run
+from control_tv import bridge
+from control_tv.bridge import run
 from control_tv.domain import (
     CommandRejectedError,
     ConnectionState,
@@ -37,6 +38,15 @@ from control_tv.domain import (
 )
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, MOVIE_URL, OBSERVED_AT, FakeClock, FakeTransport
+
+
+# The bridge answers typed JSON; these tests read deep into it, so they see it as Any.
+def dispatch(control: ControlService, request: dict[str, Any]) -> Any:
+    return bridge.dispatch(control, request)
+
+
+def handle_line(control: ControlService, line: str) -> Any:
+    return bridge.handle_line(control, line)
 
 
 @dataclass
@@ -71,6 +81,7 @@ def test_ping_reports_readiness_and_version(control: ControlService) -> None:
             "status": "ready",
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
+            "tvApps": True,
         },
     }
 
@@ -92,7 +103,7 @@ def test_discover_devices_returns_transport_devices_as_json(control: ControlServ
             "friendlyName": "Living room",
             "host": "192.168.1.20",
             "port": 8009,
-            "kind": "unknown",
+            "kind": "other",
             "modelName": None,
             "androidTvRemote": None,
         }
@@ -182,7 +193,7 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
             connection=ConnectionState.CONNECTED,
             observed_at=OBSERVED_AT,
             receiver=ReceiverStatus(app_name="Default Media Receiver"),
-            media=MediaStatus(playback_state=PlaybackState.UNKNOWN),
+            media=MediaStatus(playback_state=PlaybackState.UNDETERMINED),
         )
     )
 
@@ -197,7 +208,7 @@ def test_get_status_reports_unreported_fields_as_null_never_as_a_default() -> No
         "volumeControlType": None,
     }
     assert status["media"] == {
-        "playbackState": "unknown",
+        "playbackState": "undetermined",
         "contentId": None,
         "contentType": None,
         "title": None,
@@ -323,7 +334,7 @@ def test_unknown_method_is_rejected(control: ControlService) -> None:
     assert response == {
         "id": 6,
         "ok": False,
-        "error": {"code": "invalid_argument", "message": "unknown method: 'levitate'"},
+        "error": {"code": "invalid_argument", "message": "not a bridge method: 'levitate'"},
     }
 
 
@@ -392,6 +403,7 @@ def test_main_serves_a_ping_over_real_stdio() -> None:
             "status": "ready",
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
+            "tvApps": True,
         },
     }
 

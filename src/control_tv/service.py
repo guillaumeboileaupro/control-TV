@@ -3,7 +3,7 @@
 `ControlService` implements `TvControl` over a `CastTransport`. For every command it:
 
 1. validates arguments before anything is sent;
-2. sends the command, letting any `ControlError` from the transport propagate;
+2. sends the command, letting a `ControlError` from the transport propagate;
 3. then reads the TV status, within a bounded time, until the TV shows the expected state.
 
 Step 3 is what separates "command sent" from "TV state confirmed" (see `Confirmation`). A
@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from control_tv.domain import (
+    AppLaunchResult,
     Command,
     CommandResult,
     Confirmation,
@@ -26,11 +27,8 @@ from control_tv.domain import (
     ControlError,
     Device,
     DeviceId,
-    DeviceKind,
-    DeviceNotFoundError,
     DeviceStatus,
     InvalidArgumentError,
-    KeyPress,
     MediaRequest,
     MediaStatus,
     OperationTimeoutError,
@@ -39,10 +37,12 @@ from control_tv.domain import (
     RemoteKeyResult,
     RemoteObservation,
     RemoteTextResult,
+    TvApp,
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import CastTransport, TvRemote
+from control_tv.ports import CastTransport, TvApps, TvRemote
+from control_tv.tv_channels import TvChannels
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +133,7 @@ def _identity_mismatch(expected: _MediaIdentity | None, media: MediaStatus) -> s
     The content id must be the same, and a session reported before the command must be
     reported by the read (a missing one is no evidence). An explicitly different content id or
     session is a contradiction, which `_IdentityCheck` keeps for the whole attempt. A session
-    unknown before the command leaves the content id as the only proof, as it was before
+    not reported before the command leaves the content id as the only proof, as it was before
     sessions were read.
     """
     if expected is None:
@@ -194,7 +194,7 @@ class _IdentityCheck:
 
     @property
     def contradiction(self) -> str | None:
-        """The first explicit identity contradiction seen in this attempt, if any."""
+        """The first explicit identity contradiction seen in this attempt, if there is one."""
         return self._contradiction
 
     def mismatch(self, media: MediaStatus) -> str | None:
@@ -305,27 +305,6 @@ def _muted_is(muted: bool) -> ExpectedState:
     return check
 
 
-def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
-    """Whether the TV's own reports show the effect of the key that was sent."""
-    key, before, after = press.key, press.before.volume, press.after.volume
-    if key not in (RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE):
-        return Confirmation.NOT_CHECKED, "sent; the TV does not report the effect of this key"
-    if before is None or after is None:
-        reported = "whether its sound is muted" if key is RemoteKey.VOLUME_MUTE else "its volume"
-        return Confirmation.UNCONFIRMED, f"sent; the TV did not report {reported}"
-    if key is RemoteKey.VOLUME_MUTE:
-        now = "muted" if after.muted else "not muted"
-        if after.muted != before.muted:
-            return Confirmation.CONFIRMED, f"the TV reports its sound {now}"
-        return Confirmation.UNCONFIRMED, f"sent; the TV still reports its sound {now}"
-    level = f"{after.level}/{after.maximum}"
-    if key is RemoteKey.VOLUME_UP and after.level > before.level:
-        return Confirmation.CONFIRMED, f"the TV reports volume {level}"
-    if key is RemoteKey.VOLUME_DOWN and after.level < before.level:
-        return Confirmation.CONFIRMED, f"the TV reports volume {level}"
-    return Confirmation.UNCONFIRMED, f"sent; the TV still reports volume {level}"
-
-
 class ControlService:
     """Authoritative implementation of `TvControl`.
 
@@ -345,6 +324,7 @@ class ControlService:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         remote: TvRemote | None = None,
+        apps: TvApps | None = None,
     ) -> None:
         _require(
             confirm_timeout is None or (_is_finite(confirm_timeout) and confirm_timeout >= 0),
@@ -374,7 +354,7 @@ class ControlService:
         self._volume_tolerance = volume_tolerance
         self._clock = clock
         self._sleep = sleep
-        self._remote = remote
+        self._channels = TvChannels(self._discovered, remote=remote, apps=apps)
         self._devices: dict[DeviceId, Device] = {}
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
@@ -501,80 +481,33 @@ class ControlService:
             Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"
         )
 
-    # The TV's own remote channel ---------------------------------------------------------
-    #
-    # Separate from Cast: a fixed Cast volume does not change what the owner hears, the TV's
-    # own volume does. The TV is reached at the address of its last discovery.
+    # The TV's own channels (remote and apps) live in `TvChannels`; these methods keep the
+    # one control surface the bridge and the MCP adapter call.
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
-        remote, host = self._remote_target(device_id)
-        return remote.observe(host)
+        return self._channels.get_remote_status(device_id)
 
     def start_remote_pairing(self, device_id: DeviceId) -> None:
-        remote, host = self._remote_target(device_id)
-        remote.start_pairing(host)
+        self._channels.start_remote_pairing(device_id)
 
     def finish_remote_pairing(self, device_id: DeviceId, code: str) -> None:
-        if not isinstance(code, str):
-            raise InvalidArgumentError("the pairing code must be text", device_id=device_id)
-        remote, host = self._remote_target(device_id)
-        remote.finish_pairing(host, code)
+        self._channels.finish_remote_pairing(device_id, code)
 
     def press_remote_key(self, device_id: DeviceId, key: RemoteKey) -> RemoteKeyResult:
-        if not isinstance(key, RemoteKey):
-            raise InvalidArgumentError(f"not an allowed key: {key!r}", device_id=device_id)
-        remote, host = self._remote_target(device_id)
-        press = remote.press(host, key)
-        confirmation, detail = _key_outcome(press)
-        return RemoteKeyResult(
-            key=key,
-            device_id=device_id,
-            confirmation=confirmation,
-            before=press.before,
-            after=press.after,
-            detail=detail,
-        )
+        return self._channels.press_remote_key(device_id, key)
 
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
-        """Send text once to the TV's active text field. The TV never echoes it, so the result
-        is `NOT_CHECKED`; the detail says whether the TV reported an active field."""
-        if not isinstance(text, str):
-            raise InvalidArgumentError("the text to type must be a string", device_id=device_id)
-        remote, host = self._remote_target(device_id)
-        entry = remote.type_text(host, text)
-        detail = (
-            "sent to the TV's active text field; check the TV"
-            if entry.field_reported
-            else "sent, but the TV did not report an active text field; check the TV"
-        )
-        return RemoteTextResult(
-            device_id=device_id,
-            confirmation=Confirmation.NOT_CHECKED,
-            detail=detail,
-            field_reported=entry.field_reported,
-            observed=entry.observed,
-        )
+        return self._channels.type_remote_text(device_id, text)
 
-    def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
-        device_id = _checked_id(device_id)
-        if self._remote is None:
-            raise UnsupportedOperationError(
-                "this application has no TV remote channel", device_id=device_id
-            )
-        device = self._devices.get(device_id)
-        if device is None:
-            raise DeviceNotFoundError(
-                "this TV was not found by the last discovery", device_id=device_id
-            )
-        if device.kind is DeviceKind.GROUP:
-            raise UnsupportedOperationError(
-                "a Cast group has no remote channel of its own", device_id=device_id
-            )
-        if device.android_tv_remote is False:
-            raise UnsupportedOperationError(
-                "this TV does not offer its own remote channel", device_id=device_id
-            )
-        return self._remote, device.host
+    def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
+        return self._channels.list_tv_apps(device_id)
+
+    def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
+        return self._channels.launch_tv_app(device_id, package)
+
+    def _discovered(self, device_id: DeviceId) -> Device | None:
+        """The device of the last discovery with this id, or None."""
+        return self._devices.get(_checked_id(device_id))
 
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout

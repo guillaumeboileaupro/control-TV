@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { JsonValue } from "./json.ts";
 
 import {
   canDiscover,
@@ -43,16 +45,18 @@ import {
   type CommandResult,
 } from "./playback.ts";
 import {
-  describeRemote,
   finishRemote,
   remoteInvocation,
+  setAppFilter,
   startRemote,
   type RemoteAction,
   type RemoteAnswer,
-  type RemoteKeyName,
   type RemoteRequest,
 } from "./remote.ts";
 import { describeSound } from "./sound.ts";
+import { byId, disclosure, icon, setBusy, setIcon, text } from "./dom.ts";
+import { createRemotePanel, type RemotePanelElements } from "./remote-panel.ts";
+import { isTrayAction, trayRequest } from "./tray.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
 // through the shared control layer. This file performs the I/O and draws the DOM; the
@@ -85,6 +89,7 @@ interface CommandAnswer {
 }
 
 interface Elements {
+  remote: RemotePanelElements;
   serviceNotice: HTMLElement;
   picker: HTMLDetailsElement;
   pickerSummary: HTMLElement;
@@ -109,18 +114,6 @@ interface Elements {
   seekNote: HTMLElement;
   pauseNote: HTMLElement;
   sound: HTMLElement;
-  tvRemote: HTMLElement;
-  remotePairing: HTMLElement;
-  remotePairingText: HTMLElement;
-  remoteCode: HTMLInputElement;
-  remotePair: HTMLButtonElement;
-  remoteShowCode: HTMLButtonElement;
-  remoteRead: HTMLButtonElement;
-  remoteTextForm: HTMLFormElement;
-  remoteText: HTMLInputElement;
-  remoteTextSend: HTMLButtonElement;
-  remoteReadout: HTMLElement;
-  remoteFeedback: HTMLElement;
   muteButton: HTMLButtonElement;
   volumeInput: HTMLInputElement;
   soundReadout: HTMLElement;
@@ -128,48 +121,12 @@ interface Elements {
   commandFeedback: HTMLElement;
 }
 
-function byId<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (element === null) {
-    throw new Error(`missing #${id} element`);
-  }
-  return element as T;
-}
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function icon(name: string, className = "icon"): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("class", className);
-  svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(SVG_NS, "use");
-  use.setAttribute("href", `#i-${name}`);
-  svg.appendChild(use);
-  return svg;
-}
-
-function text(tag: string, className: string, content: string): HTMLElement {
-  const element = document.createElement(tag);
-  element.className = className;
-  element.textContent = content;
-  return element;
-}
-
-function setBusy(element: HTMLElement, busy: boolean): void {
-  if (busy) {
-    element.setAttribute("aria-disabled", "true");
-  } else {
-    element.removeAttribute("aria-disabled");
-  }
-}
-
-// Playback kinds are model vocabulary; the sprite names the shapes.
 const PLAYBACK_ICONS: Record<PlaybackKind, string> = {
   playing: "play",
   paused: "pause",
   buffering: "buffering",
   idle: "idle",
-  unknown: "unknown",
+  undetermined: "undetermined",
 };
 
 const KIND_ICONS: Record<string, string> = { audio: "volume" };
@@ -200,13 +157,6 @@ function problemBlock(
   return block;
 }
 
-function disclosure(technical: string): HTMLElement {
-  const diagnostic = document.createElement("details");
-  diagnostic.className = "diagnostic";
-  diagnostic.append(text("summary", "", "Details"), text("pre", "", technical));
-  return diagnostic;
-}
-
 function problem(
   failure: BridgeFailure,
   action: string,
@@ -214,10 +164,6 @@ function problem(
 ): HTMLElement {
   const description = describeFailure(failure, action);
   return problemBlock(description.title, description.hint, description.technical, recovery);
-}
-
-function setIcon(button: HTMLElement, name: string): void {
-  button.querySelector("use")?.setAttribute("href", `#i-${name}`);
 }
 
 function start(elements: Elements): void {
@@ -235,7 +181,6 @@ function start(elements: Elements): void {
   let listKey = "";
   let contextKey = "";
   let feedbackKey = "";
-  let remoteFeedbackKey = "";
   let seekTimer: number | undefined;
   // A range control disabled by its command loses keyboard focus. Return it after the answer
   // only while the user has not intentionally focused another control in the meantime.
@@ -244,7 +189,7 @@ function start(elements: Elements): void {
   document.addEventListener("focusin", (event) => {
     const target = event.target;
     // Losing focus to the document because a range was disabled is not a new user intention.
-    // Any real element other than that range is.
+    // Every real element other than that range is.
     if (target !== document.body && target !== document.documentElement) {
       if (target !== elements.seekInput) {
         seekFocus.cancel();
@@ -586,75 +531,6 @@ function start(elements: Elements): void {
     }
   }
 
-  // The TV's own remote: keys usable only when nothing else runs and no pairing step is in the
-  // way; the pairing area only when the TV asked for it; the TV's last report; the outcome.
-  function renderRemote(): void {
-    const el = elements;
-    const remote = describeRemote(state);
-    const active = document.activeElement;
-    const hadFocus = active !== null && el.tvRemote.contains(active);
-    el.tvRemote.hidden = !remote.visible;
-    if (!remote.visible) {
-      if (hadFocus) {
-        (el.refreshButton.hidden ? el.pickerSummary : el.refreshButton).focus();
-      }
-      return;
-    }
-    for (const button of el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
-      const sending = remote.pendingKey === button.dataset["remoteKey"];
-      setBusy(button, !remote.keysEnabled);
-      button.classList.toggle("is-loading", sending);
-      button.setAttribute("aria-busy", String(sending));
-    }
-    setBusy(el.remoteRead, !remote.readEnabled);
-    setBusy(el.remoteTextSend, !remote.keysEnabled);
-    el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
-    el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
-
-    el.remotePairing.hidden = remote.pairing === null;
-    if (remote.pairing !== null) {
-      el.remotePairingText.textContent = remote.pairing.text;
-      el.remoteCode.hidden = !remote.pairing.codeEntry;
-      el.remotePair.hidden = !remote.pairing.codeEntry;
-      el.remoteShowCode.textContent = remote.pairing.codeEntry
-        ? "Show a new code"
-        : "Show code on TV";
-      setBusy(el.remotePair, remote.busy);
-      setBusy(el.remoteShowCode, remote.busy);
-      el.remoteCode.disabled = remote.busy;
-    }
-
-    el.remoteReadout.textContent = remote.readout;
-    el.remoteReadout.classList.toggle("is-empty", remote.readout === "");
-
-    const key = JSON.stringify([remote.progress, remote.outcome]);
-    if (key === remoteFeedbackKey) {
-      return;
-    }
-    remoteFeedbackKey = key;
-    el.remoteFeedback.replaceChildren();
-    if (remote.progress !== null) {
-      const row = text("p", "feedback is-loading", "");
-      row.append(icon("buffering"), text("span", "", remote.progress));
-      el.remoteFeedback.append(row);
-    } else if (remote.outcome !== null) {
-      const outcome = remote.outcome;
-      const row = text(
-        "p",
-        `feedback feedback-${outcome.tone === "done" ? "info" : "warning"}`,
-        "",
-      );
-      row.append(
-        icon(outcome.tone === "failed" ? "alert" : "info"),
-        text("span", "", outcome.text),
-      );
-      el.remoteFeedback.append(row);
-      if (outcome.technical !== null) {
-        el.remoteFeedback.append(disclosure(outcome.technical));
-      }
-    }
-  }
-
   // The command's progress and outcome. Redrawn only when it changed: it is a live region.
   function renderFeedback(): void {
     const { commandFeedback } = elements;
@@ -718,7 +594,7 @@ function start(elements: Elements): void {
     renderContext();
     renderControls();
     renderSound();
-    renderRemote();
+    remotePanel.render(state);
     // One recovery action at a time: a failed status read, or a command outcome that offers
     // its own labelled button, makes the refresh icon a repeat of it, so it steps aside and
     // hands over keyboard focus if it had it.
@@ -831,7 +707,7 @@ function start(elements: Elements): void {
     const { command, args } = remoteInvocation(request);
     let answer: RemoteAnswer;
     try {
-      answer = { ok: true, result: await invoke<unknown>(command, args) };
+      answer = { ok: true, result: await invoke<JsonValue>(command, args) };
     } catch (error) {
       answer = { ok: false, failure: toBridgeFailure(error) };
     }
@@ -900,6 +776,13 @@ function start(elements: Elements): void {
     seekTimer = window.setTimeout(commitSeek, SEEK_COMMIT_DELAY_MS);
   });
   // Moving the volume control only composes a level; one command is sent once it has settled.
+  const remotePanel = createRemotePanel(elements.remote, {
+    run: onRemote,
+    filterApps: (filter) => update(setAppFilter(state, filter)),
+    focusElsewhere: () =>
+      (elements.refreshButton.hidden ? elements.pickerSummary : elements.refreshButton).focus(),
+  });
+
   const sound = createSoundController({
     getState: () => state,
     setState: update,
@@ -922,24 +805,6 @@ function start(elements: Elements): void {
   );
   elements.volumeInput.addEventListener("change", () => sound.volumeChange());
   elements.muteButton.addEventListener("click", () => sound.mute());
-  for (const button of elements.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
-    button.addEventListener("click", () =>
-      onRemote({ kind: "key", key: button.dataset["remoteKey"] as RemoteKeyName }),
-    );
-  }
-  elements.remoteRead.addEventListener("click", () => onRemote({ kind: "status" }));
-  elements.remoteTextForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    onRemote({ kind: "text", text: elements.remoteText.value });
-  });
-  elements.remoteShowCode.addEventListener("click", () => onRemote({ kind: "show_code" }));
-  const pair = (): void => onRemote({ kind: "pair", code: elements.remoteCode.value });
-  elements.remotePair.addEventListener("click", pair);
-  elements.remoteCode.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      pair();
-    }
-  });
   elements.picker.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && elements.picker.open) {
       elements.picker.open = false;
@@ -947,12 +812,46 @@ function start(elements: Elements): void {
     }
   });
 
+  // The tray's quick controls run as the window's own actions (see tray.ts); when one cannot
+  // run, nothing is sent and the window comes to the front so the person sees why.
+  void listen<JsonValue>("tray-action", (event) => {
+    if (!isTrayAction(event.payload)) {
+      return;
+    }
+    const request = trayRequest(state, event.payload);
+    if (request.kind === "transport") {
+      onTransport(request.command);
+    } else if (request.kind === "remote") {
+      onRemote(request.action);
+    } else {
+      void invoke("show_main_window").catch(() => undefined);
+    }
+  }).catch(() => undefined);
+
   render();
   void checkBackend();
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   start({
+    remote: {
+      tvRemote: byId("tv-remote"),
+      remotePairing: byId("remote-pairing"),
+      remotePairingText: byId("remote-pairing-text"),
+      remoteCode: byId<HTMLInputElement>("remote-code"),
+      remotePair: byId<HTMLButtonElement>("remote-pair"),
+      remoteShowCode: byId<HTMLButtonElement>("remote-show-code"),
+      remoteRead: byId<HTMLButtonElement>("remote-read"),
+      remoteTextForm: byId<HTMLFormElement>("remote-text-form"),
+      remoteText: byId<HTMLInputElement>("remote-text"),
+      remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
+      remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+      remoteKeys: byId("remote-keys"),
+      remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
+      remoteApps: byId("remote-apps"),
+      remoteReadout: byId("remote-readout"),
+      remoteFeedback: byId("remote-feedback"),
+    },
     serviceNotice: byId("service-notice"),
     picker: byId<HTMLDetailsElement>("picker"),
     pickerSummary: byId("picker-summary"),
@@ -977,18 +876,6 @@ window.addEventListener("DOMContentLoaded", () => {
     seekNote: byId("seek-note"),
     pauseNote: byId("pause-note"),
     sound: byId("sound"),
-    tvRemote: byId("tv-remote"),
-    remotePairing: byId("remote-pairing"),
-    remotePairingText: byId("remote-pairing-text"),
-    remoteCode: byId<HTMLInputElement>("remote-code"),
-    remotePair: byId<HTMLButtonElement>("remote-pair"),
-    remoteShowCode: byId<HTMLButtonElement>("remote-show-code"),
-    remoteRead: byId<HTMLButtonElement>("remote-read"),
-    remoteTextForm: byId<HTMLFormElement>("remote-text-form"),
-    remoteText: byId<HTMLInputElement>("remote-text"),
-    remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
-    remoteReadout: byId("remote-readout"),
-    remoteFeedback: byId("remote-feedback"),
     muteButton: byId<HTMLButtonElement>("mute-button"),
     volumeInput: byId<HTMLInputElement>("volume-input"),
     soundReadout: byId("sound-readout"),

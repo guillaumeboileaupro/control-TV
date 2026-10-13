@@ -16,7 +16,7 @@ class PythonUnavailable(cause: Throwable) : Exception("embedded Python bridge un
  * One request line through the embedded bridge, with the failure split the Rust shell relies on.
  *
  * [load] starts Python and imports `control_tv.embedded` (cached by Python after the first
- * call) and returns its `handle`. A failure there happens before any request reaches the
+ * call) and returns its `handle`. A failure there happens before a request reaches the
  * control layer, so it is [PythonUnavailable] (`backend_unavailable`, certainly not sent).
  * A failure while `handle` runs, or after it, is passed on unchanged: the request may have
  * been sent, so it stays the ambiguous `bridge_transport`. `handle` is called at most once.

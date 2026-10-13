@@ -17,6 +17,7 @@ import pytest
 
 from control_tv.bridge import REMOTE_KEYS, dispatch
 from control_tv.domain import (
+    AppLaunch,
     AudibleVolume,
     CommandRejectedError,
     Confirmation,
@@ -30,6 +31,7 @@ from control_tv.domain import (
     RemoteKey,
     RemoteObservation,
     TextEntry,
+    TvApp,
     UnsupportedOperationError,
 )
 from control_tv.ports import TvRemote
@@ -350,7 +352,7 @@ def test_every_host_runs_the_same_service_with_the_remote_channel(
 
     service = default_service()
 
-    assert isinstance(service._remote, TvRemoteChannel)
+    assert isinstance(service._channels._remote, TvRemoteChannel)
     assert default_credentials_dir() == tmp_path / "control-tv" / "tv-remote"
     assert not (tmp_path / "control-tv").exists()  # nothing is written until it is used
 
@@ -431,3 +433,146 @@ def test_bridge_reports_the_app_in_front_when_the_tv_says() -> None:
 def test_bridge_keyboard_keys_are_backspace_and_enter() -> None:
     assert REMOTE_KEYS["delete"] is RemoteKey.DELETE
     assert REMOTE_KEYS["enter"] is RemoteKey.ENTER
+
+
+# Apps ------------------------------------------------------------------------------------------
+
+
+@dataclass
+class FakeApps:
+    apps: tuple[TvApp, ...] = (TvApp("com.example.video", "Video"), TvApp("org.example.music"))
+    error: Exception | None = None
+    front: str | None = None
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def list_apps(self, host: str) -> tuple[TvApp, ...]:
+        self.calls.append(("list", host))
+        if self.error is not None:
+            raise self.error
+        return self.apps
+
+    def launch_app(self, host: str, package: str) -> AppLaunch:
+        self.calls.append(("launch", host, package))
+        if self.error is not None:
+            raise self.error
+        return AppLaunch(package=package, front_app=self.front)
+
+
+def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
+    service = ControlService(transport or FakeTransport(), remote=FakeRemote(), apps=apps)
+    service.discover_devices(timeout=1.0)
+    return service
+
+
+def test_the_app_list_comes_from_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    assert with_apps(apps).list_tv_apps(DEVICE_ID) == list(apps.apps)
+    assert apps.calls == [("list", HOST)]
+
+
+def test_no_app_list_for_a_group_or_without_the_inventory() -> None:
+    apps = FakeApps()
+
+    with pytest.raises(UnsupportedOperationError):
+        with_apps(apps, GroupTransport()).list_tv_apps(DEVICE_ID)
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).list_tv_apps(DEVICE_ID)
+    assert apps.calls == []
+
+
+@pytest.mark.parametrize(
+    ("front", "confirmation", "detail"),
+    [
+        ("com.example.video", Confirmation.CONFIRMED, "the TV reports the app in front"),
+        ("com.other", Confirmation.UNCONFIRMED, "sent; the TV still reports com.other in front"),
+        (
+            None,
+            Confirmation.NOT_CHECKED,
+            "sent; the TV did not report the app in front; check the TV",
+        ),
+    ],
+)
+def test_a_launch_is_confirmed_only_by_the_app_the_tv_reports_in_front(
+    front: str | None, confirmation: Confirmation, detail: str
+) -> None:
+    apps = FakeApps(front=front)
+
+    result = with_apps(apps).launch_tv_app(DEVICE_ID, "com.example.video")
+
+    assert apps.calls == [("launch", HOST, "com.example.video")]
+    assert (result.confirmation, result.detail, result.front_app) == (confirmation, detail, front)
+
+
+def test_a_launch_needs_a_package_name_string_and_the_inventory() -> None:
+    apps = FakeApps()
+
+    with pytest.raises(InvalidArgumentError):
+        with_apps(apps).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == []
+
+
+def test_bridge_lists_apps_with_their_known_names() -> None:
+    response = call(with_apps(FakeApps()), "list_tv_apps", deviceId=str(DEVICE_ID))
+
+    assert response["result"] == {
+        "apps": [
+            {"package": "com.example.video", "name": "Video"},
+            {"package": "org.example.music", "name": None},
+        ]
+    }
+
+
+def test_bridge_app_list_errors_keep_their_codes() -> None:
+    apps = FakeApps(error=PairingRequiredError("allow control-TV on the TV"))
+
+    response = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
+
+    assert response["error"]["code"] == "pairing_required"
+
+
+def test_bridge_launches_an_app_and_answers_with_what_the_tv_reported() -> None:
+    service = with_apps(FakeApps(front="com.example.video"))
+
+    response = call(service, "launch_tv_app", deviceId=str(DEVICE_ID), package="com.example.video")
+
+    result = response["result"]["result"]
+    assert result["confirmation"] == "confirmed"
+    assert result["package"] == "com.example.video"
+    assert result["frontApp"] == "com.example.video"
+
+
+def test_bridge_refuses_a_launch_without_a_package_string() -> None:
+    apps = FakeApps()
+
+    response = call(with_apps(apps), "launch_tv_app", deviceId=str(DEVICE_ID), package=7)
+
+    assert response["error"]["code"] == "invalid_argument"
+    assert apps.calls == []
+
+
+def test_apps_do_not_depend_on_what_discovery_saw_of_the_remote() -> None:
+    apps = FakeApps(front="com.example.video")
+
+    service = with_apps(apps, NoRemoteTransport())
+
+    assert service.list_tv_apps(DEVICE_ID) == list(apps.apps)
+    assert service.launch_tv_app(DEVICE_ID, "com.example.video").front_app == "com.example.video"
+    with pytest.raises(UnsupportedOperationError):
+        service.press_remote_key(DEVICE_ID, RemoteKey.HOME)
+
+
+def test_the_tv_channels_need_only_a_device_lookup_not_the_cast_service() -> None:
+    from control_tv.tv_channels import TvChannels
+
+    tv = Device(id=DEVICE_ID, friendly_name="Living room", host=HOST, port=8009)
+    remote = FakeRemote()
+    channels = TvChannels({DEVICE_ID: tv}.get, remote=remote, apps=FakeApps())
+
+    assert channels.get_remote_status(DEVICE_ID) == volume(10)
+    assert channels.list_tv_apps(DEVICE_ID)[0].package == "com.example.video"
+    assert remote.calls == [("observe", HOST)]
+    with pytest.raises(DeviceNotFoundError):
+        channels.get_remote_status(DeviceId("uuid-other"))

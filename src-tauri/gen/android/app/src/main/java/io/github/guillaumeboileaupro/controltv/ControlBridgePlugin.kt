@@ -49,7 +49,7 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun load(webView: WebView) {
         holdMulticast()
-        // Once, on the bridge worker before any request: proves in logcat that the embedded
+        // Once, on the bridge worker before the first request: proves in logcat that the embedded
         // Python imports control_tv and answers a ping. Versions only, no device data, no
         // Cast message; never retried.
         relay.execute(

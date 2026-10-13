@@ -12,6 +12,7 @@
   },
   "include": [
     "src/fixtures.ts",
+    "src/json.ts",
     "src/model.ts",
     "src/model.test.ts",
     "src/playback.ts",
@@ -20,6 +21,8 @@
     "src/sound.test.ts",
     "src/remote.ts",
     "src/remote.test.ts",
+    "src/tray.ts",
+    "src/tray.test.ts",
     "src/interaction.ts",
     "src/interaction.test.ts"
   ],

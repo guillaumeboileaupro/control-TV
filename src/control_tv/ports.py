@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from control_tv.domain import (
+    AppLaunch,
     CommandResult,
     Device,
     DeviceId,
@@ -19,6 +20,7 @@ from control_tv.domain import (
     RemoteKey,
     RemoteObservation,
     TextEntry,
+    TvApp,
 )
 
 
@@ -75,6 +77,19 @@ class TvRemote(Protocol):
     def press(self, host: str, key: RemoteKey) -> KeyPress: ...
 
     def type_text(self, host: str, text: str) -> TextEntry: ...
+
+
+class TvApps(Protocol):
+    """The apps installed on a TV, reached by the TV's IP address.
+
+    Implementations must translate failures into `ControlError` subclasses, list only what the
+    TV itself reported, launch an app at most once per call, and report the app in front only
+    as the TV reported it.
+    """
+
+    def list_apps(self, host: str) -> tuple[TvApp, ...]: ...
+
+    def launch_app(self, host: str, package: str) -> AppLaunch: ...
 
 
 class TvControl(Protocol):

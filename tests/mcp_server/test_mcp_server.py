@@ -132,7 +132,7 @@ def test_discovery_returns_ids_and_names_but_never_addresses(transport: FakeTran
             {
                 "id": ID,
                 "friendlyName": "Living room",
-                "kind": "unknown",
+                "kind": "other",
                 "modelName": None,
                 "androidTvRemote": None,
             }
@@ -204,7 +204,7 @@ def test_a_delivery_timeout_is_ambiguous_and_never_resent(
     body = structured(result)
     assert result.isError is True
     assert body["error"]["code"] == "timeout"
-    assert body["delivery"] == "unknown"
+    assert body["delivery"] == "uncertain"
     assert "may or may not have reached the TV" in text(result)
     assert SECRET_HOST not in everything(result)
     assert transport.attempted() == ["stop"]
@@ -216,12 +216,12 @@ def test_a_delivery_timeout_is_ambiguous_and_never_resent(
         (
             DeviceUnavailableError(f"device uuid-1 is unavailable: [Errno 113] {SECRET_HOST}"),
             "device_unavailable",
-            "unknown",
+            "uncertain",
         ),
         (
             CommandRejectedError(f"device uuid-1 rejected pause: {SECRET_HOST}"),
             "command_rejected",
-            "unknown",
+            "uncertain",
         ),
     ],
 )
@@ -359,7 +359,7 @@ def test_an_unexpected_service_failure_is_internal_and_its_text_stays_local(
     result = call(tools, "pause", {"deviceId": ID})
 
     body = structured(result)
-    assert (body["error"]["code"], body["delivery"]) == ("internal_error", "unknown")
+    assert (body["error"]["code"], body["delivery"]) == ("internal_error", "uncertain")
     assert SECRET_HOST not in everything(result) and "/home/" not in everything(result)
     assert "RuntimeError" not in everything(result)
 

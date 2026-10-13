@@ -6,967 +6,41 @@
 //! stdin/stdout. See `src/control_tv/bridge.py` for the wire protocol and the
 //! authoritative behavior. `ControlService` is never reimplemented here.
 
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+mod bridge;
+mod commands;
+// A phone has no status area: only the desktop and the tests use this module.
+#[cfg_attr(not(any(desktop, test)), allow(dead_code))]
+mod tray;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+/// The Android app: Python is embedded in the app process (Chaquopy).
+#[cfg(target_os = "android")]
+mod android;
+
+#[cfg(not(target_os = "android"))]
+use std::sync::Arc;
+#[cfg(not(target_os = "android"))]
+use std::sync::Mutex;
+#[cfg(target_os = "android")]
+use std::sync::{Arc, Mutex};
+
 use tauri::Manager;
 
-/// Upper bound on `ping`: this call never has an operator-supplied timeout, so it gets
-/// a fixed, generous one - long enough for a healthy bridge under load, short enough
-/// that a genuinely stuck bridge is reported quickly.
-const PING_TIMEOUT: Duration = Duration::from_secs(5);
-/// Safety margin added on top of a caller-supplied discovery timeout, so a slow-but-
-/// working discovery (bounded by `ControlService` itself) is never cut off by this
-/// outer guard first; only a bridge that is truly stuck exceeds it.
-const DISCOVERY_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
-/// Outer bound on one `get_status` round trip: twice the control layer's own 5s status
-/// budget (`DEFAULT_STATUS_TIMEOUT` in `control_tv.service`), so only a genuinely stuck
-/// bridge exceeds it. The bridge is single-flight and this timer starts before a request
-/// gets its turn, so a request must never wait behind another: the UI keeps at most one
-/// request in flight (it offers no selection, refresh or discovery while one is running).
-const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
-/// Outer bound on one playback command. The control layer runs a command inside its own
-/// windows - an identity snapshot and the confirmation share one 5s window, and delivering
-/// the command may first wait for a connection with one bounded recovery, about 35s in the
-/// worst case - so this is deliberately generous: only a genuinely stuck bridge exceeds it.
-/// The UI keeps one request in flight and never resends on a timeout (delivery is then
-/// ambiguous), so a long bound only ever delays reporting a stuck bridge.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
-/// Outer bound on one request on the TV's own remote channel (status, pairing or one key). The
-/// control layer bounds each such operation to 8s (`DEFAULT_TIMEOUT` in
-/// `control_tv.adapters.tv_remote`); this is generous on top of it, so only a stuck bridge
-/// exceeds it. A key is never resent on a timeout: its delivery is then ambiguous.
-const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
-/// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
-/// the UI tell "the backend is not there" apart from "the device is not there".
-const CODE_BACKEND_UNAVAILABLE: &str = "backend_unavailable";
-const CODE_BRIDGE_TIMEOUT: &str = "bridge_timeout";
-const CODE_BRIDGE_TRANSPORT: &str = "bridge_transport";
-/// A request that timed out before it was written: certainly not sent, so not ambiguous.
-const CODE_BRIDGE_BUSY: &str = "bridge_busy";
-
-/// The fate of one bridge call, settled once: see `call_bridge`.
-const CLAIM_PENDING: u8 = 0;
-const CLAIM_STARTED: u8 = 1;
-const CLAIM_ABANDONED: u8 = 2;
-
-/// The one process boundary to the shared Python control layer.
-///
-/// Spawned in `run()`'s `setup` hook and kept until it fails, when `BridgeSlot` replaces
-/// it for later requests. Requests are sent and answered sequentially (single-flight, serialized by
-/// `stdin`/`stdout` each being behind their own `Mutex`) and matched by a monotonically
-/// increasing id; nothing today needs concurrent in-flight requests, so this is
-/// deliberately the simplest correct thing, not a protocol limitation.
-struct PythonBridge {
-    channel: BridgeChannel,
-    next_id: AtomicU64,
-    process: Arc<BridgeProcess>,
+use bridge::*;
+#[cfg(test)]
+use commands::*;
+/// How this build starts the bridge, the first time and on every recovery.
+#[cfg(not(target_os = "android"))]
+fn bridge_launcher(app: &tauri::App) -> BridgeLauncher {
+    // Every launch resolves the bridge program again: a release build can only ever start
+    // its bundled bridge, never another Python.
+    let handle = app.handle().clone();
+    Box::new(move || {
+        resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
+    })
 }
 
-/// How one request line reaches the shared Python control layer and its response comes back.
-enum BridgeChannel {
-    /// The desktop bridge process's stdin and stdout. Dropping `PythonBridge` drops this
-    /// channel, closing stdin and sending EOF, which is exactly what makes `bridge.py`'s
-    /// `for line in stdin` loop end and the Python process exit on its own - no signal/kill
-    /// is needed for a clean shutdown. A bridge found broken is stopped explicitly instead
-    /// (`BridgeProcess`).
-    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-    Pipes {
-        stdin: Mutex<ChildStdin>,
-        stdout: Mutex<BufReader<ChildStdout>>,
-    },
-    /// Python embedded in this process (the Android app): one call takes one request line
-    /// and returns one response line, through the same `control_tv.bridge.handle_line`.
-    /// There is no process to stop or replace; the request claim and timeouts still apply.
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
-    InProcess(InProcessCall),
-}
-
-/// Runs one request line through the embedded Python bridge and returns its response line.
-type InProcessCall = Box<dyn Fn(String) -> Result<String, BridgeFailure> + Send + Sync>;
-
-/// The bridge's operating-system process, shared so that a caller whose request timed out
-/// after it was written can stop it without the bridge lock, which the worker still holds
-/// while it waits for the reply.
-struct BridgeProcess {
-    /// `None` for a bridge embedded in this process: nothing to kill or reap.
-    child: Option<Mutex<Child>>,
-    /// Set by the first `terminate`; the process group is killed only once, while its
-    /// leader is known to be ours.
-    terminated: std::sync::atomic::AtomicBool,
-}
-
-impl BridgeProcess {
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
-    fn in_process() -> Self {
-        Self {
-            child: None,
-            terminated: std::sync::atomic::AtomicBool::new(false),
-        }
-    }
-
-    fn lock_child(child: &Mutex<Child>) -> std::sync::MutexGuard<'_, Child> {
-        child
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn has_exited(&self) -> bool {
-        match &self.child {
-            Some(child) => !matches!(Self::lock_child(child).try_wait(), Ok(None)),
-            None => false,
-        }
-    }
-
-    /// Kill the process and everything it started (on Unix, its process group), then reap
-    /// it, so no zombie is left behind. With no process left holding its pipes, a worker
-    /// blocked on them sees end of file and returns. A bridge embedded in this process has
-    /// nothing to stop.
-    fn terminate(&self) {
-        let Some(child) = &self.child else {
-            self.terminated.store(true, Ordering::SeqCst);
-            return;
-        };
-        let mut child = Self::lock_child(child);
-        if !self.terminated.swap(true, Ordering::SeqCst) {
-            #[cfg(unix)]
-            if let Ok(group) = i32::try_from(child.id()) {
-                // SAFETY: plain kill(2) on the group this bridge leads (`process_group(0)`).
-                unsafe {
-                    libc::kill(-group, libc::SIGKILL);
-                }
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-}
-
-/// The failure of one bridge-backed command, as the frontend receives it: a stable
-/// machine-readable `code` plus a human-readable `message`. It is both what the bridge
-/// sends as `error` (`Deserialize`) and what a rejected `invoke` carries (`Serialize`),
-/// so a `ControlError` code reaches the UI untouched instead of being flattened into text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct BridgeFailure {
-    code: String,
-    message: String,
-}
-
-impl BridgeFailure {
-    fn new(code: &str, message: impl Into<String>) -> Self {
-        Self {
-            code: code.to_string(),
-            message: message.into(),
-        }
-    }
-
-    /// The request or response could not travel to/from the bridge process at all.
-    fn transport(message: impl Into<String>) -> Self {
-        Self::new(CODE_BRIDGE_TRANSPORT, message)
-    }
-}
-
-/// How `run` starts the bridge process.
-///
-/// A debug build runs the shared package from the repository's `uv`-managed `.venv`
-/// (`python -m control_tv.bridge`), so development needs no packaging step. A release build
-/// runs only the frozen bridge bundled as the `python-bridge/` resource
-/// (`dev.py bridge-build`), which carries its own Python runtime: there is no fallback to a
-/// `.venv`, to `python`/`python3`, to `PATH` or to `PYTHONPATH`, and a missing bundle leaves
-/// the backend unavailable instead of picking up another Python.
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BridgeProgram {
-    executable: PathBuf,
-    args: Vec<String>,
-    /// Withhold the session's Python environment variables (`PYTHON_ENV_WITHHELD`), so they
-    /// cannot point the bundled runtime at another Python installation or package.
-    isolate_python_env: bool,
-}
-
-/// Python variables that could make the frozen bridge import code other than its own.
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-const PYTHON_ENV_WITHHELD: [&str; 2] = ["PYTHONPATH", "PYTHONHOME"];
-
-#[cfg(any(debug_assertions, test))]
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-fn development_bridge_program(manifest_dir: &std::path::Path, windows: bool) -> BridgeProgram {
-    let repo_root = manifest_dir
-        .parent()
-        .expect("src-tauri always has a parent directory");
-    let executable = if windows {
-        repo_root.join(".venv").join("Scripts").join("python.exe")
-    } else {
-        repo_root.join(".venv").join("bin").join("python")
-    };
-    BridgeProgram {
-        executable,
-        args: vec!["-m".to_string(), "control_tv.bridge".to_string()],
-        isolate_python_env: false,
-    }
-}
-
-#[cfg(any(not(debug_assertions), test))]
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-fn packaged_bridge_program(resource_dir: &std::path::Path, windows: bool) -> BridgeProgram {
-    let executable = if windows {
-        "control-tv-bridge.exe"
-    } else {
-        "control-tv-bridge"
-    };
-    BridgeProgram {
-        executable: resource_dir.join("python-bridge").join(executable),
-        args: Vec::new(),
-        isolate_python_env: true,
-    }
-}
-
-/// The bundled bridge under `resource_dir`, or why it cannot be used. Never another Python.
-#[cfg(any(not(debug_assertions), test))]
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-fn packaged_bridge(
-    resource_dir: Result<PathBuf, String>,
-    windows: bool,
-) -> Result<BridgeProgram, String> {
-    let program = packaged_bridge_program(&resource_dir?, windows);
-    if !program.executable.is_file() {
-        return Err(format!(
-            "the bundled Python control bridge is missing ({})",
-            program.executable.display()
-        ));
-    }
-    Ok(program)
-}
-
-#[cfg(debug_assertions)]
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-fn resolve_bridge_program<R: tauri::Runtime>(
-    _app: &tauri::AppHandle<R>,
-) -> Result<BridgeProgram, String> {
-    Ok(development_bridge_program(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-        cfg!(windows),
-    ))
-}
-
-#[cfg(not(debug_assertions))]
-#[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-fn resolve_bridge_program<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Result<BridgeProgram, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("failed to resolve the application resource directory: {error}"));
-    packaged_bridge(resource_dir, cfg!(windows))
-}
-
-impl PythonBridge {
-    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-    fn command(program: &BridgeProgram) -> Command {
-        let mut command = Command::new(&program.executable);
-        // Its own process group, so recovery can stop everything it started.
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
-        command
-            .args(&program.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        if program.isolate_python_env {
-            for variable in PYTHON_ENV_WITHHELD {
-                command.env_remove(variable);
-            }
-        }
-        command
-    }
-
-    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
-    fn spawn(program: &BridgeProgram) -> Result<Self, String> {
-        let mut child = Self::command(program).spawn().map_err(|error| {
-            format!(
-                "failed to spawn the Python control bridge ({}): {error}",
-                program.executable.display()
-            )
-        })?;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or("spawned bridge process has no stdin")?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("spawned bridge process has no stdout")?;
-
-        Ok(Self {
-            channel: BridgeChannel::Pipes {
-                stdin: Mutex::new(stdin),
-                stdout: Mutex::new(BufReader::new(stdout)),
-            },
-            next_id: AtomicU64::new(1),
-            process: Arc::new(BridgeProcess {
-                child: Some(Mutex::new(child)),
-                terminated: std::sync::atomic::AtomicBool::new(false),
-            }),
-        })
-    }
-
-    /// A bridge to Python embedded in this process (the Android app).
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
-    fn in_process(call: InProcessCall) -> Self {
-        Self {
-            channel: BridgeChannel::InProcess(call),
-            next_id: AtomicU64::new(1),
-            process: Arc::new(BridgeProcess::in_process()),
-        }
-    }
-
-    /// Send one `{method, params}` request and return its result, or the bridge's own
-    /// `{code, message}` error, or a `bridge_transport` failure when the request or its
-    /// response could not travel to/from the process at all.
-    fn call(&self, method: &str, params: Value) -> Result<Value, BridgeFailure> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let request = json!({ "id": id, "method": method, "params": params });
-        let line = serde_json::to_string(&request).map_err(|error| {
-            BridgeFailure::transport(format!("failed to encode bridge request: {error}"))
-        })?;
-
-        let (stdin, stdout) = match &self.channel {
-            BridgeChannel::Pipes { stdin, stdout } => (stdin, stdout),
-            BridgeChannel::InProcess(call) => return parse_response(&call(line)?),
-        };
-        {
-            let mut stdin = stdin
-                .lock()
-                .map_err(|_| BridgeFailure::transport("bridge stdin lock poisoned"))?;
-            writeln!(stdin, "{line}").map_err(|error| {
-                BridgeFailure::transport(format!("failed to write to the bridge process: {error}"))
-            })?;
-            stdin.flush().map_err(|error| {
-                BridgeFailure::transport(format!(
-                    "failed to flush the bridge process stdin: {error}"
-                ))
-            })?;
-        }
-
-        let mut response_line = String::new();
-        {
-            let mut stdout = stdout
-                .lock()
-                .map_err(|_| BridgeFailure::transport("bridge stdout lock poisoned"))?;
-            let bytes_read = stdout.read_line(&mut response_line).map_err(|error| {
-                BridgeFailure::transport(format!("failed to read from the bridge process: {error}"))
-            })?;
-            if bytes_read == 0 {
-                return Err(BridgeFailure::transport(
-                    "the Python control bridge process exited unexpectedly",
-                ));
-            }
-        }
-
-        parse_response(&response_line)
-    }
-}
-
-/// Pure parsing/translation of one response line - factored out of `call` so it is
-/// testable without spawning a real process.
-fn parse_response(line: &str) -> Result<Value, BridgeFailure> {
-    let response: Value = serde_json::from_str(line.trim()).map_err(|error| {
-        BridgeFailure::transport(format!("received a malformed bridge response: {error}"))
-    })?;
-
-    let ok = response.get("ok").and_then(Value::as_bool).unwrap_or(false);
-    if ok {
-        Ok(response.get("result").cloned().unwrap_or(Value::Null))
-    } else {
-        let failure = serde_json::from_value(response.get("error").cloned().unwrap_or(Value::Null))
-            .unwrap_or_else(|error| {
-                BridgeFailure::transport(format!(
-                    "bridge reported an error in an unexpected shape: {error}"
-                ))
-            });
-        Err(failure)
-    }
-}
-
-/// Managed application state: either the bridge started successfully, or it did not -
-/// in which case every bridge-backed command reports why (`backend_unavailable`), instead
-/// of the whole application failing to launch.
-enum BridgeState {
-    Ready(PythonBridge),
-    Unavailable(String),
-}
-
-/// Starts a bridge process: the same launch `run()` uses at startup.
-type BridgeLauncher = Box<dyn Fn() -> Result<PythonBridge, String> + Send>;
-
-/// The bridge and how to start a replacement for it.
-///
-/// Recovery replaces the process, never a request: a bridge found dead, broken or stuck is
-/// stopped and marked unavailable, and the next request that reaches it starts a new one
-/// before anything of that request is written. The request that met the failure keeps its
-/// own result (`bridge_transport` or `bridge_timeout`, both "may have been delivered") and
-/// is never sent again.
-struct BridgeSlot {
-    state: BridgeState,
-    /// `None` only where no replacement may be started (some tests).
-    launcher: Option<BridgeLauncher>,
-}
-
-impl BridgeSlot {
-    fn new(launcher: BridgeLauncher) -> Self {
-        let state = match launcher() {
-            Ok(bridge) => BridgeState::Ready(bridge),
-            Err(error) => {
-                eprintln!("control-tv: Python control bridge unavailable: {error}");
-                BridgeState::Unavailable(error)
-            }
-        };
-        Self {
-            state,
-            launcher: Some(launcher),
-        }
-    }
-
-    /// Stop the current process, if any, and leave the slot unavailable for `reason`.
-    fn retire(&mut self, reason: String) {
-        if let BridgeState::Ready(bridge) = &self.state {
-            bridge.process.terminate();
-        }
-        eprintln!("control-tv: Python control bridge stopped: {reason}");
-        self.state = BridgeState::Unavailable(reason);
-    }
-
-    /// Before a request is written: replace a process that has exited, and start one where
-    /// none runs. Nothing is sent to the new process here.
-    fn recover(&mut self) {
-        if let BridgeState::Ready(bridge) = &self.state {
-            if !bridge.process.has_exited() {
-                return;
-            }
-            self.retire("the Python control bridge process exited".to_string());
-        }
-        if let Some(launcher) = &self.launcher {
-            self.state = match launcher() {
-                Ok(bridge) => {
-                    eprintln!("control-tv: Python control bridge started again");
-                    BridgeState::Ready(bridge)
-                }
-                Err(error) => BridgeState::Unavailable(error),
-            };
-        }
-    }
-}
-
-/// `Arc` so a command can clone a handle to it and move that clone onto the blocking
-/// worker thread `call_bridge` spawns, independently of the `'_`-scoped `tauri::State`
-/// borrow (which cannot itself cross into a `'static` spawned task).
-type SharedBridgeState = Arc<Mutex<BridgeSlot>>;
-
-/// Run one bridge request off Tauri's async/main thread and bound how long a command
-/// will wait for it.
-///
-/// `PythonBridge::call` is a blocking, synchronous stdio round trip (P1 review on PR
-/// #4: a *synchronous* Tauri command runs `call` on Tauri's main thread, so an ordinary
-/// discovery - or a bridge that never replies - freezes the window). Moving the blocking
-/// call onto a dedicated blocking-pool thread via `spawn_blocking` keeps the async/main
-/// thread free regardless of how long the bridge takes; wrapping that in
-/// `tokio::time::timeout` additionally guarantees this function itself always resolves
-/// within `timeout`, so a stuck bridge is reported as an error instead of leaving the
-/// caller (and the UI) waiting forever. A blocking OS read cannot be cancelled, so a
-/// request that times out after its claim kills its bridge process instead (see below):
-/// that ends the read, and the worker returns.
-///
-/// A request that times out before it was written must never be written afterwards: the
-/// caller has already been told it failed, so a late write would deliver a command nobody is
-/// waiting for. Each call therefore has a claim, settled exactly once by a compare-and-swap:
-/// the worker claims it (`CLAIM_STARTED`) after it holds the bridge and before anything
-/// reaches stdin; the timeout claims it (`CLAIM_ABANDONED`). If the timeout wins, the worker
-/// gives the bridge back without writing, and the error says the request was not sent; if the
-/// worker won, the request was sent and the timeout stays ambiguous.
-///
-/// Recovery (`BridgeSlot`) only ever acts on the process: before a still-pending request
-/// is claimed, a dead process is replaced; a request that ends in `bridge_transport`
-/// retires its process; a request that times out after its claim stops the process it was
-/// written to, which also frees a worker stuck reading from it. The next request then
-/// starts a new process. No request is retried or replayed.
-async fn call_bridge(
-    state: SharedBridgeState,
-    method: &'static str,
-    params: Value,
-    timeout: Duration,
-) -> Result<Value, BridgeFailure> {
-    let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
-    let worker_claim = Arc::clone(&claim);
-    // The process this request is written to, set before the claim, so a caller that loses
-    // the claim race to the worker can stop that process (and only that one).
-    let written_to: Arc<OnceLock<Arc<BridgeProcess>>> = Arc::new(OnceLock::new());
-    let worker_written_to = Arc::clone(&written_to);
-    let task = tauri::async_runtime::spawn_blocking(move || {
-        let mut slot = match state.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => {
-                // A worker panicked while it used the bridge, so its pipes may be mid-message.
-                state.clear_poison();
-                let mut slot = poisoned.into_inner();
-                slot.retire("a request failed while it used the bridge".to_string());
-                slot
-            }
-        };
-        if worker_claim.load(Ordering::SeqCst) == CLAIM_PENDING {
-            slot.recover();
-        }
-        let bridge = match &slot.state {
-            BridgeState::Ready(bridge) => bridge,
-            BridgeState::Unavailable(reason) => {
-                return Err(BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, reason.clone()));
-            }
-        };
-        let _ = worker_written_to.set(Arc::clone(&bridge.process));
-        if worker_claim
-            .compare_exchange(
-                CLAIM_PENDING,
-                CLAIM_STARTED,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_err()
-        {
-            // The caller gave up while this request waited for the bridge.
-            return Err(BridgeFailure::new(
-                CODE_BRIDGE_BUSY,
-                "the request was abandoned before it was sent",
-            ));
-        }
-        let result = bridge.call(method, params);
-        if let Err(failure) = &result {
-            if failure.code == CODE_BRIDGE_TRANSPORT {
-                slot.retire(failure.message.clone());
-            }
-        }
-        result
-    });
-
-    match tokio::time::timeout(timeout, task).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(join_error)) => Err(BridgeFailure::transport(format!(
-            "bridge worker thread failed: {join_error}"
-        ))),
-        Err(_timed_out) => {
-            let never_sent = claim
-                .compare_exchange(
-                    CLAIM_PENDING,
-                    CLAIM_ABANDONED,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok();
-            if never_sent {
-                Err(BridgeFailure::new(
-                    CODE_BRIDGE_BUSY,
-                    format!(
-                        "the request was not sent: the Python control bridge was still busy \
-                         after {:.0}s",
-                        timeout.as_secs_f64()
-                    ),
-                ))
-            } else {
-                // The request was written, or about to be: its result stays ambiguous. Its
-                // process is stopped so that a stuck bridge cannot hold every later request.
-                if let Some(process) = written_to.get() {
-                    let process = Arc::clone(process);
-                    tauri::async_runtime::spawn_blocking(move || process.terminate());
-                }
-                Err(BridgeFailure::new(
-                    CODE_BRIDGE_TIMEOUT,
-                    format!(
-                        "the Python control bridge did not respond within {:.0}s",
-                        timeout.as_secs_f64()
-                    ),
-                ))
-            }
-        }
-    }
-}
-
-#[tauri::command]
-async fn bridge_ping(state: tauri::State<'_, SharedBridgeState>) -> Result<Value, BridgeFailure> {
-    call_bridge(state.inner().clone(), "ping", json!({}), PING_TIMEOUT).await
-}
-
-/// Pure request-building logic for `bridge_discover_devices`, factored out so it is
-/// testable without a running `tauri::App` to construct a `State` from.
-fn discovery_request(timeout_seconds: Option<f64>) -> (Value, Duration) {
-    let mut params = serde_json::Map::new();
-    let mut timeout = PING_TIMEOUT + DISCOVERY_TIMEOUT_MARGIN;
-    if let Some(timeout_seconds) = timeout_seconds {
-        params.insert("timeoutSeconds".to_string(), json!(timeout_seconds));
-        timeout = Duration::from_secs_f64(timeout_seconds.max(0.0)) + DISCOVERY_TIMEOUT_MARGIN;
-    }
-    (Value::Object(params), timeout)
-}
-
-#[tauri::command]
-async fn bridge_discover_devices(
-    state: tauri::State<'_, SharedBridgeState>,
-    timeout_seconds: Option<f64>,
-) -> Result<Value, BridgeFailure> {
-    let (params, timeout) = discovery_request(timeout_seconds);
-    call_bridge(state.inner().clone(), "discover_devices", params, timeout).await
-}
-
-/// The request for one status read: only the stable device id, exactly as discovery
-/// reported it. Whether that id is valid, known or reachable is decided by the shared
-/// control layer, never here.
-fn status_request(device_id: &str) -> Value {
-    json!({ "deviceId": device_id })
-}
-
-async fn read_status(state: SharedBridgeState, device_id: &str) -> Result<Value, BridgeFailure> {
-    call_bridge(
-        state,
-        "get_status",
-        status_request(device_id),
-        STATUS_TIMEOUT,
-    )
-    .await
-}
-
-/// Read-only: asks the shared control layer for the selected device's observed status.
-/// Sends no playback, volume or mute command.
-#[tauri::command]
-async fn bridge_get_status(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    read_status(state.inner().clone(), &device_id).await
-}
-
-/// The request for a seek: the stable device id and the requested position in seconds. Whether
-/// the position is valid, or the media can be seeked at all, is decided by the control layer.
-fn seek_request(device_id: &str, position_seconds: f64) -> Value {
-    json!({ "deviceId": device_id, "positionSeconds": position_seconds })
-}
-
-/// Forwards `play`, `pause` or `stop` for one device. A plain forward: no retry (a timeout
-/// leaves delivery ambiguous, so resending is the operator's decision) and no state of its
-/// own. The answer is data: `ok` means the command was sent, `confirmation` says whether the
-/// TV then showed the result.
-async fn send_transport(
-    state: SharedBridgeState,
-    method: &'static str,
-    device_id: &str,
-) -> Result<Value, BridgeFailure> {
-    call_bridge(state, method, status_request(device_id), COMMAND_TIMEOUT).await
-}
-
-async fn send_seek(
-    state: SharedBridgeState,
-    device_id: &str,
-    position_seconds: f64,
-) -> Result<Value, BridgeFailure> {
-    call_bridge(
-        state,
-        "seek",
-        seek_request(device_id, position_seconds),
-        COMMAND_TIMEOUT,
-    )
-    .await
-}
-
-#[tauri::command]
-async fn bridge_play(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    send_transport(state.inner().clone(), "play", &device_id).await
-}
-
-#[tauri::command]
-async fn bridge_pause(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    send_transport(state.inner().clone(), "pause", &device_id).await
-}
-
-#[tauri::command]
-async fn bridge_stop(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    send_transport(state.inner().clone(), "stop", &device_id).await
-}
-
-#[tauri::command]
-async fn bridge_seek(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    position_seconds: f64,
-) -> Result<Value, BridgeFailure> {
-    send_seek(state.inner().clone(), &device_id, position_seconds).await
-}
-
-/// The request for a volume change: the stable device id and the requested level from 0.0 to
-/// 1.0. Whether the level is valid is decided by the control layer, never here.
-fn volume_request(device_id: &str, level: f64) -> Value {
-    json!({ "deviceId": device_id, "level": level })
-}
-
-/// The request for a mute change. `muted` is the state to reach (`true` mutes, `false` unmutes),
-/// never a toggle: the same request sent twice ends in the same state.
-fn muted_request(device_id: &str, muted: bool) -> Value {
-    json!({ "deviceId": device_id, "muted": muted })
-}
-
-/// Forwards a volume change. A plain forward like the playback commands: no retry, no state of
-/// its own, and the answer is data (`ok` means sent, `confirmation` says whether the TV showed it).
-async fn send_set_volume(
-    state: SharedBridgeState,
-    device_id: &str,
-    level: f64,
-) -> Result<Value, BridgeFailure> {
-    call_bridge(
-        state,
-        "set_volume",
-        volume_request(device_id, level),
-        COMMAND_TIMEOUT,
-    )
-    .await
-}
-
-async fn send_set_muted(
-    state: SharedBridgeState,
-    device_id: &str,
-    muted: bool,
-) -> Result<Value, BridgeFailure> {
-    call_bridge(
-        state,
-        "set_muted",
-        muted_request(device_id, muted),
-        COMMAND_TIMEOUT,
-    )
-    .await
-}
-
-#[tauri::command]
-async fn bridge_set_volume(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    level: f64,
-) -> Result<Value, BridgeFailure> {
-    send_set_volume(state.inner().clone(), &device_id, level).await
-}
-
-#[tauri::command]
-async fn bridge_set_muted(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    muted: bool,
-) -> Result<Value, BridgeFailure> {
-    send_set_muted(state.inner().clone(), &device_id, muted).await
-}
-
-/// The request for one key on the TV's own remote channel: the stable device id and the key's
-/// name (`volume_up`, `mute`, `power`, `ok`, ...). Which names exist is decided by the control
-/// layer, which refuses any other before anything is sent.
-fn remote_key_request(device_id: &str, key: &str) -> Value {
-    json!({ "deviceId": device_id, "key": key })
-}
-
-/// The request that finishes pairing: the code the TV shows, passed as typed. Its format is
-/// checked by the control layer.
-fn pairing_code_request(device_id: &str, code: &str) -> Value {
-    json!({ "deviceId": device_id, "code": code })
-}
-
-/// The request that types text into the TV's active field. The text is forwarded as typed and
-/// never logged: it may be a password.
-fn remote_text_request(device_id: &str, text: &str) -> Value {
-    json!({ "deviceId": device_id, "text": text })
-}
-
-/// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
-/// no retry, no state of its own, and the answer is data.
-async fn send_remote(
-    state: SharedBridgeState,
-    method: &'static str,
-    params: Value,
-) -> Result<Value, BridgeFailure> {
-    call_bridge(state, method, params, REMOTE_TIMEOUT).await
-}
-
-/// Read-only: what the TV reports on its own remote channel (power, audible volume and mute).
-#[tauri::command]
-async fn bridge_get_remote_status(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    send_remote(
-        state.inner().clone(),
-        "get_remote_status",
-        status_request(&device_id),
-    )
-    .await
-}
-
-/// Asks the TV to show a pairing code.
-#[tauri::command]
-async fn bridge_start_remote_pairing(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-) -> Result<Value, BridgeFailure> {
-    send_remote(
-        state.inner().clone(),
-        "start_remote_pairing",
-        status_request(&device_id),
-    )
-    .await
-}
-
-#[tauri::command]
-async fn bridge_finish_remote_pairing(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    code: String,
-) -> Result<Value, BridgeFailure> {
-    send_remote(
-        state.inner().clone(),
-        "finish_remote_pairing",
-        pairing_code_request(&device_id, &code),
-    )
-    .await
-}
-
-#[tauri::command]
-async fn bridge_press_remote_key(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    key: String,
-) -> Result<Value, BridgeFailure> {
-    send_remote(
-        state.inner().clone(),
-        "press_remote_key",
-        remote_key_request(&device_id, &key),
-    )
-    .await
-}
-
-#[tauri::command]
-async fn bridge_type_remote_text(
-    state: tauri::State<'_, SharedBridgeState>,
-    device_id: String,
-    text: String,
-) -> Result<Value, BridgeFailure> {
-    send_remote(
-        state.inner().clone(),
-        "type_remote_text",
-        remote_text_request(&device_id, &text),
-    )
-    .await
-}
-
-/// The failure of an embedded (Android) bridge call. The Android side rejects with
-/// `backend_unavailable` only when the embedded Python could not start, before any request
-/// reached the shared control layer (certainly not sent); any other rejection may have come
-/// after the request was handled, so it is the ambiguous `bridge_transport`.
-#[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
-fn embedded_rejection(code: Option<&str>, message: Option<&str>) -> BridgeFailure {
-    let message = message
-        .unwrap_or("the embedded Python control bridge failed")
-        .to_string();
-    match code {
-        Some(CODE_BACKEND_UNAVAILABLE) => BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, message),
-        _ => BridgeFailure::transport(message),
-    }
-}
-
-/// The Android app: Python is embedded in the app process (Chaquopy) and reached through
-/// the `ControlBridgePlugin` Kotlin plugin, which runs `control_tv.embedded.handle`.
-#[cfg(target_os = "android")]
-mod android {
-    use super::*;
-    use tauri::plugin::{mobile::PluginInvokeError, PluginHandle, TauriPlugin};
-
-    const PLUGIN_PACKAGE: &str = "io.github.guillaumeboileaupro.controltv";
-    const PLUGIN_CLASS: &str = "ControlBridgePlugin";
-
-    #[derive(Serialize)]
-    struct HandleArgs {
-        line: String,
-    }
-
-    #[derive(Deserialize)]
-    struct HandleResponse {
-        line: String,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SelectionArgs {
-        device_id: String,
-        name: String,
-    }
-
-    /// Stores the window's explicit choice of TV for the home-screen widget (Kotlin plugin,
-    /// app-private preferences). Blocking: call it off the main thread.
-    pub(super) fn remember_selection(
-        handle: &PluginHandle<tauri::Wry>,
-        device_id: String,
-        name: String,
-    ) -> Result<(), String> {
-        handle
-            .run_mobile_plugin::<Value>("rememberSelection", SelectionArgs { device_id, name })
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    /// The registered Kotlin plugin, shared by every launch of the bridge.
-    pub(super) struct EmbeddedBridge(pub(super) Arc<PluginHandle<tauri::Wry>>);
-
-    pub(super) fn plugin() -> TauriPlugin<tauri::Wry> {
-        tauri::plugin::Builder::new("control-bridge")
-            .setup(|app, api| {
-                let handle = api.register_android_plugin(PLUGIN_PACKAGE, PLUGIN_CLASS)?;
-                app.manage(EmbeddedBridge(Arc::new(handle)));
-                Ok(())
-            })
-            .build()
-    }
-
-    /// One request line to the embedded bridge, on the calling (worker) thread; the Kotlin
-    /// side runs Python off the Android main thread and answers once.
-    pub(super) fn launcher(handle: Arc<PluginHandle<tauri::Wry>>) -> BridgeLauncher {
-        Box::new(move || {
-            let handle = Arc::clone(&handle);
-            Ok(PythonBridge::in_process(Box::new(move |line| {
-                handle
-                    .run_mobile_plugin::<HandleResponse>("handle", HandleArgs { line })
-                    .map(|response| response.line)
-                    .map_err(|error| match error {
-                        PluginInvokeError::InvokeRejected(rejection) => embedded_rejection(
-                            rejection.code.as_deref(),
-                            rejection.message.as_deref(),
-                        ),
-                        other => BridgeFailure::transport(other.to_string()),
-                    })
-            })))
-        })
-    }
-}
-
-/// The window's explicit choice of a TV, remembered for the Android home-screen widget as
-/// its target. It never reaches the bridge or any TV. Async with the plugin call on a
-/// blocking worker: the Kotlin plugin runs on the Android main thread.
+/// Remembers the window's explicit TV choice for the Android widget. The plugin call is
+/// blocking, so it runs off the async/main thread. No bridge request or TV command is sent.
 #[cfg(target_os = "android")]
 #[tauri::command]
 async fn remember_selection(
@@ -982,23 +56,12 @@ async fn remember_selection(
     .map_err(|error| error.to_string())?
 }
 
-/// On the desktop there is no home-screen widget: the choice is accepted and nothing stored.
+/// Desktop has no home-screen widget; accepting the selection keeps one frontend contract.
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn remember_selection(device_id: String, name: String) -> Result<(), String> {
     let _ = (device_id, name);
     Ok(())
-}
-
-/// How this build starts the bridge, the first time and on every recovery.
-#[cfg(not(target_os = "android"))]
-fn bridge_launcher(app: &tauri::App) -> BridgeLauncher {
-    // Every launch resolves the bridge program again: a release build can only ever start
-    // its bundled bridge, never another Python.
-    let handle = app.handle().clone();
-    Box::new(move || {
-        resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
-    })
 }
 
 /// How this build starts the bridge: Python embedded in the Android app.
@@ -1017,23 +80,31 @@ pub fn run() {
         .setup(|app| {
             let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
+            // Without a status area (or its AppIndicator support) the window works as before.
+            #[cfg(desktop)]
+            if let Err(error) = tray::install(app) {
+                eprintln!("control-TV: no status-area icon: {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            bridge_ping,
-            bridge_discover_devices,
-            bridge_get_status,
-            bridge_play,
-            bridge_pause,
-            bridge_stop,
-            bridge_seek,
-            bridge_set_volume,
-            bridge_set_muted,
-            bridge_get_remote_status,
-            bridge_start_remote_pairing,
-            bridge_finish_remote_pairing,
-            bridge_press_remote_key,
-            bridge_type_remote_text,
+            commands::bridge_ping,
+            commands::bridge_discover_devices,
+            commands::bridge_get_status,
+            commands::bridge_play,
+            commands::bridge_pause,
+            commands::bridge_stop,
+            commands::bridge_seek,
+            commands::bridge_set_volume,
+            commands::bridge_set_muted,
+            commands::bridge_get_remote_status,
+            commands::bridge_start_remote_pairing,
+            commands::bridge_finish_remote_pairing,
+            commands::bridge_press_remote_key,
+            commands::bridge_type_remote_text,
+            commands::bridge_list_tv_apps,
+            commands::bridge_launch_tv_app,
+            commands::show_main_window,
             remember_selection
         ])
         .run(tauri::generate_context!())
@@ -1043,20 +114,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
-    #[test]
-    fn remembering_a_selection_on_the_desktop_stores_nothing_and_sends_nothing() {
-        let (state, seen) = embedded_slot(|request| answer(request, json!({})));
-
-        let result = tauri::async_runtime::block_on(remember_selection(
-            "device-b".to_string(),
-            "Living room".to_string(),
-        ));
-
-        assert_eq!(result, Ok(()));
-        assert!(seen.lock().unwrap().is_empty());
-        drop(state);
-    }
+    use serde_json::{json, Value};
 
     #[test]
     fn parses_a_successful_response() {
@@ -1285,7 +349,7 @@ mod tests {
     }
 
     /// The real bridge, real `ControlService`, real `PyChromecastTransport`: a device that
-    /// was never discovered is rejected before any network I/O, so this proves the Rust
+    /// was never discovered is rejected before a network I/O, so this proves the Rust
     /// -> Python `get_status` path and its error code end to end without a Chromecast.
     #[test]
     fn the_real_bridge_answers_get_status_for_an_undiscovered_device_with_its_code() {
@@ -1888,6 +952,52 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
         );
     }
 
+    // --- the status-area icon (tray): pure mapping, no desktop needed ----------------------
+
+    #[test]
+    fn tray_items_mean_open_quit_or_one_window_action() {
+        use tray::{event_for, TrayEvent};
+
+        assert_eq!(event_for("open"), TrayEvent::Open);
+        assert_eq!(event_for("quit"), TrayEvent::Quit);
+        for (id, _) in tray::ACTIONS {
+            assert_eq!(event_for(id), TrayEvent::Action(id));
+        }
+        assert_eq!(event_for("set_volume"), TrayEvent::Unrecognized);
+        assert_eq!(event_for(""), TrayEvent::Unrecognized);
+    }
+
+    #[test]
+    fn tray_actions_are_the_quick_controls_and_never_a_level_or_a_free_command() {
+        let ids: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
+
+        assert_eq!(
+            ids,
+            [
+                "play_pause",
+                "stop",
+                "tv_mute",
+                "tv_volume_down",
+                "tv_volume_up"
+            ]
+        );
+        assert_eq!(tray::EVENT, "tray-action");
+    }
+
+    #[test]
+    fn an_app_request_carries_the_package_name_as_given() {
+        assert_eq!(
+            app_request("uuid-1", "com.example.video"),
+            json!({"deviceId": "uuid-1", "package": "com.example.video"})
+        );
+    }
+
+    #[test]
+    fn the_app_list_bound_covers_the_owner_allowing_control_tv_on_the_tv() {
+        // socket 5 + two 5s handshake reads + allow 30 + the launch's 15s budget, with a margin
+        assert!(APPS_TIMEOUT >= Duration::from_secs(5 + 5 + 5 + 30 + 15) + Duration::from_secs(10));
+    }
+
     #[test]
     fn a_pairing_code_request_carries_the_code_as_typed() {
         assert_eq!(
@@ -2054,7 +1164,7 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
     }
 
     /// The real bridge, real `ControlService`, real `PyChromecastTransport`: an id that was
-    /// never discovered is refused before any network I/O. Reaching `device_not_found` (and
+    /// never discovered is refused before a network I/O. Reaching `device_not_found` (and
     /// not `invalid_argument`) proves the method names and the `level`/`muted` parameter
     /// names this shell sends are the ones the bridge accepts, without a Chromecast.
     #[test]
@@ -2126,6 +1236,18 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
             .unwrap_err();
         assert_eq!(text.code, "device_not_found");
         assert!(!text.message.contains("hello"));
+
+        let apps = bridge
+            .call("list_tv_apps", status_request("never-discovered"))
+            .unwrap_err();
+        let launch = bridge
+            .call(
+                "launch_tv_app",
+                app_request("never-discovered", "com.example.video"),
+            )
+            .unwrap_err();
+        assert_eq!(apps.code, "device_not_found");
+        assert_eq!(launch.code, "device_not_found");
     }
 
     #[test]

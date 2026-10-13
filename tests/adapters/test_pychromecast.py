@@ -1689,7 +1689,7 @@ def test_a_player_state_that_is_not_a_string_is_unknown(value: object) -> None:
     media = read_media(paused_entry(playerState=value))
 
     assert isinstance(media, MediaStatus)
-    assert media.playback_state is PlaybackState.UNKNOWN
+    assert media.playback_state is PlaybackState.UNDETERMINED
     assert media.content_id == MOVIE
 
 

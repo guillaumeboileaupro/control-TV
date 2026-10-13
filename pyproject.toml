@@ -18,11 +18,13 @@ dependencies = [
 mcp = [
     "mcp==1.30.0",
 ]
-# The Android TV Remote channel (protocol v2) of a Google TV: audible volume, mute, keys.
-# Optional while it is validated on real TVs: the desktop bridge and the Android app do not
-# install it yet (cryptography is native; see DEVELOPMENT_PLAN.md, phase 2C).
+# The Google TV's own channels: its remote (Android TV Remote protocol v2: audible volume, mute,
+# keys, text, app launch) and its network debugging (ADB: the list of installed apps). The
+# desktop bridge and the Android app embed this extra (see packaging/android_python.py).
 tvremote = [
     "androidtvremote2==0.3.2",
+    # The TV's installed apps, listed over its network debugging (ADB), which the owner turns on.
+    "adb-shell==0.4.4",
 ]
 
 [dependency-groups]
@@ -67,8 +69,20 @@ files = ["src", "tests", "scripts", "packaging"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
+# No explicit Any in the application, scripts or packaging (tests may still use it, owner
+# decision of 2026-10-13): external data is narrowed from `object` or typed JSON
+# (`control_tv.json_types`), and libraries are reached through Protocols.
+module = ["control_tv", "control_tv.*", "android_icon", "android_python", "bridge_entry", "build_bridge", "cast_observe", "dev", "release_linux"]
+disallow_any_explicit = true
+
+[[tool.mypy.overrides]]
 # PyInstaller ships no type information and is installed only by `dev.py bridge-build`.
 module = ["PyInstaller", "PyInstaller.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# adb-shell (the TV's app list over network debugging) ships no type information.
+module = ["adb_shell", "adb_shell.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
