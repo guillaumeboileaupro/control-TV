@@ -74,6 +74,7 @@ object WidgetPresentation {
         val parts = mutableListOf(playback)
         if (state.playback in setOf("playing", "buffering", "paused")) state.title?.let { parts += it }
         when {
+            state.muted == true && state.volumeFixed -> parts += "Muted (Cast) · TV sound may not change"
             state.muted == true -> parts += "Muted"
             state.volumeLevel != null -> parts += "${(state.volumeLevel * 100).roundToInt()}%"
         }

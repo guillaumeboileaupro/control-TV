@@ -41,6 +41,14 @@ pub(crate) const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
 /// bridge overhead; this bound leaves margin above it.
 pub(crate) const APPS_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Desktop has no home-screen widget; accepting the selection keeps one frontend contract.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub(crate) async fn remember_selection(device_id: String, name: String) -> Result<(), String> {
+    let _ = (device_id, name);
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn bridge_ping(
     state: tauri::State<'_, SharedBridgeState>,

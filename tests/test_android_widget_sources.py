@@ -91,7 +91,9 @@ def test_widget_production_sources_do_not_reintroduce_any_or_unknown() -> None:
     """The owner's strict type/vocabulary rule applies to handwritten Android code too."""
     forbidden = re.compile(r"\b(?:any|unknown)\b", re.IGNORECASE)
     offenders: list[str] = []
-    for source in sorted(KOTLIN.glob("*.kt")):
+    for source in sorted(KOTLIN.rglob("*.kt")):
+        if "generated" in source.relative_to(KOTLIN).parts:
+            continue
         for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
             if forbidden.search(line):
                 offenders.append(f"{source.name}:{line_number}: {line.strip()}")

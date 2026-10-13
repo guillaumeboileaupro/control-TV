@@ -25,7 +25,11 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
+#[cfg(target_os = "android")]
+use android::remember_selection;
 use bridge::*;
+#[cfg(not(target_os = "android"))]
+use commands::remember_selection;
 #[cfg(test)]
 use commands::*;
 /// How this build starts the bridge, the first time and on every recovery.
@@ -37,31 +41,6 @@ fn bridge_launcher(app: &tauri::App) -> BridgeLauncher {
     Box::new(move || {
         resolve_bridge_program(&handle).and_then(|program| PythonBridge::spawn(&program))
     })
-}
-
-/// Remembers the window's explicit TV choice for the Android widget. The plugin call is
-/// blocking, so it runs off the async/main thread. No bridge request or TV command is sent.
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn remember_selection(
-    app: tauri::AppHandle,
-    device_id: String,
-    name: String,
-) -> Result<(), String> {
-    let handle = Arc::clone(&app.state::<android::EmbeddedBridge>().0);
-    tauri::async_runtime::spawn_blocking(move || {
-        android::remember_selection(&handle, device_id, name)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-/// Desktop has no home-screen widget; accepting the selection keeps one frontend contract.
-#[cfg(not(target_os = "android"))]
-#[tauri::command]
-async fn remember_selection(device_id: String, name: String) -> Result<(), String> {
-    let _ = (device_id, name);
-    Ok(())
 }
 
 /// How this build starts the bridge: Python embedded in the Android app.

@@ -2,6 +2,8 @@ package io.github.guillaumeboileaupro.controltv
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /** The TV the window last worked with: what the home-screen widget controls. */
 data class Selection(val deviceId: String, val name: String)
@@ -97,11 +99,11 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
             .apply()
     }
 
-    override fun updateClaimedTaps(update: (String?) -> String?): Boolean = synchronized(LOCK) {
+    override fun updateClaimedTaps(update: (String?) -> String?): Boolean = LOCK.withLock {
         // An update from a version that kept only the last claimed tap: that tap stays claimed.
         val stored = prefs.getString("claimed_taps", null)
             ?: prefs.getString("claimed_tap", null)?.let { ClaimedTaps.claim(null, it, System.currentTimeMillis()) }
-        val next = update(stored) ?: return false
+        val next = update(stored) ?: return@withLock false
         // commit(), not apply(): written to disk before the command is handed to the bridge.
         check(prefs.edit().putString("claimed_taps", next).remove("claimed_tap").commit()) {
             "could not record the widget tap"
@@ -109,20 +111,20 @@ class PreferencesWidgetStore(context: Context) : WidgetStore {
         true
     }
 
-    override fun armedToken(newToken: () -> String): String = synchronized(LOCK) {
+    override fun armedToken(newToken: () -> String): String = LOCK.withLock {
         prefs.getString("armed_token", null) ?: newToken().also {
             check(prefs.edit().putString("armed_token", it).commit()) { "could not arm the widget" }
         }
     }
 
-    override fun consumeToken(token: String, next: String): Boolean = synchronized(LOCK) {
-        if (prefs.getString("armed_token", null) != token) return false
+    override fun consumeToken(token: String, next: String): Boolean = LOCK.withLock {
+        if (prefs.getString("armed_token", null) != token) return@withLock false
         check(prefs.edit().putString("armed_token", next).commit()) { "could not record the widget tap" }
         true
     }
 
     private companion object {
-        val LOCK = Object()
+        val LOCK = ReentrantLock()
     }
 
     private fun optionalBoolean(key: String): Boolean? = prefs.getString(key, null)?.toBooleanStrictOrNull()

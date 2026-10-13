@@ -12,7 +12,8 @@ class WidgetPresentationTest {
         level: Double? = 0.45,
         muted: Boolean? = false,
         connected: Boolean = true,
-    ) = TvState(connected, playback, title, null, level, false, muted)
+        volumeFixed: Boolean = false,
+    ) = TvState(connected, playback, title, null, level, volumeFixed, muted)
 
     @Test
     fun withoutASelectedTvItAsksToChooseOneInTheApp() {
@@ -42,6 +43,63 @@ class WidgetPresentationTest {
         assertEquals(false, confirmed.playing)
         assertTrue(unconfirmed.line.startsWith("Sent, but the TV hasn't shown it yet"))
         assertEquals("Sent. Tap ↻ to check.", unchecked.line)
+    }
+
+    @Test
+    fun confirmedCastMuteOnAFixedVolumeTvDoesNotClaimThePhysicalSoundChanged() {
+        val outcome = WidgetOutcome.Sent(
+            "set_muted",
+            "confirmed",
+            state(muted = true, volumeFixed = true),
+        )
+
+        val view = WidgetPresentation.present(outcome, SELECTED)
+
+        assertEquals("Playing · A film · Muted (Cast) · TV sound may not change", view.line)
+        assertEquals(true, view.muted)
+    }
+
+    @Test
+    fun confirmedMuteOnAnAdjustableCastVolumeKeepsTheConciseReportedState() {
+        val outcome = WidgetOutcome.Sent("set_muted", "confirmed", state(muted = true))
+
+        val view = WidgetPresentation.present(outcome, SELECTED)
+
+        assertEquals("Playing · A film · Muted", view.line)
+        assertEquals(true, view.muted)
+    }
+
+    @Test
+    fun sentButUnconfirmedMuteDoesNotClaimEitherReportedOrPhysicalMute() {
+        val outcome = WidgetOutcome.Sent(
+            "set_muted",
+            "unconfirmed",
+            state(muted = false, volumeFixed = true),
+        )
+
+        val view = WidgetPresentation.present(outcome, SELECTED)
+
+        assertEquals("Sent, but the TV hasn't shown it yet. Tap ↻ to check.", view.line)
+        assertEquals(false, view.muted)
+    }
+
+    @Test
+    fun muteFailureBeforeSendSaysNothingWasSent() {
+        val view = WidgetPresentation.present(WidgetOutcome.NotSent("unsupported_operation"), SELECTED)
+
+        assertEquals("The TV can't do that now. Nothing was sent.", view.line)
+        assertEquals(null, view.muted)
+    }
+
+    @Test
+    fun unavailableAndAmbiguousMuteOutcomesNeverClaimMute() {
+        val unavailable = WidgetPresentation.present(WidgetOutcome.Unavailable, SELECTED)
+        val ambiguous = WidgetPresentation.present(WidgetOutcome.MaybeSent("set_muted"), SELECTED)
+
+        assertEquals("control-TV couldn't start. Nothing was sent.", unavailable.line)
+        assertEquals("It may or may not have reached the TV. Tap ↻ to check.", ambiguous.line)
+        assertEquals(null, unavailable.muted)
+        assertEquals(null, ambiguous.muted)
     }
 
     @Test
