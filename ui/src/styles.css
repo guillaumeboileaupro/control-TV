@@ -1,10 +1,10 @@
 /* A remote first: soft surfaces group what acts on the same thing (the media, the TV's own
    remote, its apps, the Cast sound). One accent for actions and selection, red for a problem.
-   State is never shown by color alone: it also has an icon or a word. Light and dark follow the
-   system; every text and control color meets WCAG AA contrast on its surface. */
+   State is never shown by color alone: it also has an icon or a word. One light theme (owner
+   choice, 2026-10-13); every text and control color meets WCAG AA contrast on its surface. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family:
     system-ui,
     -apple-system,
@@ -34,27 +34,6 @@
   --radius-small: 10px;
   --gap: clamp(12px, 4vw, 20px);
   --target: 48px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e1218;
-    --surface: #171c24;
-    --surface-2: #202733;
-    --surface-3: #2a3240;
-    --text: #e8edf3;
-    --muted: #a3afbd;
-    --line: #2c3442;
-    --accent: #5b8cff;
-    --accent-hover: #7aa2ff;
-    --accent-text: #0b1020;
-    --accent-tint: #1d2a4a;
-    --error: #ff8a7a;
-    --error-tint: #3a1a17;
-    --power: #ff7a59;
-    --hover: #252d3a;
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
-  }
 }
 
 * {
