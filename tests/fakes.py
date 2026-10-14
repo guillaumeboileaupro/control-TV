@@ -179,13 +179,13 @@ class FakeTransport:
 
         self._command("load_media", (device_id, request), effect)
 
-    def play(self, device_id: DeviceId) -> None:
+    def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
         self._command("play", (device_id,), self._set("playback", PlaybackState.PLAYING))
 
-    def pause(self, device_id: DeviceId) -> None:
+    def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
         self._command("pause", (device_id,), self._set("playback", PlaybackState.PAUSED))
 
-    def stop(self, device_id: DeviceId) -> None:
+    def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
         def effect() -> None:
             if self.clears_media_on_stop:
                 self.tv.has_media = False
@@ -194,7 +194,12 @@ class FakeTransport:
 
         self._command("stop", (device_id,), effect)
 
-    def seek(self, device_id: DeviceId, position_seconds: float) -> None:
+    def seek(
+        self,
+        device_id: DeviceId,
+        position_seconds: float,
+        media_session_id: int | None = None,
+    ) -> None:
         self._command(
             "seek", (device_id, position_seconds), self._set("position", position_seconds)
         )

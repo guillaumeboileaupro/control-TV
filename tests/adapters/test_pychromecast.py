@@ -127,8 +127,11 @@ class FakeMediaController:
         *,
         callback_function: Callable[[bool, dict[str, object] | None], None],
     ) -> None:
-        assert data == {"type": "GET_STATUS"}
-        self.status_requests += 1
+        if data == {"type": "GET_STATUS"}:
+            self.status_requests += 1
+            callback_function(True, {"type": "MEDIA_STATUS", "status": list(self.reported)})
+            return
+        self._call("send_message", data, callback_function=callback_function)
         callback_function(True, {"type": "MEDIA_STATUS", "status": list(self.reported)})
 
     def play(self, *, timeout: float) -> None:
@@ -458,11 +461,18 @@ def test_all_commands_use_bounded_library_calls() -> None:
     transport.set_muted(DEVICE_ID, True)
 
     calls = cast_device.media_controller.calls
-    assert [call[0] for call in calls] == ["load_media", "play", "pause", "stop", "seek"]
+    assert [call[0] for call in calls] == ["load_media", *("send_message",) * 4]
     assert calls[0][1] == ("https://media.local/movie.mp4", "video/mp4")
     assert calls[0][2]["title"] is None
-    assert [calls[index][2]["timeout"] for index in (1, 2, 3, 4)] == [4.0] * 4
-    assert calls[4][1] == (25.0,)
+    messages = [cast(dict[str, object], calls[index][1][0]) for index in (1, 2, 3, 4)]
+    assert [message["type"] for message in messages] == [
+        "PLAY",
+        "PAUSE",
+        "STOP",
+        "SEEK",
+    ]
+    assert [message["mediaSessionId"] for message in messages] == [None] * 4
+    assert messages[3]["currentTime"] == 25.0
     assert cast_device.volume_calls == [(0.7, 4.0)]
     assert cast_device.mute_calls == [(True, 4.0)]
 
@@ -501,8 +511,47 @@ def test_each_playback_command_error_is_translated_without_replay(
     with pytest.raises(expected_error):
         send_playback_command(transport, command)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == [command]
+    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
+    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
+    assert message["type"] == command.upper()
     assert cast_device.wait_timeouts == [3.0]
+
+
+@pytest.mark.parametrize(
+    ("command", "message_type"),
+    [("play", "PLAY"), ("pause", "PAUSE"), ("stop", "STOP")],
+)
+def test_playback_command_targets_the_captured_media_session(
+    command: str, message_type: str
+) -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+
+    getattr(transport, command)(DEVICE_ID, 41)
+
+    name, args, kwargs = cast_device.media_controller.calls[-1]
+    assert name == "send_message"
+    assert args == ({"type": message_type, "mediaSessionId": 41},)
+    assert callable(kwargs["callback_function"])
+
+
+def test_seek_targets_the_captured_media_session() -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+
+    transport.seek(DEVICE_ID, 25.5, 41)
+
+    name, args, kwargs = cast_device.media_controller.calls[-1]
+    assert name == "send_message"
+    assert args == (
+        {
+            "type": "SEEK",
+            "mediaSessionId": 41,
+            "currentTime": 25.5,
+            "resumeState": "PLAYBACK_START",
+        },
+    )
+    assert callable(kwargs["callback_function"])
 
 
 def test_connection_timeout_is_translated_with_device_context() -> None:
@@ -571,7 +620,9 @@ def test_stale_connection_is_rediscovered_once_by_uuid_before_command() -> None:
     assert calls == [2.5, 1.0]
     assert stale.disconnect_calls == [3.0]
     assert [call[0] for call in stale.media_controller.calls] == []
-    assert [call[0] for call in recovered.media_controller.calls] == ["play"]
+    assert [call[0] for call in recovered.media_controller.calls] == ["send_message"]
+    message = cast(dict[str, object], recovered.media_controller.calls[0][1][0])
+    assert message["type"] == "PLAY"
 
 
 def test_rediscovery_without_same_uuid_does_not_send_command() -> None:
@@ -607,7 +658,9 @@ def test_command_failure_is_not_replayed_automatically() -> None:
     with pytest.raises(DeviceUnavailableError):
         transport.play(DEVICE_ID)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == ["play"]
+    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
+    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
+    assert message["type"] == "PLAY"
     assert cast_device.wait_timeouts == [3.0]
 
 
@@ -1004,7 +1057,9 @@ def test_request_not_sent_is_unavailable_not_receiver_rejection_and_is_not_repla
     with pytest.raises(DeviceUnavailableError, match="unavailable"):
         transport.pause(DEVICE_ID)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == ["pause"]
+    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
+    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
+    assert message["type"] == "PAUSE"
 
 
 def test_load_not_sent_is_unavailable_and_is_not_replayed() -> None:

@@ -19,6 +19,10 @@ from pychromecast.controllers.media import (
     MEDIA_PLAYER_STATE_PLAYING,
     TYPE_GET_STATUS,
     TYPE_MEDIA_STATUS,
+    TYPE_PAUSE,
+    TYPE_PLAY,
+    TYPE_SEEK,
+    TYPE_STOP,
 )
 from pychromecast.controllers.media import (
     MediaStatus as PyMediaStatus,
@@ -247,43 +251,58 @@ class PyChromecastTransport:
                 device_id=device_id,
             )
 
-    def play(self, device_id: DeviceId) -> None:
-        cast_device = self._ready(device_id)
-        self._command(
-            device_id,
-            "play",
-            lambda: cast_device.media_controller.play(timeout=self._request_timeout),
-        )
+    def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._media_session_command(device_id, "play", TYPE_PLAY, media_session_id)
 
-    def pause(self, device_id: DeviceId) -> None:
-        cast_device = self._ready(device_id)
-        self._command(
-            device_id,
-            "pause",
-            lambda: cast_device.media_controller.pause(timeout=self._request_timeout),
-        )
+    def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._media_session_command(device_id, "pause", TYPE_PAUSE, media_session_id)
 
-    def stop(self, device_id: DeviceId) -> None:
-        cast_device = self._ready(device_id)
-        self._command(
-            device_id,
-            "stop",
-            lambda: cast_device.media_controller.stop(timeout=self._request_timeout),
-        )
+    def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._media_session_command(device_id, "stop", TYPE_STOP, media_session_id)
 
-    def seek(self, device_id: DeviceId, position_seconds: float) -> None:
+    def seek(
+        self,
+        device_id: DeviceId,
+        position_seconds: float,
+        media_session_id: int | None = None,
+    ) -> None:
         if not math.isfinite(position_seconds) or position_seconds < 0:
             raise InvalidArgumentError(
                 f"seek position must be a finite number >= 0: {position_seconds}"
             )
-        cast_device = self._ready(device_id)
-        self._command(
+        self._media_session_command(
             device_id,
             "seek",
-            lambda: cast_device.media_controller.seek(
-                position_seconds, timeout=self._request_timeout
+            TYPE_SEEK,
+            media_session_id,
+            currentTime=position_seconds,
+            resumeState="PLAYBACK_START",
+        )
+
+    def _media_session_command(
+        self,
+        device_id: DeviceId,
+        name: str,
+        message_type: str,
+        media_session_id: int | None,
+        **fields: object,
+    ) -> None:
+        """Send to the session captured by the service, never PyChromecast's current cache."""
+        cast_device = self._ready(device_id)
+        response = WaitResponse(self._request_timeout, name)
+        message: dict[str, object] = {
+            MESSAGE_TYPE: message_type,
+            "mediaSessionId": media_session_id,
+            **fields,
+        }
+        self._command(
+            device_id,
+            name,
+            lambda: cast_device.media_controller.send_message_nocheck(
+                message, callback_function=response.callback
             ),
         )
+        self._command(device_id, name, response.wait_response)
 
     def set_volume(self, device_id: DeviceId, level: float) -> None:
         if not math.isfinite(level) or not 0 <= level <= 1:

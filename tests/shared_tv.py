@@ -147,17 +147,34 @@ class TvLink:
             device_id, "load_media", (request.url,), lambda: self.tv.new_session(request.url)
         )
 
-    def play(self, device_id: DeviceId) -> None:
-        self._send(device_id, "play", (), self._playback(PlaybackState.PLAYING))
+    def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._send_session(
+            device_id, "play", media_session_id, (), self._playback(PlaybackState.PLAYING)
+        )
 
-    def pause(self, device_id: DeviceId) -> None:
-        self._send(device_id, "pause", (), self._playback(PlaybackState.PAUSED))
+    def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._send_session(
+            device_id, "pause", media_session_id, (), self._playback(PlaybackState.PAUSED)
+        )
 
-    def stop(self, device_id: DeviceId) -> None:
-        self._send(device_id, "stop", (), self._playback(PlaybackState.IDLE))
+    def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+        self._send_session(
+            device_id, "stop", media_session_id, (), self._playback(PlaybackState.IDLE)
+        )
 
-    def seek(self, device_id: DeviceId, position_seconds: float) -> None:
-        self._send(device_id, "seek", (position_seconds,), self._set("position", position_seconds))
+    def seek(
+        self,
+        device_id: DeviceId,
+        position_seconds: float,
+        media_session_id: int | None = None,
+    ) -> None:
+        self._send_session(
+            device_id,
+            "seek",
+            media_session_id,
+            (position_seconds,),
+            self._set("position", position_seconds),
+        )
 
     def set_volume(self, device_id: DeviceId, level: float) -> None:
         self._send(device_id, "set_volume", (level,), self._set("volume", level))
@@ -189,6 +206,32 @@ class TvLink:
         self.send_attempts.append(command)
         if self.before_send:
             self.before_send.pop(0)()
+        if self.fail_before_delivery:
+            raise DeviceUnavailableError(
+                f"lost contact before {command} was delivered", device_id=device_id
+            )
+        self.tv.deliver(self.controller, command, args, effect)
+        if self.lose_answer_after_delivery:
+            raise OperationTimeoutError(f"no answer to {command}", device_id=device_id)
+        if self.fail_after_delivery:
+            raise DeviceUnavailableError(f"lost contact after {command}", device_id=device_id)
+
+    def _send_session(
+        self,
+        device_id: DeviceId,
+        command: str,
+        media_session_id: int | None,
+        args: tuple[object, ...],
+        effect: Callable[[], None],
+    ) -> None:
+        self._require_known(device_id)
+        self.send_attempts.append(command)
+        if self.before_send:
+            self.before_send.pop(0)()
+        if media_session_id is not None:
+            with self.tv.lock:
+                if self.tv.state.media_session_id != media_session_id:
+                    return
         if self.fail_before_delivery:
             raise DeviceUnavailableError(
                 f"lost contact before {command} was delivered", device_id=device_id

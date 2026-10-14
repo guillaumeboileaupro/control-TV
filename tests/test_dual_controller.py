@@ -397,9 +397,9 @@ def other_controller_loads_before_the_send(link: TvLink, android: ControlService
 
 
 def test_a_session_switch_before_the_send_leaves_the_command_unconfirmed_and_unrepeated() -> None:
-    # Current behavior, pinned: the pause prepared for the first session is still sent, once,
-    # and acts on whatever session the TV holds at that moment; it is never confirmed, since
-    # the media identity read before it no longer matches, and it is never resent.
+    # The pause is attempted once with the session captured by the pre-read. The receiver
+    # ignores that now-stale target; the replacement session remains untouched and no retry
+    # can accidentally retarget it.
     tv = SharedTv()
     desktop, desktop_link, android, _ = two_controllers(tv)
     other_controller_loads_before_the_send(desktop_link, android)
@@ -407,30 +407,15 @@ def test_a_session_switch_before_the_send_leaves_the_command_unconfirmed_and_unr
     result = desktop.pause(DEVICE_ID)
 
     assert desktop_link.send_attempts == ["pause"]
-    assert [(d.controller, d.command) for d in tv.deliveries] == [
-        ("android", "load_media"),
-        ("desktop", "pause"),
-    ]
+    assert [(d.controller, d.command) for d in tv.deliveries] == [("android", "load_media")]
     media = tv.snapshot().media
     assert media is not None
     assert (media.content_id, media.media_session_id) == (OTHER_URL, 2)
-    assert media.playback_state is PlaybackState.PAUSED  # the new session got the pause
+    assert media.playback_state is PlaybackState.PLAYING
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert result.detail is not None and "content changed" in result.detail
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap (PR #38 review P3-3): ControlService does not re-check the media session "
-        "between its pre-command read and the send, and CastTransport carries no expected "
-        "session id: PyChromecast fills in the mediaSessionId it last heard of, which can "
-        "already be the new session, so a command prepared for a session that ended reaches "
-        "the new one. Fixing it needs the transport to send the pre-read mediaSessionId so "
-        "the receiver refuses a stale one (a CastTransport and adapter change, outside this "
-        "PR, to be validated on a real receiver)."
-    ),
-)
 def test_a_command_is_not_sent_to_a_session_that_ended_after_the_pre_read() -> None:
     tv = SharedTv()
     desktop, desktop_link, android, _ = two_controllers(tv)

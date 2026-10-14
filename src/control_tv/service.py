@@ -120,6 +120,14 @@ class _MediaIdentity:
     item_id: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class _PlaybackTarget:
+    """Receiver identity captured before sending a playback command."""
+
+    identity: _MediaIdentity | None
+    media_session_id: int | None
+
+
 def _identity_of(media: MediaStatus | None) -> _MediaIdentity | None:
     content_id = _usable_content_id(media.content_id if media is not None else None)
     if media is None or content_id is None:
@@ -375,8 +383,9 @@ class ControlService:
     def play(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected = self._playback_identity(device_id, deadline)
-        self._transport.play(device_id)
+        target = self._playback_target(device_id, deadline)
+        expected = target.identity
+        self._transport.play(device_id, target.media_session_id)
         return self._verify(
             Command.PLAY,
             device_id,
@@ -388,8 +397,9 @@ class ControlService:
     def pause(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected = self._playback_identity(device_id, deadline)
-        self._transport.pause(device_id)
+        target = self._playback_target(device_id, deadline)
+        expected = target.identity
+        self._transport.pause(device_id, target.media_session_id)
         return self._verify(
             Command.PAUSE,
             device_id,
@@ -401,8 +411,9 @@ class ControlService:
     def stop(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
         deadline = self._confirmation_deadline()
-        expected = self._playback_identity(device_id, deadline)
-        self._transport.stop(device_id)
+        target = self._playback_target(device_id, deadline)
+        expected = target.identity
+        self._transport.stop(device_id, target.media_session_id)
         return self._verify(
             Command.STOP,
             device_id,
@@ -443,7 +454,9 @@ class ControlService:
             raise UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
             )
-        self._transport.seek(device_id, position_seconds)
+        self._transport.seek(
+            device_id, position_seconds, media.media_session_id if media is not None else None
+        )
         return self._verify(
             Command.SEEK,
             device_id,
@@ -539,31 +552,32 @@ class ControlService:
             and receiver.volume_control_type is VolumeControlType.FIXED
         )
 
-    def _playback_identity(
-        self, device_id: DeviceId, deadline: float | None
-    ) -> _MediaIdentity | None:
-        """Best-effort media identity captured before a playback command is sent.
+    def _playback_target(self, device_id: DeviceId, deadline: float | None) -> _PlaybackTarget:
+        """Best-effort identity and exact Cast session captured before one send.
 
-        A failed read must not turn an otherwise deliverable command into a delivery error.
-        Without a pre-command identity the command is still sent once, but later playback
-        state cannot prove which media reached that state and therefore cannot confirm it.
+        A failed read keeps the existing delivery semantics: the command is sent once and
+        cannot be confirmed.  When the receiver did report a session, that exact id is passed
+        to the transport so a concurrent session replacement cannot be targeted implicitly.
         """
         if deadline is None:
-            return None
+            return _PlaybackTarget(None, None)
         remaining = deadline - self._clock()
         if remaining <= 0:
-            return None
+            return _PlaybackTarget(None, None)
         try:
             status = self._transport.get_status(
                 device_id, timeout=min(self._status_timeout, remaining)
             )
         except ControlError:
-            return None
+            return _PlaybackTarget(None, None)
         if self._clock() >= deadline:
-            return None
+            return _PlaybackTarget(None, None)
         if status.connection is not ConnectionState.CONNECTED:
-            return None
-        return _identity_of(status.media)
+            return _PlaybackTarget(None, None)
+        media = status.media
+        return _PlaybackTarget(
+            _identity_of(media), media.media_session_id if media is not None else None
+        )
 
     def _verify(
         self,
