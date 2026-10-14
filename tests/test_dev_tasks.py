@@ -783,9 +783,27 @@ def test_npm_audit_findings_keep_advisories_and_skip_pointers() -> None:
     report = _report(("source-map-js", "high", GHSA), ("source-map-js", "high", GHSA))
 
     assert dev.npm_audit_findings(report) == [dev.AuditFinding("source-map-js", "high", GHSA)]
-    assert dev.npm_audit_findings({"vulnerabilities": {}}) == []
+    assert dev.npm_audit_findings({"auditReportVersion": 2, "vulnerabilities": {}}) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {"error": {"code": "ENOAUDIT"}},
+        {"auditReportVersion": 3, "vulnerabilities": {}},
+        {"vulnerabilities": {}},
+        {"auditReportVersion": 2},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": "b"}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": []}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [{"url": GHSA}]}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [{"severity": "high"}]}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [42]}}},
+    ],
+)
+def test_an_unreadable_npm_audit_report_fails_closed(report: dict[str, object]) -> None:
     with pytest.raises(ValueError):
-        dev.npm_audit_findings({"error": {"code": "ENOAUDIT"}})
+        dev.npm_audit_findings(report)
 
 
 def test_npm_audit_blocks_high_and_critical_only() -> None:

@@ -558,20 +558,30 @@ class AuditVerdict:
 
 
 def npm_audit_findings(report: object) -> list[AuditFinding]:
-    """Every advisory of an `npm audit --json` report (format 2), once per package and URL."""
-    if not isinstance(report, dict) or not isinstance(report.get("vulnerabilities"), dict):
-        raise ValueError("not an npm audit report (no `vulnerabilities` object)")
+    """Every advisory of an `npm audit --json` report (format 2), once per package and URL.
+
+    The gate fails closed: a report in another format, or an entry it cannot read, raises
+    instead of being skipped, so a change in npm's output can never pass as a clean audit.
+    """
+    if not isinstance(report, dict) or report.get("auditReportVersion") != 2:
+        raise ValueError("not an npm audit report in format 2 (`auditReportVersion` != 2)")
+    vulnerabilities = report.get("vulnerabilities")
+    if not isinstance(vulnerabilities, dict):
+        raise ValueError("the npm audit report has no `vulnerabilities` object")
     found: dict[tuple[str, str], AuditFinding] = {}
-    for package, entry in report["vulnerabilities"].items():
+    for package, entry in vulnerabilities.items():
         via = entry.get("via") if isinstance(entry, dict) else None
-        for item in via if isinstance(via, list) else []:
-            # A string names the vulnerable dependency it comes through; only objects are
-            # advisories.
-            if not isinstance(item, dict):
+        if not isinstance(via, list) or not via:
+            raise ValueError(f"unreadable npm audit entry for {package}: no `via` list")
+        for item in via:
+            # A string names the vulnerable dependency it comes through; objects are advisories.
+            if isinstance(item, str):
                 continue
-            url, severity = item.get("url"), item.get("severity")
-            if isinstance(url, str) and isinstance(severity, str):
-                found[(str(package), url)] = AuditFinding(str(package), severity, url)
+            url = item.get("url") if isinstance(item, dict) else None
+            severity = item.get("severity") if isinstance(item, dict) else None
+            if not (isinstance(url, str) and url and isinstance(severity, str) and severity):
+                raise ValueError(f"unreadable npm advisory for {package}: no `url` or `severity`")
+            found[(str(package), url)] = AuditFinding(str(package), severity, url)
     return sorted(found.values(), key=lambda f: (f.package, f.advisory))
 
 
