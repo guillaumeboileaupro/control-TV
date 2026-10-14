@@ -18,6 +18,8 @@ import {
 } from "./model.ts";
 import { startTransport } from "./playback.ts";
 import {
+  appHue,
+  appInitial,
   appLabel,
   describeRemote,
   describeReport,
@@ -671,5 +673,23 @@ describe("the app filter belongs to one TV", () => {
 
     assert.equal(selectDevice(found, "b").state.remote.appFilter, "");
     assert.equal(refreshStatus(found).state.remote.appFilter, "zzz"); // same TV keeps it
+  });
+});
+
+describe("app tiles", () => {
+  test("the letter is the label's first letter or digit, upper case", () => {
+    assert.equal(appInitial("youtube"), "Y");
+    assert.equal(appInitial("  (Prime) Video"), "P");
+    assert.equal(appInitial("6play"), "6");
+    assert.equal(appInitial("éclair"), "É");
+    assert.equal(appInitial("—"), "?");
+  });
+
+  test("the colour is stable per package and stays a hue", () => {
+    const hue = appHue("com.google.android.youtube.tv");
+
+    assert.equal(appHue("com.google.android.youtube.tv"), hue);
+    assert.ok(Number.isInteger(hue) && hue >= 0 && hue < 360);
+    assert.notEqual(appHue("com.netflix.ninja"), hue);
   });
 });

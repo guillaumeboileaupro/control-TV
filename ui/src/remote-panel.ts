@@ -7,6 +7,8 @@
 import { disclosure, icon, setBusy, text } from "./dom.ts";
 import type { AppState } from "./model.ts";
 import {
+  appHue,
+  appInitial,
   appLabel,
   describeRemote,
   type RemoteAction,
@@ -164,14 +166,15 @@ export function createRemotePanel(
     el.remoteApps.replaceChildren();
     for (const app of remote.apps ?? []) {
       const item = document.createElement("li");
-      const button = text("button", "btn", "") as HTMLButtonElement;
+      const button = text("button", "app-tile", "") as HTMLButtonElement;
       button.type = "button";
       button.dataset["package"] = app.package;
+      button.title = app.package;
       button.setAttribute("aria-label", `Open ${appLabel(app)} on the TV`);
-      button.append(text("span", "", appLabel(app)));
-      if (app.name !== null) {
-        button.append(text("span", "app-package", app.package));
-      }
+      const avatar = text("span", "app-avatar", appInitial(appLabel(app)));
+      avatar.setAttribute("aria-hidden", "true");
+      avatar.style.setProperty("--hue", String(appHue(app.package)));
+      button.append(avatar, text("span", "app-name", appLabel(app)));
       const opening = remote.pendingApp === app.package;
       setBusy(button, !remote.launchEnabled);
       button.classList.toggle("is-loading", opening);
