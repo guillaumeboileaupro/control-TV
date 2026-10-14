@@ -39,7 +39,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self'",
         "font-src": "'self'",
-        "connect-src": "ipc: http://ipc.localhost ws://localhost:1420",
+        "connect-src": "ipc: http://ipc.localhost ws://localhost:1420 ws://*:1421",
         "object-src": "'none'",
         "base-uri": "'none'",
         "form-action": "'none'",

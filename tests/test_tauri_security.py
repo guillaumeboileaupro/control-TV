@@ -2,7 +2,7 @@
 
 The Tauri window loads only the application's own files and talks only to its own IPC: no
 inline script or style, no eval, no remote origin. The development policy may add only what
-the Vite dev server needs (its websocket and the styles it injects).
+the Vite dev server needs (its websockets and the styles it injects).
 """
 
 from __future__ import annotations
@@ -57,7 +57,9 @@ def test_the_dev_policy_adds_only_what_the_vite_dev_server_needs() -> None:
     assert set(dev) == set(production)
     assert differences == {
         "style-src": "'self' 'unsafe-inline'",
-        "connect-src": f"{TAURI_IPC} ws://localhost:1420",
+        # Vite's HMR socket: localhost:1420 on the desktop; with TAURI_DEV_HOST (phone or
+        # remote device) ui/vite.config.ts moves it to that host on port 1421.
+        "connect-src": f"{TAURI_IPC} ws://localhost:1420 ws://*:1421",
     }
 
 
