@@ -126,11 +126,14 @@ const PAIRING_CODE = /^[0-9a-fA-F]{6}$/;
 export const MAX_TEXT_LENGTH = 256;
 
 // What the control layer accepts: 1 to 256 characters, none of them a control character.
+// Characters are counted as the control layer counts them (Python's `len`, Unicode code
+// points), not as UTF-16 units: an emoji is one character, not two.
 function textAllowed(text: string): boolean {
+  const characters = [...text];
   return (
-    text.length > 0 &&
-    text.length <= MAX_TEXT_LENGTH &&
-    ![...text].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+    characters.length > 0 &&
+    characters.length <= MAX_TEXT_LENGTH &&
+    !characters.some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
   );
 }
 

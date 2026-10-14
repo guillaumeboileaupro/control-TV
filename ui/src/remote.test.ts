@@ -449,13 +449,21 @@ describe("typing on the TV", () => {
   });
 
   test("empty, too long or multi-line text is refused here and nothing is sent", () => {
-    for (const text of ["", "a".repeat(257), "two\nlines", "tab\there"]) {
+    for (const text of ["", "a".repeat(257), "😀".repeat(257), "two\nlines", "tab\there"]) {
       const started = startRemote(withTv(), { kind: "text", text });
       assert.equal(started.request, null);
       assert.equal(started.state.remote.outcome?.text, "Type 1 to 256 characters, on one line.");
     }
   });
 
+  test("text is counted in characters as the control layer counts them, not UTF-16 units", () => {
+    // 256 emoji are 512 UTF-16 units but 256 characters for Python's `len`: accepted.
+    for (const text of ["😀".repeat(256), "é".repeat(256), "a".repeat(255) + "😀"]) {
+      const started = startRemote(withTv(), { kind: "text", text });
+
+      assert.notEqual(started.request, null, `refused: ${[...text].length} characters`);
+    }
+  });
   test("text whose answer is lost is uncertain, never resent and never shown", () => {
     const { state } = run(withTv(), { kind: "text", text: "s3cret" }, failure("bridge_timeout"));
 
