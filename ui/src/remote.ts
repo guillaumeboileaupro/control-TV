@@ -654,3 +654,19 @@ export function describeRemote(state: AppState): RemoteDescription {
     outcome: remote.outcome,
   };
 }
+
+// The tile's letter: the first letter or digit of the app's label.
+export function appInitial(label: string): string {
+  const first = /[\p{L}\p{N}]/u.exec(label);
+  return first === null ? "?" : first[0].toUpperCase();
+}
+
+// A stable colour per app (the same package always gets the same hue), so a tile is easy to
+// find again; the letter and the name carry the meaning, never the colour alone.
+export function appHue(packageName: string): number {
+  let hash = 0;
+  for (const char of packageName) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 360;
+  }
+  return hash;
+}

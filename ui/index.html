@@ -10,7 +10,8 @@
 
   <body>
     <!--
-      A remote, not a dashboard: one surface, the current device and what it is doing first.
+      A remote, not a dashboard: the current device and what it is doing first, then the TV's
+      own remote, its apps and the Cast sound, each grouped on its own surface.
       Nothing here talks to Chromecast directly; src/main.ts draws these regions from the
       state rules in src/model.ts and reaches the devices only through the application's
       commands. Icons are one consistent SVG set (24px grid, 1.75 stroke), referenced by id.
@@ -77,6 +78,51 @@
           <circle cx="12" cy="12" r="9" />
           <path d="M12 11v5.5M12 7.5h.01" />
         </symbol>
+        <symbol id="i-power" viewBox="0 0 24 24">
+          <path d="M12 3.5v8" />
+          <path d="M7.2 6.6a7 7 0 1 0 9.6 0" />
+        </symbol>
+        <symbol id="i-up" viewBox="0 0 24 24">
+          <path d="M6 15l6-6 6 6" />
+        </symbol>
+        <symbol id="i-down" viewBox="0 0 24 24">
+          <path d="M6 9l6 6 6-6" />
+        </symbol>
+        <symbol id="i-left" viewBox="0 0 24 24">
+          <path d="M15 6l-6 6 6 6" />
+        </symbol>
+        <symbol id="i-right" viewBox="0 0 24 24">
+          <path d="M9 6l6 6-6 6" />
+        </symbol>
+        <symbol id="i-back" viewBox="0 0 24 24">
+          <path d="M9 7L4.5 11.5 9 16" />
+          <path d="M5 11.5h9.5a5 5 0 0 1 0 10H12" />
+        </symbol>
+        <symbol id="i-home" viewBox="0 0 24 24">
+          <path d="M4.5 10.5L12 4l7.5 6.5V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z" />
+        </symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24">
+          <path d="M6 12h12" />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <path d="M12 6v12M6 12h12" />
+        </symbol>
+        <symbol id="i-keyboard" viewBox="0 0 24 24">
+          <rect x="3" y="6" width="18" height="12" rx="2" />
+          <path d="M7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8" />
+        </symbol>
+        <symbol id="i-backspace" viewBox="0 0 24 24">
+          <path d="M9 5.5h10.5a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H9L3 12z" />
+          <path d="M12 9.5l5 5M17 9.5l-5 5" />
+        </symbol>
+        <symbol id="i-enter" viewBox="0 0 24 24">
+          <path d="M19.5 5v6.5a2 2 0 0 1-2 2H5" />
+          <path d="M9 9.5L5 13.5l4 4" />
+        </symbol>
+        <symbol id="i-send" viewBox="0 0 24 24">
+          <path d="M4.5 12L20 4.5 16.5 20l-4-6.5z" />
+          <path d="M12.5 13.5L20 4.5" />
+        </symbol>
       </defs>
     </svg>
 
@@ -102,56 +148,277 @@
         </details>
 
         <section id="context" class="context" aria-label="Current device state" hidden>
-          <div class="context-head">
-            <p id="observed" class="meta"></p>
-            <button
-              id="refresh-button"
-              class="btn-icon"
-              type="button"
-              aria-label="Refresh status"
-              title="Refresh status"
-            >
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
-            </button>
-          </div>
-          <div id="context-now" aria-live="polite"></div>
+          <!-- What the TV is doing, and the Cast playback controls for it. -->
+          <div class="card now-card">
+            <div class="context-head">
+              <p id="observed" class="meta"></p>
+              <button
+                id="refresh-button"
+                class="btn-icon"
+                type="button"
+                aria-label="Refresh status"
+                title="Refresh status"
+              >
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+              </button>
+            </div>
+            <div id="context-now" aria-live="polite"></div>
 
-          <!-- Playback controls: static elements updated in place, so keyboard focus is never
-               lost when the state changes. Shown only for media the TV reports on a
-               connected device; what each offers comes from the observed state. -->
-          <div id="controls" class="controls" role="group" aria-label="Playback controls" hidden>
-            <div id="seek" class="seek" hidden>
+            <!-- Playback controls: static elements updated in place, so keyboard focus is never
+                 lost when the state changes. Shown only for media the TV reports on a
+                 connected device; what each offers comes from the observed state. -->
+            <div id="controls" class="controls" role="group" aria-label="Playback controls" hidden>
+              <div id="seek" class="seek" hidden>
+                <input
+                  id="seek-input"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="0"
+                  step="1"
+                  value="0"
+                  aria-label="Seek position"
+                />
+                <p id="seek-label" class="seek-label is-empty"></p>
+              </div>
+              <div class="transport">
+                <button id="primary-button" class="btn btn-primary btn-transport" type="button">
+                  <svg class="icon" aria-hidden="true"><use href="#i-pause" /></svg>
+                  <span id="primary-label">Pause</span>
+                </button>
+                <button id="stop-button" class="btn btn-transport-secondary" type="button">
+                  <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
+                  <span id="stop-label">Stop</span>
+                </button>
+              </div>
+              <p id="controls-note" class="note" hidden></p>
+              <p id="pause-note" class="note" hidden></p>
+              <p id="seek-note" class="note" hidden></p>
+            </div>
+
+            <!-- Outside the controls on purpose: a command's outcome must stay visible even when
+                 its result removes the controls (a stopped TV has no media left to control). -->
+            <div id="command-feedback" class="command-feedback" aria-live="polite"></div>
+
+            <div id="context-facts"></div>
+          </div>
+
+          <!-- The TV's own remote (Google TV remote protocol): the volume the TV itself sets, mute,
+               power and navigation, then the TV's apps and its keyboard. Each press sends one key
+               once; what is shown of the TV is its own last report. -->
+          <div id="tv-remote" class="tv-remote" role="group" aria-label="TV remote and apps" hidden>
+            <!-- The remote's own keys: only for a TV that advertises its remote channel. -->
+            <div id="remote-keys" class="card remote-card">
+              <div class="card-head">
+                <h2 id="tv-remote-title" class="card-title">TV remote</h2>
+                <div class="card-head-actions">
+                  <button
+                    id="remote-read"
+                    class="btn-icon"
+                    type="button"
+                    aria-label="Read TV state"
+                    title="Read TV state"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                  </button>
+                  <button
+                    class="btn-round btn-power"
+                    type="button"
+                    data-remote-key="power"
+                    aria-label="TV power"
+                    title="TV power"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-power" /></svg>
+                  </button>
+                </div>
+              </div>
+              <p id="remote-readout" class="readout is-empty"></p>
+
+              <div id="remote-pairing" class="pairing" hidden>
+                <p id="remote-pairing-text" class="pairing-text"></p>
+                <div class="pairing-row">
+                  <input
+                    id="remote-code"
+                    class="field remote-code"
+                    type="text"
+                    inputmode="text"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    maxlength="6"
+                    aria-label="Code shown on the TV"
+                    hidden
+                  />
+                  <button id="remote-pair" class="btn btn-primary" type="button" hidden>
+                    Pair
+                  </button>
+                  <button id="remote-show-code" class="btn" type="button">Show code on TV</button>
+                </div>
+              </div>
+
+              <div class="pad-area">
+                <div class="dpad" role="group" aria-label="Navigation">
+                  <button
+                    class="dpad-key dpad-up"
+                    type="button"
+                    data-remote-key="up"
+                    aria-label="Up"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-up" /></svg>
+                  </button>
+                  <button
+                    class="dpad-key dpad-left"
+                    type="button"
+                    data-remote-key="left"
+                    aria-label="Left"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-left" /></svg>
+                  </button>
+                  <button class="dpad-ok" type="button" data-remote-key="ok">OK</button>
+                  <button
+                    class="dpad-key dpad-right"
+                    type="button"
+                    data-remote-key="right"
+                    aria-label="Right"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-right" /></svg>
+                  </button>
+                  <button
+                    class="dpad-key dpad-down"
+                    type="button"
+                    data-remote-key="down"
+                    aria-label="Down"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-down" /></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="remote-row">
+                <button class="btn-pill" type="button" data-remote-key="back" aria-label="Back">
+                  <svg class="icon" aria-hidden="true"><use href="#i-back" /></svg>
+                  <span>Back</span>
+                </button>
+                <button class="btn-pill" type="button" data-remote-key="home" aria-label="Home">
+                  <svg class="icon" aria-hidden="true"><use href="#i-home" /></svg>
+                  <span>Home</span>
+                </button>
+              </div>
+
+              <div class="volume-rocker" role="group" aria-label="TV volume">
+                <button
+                  class="rocker-key"
+                  type="button"
+                  data-remote-key="volume_down"
+                  aria-label="TV volume down"
+                  title="TV volume down"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-minus" /></svg>
+                </button>
+                <button
+                  class="rocker-key rocker-mute"
+                  type="button"
+                  data-remote-key="mute"
+                  aria-label="TV mute or unmute"
+                  title="TV mute or unmute"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-volume-off" /></svg>
+                  <span>Mute</span>
+                </button>
+                <button
+                  class="rocker-key"
+                  type="button"
+                  data-remote-key="volume_up"
+                  aria-label="TV volume up"
+                  title="TV volume up"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
+                </button>
+              </div>
+
+              <!-- The TV's active text field: the text replaces what the field holds; it is
+                   sent once and never kept or logged (it may be a password). -->
+              <details class="keyboard">
+                <summary class="keyboard-summary">
+                  <svg class="icon" aria-hidden="true"><use href="#i-keyboard" /></svg>
+                  <span>Keyboard</span>
+                  <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron" /></svg>
+                </summary>
+                <p id="remote-text-hint" class="hint">
+                  Open a search or text field on the TV first. The text replaces what the field
+                  holds.
+                </p>
+                <form id="remote-text-form" class="keyboard-form">
+                  <input
+                    id="remote-text"
+                    class="field"
+                    type="text"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    maxlength="256"
+                    enterkeyhint="send"
+                    placeholder="Text for the TV"
+                    aria-label="Text to type in the TV's active field"
+                    aria-describedby="remote-text-hint"
+                  />
+                  <button id="remote-text-send" class="btn btn-primary" type="submit">
+                    Send text
+                  </button>
+                </form>
+                <div class="remote-row">
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="delete"
+                    aria-label="Backspace on the TV"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-backspace" /></svg>
+                    <span>Backspace</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="enter"
+                    aria-label="Enter on the TV"
+                  >
+                    <svg class="icon" aria-hidden="true"><use href="#i-enter" /></svg>
+                    <span>Enter</span>
+                  </button>
+                </div>
+              </details>
+            </div>
+
+            <!-- The TV's installed apps: listed and opened over the TV's debugging (which the
+                 owner turns on), a service separate from the remote: shown for every TV. -->
+            <div class="card tv-apps" role="group" aria-labelledby="tv-apps-title">
+              <div class="card-head">
+                <h2 id="tv-apps-title" class="card-title">TV apps</h2>
+                <button id="remote-apps-list" class="btn btn-small" type="button">
+                  Show TV apps
+                </button>
+              </div>
               <input
-                id="seek-input"
-                class="range"
-                type="range"
-                min="0"
-                max="0"
-                step="1"
-                value="0"
-                aria-label="Seek position"
+                id="remote-apps-filter"
+                class="field"
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Find an app"
+                aria-label="Find an app"
+                hidden
               />
-              <p id="seek-label" class="seek-label is-empty"></p>
+              <ul id="remote-apps" class="app-grid" aria-label="Apps installed on the TV"></ul>
             </div>
-            <div class="transport">
-              <button id="primary-button" class="btn btn-primary btn-transport" type="button">
-                <svg class="icon" aria-hidden="true"><use href="#i-pause" /></svg>
-                <span id="primary-label">Pause</span>
-              </button>
-              <button id="stop-button" class="btn" type="button">
-                <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
-                <span id="stop-label">Stop</span>
-              </button>
-            </div>
-            <p id="controls-note" class="note" hidden></p>
-            <p id="pause-note" class="note" hidden></p>
-            <p id="seek-note" class="note" hidden></p>
+
+            <!-- The outcome of the last remote action, kept in view while the remote scrolls. -->
+            <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>
           </div>
 
-          <!-- Sound: mute and volume for every connected device, playing or not. Static elements
-               updated in place. The volume control works on a draft and sends once it settles;
-               the mute button offers the opposite of the state the TV reported. -->
-          <div id="sound" class="sound" role="group" aria-label="Sound" hidden>
+          <!-- Cast sound: the receiver's own volume and mute, which on many TVs is not the sound
+               you hear (the TV remote above is). Static elements updated in place. -->
+          <div id="sound" class="card sound" role="group" aria-label="Cast sound" hidden>
+            <h2 class="card-title">Cast sound</h2>
             <div class="sound-row">
               <button
                 id="mute-button"
@@ -173,170 +440,9 @@
                 aria-label="Volume"
               />
             </div>
-            <p id="sound-readout" class="sound-readout is-empty"></p>
+            <p id="sound-readout" class="readout sound-readout is-empty"></p>
             <p id="sound-note" class="note" hidden></p>
           </div>
-
-          <!-- The TV's own remote (Google TV remote protocol): the volume the TV itself sets, mute,
-               power and navigation. Only for a TV that advertises it. Each press sends one key
-               once; what is shown of the TV is its own last report. -->
-          <div id="tv-remote" class="tv-remote" role="group" aria-label="TV remote and apps" hidden>
-            <!-- The remote's own keys: only for a TV that advertises its remote channel. -->
-            <div id="remote-keys" class="tv-remote-keys">
-              <p id="tv-remote-title" class="tv-remote-title">TV remote</p>
-              <div id="remote-pairing" class="tv-remote-pairing" hidden>
-                <p id="remote-pairing-text" class="note"></p>
-                <div class="tv-remote-row">
-                  <input
-                    id="remote-code"
-                    class="remote-code"
-                    type="text"
-                    inputmode="text"
-                    autocomplete="off"
-                    autocapitalize="characters"
-                    spellcheck="false"
-                    maxlength="6"
-                    aria-label="Code shown on the TV"
-                    hidden
-                  />
-                  <button id="remote-pair" class="btn btn-primary" type="button" hidden>
-                    Pair
-                  </button>
-                  <button id="remote-show-code" class="btn" type="button">Show code on TV</button>
-                </div>
-              </div>
-              <div class="tv-remote-row">
-                <button
-                  class="btn"
-                  type="button"
-                  data-remote-key="volume_down"
-                  aria-label="TV volume down"
-                >
-                  Vol −
-                </button>
-                <button
-                  class="btn"
-                  type="button"
-                  data-remote-key="volume_up"
-                  aria-label="TV volume up"
-                >
-                  Vol +
-                </button>
-                <button
-                  class="btn"
-                  type="button"
-                  data-remote-key="mute"
-                  aria-label="TV mute or unmute"
-                >
-                  Mute
-                </button>
-                <button class="btn" type="button" data-remote-key="power" aria-label="TV power">
-                  Power
-                </button>
-              </div>
-              <div class="dpad">
-                <button class="btn dpad-up" type="button" data-remote-key="up" aria-label="Up">
-                  ↑
-                </button>
-                <button
-                  class="btn dpad-left"
-                  type="button"
-                  data-remote-key="left"
-                  aria-label="Left"
-                >
-                  ←
-                </button>
-                <button class="btn dpad-ok" type="button" data-remote-key="ok">OK</button>
-                <button
-                  class="btn dpad-right"
-                  type="button"
-                  data-remote-key="right"
-                  aria-label="Right"
-                >
-                  →
-                </button>
-                <button
-                  class="btn dpad-down"
-                  type="button"
-                  data-remote-key="down"
-                  aria-label="Down"
-                >
-                  ↓
-                </button>
-              </div>
-              <div class="tv-remote-row">
-                <button class="btn" type="button" data-remote-key="back">Back</button>
-                <button class="btn" type="button" data-remote-key="home">Home</button>
-                <button id="remote-read" class="btn" type="button">Read TV state</button>
-              </div>
-              <!-- The TV's active text field: the text replaces what the field holds; it is
-                 sent once and never kept or logged (it may be a password). -->
-              <form id="remote-text-form" class="tv-remote-text">
-                <input
-                  id="remote-text"
-                  class="remote-text"
-                  type="text"
-                  autocomplete="off"
-                  autocapitalize="off"
-                  spellcheck="false"
-                  maxlength="256"
-                  enterkeyhint="send"
-                  placeholder="Text for the TV"
-                  aria-label="Text to type in the TV's active field"
-                  aria-describedby="remote-text-hint"
-                />
-                <button id="remote-text-send" class="btn" type="submit">Send text</button>
-              </form>
-              <p id="remote-text-hint" class="note">
-                Open a search or text field on the TV first. The text replaces what the field holds.
-              </p>
-              <div class="tv-remote-row">
-                <button
-                  class="btn"
-                  type="button"
-                  data-remote-key="delete"
-                  aria-label="Backspace on the TV"
-                >
-                  ⌫ Backspace
-                </button>
-                <button
-                  class="btn"
-                  type="button"
-                  data-remote-key="enter"
-                  aria-label="Enter on the TV"
-                >
-                  Enter
-                </button>
-              </div>
-            </div>
-            <!-- The TV's installed apps: listed and opened over the TV's debugging (which the
-                 owner turns on), a service separate from the remote: shown for every TV. -->
-            <div class="tv-apps" role="group" aria-labelledby="tv-apps-title">
-              <div class="tv-apps-head">
-                <p id="tv-apps-title" class="tv-remote-title">TV apps</p>
-                <button id="remote-apps-list" class="btn" type="button">Show TV apps</button>
-              </div>
-              <input
-                id="remote-apps-filter"
-                class="remote-text"
-                type="search"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="Find an app"
-                aria-label="Find an app"
-                hidden
-              />
-              <ul id="remote-apps" class="tv-apps-list" aria-label="Apps installed on the TV"></ul>
-            </div>
-            <p id="remote-readout" class="sound-readout is-empty"></p>
-            <div id="remote-feedback" class="remote-feedback" aria-live="polite"></div>
-          </div>
-
-          <!-- Outside the controls on purpose: a command's outcome must stay visible even when
-               its result removes the controls (a stopped TV has no media left to control). -->
-          <div id="command-feedback" class="command-feedback" aria-live="polite"></div>
-
-          <div id="context-facts"></div>
         </section>
       </main>
     </div>
