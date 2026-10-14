@@ -103,13 +103,14 @@ mod tests {
 
     #[test]
     fn parses_a_successful_response() {
-        let result = parse_response(r#"{"id":1,"ok":true,"result":{"status":"ready"}}"#).unwrap();
+        let result =
+            parse_response(r#"{"id":1,"ok":true,"result":{"status":"ready"}}"#, 1).unwrap();
         assert_eq!(result, json!({"status": "ready"}));
     }
 
     #[test]
     fn a_missing_result_becomes_null() {
-        let result = parse_response(r#"{"id":1,"ok":true}"#).unwrap();
+        let result = parse_response(r#"{"id":1,"ok":true}"#, 1).unwrap();
         assert_eq!(result, Value::Null);
     }
 
@@ -117,6 +118,7 @@ mod tests {
     fn keeps_the_bridge_error_code_and_message_separate() {
         let error = parse_response(
             r#"{"id":1,"ok":false,"error":{"code":"invalid_argument","message":"bad timeout"}}"#,
+            1,
         )
         .unwrap_err();
 
@@ -125,7 +127,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_json() {
-        let error = parse_response("not json").unwrap_err();
+        let error = parse_response("not json", 1).unwrap_err();
 
         assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
         assert!(
@@ -136,7 +138,7 @@ mod tests {
 
     #[test]
     fn a_missing_ok_field_is_treated_as_failure_not_success() {
-        let error = parse_response(r#"{"id":1}"#).unwrap_err();
+        let error = parse_response(r#"{"id":1}"#, 1).unwrap_err();
 
         assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
         assert!(error.message.contains("unexpected shape"), "{error:?}");
@@ -150,6 +152,22 @@ mod tests {
             serde_json::to_value(&failure).unwrap(),
             json!({"code": "device_unavailable", "message": "tv is asleep"})
         );
+    }
+
+    #[test]
+    fn rejects_a_response_without_an_id() {
+        let error = parse_response(r#"{"ok":true,"result":{}}"#, 7).unwrap_err();
+
+        assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
+        assert!(error.message.contains("expected 7, received no id"));
+    }
+
+    #[test]
+    fn rejects_a_response_for_another_request() {
+        let error = parse_response(r#"{"id":6,"ok":true,"result":{}}"#, 7).unwrap_err();
+
+        assert_eq!(error.code, CODE_BRIDGE_TRANSPORT);
+        assert!(error.message.contains("expected 7, received 6"));
     }
 
     #[test]
@@ -508,7 +526,8 @@ mod tests {
             r#"while IFS= read -r line; do
   printf '%s\n' "$line" >> '{log}'
   case "$line" in *'"method":"slow"'*) sleep {slow} ;; esac
-  echo '{{"ok":true,"result":{{}}}}'
+  id=${{line#*'"id":'}}; id=${{id%%,*}}
+  printf '{{"id":%s,"ok":true,"result":{{}}}}\n' "$id"
 done"#,
             log = log.display()
         ));
@@ -1323,8 +1342,7 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"set_volume","confirmation
     }
 
     /// The answer every healthy instance gives, after logging the request.
-    const ANSWER: &str =
-        r#"printf '%s %s\n' "$n" "$line" >> "$dir/log"; echo '{"ok":true,"result":{}}'"#;
+    const ANSWER: &str = r#"printf '%s %s\n' "$n" "$line" >> "$dir/log"; id=${line#*'"id":'}; id=${id%%,*}; printf '{"id":%s,"ok":true,"result":{}}\n' "$id""#;
 
     /// `first` is what instance 1 does; every later instance logs and answers each request.
     fn relaunching(first: &str) -> Relaunching {
@@ -1528,7 +1546,7 @@ while IFS= read -r line; do {ANSWER}; done"#,
     fn a_bridge_that_could_not_start_is_started_by_a_later_request() {
         let attempts = Arc::new(AtomicU64::new(0));
         let counted = Arc::clone(&attempts);
-        let ok_state = ready_state(r#"echo '{"ok":true,"result":{"status":"ready"}}'"#);
+        let ok_state = ready_state(r#"echo '{"id":1,"ok":true,"result":{"status":"ready"}}'"#);
         let ready = Arc::new(Mutex::new(Some(ok_state)));
         let launcher: BridgeLauncher = Box::new(move || {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
