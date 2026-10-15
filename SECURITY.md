@@ -36,3 +36,35 @@ Please do not include private network addresses, device identifiers, credentials
 Please allow reasonable time for the vulnerability to be investigated and, when appropriate, fixed before publicly disclosing it.
 
 Confirmed vulnerabilities will be assessed and addressed according to their severity and impact.
+
+## Dependency advisories
+
+CI audits every dependency for known advisories (`python3 scripts/dev.py npm-audit`,
+`python-audit` and `rust-audit`). A blocking advisory fails the build unless a waiver in the
+ecosystem's waiver file (`ui/npm-audit-waivers.json`, `python-audit-waivers.json`,
+`src-tauri/cargo-audit-waivers.json`) names it, with a reason and an expiry date. A waiver
+needs the owner's approval, covers only the advisory it names (and only the package it names,
+when it names one), and an expired waiver fails the build by itself, so it is reviewed again
+rather than forgotten. Ignores set in a cargo `audit.toml` are refused.
+
+### RUSTSEC-2024-0429 (glib), waived until 2027-01-15
+
+- **Advisory:** unsoundness in the `Iterator` and `DoubleEndedIterator` implementations of
+  `glib::VariantStrIter` (a memory-safety bug when that iterator is used); fixed in
+  glib >= 0.20.
+- **Why it is in the build:** the Linux desktop window only. Tauri 2 (2.11.6) runs on the
+  gtk-rs 0.18 stack: `tauri` / `tauri-runtime-wry` / `wry` / `tao` / `muda` / `webkit2gtk` /
+  `libappindicator` -> `gtk` 0.18.2 -> `glib` 0.18.5 (also through `gio`, `gdk`, `cairo-rs`,
+  `gdk-pixbuf`). The Android build has no glib. glib 0.20 cannot be taken without the gtk-rs
+  stack Tauri depends on moving with it.
+- **Known use of `VariantStrIter`:** none. control-TV's Rust does not use glib directly, and no
+  locked crate whose sources were searched (328 of 430; the others are other platforms'
+  crates) calls it; only glib itself defines it (2026-10-15).
+- **Residual risk:** a dependency update could start using `VariantStrIter`; until the waiver
+  expires, the audit would not flag that use. The waiver names this advisory and the `glib`
+  package only: any other advisory, any other unsound crate, or this advisory on another
+  package still fails the build.
+- **Removal:** delete the waiver as soon as `cargo tree -i glib` in `src-tauri/` shows
+  glib >= 0.20 (Tauri on gtk-rs >= 0.20 or GTK 4), or if control-TV or a dependency is found
+  to use `VariantStrIter`. On 2027-01-15 the waiver expires and the build fails until the owner
+  reviews it again.
