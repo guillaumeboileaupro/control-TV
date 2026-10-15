@@ -7,6 +7,7 @@ asked for is never stored in it.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,15 @@ from control_tv.domain.errors import InvalidArgumentError
 
 DeviceId = NewType("DeviceId", str)
 """Stable device identifier (for Cast, the device UUID). Never a display name."""
+
+
+def _finite_non_negative_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 class DeviceKind(StrEnum):
@@ -199,7 +209,10 @@ class MediaStatus:
             ("position", self.position_seconds),
             ("duration", self.duration_seconds),
         ):
-            _require(value is None or value >= 0, f"media {name} must not be negative: {value}")
+            _require(
+                value is None or _finite_non_negative_number(value),
+                f"media {name} must be a finite non-negative number or None: {value!r}",
+            )
         for name, identifier in (
             ("session id", self.media_session_id),
             ("queue item id", self.current_item_id),
