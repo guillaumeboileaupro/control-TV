@@ -319,7 +319,7 @@ impl PythonBridge {
 
         let (stdin, stdout) = match &self.channel {
             BridgeChannel::Pipes { stdin, stdout } => (stdin, stdout),
-            BridgeChannel::InProcess(call) => return parse_response(&call(line)?),
+            BridgeChannel::InProcess(call) => return parse_response(&call(line)?, id),
         };
         {
             let mut stdin = stdin
@@ -350,16 +350,26 @@ impl PythonBridge {
             }
         }
 
-        parse_response(&response_line)
+        parse_response(&response_line, id)
     }
 }
 
 /// Pure parsing/translation of one response line - factored out of `call` so it is
 /// testable without spawning a real process.
-pub(crate) fn parse_response(line: &str) -> Result<Value, BridgeFailure> {
+pub(crate) fn parse_response(line: &str, expected_id: u64) -> Result<Value, BridgeFailure> {
     let response: Value = serde_json::from_str(line.trim()).map_err(|error| {
         BridgeFailure::transport(format!("received a malformed bridge response: {error}"))
     })?;
+
+    let response_id = response.get("id").and_then(Value::as_u64);
+    if response_id != Some(expected_id) {
+        return Err(BridgeFailure::transport(format!(
+            "bridge response id does not match request: expected {expected_id}, received {}",
+            response
+                .get("id")
+                .map_or_else(|| "no id".to_string(), Value::to_string)
+        )));
+    }
 
     let ok = response.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if ok {
