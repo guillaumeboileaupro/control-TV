@@ -35,6 +35,15 @@ class Evidence(StrEnum):
     REAL = "real"
 
 
+@dataclass(frozen=True)
+class Contract:
+    preconditions: tuple[str, ...]
+    device: str
+    planned_commands: tuple[str, ...]
+    initial_state: str
+    expected: str
+
+
 class Capability(StrEnum):
     EXECUTE = "execute"
     TV_COMMAND = "tv-command"
@@ -86,6 +95,8 @@ class Result:
     started_at: str
     log: str = ""
     evidence: Evidence = Evidence.STATIC
+    observed: str = "not executed"
+    proof: str = "none"
 
 
 @dataclass(frozen=True)
@@ -97,6 +108,7 @@ class Scenario:
     capabilities: frozenset[Capability] = frozenset({Capability.EXECUTE})
     dependencies: tuple[str, ...] = ()
     evidence: Evidence = Evidence.STATIC
+    contract: Contract | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +188,8 @@ def make_result(
     *,
     started: float,
     log: str = "",
+    observed: str = "not executed",
+    proof: str = "none",
 ) -> Result:
     return Result(
         scenario_id=scenario.id,
@@ -186,6 +200,8 @@ def make_result(
         started_at=datetime.now(UTC).isoformat(),
         log=log,
         evidence=scenario.evidence,
+        observed=observed,
+        proof=proof,
     )
 
 
@@ -233,13 +249,22 @@ class AcceptanceRunner:
                     name for name in scenario.dependencies if not self.environment.tools.get(name)
                 ]
                 if not permitted:
-                    result = make_result(scenario, Outcome.BLOCKED, reason, started=started)
+                    result = make_result(
+                        scenario,
+                        Outcome.BLOCKED,
+                        reason,
+                        started=started,
+                        observed="not executed",
+                        proof="authorization policy",
+                    )
                 elif missing:
                     result = make_result(
                         scenario,
                         Outcome.SKIP,
                         "dependencies unavailable: " + ", ".join(missing),
                         started=started,
+                        observed="not executed",
+                        proof="dependency detection",
                     )
                 else:
                     try:
@@ -259,16 +284,23 @@ class AcceptanceRunner:
                             started=started,
                         )
             results.append(result)
-            self.write_reports(results)
+            self.write_reports(results, scenarios=scenarios)
         return results
 
-    def write_reports(self, results: Sequence[Result]) -> None:
+    def write_reports(
+        self, results: Sequence[Result], *, scenarios: Sequence[Scenario] = ()
+    ) -> None:
         self.report_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": 1,
             "generated_at": datetime.now(UTC).isoformat(),
             "dry_run": not self.policy.execute,
             "environment": asdict(self.environment),
+            "scenario_contracts": {
+                scenario.id: asdict(scenario.contract)
+                for scenario in scenarios
+                if scenario.contract is not None
+            },
             "results": [
                 {
                     **asdict(result),
@@ -292,6 +324,8 @@ class AcceptanceRunner:
             f"<td>{result.evidence.value}</td>"
             f"<td>{result.outcome.value}</td>"
             f"<td>{html.escape(result.reason)}</td>"
+            f"<td>{html.escape(result.observed)}</td>"
+            f"<td>{html.escape(result.proof)}</td>"
             f"<td>{result.duration_seconds:.3f}</td>"
             "</tr>"
             for result in results
@@ -300,7 +334,8 @@ class AcceptanceRunner:
             '<!doctype html><html lang="en"><meta charset="utf-8">'
             "<title>control-TV acceptance</title><h1>Acceptance results</h1>"
             "<table><thead><tr><th>Scenario</th><th>Category</th><th>Evidence</th><th>Outcome</th>"
-            f"<th>Reason</th><th>Seconds</th></tr></thead><tbody>{rows}</tbody></table></html>\n"
+            f"<th>Reason</th><th>Observed</th><th>Proof</th><th>Seconds</th></tr>"
+            f"</thead><tbody>{rows}</tbody></table></html>\n"
         )
         (self.report_dir / "acceptance.html").write_text(document, encoding="utf-8")
 
