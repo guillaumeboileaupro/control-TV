@@ -1046,3 +1046,70 @@ def test_an_unreadable_unsound_warning_fails_closed(unsound: object) -> None:
 
     with pytest.raises(ValueError):
         dev.cargo_audit_findings(report)
+
+
+GLIB_ADVISORY = "RUSTSEC-2024-0429"
+
+
+def _repo_rust_waivers() -> list[object]:
+    path = DEV_PATH.parents[1] / "src-tauri" / "cargo-audit-waivers.json"
+    return list(dev.audit_waivers(json.loads(path.read_text(encoding="utf-8"))))
+
+
+def test_the_rust_waiver_file_waives_only_glib_rustsec_2024_0429_until_2027_01_15() -> None:
+    waivers = _repo_rust_waivers()
+
+    assert len(waivers) == 1
+    waiver = waivers[0]
+    assert isinstance(waiver, dev.AuditWaiver)
+    assert (waiver.advisory, waiver.package, waiver.expires) == (
+        GLIB_ADVISORY,
+        "glib",
+        dev.date(2027, 1, 15),
+    )
+    assert "SECURITY.md" in waiver.reason
+
+
+def test_the_glib_waiver_lifts_that_advisory_until_it_expires() -> None:
+    waivers = _repo_rust_waivers()
+    findings = [dev.AuditFinding("glib", "unsound", GLIB_ADVISORY)]
+
+    last_day = dev.audit_verdict(findings, waivers, dev.date(2027, 1, 15), None)
+    expired = dev.audit_verdict(findings, waivers, dev.date(2027, 1, 16), None)
+
+    assert last_day.passed and last_day.waived == tuple(findings)
+    assert not expired.passed
+    assert expired.blocking == tuple(findings)
+    assert [w.advisory for w in expired.expired] == [GLIB_ADVISORY]
+
+
+def test_the_glib_waiver_covers_no_other_advisory_or_package() -> None:
+    waivers = _repo_rust_waivers()
+    findings = [
+        dev.AuditFinding("glib", "unsound", GLIB_ADVISORY),
+        dev.AuditFinding("glib", "unsound", "RUSTSEC-2099-0001"),
+        dev.AuditFinding("gtk", "unsound", "RUSTSEC-2099-0002"),
+        dev.AuditFinding("gio", "unsound", GLIB_ADVISORY),
+        dev.AuditFinding("time", "vulnerability", "RUSTSEC-2020-0071"),
+    ]
+
+    verdict = dev.audit_verdict(findings, waivers, dev.date(2026, 10, 15), None)
+
+    assert verdict.waived == (findings[0],)
+    assert verdict.blocking == tuple(findings[1:])
+    assert not verdict.passed
+
+
+def test_a_waiver_without_a_package_still_matches_its_advisory_only() -> None:
+    waiver = dev.audit_waivers(
+        {"waivers": [{"advisory": "A-1", "reason": "r", "expires": "2026-12-31"}]}
+    )
+    findings = [dev.AuditFinding("x", "high", "A-1"), dev.AuditFinding("y", "high", "A-2")]
+
+    verdict = dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15))
+
+    assert verdict.waived == (findings[0],) and verdict.blocking == (findings[1],)
+    with pytest.raises(ValueError):
+        dev.audit_waivers(
+            {"waivers": [{"advisory": "A-1", "reason": "r", "expires": "2026-12-31", "package": 3}]}
+        )

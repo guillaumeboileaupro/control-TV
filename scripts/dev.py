@@ -553,6 +553,14 @@ class AuditWaiver:
     advisory: str
     reason: str
     expires: date
+    package: str | None = None  # when set, the waiver covers that advisory for this package only
+
+    def covers(self, finding: AuditFinding, today: date) -> bool:
+        return (
+            self.expires >= today
+            and self.advisory == finding.advisory
+            and self.package in (None, finding.package)
+        )
 
 
 @dataclass(frozen=True)
@@ -689,7 +697,8 @@ def cargo_audit_warnings(report: object) -> list[str]:
 
 
 def audit_waivers(document: object) -> list[AuditWaiver]:
-    """A waivers file: {"waivers": [{"advisory", "reason", "expires": "YYYY-MM-DD"}]}."""
+    """A waivers file: {"waivers": [{"advisory", "reason", "expires": "YYYY-MM-DD",
+    "package" (optional)}]}."""
     waivers = document.get("waivers") if isinstance(document, dict) else None
     if not isinstance(waivers, list):
         raise ValueError("the waivers file needs a `waivers` list")
@@ -702,7 +711,10 @@ def audit_waivers(document: object) -> list[AuditWaiver]:
             raise ValueError("each waiver needs an `advisory` and a `reason`")
         if not isinstance(expires, str):
             raise ValueError(f"the waiver of {advisory} needs an `expires` date")
-        parsed.append(AuditWaiver(advisory, reason, date.fromisoformat(expires)))
+        package = item.get("package") if isinstance(item, dict) else None
+        if package is not None and not (isinstance(package, str) and package):
+            raise ValueError(f"the waiver of {advisory} has an unreadable `package`")
+        parsed.append(AuditWaiver(advisory, reason, date.fromisoformat(expires), package))
     return parsed
 
 
@@ -715,14 +727,13 @@ def audit_verdict(
     """Findings of a blocking severity (all of them when `blocking_severities` is None) block
     unless a waiver still in date names them; an expired waiver blocks by itself, so a waiver
     is never forgotten."""
-    valid = {w.advisory for w in waivers if w.expires >= today}
     blocking: list[AuditFinding] = []
     reported: list[AuditFinding] = []
     waived: list[AuditFinding] = []
     for finding in findings:
         if blocking_severities is not None and finding.severity not in blocking_severities:
             reported.append(finding)
-        elif finding.advisory in valid:
+        elif any(waiver.covers(finding, today) for waiver in waivers):
             waived.append(finding)
         else:
             blocking.append(finding)
