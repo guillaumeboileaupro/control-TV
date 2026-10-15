@@ -29,6 +29,12 @@ class Outcome(StrEnum):
     BLOCKED = "BLOCKED"
 
 
+class Evidence(StrEnum):
+    STATIC = "static"
+    SIMULATED = "simulated"
+    REAL = "real"
+
+
 class Capability(StrEnum):
     EXECUTE = "execute"
     TV_COMMAND = "tv-command"
@@ -79,6 +85,7 @@ class Result:
     duration_seconds: float
     started_at: str
     log: str = ""
+    evidence: Evidence = Evidence.STATIC
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,7 @@ class Scenario:
     run: Callable[[Context], Result]
     capabilities: frozenset[Capability] = frozenset({Capability.EXECUTE})
     dependencies: tuple[str, ...] = ()
+    evidence: Evidence = Evidence.STATIC
 
 
 @dataclass(frozen=True)
@@ -120,7 +128,9 @@ def detect_environment(
 ) -> Environment:
     """Inspect local prerequisites only; never contacts a device."""
     values = os.environ if environ is None else environ
-    tools = {name: which(name) for name in ("adb", "dpkg-deb", "git", "python3")}
+    tools = {
+        name: which(name) for name in ("aapt", "adb", "cargo", "dpkg-deb", "git", "npm", "python3")
+    }
     artifacts = {
         "deb": values.get("CONTROL_TV_DEB"),
         "apk": values.get("CONTROL_TV_APK"),
@@ -175,6 +185,7 @@ def make_result(
         duration_seconds=round(time.monotonic() - started, 6),
         started_at=datetime.now(UTC).isoformat(),
         log=log,
+        evidence=scenario.evidence,
     )
 
 
@@ -196,7 +207,13 @@ class AcceptanceRunner:
             return {}
         raw = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
         return {
-            item["scenario_id"]: Result(**{**item, "outcome": Outcome(item["outcome"])})
+            item["scenario_id"]: Result(
+                **{
+                    **item,
+                    "outcome": Outcome(item["outcome"]),
+                    "evidence": Evidence(item.get("evidence", Evidence.STATIC.value)),
+                }
+            )
             for item in raw.get("results", [])
             if item.get("outcome") == Outcome.PASS.value
         }
@@ -252,7 +269,14 @@ class AcceptanceRunner:
             "generated_at": datetime.now(UTC).isoformat(),
             "dry_run": not self.policy.execute,
             "environment": asdict(self.environment),
-            "results": [{**asdict(result), "outcome": result.outcome.value} for result in results],
+            "results": [
+                {
+                    **asdict(result),
+                    "outcome": result.outcome.value,
+                    "evidence": result.evidence.value,
+                }
+                for result in results
+            ],
         }
         self.checkpoint_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -265,6 +289,7 @@ class AcceptanceRunner:
             "<tr>"
             f"<td>{html.escape(result.scenario_id)}</td>"
             f"<td>{html.escape(result.category)}</td>"
+            f"<td>{result.evidence.value}</td>"
             f"<td>{result.outcome.value}</td>"
             f"<td>{html.escape(result.reason)}</td>"
             f"<td>{result.duration_seconds:.3f}</td>"
@@ -274,7 +299,7 @@ class AcceptanceRunner:
         document = (
             '<!doctype html><html lang="en"><meta charset="utf-8">'
             "<title>control-TV acceptance</title><h1>Acceptance results</h1>"
-            "<table><thead><tr><th>Scenario</th><th>Category</th><th>Outcome</th>"
+            "<table><thead><tr><th>Scenario</th><th>Category</th><th>Evidence</th><th>Outcome</th>"
             f"<th>Reason</th><th>Seconds</th></tr></thead><tbody>{rows}</tbody></table></html>\n"
         )
         (self.report_dir / "acceptance.html").write_text(document, encoding="utf-8")
@@ -293,7 +318,7 @@ class AcceptanceRunner:
             case = ET.SubElement(
                 suite,
                 "testcase",
-                classname=f"acceptance.{result.category}",
+                classname=f"acceptance.{result.evidence.value}.{result.category}",
                 name=result.scenario_id,
                 time=f"{result.duration_seconds:.6f}",
             )

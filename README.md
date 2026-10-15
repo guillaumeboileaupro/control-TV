@@ -61,6 +61,12 @@ The hardware adapters are intentionally still blocked in this first infrastructu
 See [docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
 separate explicit authorizations required by future executable scenarios.
 
+Ubuntu and Android acceptance results explicitly identify static, simulated or real evidence.
+Set `CONTROL_TV_DEB` or `CONTROL_TV_APK` to inspect an existing artifact without installing it;
+add `--execute` only to run the deterministic simulated contract suites. Real installation,
+launch, tray interaction and device-log scenarios remain blocked without their separate adapters
+and authorizations.
+
 `setup` fails loudly if `uv.lock` does not match `pyproject.toml`, instead of silently resolving new versions; run `lock` deliberately whenever a dependency changes, review the resulting `uv.lock` diff, then commit both files together. Every other command only needs the `.venv` that `setup` created, so run `setup` first.
 
 ### Generated output and disk usage
