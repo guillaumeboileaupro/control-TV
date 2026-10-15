@@ -47,7 +47,7 @@ class TvState:
     connection: ConnectionState = ConnectionState.CONNECTED
     playback: PlaybackState = PlaybackState.PLAYING
     content_id: str | None = MOVIE_URL
-    media_session_id: int | None = None
+    media_session_id: int | None = 1
     """The receiver's mediaSessionId; None mimics a receiver that does not report one."""
     current_item_id: int | None = None
     """The receiver's currentItemId; None mimics a receiver that does not report one."""
@@ -99,6 +99,7 @@ class FakeTransport:
     tv: TvState = field(default_factory=TvState)
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
     command_attempts: list[str] = field(default_factory=list)
+    media_session_targets: list[tuple[str, int]] = field(default_factory=list)
     _pending: tuple[int, Callable[[], None]] | None = None
 
     def sent(self) -> list[str]:
@@ -179,13 +180,16 @@ class FakeTransport:
 
         self._command("load_media", (device_id, request), effect)
 
-    def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def play(self, device_id: DeviceId, media_session_id: int) -> None:
+        self.media_session_targets.append(("play", media_session_id))
         self._command("play", (device_id,), self._set("playback", PlaybackState.PLAYING))
 
-    def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def pause(self, device_id: DeviceId, media_session_id: int) -> None:
+        self.media_session_targets.append(("pause", media_session_id))
         self._command("pause", (device_id,), self._set("playback", PlaybackState.PAUSED))
 
-    def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def stop(self, device_id: DeviceId, media_session_id: int) -> None:
+        self.media_session_targets.append(("stop", media_session_id))
         def effect() -> None:
             if self.clears_media_on_stop:
                 self.tv.has_media = False
@@ -198,8 +202,9 @@ class FakeTransport:
         self,
         device_id: DeviceId,
         position_seconds: float,
-        media_session_id: int | None = None,
+        media_session_id: int,
     ) -> None:
+        self.media_session_targets.append(("seek", media_session_id))
         self._command(
             "seek", (device_id, position_seconds), self._set("position", position_seconds)
         )

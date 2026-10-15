@@ -152,19 +152,13 @@ def test_blocked_identity_snapshot_exhausts_the_single_budget_before_confirmatio
     transport.hang_status_reads = True
     service = make_service(transport, clock, confirm_timeout=1.0)
 
-    result = service.pause(DEVICE_ID)
+    with pytest.raises(OperationTimeoutError):
+        service.pause(DEVICE_ID)
 
-    assert transport.calls == [
-        ("get_status", (DEVICE_ID, 1.0)),
-        ("pause", (DEVICE_ID,)),
-    ]
-    assert transport.sent() == ["pause"]
+    assert transport.calls == [("get_status", (DEVICE_ID, 1.0))]
+    assert transport.sent() == []
     assert transport.status_reads() == 1
     assert clock.now == pytest.approx(1.0)
-    assert result.confirmation is Confirmation.UNCONFIRMED
-    assert result.observed is None
-    assert result.detail is not None
-    assert "confirmation budget (1s) expired" in result.detail
 
 
 def test_late_identity_snapshot_cannot_confirm_or_start_another_read(
@@ -223,24 +217,24 @@ def test_verification_can_be_disabled(transport: FakeTransport, clock: FakeClock
 
     assert result.confirmation is Confirmation.NOT_CHECKED
     assert result.observed is None
-    assert transport.status_reads() == 0
+    assert transport.status_reads() == 1
     assert transport.sent() == ["pause"]
+    assert transport.media_session_targets == [("pause", 1)]
 
 
-def test_zero_timeout_reads_the_status_zero_times(
+def test_zero_timeout_cannot_capture_a_session_or_send(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
     """A zero-second budget leaves nothing to spend on even one bounded read."""
     transport.ignore_commands = True
     service = make_service(transport, clock, confirm_timeout=0)
 
-    result = service.pause(DEVICE_ID)
+    with pytest.raises(OperationTimeoutError, match="media session could not be captured"):
+        service.pause(DEVICE_ID)
 
-    assert result.confirmation is Confirmation.UNCONFIRMED
     assert transport.status_reads() == 0
+    assert transport.sent() == []
     assert clock.sleeps == []
-    assert result.detail is not None
-    assert "budget (0s) expired before a status could be read" in result.detail
 
 
 # --- P2 review: each status read must itself be bounded by the confirmation budget ---------
@@ -347,20 +341,16 @@ def test_a_match_arriving_after_the_deadline_is_never_confirmed(
     assert "answered after the confirmation window expired" in result.detail
 
 
-def test_a_device_that_is_not_connected_never_confirms(
+def test_a_device_that_is_not_connected_never_receives_a_playback_command(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
     transport.tv.connection = ConnectionState.DISCONNECTED
     service = make_service(transport, clock)
 
-    result = service.pause(DEVICE_ID)
+    with pytest.raises(UnsupportedOperationError, match="media session id"):
+        service.pause(DEVICE_ID)
 
-    assert result.confirmation is Confirmation.UNCONFIRMED
-    assert result.observed is not None
-    assert result.observed.connection is ConnectionState.DISCONNECTED
-    # Being disconnected is reported as exactly that, distinct from a contradicting state.
-    assert result.detail is not None
-    assert "connection is disconnected" in result.detail
+    assert transport.sent() == []
 
 
 def test_stop_never_fabricates_an_idle_state_the_device_did_not_report(
@@ -407,7 +397,9 @@ def test_an_unknown_device_is_reported_as_not_found(service: ControlService) -> 
 def test_failing_to_read_the_status_after_sending_is_unconfirmed_not_an_error(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
-    transport.status_errors = [DeviceUnavailableError("link lost")] * 10
+    transport.status_effects = [
+        lambda: transport.status_errors.extend([DeviceUnavailableError("link lost")] * 10)
+    ]
     service = make_service(transport, clock)
 
     result = service.pause(DEVICE_ID)
@@ -429,19 +421,16 @@ def test_a_transient_status_failure_recovers(transport: FakeTransport, clock: Fa
     assert transport.status_reads() == 2
 
 
-def test_playback_command_without_precommand_identity_is_sent_but_unconfirmed(
+def test_playback_command_with_failed_preread_is_not_sent(
     transport: FakeTransport, clock: FakeClock
 ) -> None:
     transport.status_errors = [DeviceUnavailableError("pre-command status unavailable")]
     service = make_service(transport, clock)
 
-    result = service.pause(DEVICE_ID)
+    with pytest.raises(DeviceUnavailableError, match="pre-command status unavailable"):
+        service.pause(DEVICE_ID)
 
-    assert transport.sent() == ["pause"]
-    assert result.confirmation is Confirmation.UNCONFIRMED
-    assert result.observed is not None
-    assert result.detail is not None
-    assert "media identity was not reported before the command" in result.detail
+    assert transport.sent() == []
 
 
 @pytest.mark.parametrize("content_id", [None, "", " ", " \t\n"])
@@ -1210,6 +1199,7 @@ def test_same_content_in_a_new_session_does_not_confirm(command: str) -> None:
     assert result.confirmation is Confirmation.UNCONFIRMED
     assert "media session changed" in (result.detail or "")
     assert transport.attempted() == [command]
+    assert transport.media_session_targets == [(command, SESSION)]
 
 
 @ALL_COMMANDS
@@ -1241,9 +1231,8 @@ def test_a_session_alone_never_identifies_the_media(command: str, content_id: st
 def test_a_session_unknown_before_the_command_keeps_the_content_rule(
     command: str, after_session: int | None
 ) -> None:
-    result, _ = identity_run(command, before=(MOVIE_URL, None), after=(MOVIE_URL, after_session))
-
-    assert result.confirmation is Confirmation.CONFIRMED
+    with pytest.raises(UnsupportedOperationError, match="media session id"):
+        identity_run(command, before=(MOVIE_URL, None), after=(MOVIE_URL, after_session))
 
 
 @ALL_COMMANDS
@@ -1256,11 +1245,9 @@ def test_a_session_missing_after_the_command_does_not_confirm(command: str) -> N
 
 
 @ALL_COMMANDS
-def test_no_identity_before_the_command_does_not_confirm(command: str) -> None:
-    result, transport = identity_run(command, before=(None, None), after=(MOVIE_URL, SESSION))
-
-    assert result.confirmation is Confirmation.UNCONFIRMED
-    assert transport.attempted() == [command]
+def test_no_session_before_the_command_prevents_delivery(command: str) -> None:
+    with pytest.raises(UnsupportedOperationError, match="media session id"):
+        identity_run(command, before=(None, None), after=(MOVIE_URL, SESSION))
 
 
 @ALL_COMMANDS

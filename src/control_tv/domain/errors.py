@@ -34,6 +34,7 @@ class ControlError(Exception):
         super().__init__(message)
         self.message = message
         self.device_id = device_id
+        self.delivery: str | None = None
 
 
 class InvalidArgumentError(ControlError):

@@ -147,17 +147,17 @@ class TvLink:
             device_id, "load_media", (request.url,), lambda: self.tv.new_session(request.url)
         )
 
-    def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def play(self, device_id: DeviceId, media_session_id: int) -> None:
         self._send_session(
             device_id, "play", media_session_id, (), self._playback(PlaybackState.PLAYING)
         )
 
-    def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def pause(self, device_id: DeviceId, media_session_id: int) -> None:
         self._send_session(
             device_id, "pause", media_session_id, (), self._playback(PlaybackState.PAUSED)
         )
 
-    def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
+    def stop(self, device_id: DeviceId, media_session_id: int) -> None:
         self._send_session(
             device_id, "stop", media_session_id, (), self._playback(PlaybackState.IDLE)
         )
@@ -166,7 +166,7 @@ class TvLink:
         self,
         device_id: DeviceId,
         position_seconds: float,
-        media_session_id: int | None = None,
+        media_session_id: int,
     ) -> None:
         self._send_session(
             device_id,

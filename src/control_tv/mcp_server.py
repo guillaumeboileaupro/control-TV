@@ -228,7 +228,9 @@ def _text_result(text: str, structured: JsonObject, *, is_error: bool) -> types.
     )
 
 
-def present_error(tool: str, code: str, message: str) -> types.CallToolResult:
+def present_error(
+    tool: str, code: str, message: str, *, delivery: str | None = None
+) -> types.CallToolResult:
     """An error answer: the code, a privacy-safe message and, for a command, its delivery."""
     public_message = (
         message
@@ -238,9 +240,9 @@ def present_error(tool: str, code: str, message: str) -> types.CallToolResult:
     structured: JsonObject = {"error": {"code": code, "message": public_message}}
     text = f"{tool} failed ({code}): {public_message}"
     if tool in COMMAND_TOOLS:
-        delivery = _COMMAND_DELIVERY.get(code, NOT_SENT)
-        structured["delivery"] = delivery
-        text += " " + _DELIVERY_NOTES[delivery]
+        command_delivery = delivery or _COMMAND_DELIVERY.get(code, NOT_SENT)
+        structured["delivery"] = command_delivery
+        text += " " + _DELIVERY_NOTES[command_delivery]
     return _text_result(text, structured, is_error=True)
 
 
@@ -276,7 +278,10 @@ def present(tool: str, response: Mapping[str, JsonValue]) -> types.CallToolResul
     if not response.get("ok"):
         error = as_object(response.get("error"))
         return present_error(
-            tool, str(error.get("code", INTERNAL_ERROR_CODE)), str(error.get("message", ""))
+            tool,
+            str(error.get("code", INTERNAL_ERROR_CODE)),
+            str(error.get("message", "")),
+            delivery=str(response["delivery"]) if "delivery" in response else None,
         )
     result = as_object(response.get("result"))
     if tool == "discover_devices":

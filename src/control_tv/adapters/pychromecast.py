@@ -252,36 +252,12 @@ class PyChromecastTransport:
             )
 
     def play(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
-        if media_session_id is None:
-            cast_device = self._ready(device_id)
-            self._command(
-                device_id,
-                "play",
-                lambda: cast_device.media_controller.play(timeout=self._request_timeout),
-            )
-            return
         self._media_session_command(device_id, "play", TYPE_PLAY, media_session_id)
 
     def pause(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
-        if media_session_id is None:
-            cast_device = self._ready(device_id)
-            self._command(
-                device_id,
-                "pause",
-                lambda: cast_device.media_controller.pause(timeout=self._request_timeout),
-            )
-            return
         self._media_session_command(device_id, "pause", TYPE_PAUSE, media_session_id)
 
     def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
-        if media_session_id is None:
-            cast_device = self._ready(device_id)
-            self._command(
-                device_id,
-                "stop",
-                lambda: cast_device.media_controller.stop(timeout=self._request_timeout),
-            )
-            return
         self._media_session_command(device_id, "stop", TYPE_STOP, media_session_id)
 
     def seek(
@@ -294,16 +270,6 @@ class PyChromecastTransport:
             raise InvalidArgumentError(
                 f"seek position must be a finite number >= 0: {position_seconds}"
             )
-        if media_session_id is None:
-            cast_device = self._ready(device_id)
-            self._command(
-                device_id,
-                "seek",
-                lambda: cast_device.media_controller.seek(
-                    position_seconds, timeout=self._request_timeout
-                ),
-            )
-            return
         self._media_session_command(
             device_id,
             "seek",
@@ -322,6 +288,10 @@ class PyChromecastTransport:
         **fields: object,
     ) -> None:
         """Send to the session captured by the service, never PyChromecast's current cache."""
+        if media_session_id is None:
+            raise InvalidArgumentError(
+                "media session id is required for playback commands", device_id=device_id
+            )
         cast_device = self._ready(device_id)
         response = WaitResponse(self._request_timeout, name)
         message: dict[str, object] = {
