@@ -146,7 +146,20 @@ def detect_environment(
     """Inspect local prerequisites only; never contacts a device."""
     values = os.environ if environ is None else environ
     tools = {
-        name: which(name) for name in ("aapt", "adb", "cargo", "dpkg-deb", "git", "npm", "python3")
+        name: which(name)
+        for name in (
+            "aapt",
+            "adb",
+            "apt-get",
+            "cargo",
+            "dpkg-deb",
+            "dpkg-query",
+            "gdbus",
+            "git",
+            "npm",
+            "python3",
+            "sudo",
+        )
     }
     artifacts = {
         "deb": values.get("CONTROL_TV_DEB"),

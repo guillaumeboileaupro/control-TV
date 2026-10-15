@@ -201,6 +201,17 @@ def test_environment_detection_never_invokes_adb(
     assert all(command[0] != "/adb" for command in calls)
 
 
+def test_environment_detection_includes_ubuntu_adapter_tools(tmp_path: Path) -> None:
+    detected = acceptance.detect_environment(tmp_path, environ={}, which=lambda name: f"/{name}")
+    assert {
+        "apt-get": "/apt-get",
+        "dpkg-deb": "/dpkg-deb",
+        "dpkg-query": "/dpkg-query",
+        "gdbus": "/gdbus",
+        "sudo": "/sudo",
+    }.items() <= detected.tools.items()
+
+
 def test_catalog_is_unique_and_dry_run_runs_only_static_scenarios(tmp_path: Path) -> None:
     scenarios = run_acceptance.load_scenarios()
     assert len({scenario.id for scenario in scenarios}) == len(scenarios)

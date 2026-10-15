@@ -11,9 +11,9 @@ from acceptance_platforms import (
     configured_artifact,
     csp_check,
     deb_contents_check,
-    real_adapter_blocked,
     source_check,
 )
+from acceptance_ubuntu import run_ubuntu_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -98,7 +98,7 @@ def simulated(context: Context) -> Result:
 
 
 def real(context: Context) -> Result:
-    return real_adapter_blocked(context, SCENARIOS[5])
+    return run_ubuntu_acceptance(context, SCENARIOS[5])
 
 
 SCENARIOS = (
@@ -153,7 +153,7 @@ SCENARIOS = (
         "Launch installed Tauri app and capture tray/log evidence",
         real,
         frozenset({Capability.EXECUTE, Capability.INSTALL_DEB}),
-        (),
+        ("apt-get", "dpkg-deb", "dpkg-query", "gdbus", "sudo"),
         Evidence.REAL,
     ),
 )
