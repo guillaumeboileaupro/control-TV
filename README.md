@@ -48,6 +48,19 @@ python3 scripts/dev.py typecheck    # mypy only
 python3 scripts/dev.py test         # pytest only
 ```
 
+Acceptance infrastructure is dry-run by default and does not contact a TV, start ADB, or install
+an artifact. It writes JSON, HTML and JUnit reports and supports checkpoints:
+
+```bash
+python3 scripts/run_acceptance.py
+python3 scripts/run_acceptance.py --category ubuntu
+python3 scripts/run_acceptance.py --resume
+```
+
+The hardware adapters are intentionally still blocked in this first infrastructure iteration.
+See [docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
+separate explicit authorizations required by future executable scenarios.
+
 `setup` fails loudly if `uv.lock` does not match `pyproject.toml`, instead of silently resolving new versions; run `lock` deliberately whenever a dependency changes, review the resulting `uv.lock` diff, then commit both files together. Every other command only needs the `.venv` that `setup` created, so run `setup` first.
 
 ### Generated output and disk usage

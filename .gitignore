@@ -36,6 +36,8 @@ htmlcov/
 /tmp/
 /temp/
 *.log
+/reports/acceptance/*
+!/reports/acceptance/.gitkeep
 
 # IDE / OS
 .vscode/
