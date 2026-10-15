@@ -21,6 +21,15 @@ DeviceId = NewType("DeviceId", str)
 """Stable device identifier (for Cast, the device UUID). Never a display name."""
 
 
+def _finite_non_negative_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 class DeviceKind(StrEnum):
     CAST = "cast"
     AUDIO = "audio"
@@ -201,13 +210,7 @@ class MediaStatus:
             ("duration", self.duration_seconds),
         ):
             _require(
-                value is None
-                or (
-                    isinstance(value, int | float)
-                    and not isinstance(value, bool)
-                    and math.isfinite(value)
-                    and value >= 0
-                ),
+                value is None or _finite_non_negative_number(value),
                 f"media {name} must be a finite non-negative number or None: {value!r}",
             )
         for name, identifier in (

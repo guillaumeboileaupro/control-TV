@@ -171,8 +171,15 @@ def test_media_status_rejects_negative_times() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [True, False, float("nan"), float("inf"), float("-inf")],
-    ids=["true", "false", "nan", "positive-infinity", "negative-infinity"],
+    [True, False, float("nan"), float("inf"), float("-inf"), 10**400],
+    ids=[
+        "true",
+        "false",
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "oversized-integer",
+    ],
 )
 @pytest.mark.parametrize("field", ["position_seconds", "duration_seconds"])
 def test_media_status_rejects_non_real_times(field: str, value: object) -> None:
