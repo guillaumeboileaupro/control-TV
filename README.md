@@ -38,6 +38,7 @@ python3 scripts/dev.py setup        # create .venv from uv.lock, with the option
 python3 scripts/dev.py lock         # regenerate uv.lock after changing a dependency
 python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, pytest, dependency check
 python3 scripts/dev.py type-rules   # no `any` / `unknown` in the window's TypeScript (also part of `check`); mypy refuses explicit `Any` in Python
+python3 scripts/dev.py npm-audit    # npm advisories of ui/ (network): high or critical fail unless waived until a date in ui/npm-audit-waivers.json (also in CI)
 python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
 python3 scripts/dev.py depcheck     # verify installed dependency consistency
 python3 scripts/dev.py lint         # lint and format check only

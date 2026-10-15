@@ -14,6 +14,8 @@ Commands:
   check        lint, typecheck, test and depcheck (the Python quality gate)
   rust-check   cargo fmt --check, clippy -D warnings and cargo test (src-tauri/)
   ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
+  npm-audit    npm audit of ui/ (needs the network): a high or critical advisory fails unless
+               ui/npm-audit-waivers.json waives it until a date
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
@@ -48,6 +50,7 @@ import subprocess
 import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -522,6 +525,143 @@ def cmd_ui_check(root: Path) -> int:
     return 0
 
 
+# npm advisories: what blocks, and the dated waivers that may lift a block for a while. The
+# policy is pure (findings, waivers and today in, verdict out); only cmd_npm_audit runs npm.
+BLOCKING_SEVERITIES = ("high", "critical")
+NPM_AUDIT_WAIVERS = Path("ui") / "npm-audit-waivers.json"
+
+
+@dataclass(frozen=True)
+class AuditFinding:
+    package: str
+    severity: str
+    advisory: str  # the advisory URL npm reports, e.g. https://github.com/advisories/GHSA-...
+
+
+@dataclass(frozen=True)
+class AuditWaiver:
+    advisory: str
+    reason: str
+    expires: date
+
+
+@dataclass(frozen=True)
+class AuditVerdict:
+    blocking: tuple[AuditFinding, ...]
+    reported: tuple[AuditFinding, ...]  # below the policy: shown, never blocking
+    waived: tuple[AuditFinding, ...]
+    expired: tuple[AuditWaiver, ...]
+
+    @property
+    def passed(self) -> bool:
+        return not self.blocking and not self.expired
+
+
+def npm_audit_findings(report: object) -> list[AuditFinding]:
+    """Every advisory of an `npm audit --json` report (format 2), once per package and URL.
+
+    The gate fails closed: a report in another format, or an entry it cannot read, raises
+    instead of being skipped, so a change in npm's output can never pass as a clean audit.
+    """
+    if not isinstance(report, dict) or report.get("auditReportVersion") != 2:
+        raise ValueError("not an npm audit report in format 2 (`auditReportVersion` != 2)")
+    vulnerabilities = report.get("vulnerabilities")
+    if not isinstance(vulnerabilities, dict):
+        raise ValueError("the npm audit report has no `vulnerabilities` object")
+    found: dict[tuple[str, str], AuditFinding] = {}
+    for package, entry in vulnerabilities.items():
+        via = entry.get("via") if isinstance(entry, dict) else None
+        if not isinstance(via, list) or not via:
+            raise ValueError(f"unreadable npm audit entry for {package}: no `via` list")
+        for item in via:
+            # A string names the vulnerable dependency it comes through; objects are advisories.
+            if isinstance(item, str):
+                continue
+            url = item.get("url") if isinstance(item, dict) else None
+            severity = item.get("severity") if isinstance(item, dict) else None
+            if not (isinstance(url, str) and url and isinstance(severity, str) and severity):
+                raise ValueError(f"unreadable npm advisory for {package}: no `url` or `severity`")
+            found[(str(package), url)] = AuditFinding(str(package), severity, url)
+    return sorted(found.values(), key=lambda f: (f.package, f.advisory))
+
+
+def npm_audit_waivers(document: object) -> list[AuditWaiver]:
+    """The waivers file: {"waivers": [{"advisory", "reason", "expires": "YYYY-MM-DD"}]}."""
+    waivers = document.get("waivers") if isinstance(document, dict) else None
+    if not isinstance(waivers, list):
+        raise ValueError("the waivers file needs a `waivers` list")
+    parsed: list[AuditWaiver] = []
+    for item in waivers:
+        advisory = item.get("advisory") if isinstance(item, dict) else None
+        reason = item.get("reason") if isinstance(item, dict) else None
+        expires = item.get("expires") if isinstance(item, dict) else None
+        if not (isinstance(advisory, str) and advisory and isinstance(reason, str) and reason):
+            raise ValueError("each waiver needs an `advisory` URL and a `reason`")
+        if not isinstance(expires, str):
+            raise ValueError(f"the waiver of {advisory} needs an `expires` date")
+        parsed.append(AuditWaiver(advisory, reason, date.fromisoformat(expires)))
+    return parsed
+
+
+def npm_audit_verdict(
+    findings: Sequence[AuditFinding], waivers: Sequence[AuditWaiver], today: date
+) -> AuditVerdict:
+    """High and critical advisories block unless a waiver still in date names them; an expired
+    waiver blocks by itself, so a waiver is never forgotten."""
+    valid = {w.advisory for w in waivers if w.expires >= today}
+    blocking: list[AuditFinding] = []
+    reported: list[AuditFinding] = []
+    waived: list[AuditFinding] = []
+    for finding in findings:
+        if finding.severity not in BLOCKING_SEVERITIES:
+            reported.append(finding)
+        elif finding.advisory in valid:
+            waived.append(finding)
+        else:
+            blocking.append(finding)
+    expired = tuple(w for w in waivers if w.expires < today)
+    return AuditVerdict(tuple(blocking), tuple(reported), tuple(waived), expired)
+
+
+def _npm_audit_report(root: Path) -> object:
+    """`npm audit --json` of ui/ (npm exits non-zero when it finds advisories: the JSON says)."""
+    print("+ npm audit --json (in ui)")
+    result = subprocess.run(
+        ["npm", "audit", "--json"], cwd=root / "ui", capture_output=True, text=True, check=False
+    )
+    report: object = json.loads(result.stdout)
+    return report
+
+
+def cmd_npm_audit(root: Path) -> int:
+    """Fail on a high or critical npm advisory that no in-date waiver covers."""
+    if shutil.which("npm") is None:
+        return _missing_tool("npm", "https://nodejs.org/")
+    try:
+        findings = npm_audit_findings(_npm_audit_report(root))
+        waivers_path = root / NPM_AUDIT_WAIVERS
+        waivers = npm_audit_waivers(json.loads(waivers_path.read_text(encoding="utf-8")))
+    except (ValueError, OSError) as error:
+        print(f"error: npm audit could not be evaluated: {error}", file=sys.stderr)
+        return 2
+    verdict = npm_audit_verdict(findings, waivers, date.today())
+    for finding in verdict.reported:
+        print(f"note: {finding.package}: {finding.severity} {finding.advisory} (below the policy)")
+    for finding in verdict.waived:
+        print(f"waived: {finding.package}: {finding.severity} {finding.advisory}")
+    for finding in verdict.blocking:
+        print(f"error: {finding.package}: {finding.severity} {finding.advisory}", file=sys.stderr)
+    for waiver in verdict.expired:
+        print(
+            f"error: the waiver of {waiver.advisory} expired on {waiver.expires.isoformat()}",
+            file=sys.stderr,
+        )
+    if verdict.passed:
+        print(f"npm audit: no unwaived {' or '.join(BLOCKING_SEVERITIES)} advisory")
+        return 0
+    return 1
+
+
 def _run_bridge_packaging(root: Path, *action: str) -> int:
     return _run(root, [str(root / "packaging" / "build_bridge.py"), *action])
 
@@ -586,6 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
         "type-rules",
         "rust-check",
         "ui-check",
+        "npm-audit",
         "bridge-build",
         "bridge-smoke",
         "release-deb",
@@ -619,6 +760,7 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "type-rules": cmd_type_rules,
         "rust-check": cmd_rust_check,
         "ui-check": cmd_ui_check,
+        "npm-audit": cmd_npm_audit,
         "bridge-build": cmd_bridge_build,
         "bridge-smoke": cmd_bridge_smoke,
         "release-deb": cmd_release_deb,

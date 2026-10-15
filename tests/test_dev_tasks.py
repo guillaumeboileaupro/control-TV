@@ -763,3 +763,100 @@ def test_type_rules_scan_subdirectories(repo: Path, capsys: pytest.CaptureFixtur
     (nested / "panel.ts").write_text("export const p = (x: any): void => {};\n", encoding="utf-8")
     assert dev.cmd_type_rules(repo) == 1
     assert "ui/src/panels/panel.ts:1: `any`" in capsys.readouterr().err
+
+
+GHSA = "https://github.com/advisories/GHSA-68fv-2mgg-jv7q"
+
+
+def _report(*advisories: tuple[str, str, str]) -> dict[str, object]:
+    vulnerabilities: dict[str, object] = {}
+    for package, severity, url in advisories:
+        entry = vulnerabilities.setdefault(package, {"via": []})
+        assert isinstance(entry, dict)
+        entry["via"].append({"url": url, "severity": severity, "title": "t"})
+    # A package that is only vulnerable through another one names it as a string.
+    vulnerabilities["postcss"] = {"via": ["source-map-js"]}
+    return {"auditReportVersion": 2, "vulnerabilities": vulnerabilities}
+
+
+def test_npm_audit_findings_keep_advisories_and_skip_pointers() -> None:
+    report = _report(("source-map-js", "high", GHSA), ("source-map-js", "high", GHSA))
+
+    assert dev.npm_audit_findings(report) == [dev.AuditFinding("source-map-js", "high", GHSA)]
+    assert dev.npm_audit_findings({"auditReportVersion": 2, "vulnerabilities": {}}) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {"error": {"code": "ENOAUDIT"}},
+        {"auditReportVersion": 3, "vulnerabilities": {}},
+        {"vulnerabilities": {}},
+        {"auditReportVersion": 2},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": "b"}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": []}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [{"url": GHSA}]}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [{"severity": "high"}]}}},
+        {"auditReportVersion": 2, "vulnerabilities": {"a": {"via": [42]}}},
+    ],
+)
+def test_an_unreadable_npm_audit_report_fails_closed(report: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        dev.npm_audit_findings(report)
+
+
+def test_npm_audit_blocks_high_and_critical_only() -> None:
+    findings = dev.npm_audit_findings(
+        _report(("a", "high", "u1"), ("b", "critical", "u2"), ("c", "moderate", "u3"))
+    )
+
+    verdict = dev.npm_audit_verdict(findings, [], dev.date(2026, 10, 14))
+
+    assert [f.package for f in verdict.blocking] == ["a", "b"]
+    assert [f.package for f in verdict.reported] == ["c"]
+    assert not verdict.passed
+
+
+def test_an_in_date_waiver_lifts_the_block_and_an_expired_one_fails() -> None:
+    findings = [dev.AuditFinding("source-map-js", "high", GHSA)]
+    waiver = dev.npm_audit_waivers(
+        {"waivers": [{"advisory": GHSA, "reason": "build tooling only", "expires": "2026-10-31"}]}
+    )
+
+    in_date = dev.npm_audit_verdict(findings, waiver, dev.date(2026, 10, 31))
+    expired = dev.npm_audit_verdict([], waiver, dev.date(2026, 11, 1))
+
+    assert in_date.passed and in_date.waived == tuple(findings)
+    assert not expired.passed and expired.expired == tuple(waiver)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"waivers": [{"advisory": GHSA, "expires": "2026-10-31"}]},
+        {"waivers": [{"advisory": GHSA, "reason": "r"}]},
+        {"waivers": [{"advisory": GHSA, "reason": "r", "expires": "soon"}]},
+    ],
+)
+def test_a_waiver_needs_an_advisory_a_reason_and_a_date(document: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        dev.npm_audit_waivers(document)
+
+
+def test_npm_audit_command_reports_and_fails_on_an_unwaived_advisory(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "ui").mkdir(exist_ok=True)
+    (repo / "ui" / "npm-audit-waivers.json").write_text('{"waivers": []}', encoding="utf-8")
+    monkeypatch.setattr(dev.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        dev, "_npm_audit_report", lambda root: _report(("source-map-js", "high", GHSA))
+    )
+
+    assert dev.cmd_npm_audit(repo) == 1
+    assert f"source-map-js: high {GHSA}" in capsys.readouterr().err
+
+    monkeypatch.setattr(dev, "_npm_audit_report", lambda root: _report())
+    assert dev.cmd_npm_audit(repo) == 0

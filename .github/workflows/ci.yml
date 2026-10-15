@@ -102,6 +102,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix ui
 
+      # High and critical npm advisories fail the job unless ui/npm-audit-waivers.json waives
+      # them until a date (an expired waiver fails too).
+      - name: Audit the frontend dependencies
+        run: python3 scripts/dev.py npm-audit
+
       - name: Type-check and format-check the frontend
         run: python3 scripts/dev.py ui-check
 
