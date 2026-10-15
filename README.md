@@ -67,6 +67,10 @@ add `--execute` only to run the deterministic simulated contract suites. Real in
 launch, tray interaction and device-log scenarios remain blocked without their separate adapters
 and authorizations.
 
+Google TV preparation reuses the existing R1-R4 and C1-C7 hardware protocol. C6 and C7 can pass
+only with ordered media-session and low-level send-attempt evidence; see
+[docs/GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](docs/GOOGLE_TV_ACCEPTANCE_AUTOMATION.md).
+
 `setup` fails loudly if `uv.lock` does not match `pyproject.toml`, instead of silently resolving new versions; run `lock` deliberately whenever a dependency changes, review the resulting `uv.lock` diff, then commit both files together. Every other command only needs the `.venv` that `setup` created, so run `setup` first.
 
 ### Generated output and disk usage

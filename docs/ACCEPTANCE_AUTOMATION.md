@@ -89,3 +89,6 @@ Real Ubuntu launch/tray checks and Android install/launch/log checks remain `BLO
 catalog entries require `--allow-deb-install` or both `--allow-apk-install` and `--enable-adb`, but
 even those flags perform nothing until a separately reviewed real-platform adapter exists. The
 runner never enables Android developer options or ADB itself.
+
+The Google TV and two-controller catalog, including the mandatory C6/C7 trace contracts, is
+documented in [GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](GOOGLE_TV_ACCEPTANCE_AUTOMATION.md).

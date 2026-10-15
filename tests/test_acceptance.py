@@ -57,6 +57,8 @@ def test_default_policy_blocks_execution_and_writes_all_formats(tmp_path: Path) 
     assert payload["dry_run"] is True
     assert payload["results"][0]["outcome"] == "BLOCKED"
     assert payload["results"][0]["evidence"] == "static"
+    assert payload["results"][0]["observed"] == "not executed"
+    assert payload["results"][0]["proof"] == "authorization policy"
     assert (tmp_path / "reports" / "acceptance.html").is_file()
     skipped = ET.parse(tmp_path / "reports" / "acceptance.junit.xml").find(".//skipped")
     assert skipped is not None
