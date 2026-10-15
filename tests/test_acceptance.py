@@ -56,6 +56,7 @@ def test_default_policy_blocks_execution_and_writes_all_formats(tmp_path: Path) 
     payload = json.loads((tmp_path / "reports" / "acceptance.json").read_text())
     assert payload["dry_run"] is True
     assert payload["results"][0]["outcome"] == "BLOCKED"
+    assert payload["results"][0]["evidence"] == "static"
     assert (tmp_path / "reports" / "acceptance.html").is_file()
     skipped = ET.parse(tmp_path / "reports" / "acceptance.junit.xml").find(".//skipped")
     assert skipped is not None
@@ -176,11 +177,20 @@ def test_environment_detection_never_invokes_adb(
     assert all(command[0] != "/adb" for command in calls)
 
 
-def test_catalog_is_unique_and_dry_run_blocks_every_scenario(tmp_path: Path) -> None:
+def test_catalog_is_unique_and_dry_run_runs_only_static_scenarios(tmp_path: Path) -> None:
     scenarios = run_acceptance.load_scenarios()
     assert len({scenario.id for scenario in scenarios}) == len(scenarios)
     results = acceptance.AcceptanceRunner(
         tmp_path, tmp_path / "reports", acceptance.Policy(), environment()
     ).run(scenarios)
     assert results
-    assert all(result.outcome is acceptance.Outcome.BLOCKED for result in results)
+    assert all(
+        result.evidence is acceptance.Evidence.STATIC
+        or result.outcome is acceptance.Outcome.BLOCKED
+        for result in results
+    )
+    assert not any(
+        result.evidence is not acceptance.Evidence.STATIC
+        and result.outcome is acceptance.Outcome.PASS
+        for result in results
+    )

@@ -54,3 +54,38 @@ results, allowing newly available dependencies or permissions to unblock an inte
 
 The existing manual evidence rules remain authoritative in
 `docs/CAST_HARDWARE_VALIDATION.md` and `docs/DUAL_CONTROLLER_VALIDATION.md`.
+
+## Ubuntu and Android categories
+
+Every result carries an `evidence` field. `static` checks inspect source or a configured artifact,
+`simulated` checks run existing contract suites with doubles, and `real` checks require a target
+platform or device. Reports never combine those levels into one success claim.
+
+Static inspection remains safe in the default mode:
+
+```bash
+CONTROL_TV_DEB=/path/control-tv_0.1.0_amd64.deb \
+  python3 scripts/run_acceptance.py --category ubuntu
+CONTROL_TV_APK=/path/app-universal-debug.apk \
+  python3 scripts/run_acceptance.py --category android
+```
+
+Ubuntu verifies Debian identity, amd64 architecture, WebKit/AppIndicator dependencies, packaged
+Tauri executable, frozen Python bridge, desktop icon, production CSP/IPC allowance, and tray
+actions. Android verifies the APK archive and arm64 ABI, embedded Python, package identity and
+permissions (when `aapt` is available), production CSP, embedded-bridge sources and widget
+isolation/wiring.
+
+The simulated suites require `--execute`; they exercise the existing bridge, IPC, packaging,
+widget and startup-error tests and include captured stdout/stderr in the report. They do not install
+or launch an application and do not invoke ADB:
+
+```bash
+python3 scripts/run_acceptance.py --category ubuntu --execute
+python3 scripts/run_acceptance.py --category android --execute
+```
+
+Real Ubuntu launch/tray checks and Android install/launch/log checks remain `BLOCKED`. Their
+catalog entries require `--allow-deb-install` or both `--allow-apk-install` and `--enable-adb`, but
+even those flags perform nothing until a separately reviewed real-platform adapter exists. The
+runner never enables Android developer options or ADB itself.
