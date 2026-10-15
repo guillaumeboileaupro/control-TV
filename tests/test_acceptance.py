@@ -49,6 +49,15 @@ def test_execute_alias_and_explicit_mode_are_mutually_exclusive() -> None:
         run_acceptance.parser().parse_args(["--mode", "dry-run", "--execute"])
 
 
+def test_existing_deb_validation_requires_its_own_explicit_flag() -> None:
+    default = run_acceptance.parser().parse_args(["--execute", "--allow-deb-install"])
+    resumed = run_acceptance.parser().parse_args(
+        ["--execute", "--allow-deb-install", "--allow-existing-deb-validation"]
+    )
+    assert default.allow_existing_deb_validation is False
+    assert resumed.allow_existing_deb_validation is True
+
+
 def passing(scenario: Any) -> Any:
     def run(context: Any) -> Any:
         del context
@@ -199,6 +208,17 @@ def test_environment_detection_never_invokes_adb(
     )
     assert detected.devices == {"android": "simulated"}
     assert all(command[0] != "/adb" for command in calls)
+
+
+def test_environment_detection_includes_ubuntu_adapter_tools(tmp_path: Path) -> None:
+    detected = acceptance.detect_environment(tmp_path, environ={}, which=lambda name: f"/{name}")
+    assert {
+        "apt-get": "/apt-get",
+        "dpkg-deb": "/dpkg-deb",
+        "dpkg-query": "/dpkg-query",
+        "gdbus": "/gdbus",
+        "sudo": "/sudo",
+    }.items() <= detected.tools.items()
 
 
 def test_catalog_is_unique_and_dry_run_runs_only_static_scenarios(tmp_path: Path) -> None:

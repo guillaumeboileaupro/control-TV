@@ -57,16 +57,18 @@ python3 scripts/run_acceptance.py --category ubuntu
 python3 scripts/run_acceptance.py --resume
 ```
 
-The hardware adapters are intentionally still blocked in this first infrastructure iteration.
-See [docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
-separate explicit authorizations required by future executable scenarios.
+Hardware execution is blocked by default. See
+[docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
+separate explicit authorizations required by executable scenarios.
 
 Ubuntu and Android acceptance results explicitly identify static, simulated or real evidence.
 Set `CONTROL_TV_DEB` or `CONTROL_TV_APK` to inspect an existing artifact without installing it;
 add `--mode execute` (or the compatible shorthand `--execute`) only to run the deterministic
-simulated contract suites. Real installation,
-launch, tray interaction and device-log scenarios remain blocked without their separate adapters
-and authorizations.
+simulated contract suites. Real Ubuntu installation, launch, bridge and tray validation additionally
+requires `--allow-deb-install`, a configured `.deb`, an interactive GNOME session and
+non-interactive installation privilege. It refuses to alter a pre-existing installation; validating
+one requires the separate `--allow-existing-deb-validation` consent. Android device scenarios
+remain blocked without their separate adapter and authorizations.
 
 Google TV preparation reuses the existing R1-R4 and C1-C7 hardware protocol. C6 and C7 can pass
 only with ordered media-session and low-level send-attempt evidence; see

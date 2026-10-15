@@ -2,15 +2,16 @@
 
 The acceptance runner is reusable infrastructure for the Ubuntu, Android, Google TV,
 dual-controller and latency protocols. It does **not** replace hardware evidence. The first
-iteration deliberately provides the policy, detection, scenario catalog, bounded execution,
-checkpoint and report layers only; hardware adapters remain blocked until they are implemented
-and individually authorized.
+iteration provides the policy, detection, scenario catalog, bounded execution, checkpoint and
+report layers. The Ubuntu adapter is executable only after its two explicit authorizations;
+other hardware adapters remain blocked until implemented and individually authorized.
 
 ## Architecture
 
 - `scripts/acceptance.py`: typed policy, environment model, bounded process port, runner,
   checkpoint/restart logic and JSON, HTML and JUnit writers.
 - `scripts/run_acceptance.py`: composition root and command-line interface.
+- `scripts/acceptance_ubuntu.py`: Ubuntu host port and real `.deb`/launch/bridge/tray adapter.
 - `tests/e2e/test_*.py`: scenario declarations grouped by target. These files also contain
   static contract tests and never contact hardware during `pytest`.
 - `tests/test_acceptance.py`: deterministic unit tests using simulated environments and process
@@ -37,11 +38,10 @@ Reports are written as `acceptance.json`, `acceptance.html` and `acceptance.juni
 configuration; detection never invokes ADB or contacts a TV.
 
 `--mode execute` (or its compatibility alias `--execute`) leaves dry-run mode but grants no
-sensitive capability. Future hardware adapters
+sensitive capability. Hardware adapters
 must additionally require the relevant explicit flag: `--allow-tv-commands`,
 `--allow-deb-install`, `--allow-apk-install`, or `--enable-adb`. Sensitive flags without execute
-mode grant nothing. This infrastructure iteration must not be run with those flags against real
-devices.
+mode grant nothing.
 
 ## Outcomes and restart
 
@@ -88,10 +88,56 @@ python3 scripts/run_acceptance.py --category ubuntu --execute
 python3 scripts/run_acceptance.py --category android --execute
 ```
 
-Real Ubuntu launch/tray checks and Android install/launch/log checks remain `BLOCKED`. Their
-catalog entries require `--allow-deb-install` or both `--allow-apk-install` and `--enable-adb`, but
-even those flags perform nothing until a separately reviewed real-platform adapter exists. The
-runner never enables Android developer options or ADB itself.
+The real Ubuntu adapter is deliberately fail-closed. It requires an interactive GNOME session,
+session DBus, a configured `.deb`, resolvable dependencies, non-interactive `sudo`, and both
+`--execute` and `--allow-deb-install`. It never replaces or removes an existing `control-tv`
+installation. After preflights it installs the package, checks the exact installed version,
+launches `/usr/bin/control-tv`, pings the installed frozen Python bridge, compares GNOME
+StatusNotifier registrations before/after launch, captures stdout/stderr, and terminates only the
+process it launched. Before installation it writes an artifact-hash/version receipt under the
+report directory, updates it after installation, and removes it only after the complete scenario
+passes. This distinguishes a package left by an interrupted recipe from an unrelated pre-existing
+installation. It leaves every installed package installed because removal is never authorized.
+
+Run the real Ubuntu recipe only on the intended disposable or explicitly prepared host:
+
+```bash
+sudo -v
+CONTROL_TV_DEB=/absolute/path/control-tv_0.1.0_amd64.deb \
+  python3 scripts/run_acceptance.py --category ubuntu --execute --allow-deb-install
+```
+
+The first command grants a short-lived sudo credential; the adapter itself accepts only
+non-interactive `sudo -n`. The recipe mutates the host by installing the package. It never sends a
+TV command and never uses ADB. The bridge ping proves the packaged Python service starts and correlates its response;
+it does not replace a separate end-to-end UI interaction check. Android install/launch/log checks
+remain `BLOCKED`; their catalog entry requires both `--allow-apk-install` and `--enable-adb`, and
+the runner never enables Android developer options or ADB itself.
+
+If a clean matching package is already installed, the adapter reports whether a matching receipt
+identifies an interrupted acceptance installation or whether the installation is pre-existing. It
+returns `BLOCKED` in both cases unless the owner gives the additional, non-mutating consent:
+
+```bash
+CONTROL_TV_DEB=/absolute/path/control-tv_0.1.0_amd64.deb \
+  python3 scripts/run_acceptance.py --category ubuntu --execute --allow-deb-install \
+  --allow-existing-deb-validation
+```
+
+That flag validates and launches the matching installed version; it never invokes package
+installation, replacement or removal. A version mismatch, partial dpkg state, stale/mismatched
+receipt, or receipt without a clean installed package remains `BLOCKED` for manual review.
+
+The non-destructive recovery procedure is:
+
+1. Read the package state with `dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' control-tv`.
+2. Inspect `reports/acceptance/ubuntu-install-receipt.json` when present and compare the configured
+   artifact with `sha256sum "$CONTROL_TV_DEB"`; do not edit the receipt to force a match.
+3. If dpkg reports a clean matching version, decide explicitly whether to run the validation-only
+   command above. The report records `interrupted acceptance installation` or
+   `pre-existing installation` as its origin.
+4. If dpkg reports a partial state, the version differs, or receipt and artifact differ, stop for
+   manual review. The orchestrator will not install, reinstall, repair, replace, or remove anything.
 
 The Google TV and two-controller catalog, including the mandatory C6/C7 trace contracts, is
 documented in [GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](GOOGLE_TV_ACCEPTANCE_AUTOMATION.md).

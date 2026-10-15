@@ -65,6 +65,11 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--allow-tv-commands", action="store_true")
     result.add_argument("--allow-deb-install", action="store_true")
+    result.add_argument(
+        "--allow-existing-deb-validation",
+        action="store_true",
+        help="validate an existing matching package without reinstalling or removing it",
+    )
     result.add_argument("--allow-apk-install", action="store_true")
     result.add_argument("--enable-adb", action="store_true")
     return result
@@ -85,6 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         execute=args.execute or args.mode == "execute",
         tv_commands=args.allow_tv_commands,
         install_deb=args.allow_deb_install,
+        validate_existing_deb=args.allow_existing_deb_validation,
         install_apk=args.allow_apk_install,
         adb=args.enable_adb,
     )
