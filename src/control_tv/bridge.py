@@ -393,8 +393,17 @@ _HANDLERS: dict[str, Handler] = {
 }
 
 
-def _error_response(request_id: JsonValue, code: str, message: str) -> JsonObject:
-    return {"id": request_id, "ok": False, "error": {"code": code, "message": message}}
+def _error_response(
+    request_id: JsonValue, code: str, message: str, *, delivery: str | None = None
+) -> JsonObject:
+    response: JsonObject = {
+        "id": request_id,
+        "ok": False,
+        "error": {"code": code, "message": message},
+    }
+    if delivery is not None:
+        response["delivery"] = delivery
+    return response
 
 
 def dispatch(control: TvControl, request: JsonObject) -> JsonObject:
@@ -409,7 +418,7 @@ def dispatch(control: TvControl, request: JsonObject) -> JsonObject:
             raise InvalidArgumentError("params must be an object")
         result = _HANDLERS[method](control, params)
     except ControlError as error:
-        return _error_response(request_id, error.code.value, error.message)
+        return _error_response(request_id, error.code.value, error.message, delivery=error.delivery)
     except Exception as error:
         # A process boundary: an unexpected exception must not kill this long-lived process
         # (every later request from the app would then fail), and must never look like success.

@@ -93,7 +93,7 @@ def mcp_over_real_adapter(socket_client: SocketClient) -> ControlTvTools:
         return [cast(Chromecast, cast_device)], SimpleNamespace(stop_discovery=lambda: None)
 
     transport = PyChromecastTransport(request_timeout=0.5, discoverer=discoverer)
-    # Verification off: no status read before or after, so the command is the only traffic.
+    # Verification off still requires one pre-read to bind the command to an exact session.
     tools = ControlTvTools(ControlService(transport, confirm_timeout=None))
     discovered = anyio.run(tools.call, "discover_devices", {})
     assert discovered.isError is False
@@ -107,7 +107,7 @@ def answer(result: types.CallToolResult) -> tuple[dict[str, Any], str]:
     return result.structuredContent, block.text
 
 
-def test_a_socket_write_failure_after_bytes_left_is_reported_as_possibly_delivered(
+def test_a_failed_session_preread_never_claims_the_command_was_delivered(
     socket_client: SocketClient,
 ) -> None:
     socket = BreakingSocket()
@@ -118,14 +118,11 @@ def test_a_socket_write_failure_after_bytes_left_is_reported_as_possibly_deliver
     result = anyio.run(tools.call, "pause", {"deviceId": DEVICE_ID})
 
     body, text = answer(result)
-    # PyChromecast caught the OSError, failed the request; the adapter made it
-    # device_unavailable. The command bytes had already been handed to the socket.
-    assert len(socket.writes) == 1 and b"PAUSE" in socket.writes[0]
+    assert len(socket.writes) == 1
+    assert all(b"PAUSE" not in write for write in socket.writes)
     assert result.isError is True
-    assert (body["error"]["code"], body["delivery"]) == ("device_unavailable", "uncertain")
-    assert "may or may not have reached the TV" in text
-    assert "Do not resend it automatically" in text and "get_status" in text
-    assert "Nothing was sent" not in text
+    assert (body["error"]["code"], body["delivery"]) == ("device_unavailable", "not_sent")
+    assert "Nothing was sent" in text
     assert "192.168.1.20" not in text + str(body)
 
 
@@ -140,17 +137,12 @@ def test_a_library_error_raised_before_writing_never_claims_the_tv_received_it(
     result = anyio.run(tools.call, "pause", {"deviceId": DEVICE_ID})
 
     body, text = answer(result)
-    # UnsupportedNamespace was raised by the socket client before any write; the shared
-    # adapter maps it to command_rejected, which therefore does not prove receipt.
-    assert socket.writes == []
-    assert (body["error"]["code"], body["delivery"]) == ("command_rejected", "uncertain")
-    assert "received the command" not in text
-    assert "The command reached the TV" not in text and "Nothing was sent" not in text
-    assert "may or may not have reached the TV" in text
-    assert "Do not resend it automatically" in text
+    assert all(b"PAUSE" not in write for write in socket.writes)
+    assert body["delivery"] == "not_sent"
+    assert "Nothing was sent" in text
 
 
-def test_each_failed_command_reaches_the_library_once_and_is_never_replayed(
+def test_each_failed_preread_is_attempted_once_and_no_command_is_replayed(
     socket_client: SocketClient,
 ) -> None:
     socket = BreakingSocket()
@@ -164,5 +156,6 @@ def test_each_failed_command_reaches_the_library_once_and_is_never_replayed(
     second = anyio.run(tools.call, "stop", {"deviceId": DEVICE_ID})
 
     assert first.isError and second.isError
-    assert after_first == 1  # one MCP call, one write attempt, no retry
-    assert len(socket.writes) == 2 and b"STOP" in socket.writes[1]  # the next call only
+    assert after_first == 1
+    assert len(socket.writes) == 2
+    assert all(b"PAUSE" not in write and b"STOP" not in write for write in socket.writes)
