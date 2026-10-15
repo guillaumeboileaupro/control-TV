@@ -37,6 +37,7 @@ class FakeProcess:
         self.hangs_on_stop = hangs_on_stop
         self.terminated = False
         self.killed = False
+        self.pid = 4242
 
     def poll(self) -> int | None:
         return self.exit_code
@@ -109,7 +110,7 @@ def scenario() -> Any:
     )
 
 
-def context(tmp_path: Path, *, authorized: bool = True) -> Any:
+def context(tmp_path: Path, *, authorized: bool = True, allow_existing: bool = False) -> Any:
     package = tmp_path / "control-tv.deb"
     package.write_bytes(b"deb")
     environment = acceptance.Environment(
@@ -121,26 +122,39 @@ def context(tmp_path: Path, *, authorized: bool = True) -> Any:
         {"deb": str(package)},
         {},
     )
-    policy = acceptance.Policy(execute=authorized, install_deb=authorized)
-    return acceptance.Context(policy, environment, 10, acceptance.SubprocessRunner())
+    policy = acceptance.Policy(
+        execute=authorized,
+        install_deb=authorized,
+        validate_existing_deb=allow_existing,
+    )
+    return acceptance.Context(
+        policy, environment, 10, acceptance.SubprocessRunner(), tmp_path / "reports"
+    )
+
+
+def metadata() -> subprocess.CompletedProcess[str]:
+    return completed(
+        stdout=(
+            "Package: control-tv\nArchitecture: amd64\nVersion: 0.1.0\n"
+            "Depends: libwebkit2gtk-4.1-0\n"
+        )
+    )
 
 
 def successful_replies() -> list[subprocess.CompletedProcess[str]]:
     return [
+        metadata(),
         completed(1),
-        completed(
-            stdout=(
-                "Package: control-tv\nArchitecture: amd64\nVersion: 0.1.0\n"
-                "Depends: libwebkit2gtk-4.1-0\n"
-            )
-        ),
         completed(stdout="Inst control-tv"),
         completed(stdout="(@as [],)"),
         completed(),
         completed(stdout="installed"),
         completed(stdout="ii  0.1.0"),
         completed(stdout='{"id":1,"result":{"status":"ready"}}\n'),
-        completed(stdout="(@as ['/StatusNotifierItem/control_tv'],)"),
+        completed(
+            stdout="(@as [':1.9/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv'],)"
+        ),
+        completed(stdout="(uint32 4242,)"),
     ]
 
 
@@ -155,11 +169,36 @@ def test_missing_authorization_performs_no_host_action(tmp_path: Path) -> None:
 
 
 def test_preinstalled_package_is_never_replaced_or_removed(tmp_path: Path) -> None:
-    host = FakeHost([completed(stdout="ii  0.1.0")])
+    host = FakeHost([metadata(), completed(stdout="ii  0.1.0")])
     result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
     assert result.outcome is acceptance.Outcome.BLOCKED
-    assert len(host.calls) == 1
+    assert "pre-existing installation" in result.observed
+    assert len(host.calls) == 2
     assert not any("apt-get" in command for command, _ in host.calls)
+
+
+def test_explicit_consent_validates_preexisting_package_without_install(tmp_path: Path) -> None:
+    host = FakeHost(
+        [
+            metadata(),
+            completed(stdout="ii  0.1.0"),
+            completed(stdout="already satisfied"),
+            completed(stdout="(@as [],)"),
+            completed(stdout='{"id":1,"result":{"status":"ready"}}\n'),
+            completed(
+                stdout=(
+                    "(@as [':1.9/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv'],)"
+                )
+            ),
+            completed(stdout="(uint32 4242,)"),
+        ]
+    )
+    result = ubuntu.run_ubuntu_acceptance(
+        context(tmp_path, allow_existing=True), scenario(), host=host
+    )
+    assert result.outcome is acceptance.Outcome.PASS
+    assert "origin=pre-existing installation" in result.observed
+    assert not any(command[:3] == ("sudo", "-n", "apt-get") for command, _ in host.calls)
 
 
 @pytest.mark.parametrize(
@@ -181,13 +220,8 @@ def test_desktop_preflight_stops_before_install(
 def test_unresolvable_dependencies_block_before_install(tmp_path: Path) -> None:
     host = FakeHost(
         [
+            metadata(),
             completed(1),
-            completed(
-                stdout=(
-                    "Package: control-tv\nArchitecture: amd64\nVersion: 0.1.0\n"
-                    "Depends: libwebkit2gtk-4.1-0\n"
-                )
-            ),
             completed(100, stderr="unmet dependencies"),
         ]
     )
@@ -208,7 +242,8 @@ def test_success_validates_install_launch_bridge_and_tray(tmp_path: Path) -> Non
     assert install[3:6] == ("install", "--no-install-recommends", "-y")
     bridge = next(item for item in host.calls if item[0] == (str(ubuntu.BRIDGE),))
     assert '"method":"ping"' in (bridge[1] or "")
-    assert "gdbus" in result.proof
+    assert "StatusNotifier identity" in result.proof
+    assert (context(tmp_path).state_dir / ubuntu.RECEIPT).exists() is False
 
 
 def test_bridge_id_mismatch_fails_and_process_is_cleaned(tmp_path: Path) -> None:
@@ -221,13 +256,23 @@ def test_bridge_id_mismatch_fails_and_process_is_cleaned(tmp_path: Path) -> None
     assert host.process.terminated is True
 
 
-def test_missing_new_tray_item_fails(tmp_path: Path) -> None:
+def test_unrelated_new_tray_item_is_not_a_control_tv_false_positive(tmp_path: Path) -> None:
     replies = successful_replies()
-    replies[-1] = completed(stdout="(@as [],)")
+    replies[-2] = completed(stdout="(@as [':1.8/org/ayatana/NotificationItem/other_app'],)")
     host = FakeHost(replies)
     result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
     assert result.outcome is acceptance.Outcome.FAIL
-    assert "tray" in result.reason
+    assert "identity" in result.reason
+    assert len(host.replies) == 1
+
+
+def test_spoofed_tray_path_owned_by_another_process_fails(tmp_path: Path) -> None:
+    replies = successful_replies()
+    replies[-1] = completed(stdout="(uint32 9999,)")
+    host = FakeHost(replies)
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.FAIL
+    assert "not owned" in result.reason
 
 
 def test_hung_process_is_killed_during_bounded_cleanup(tmp_path: Path) -> None:
@@ -245,3 +290,66 @@ def test_no_tv_or_adb_command_exists_in_real_ubuntu_path(tmp_path: Path) -> None
     flattened = [part for command, _ in host.calls for part in command]
     assert "adb" not in flattened
     assert not any("cast" in part.casefold() for part in flattened)
+
+
+def test_interrupted_recipe_requires_extra_consent_and_is_identified(tmp_path: Path) -> None:
+    current = context(tmp_path)
+    artifact = Path(current.environment.artifacts["deb"])
+    receipt = current.state_dir / ubuntu.RECEIPT
+    ubuntu._write_receipt(
+        receipt,
+        digest=ubuntu._artifact_digest(artifact),
+        version="0.1.0",
+        state="installed",
+    )
+    host = FakeHost([metadata(), completed(stdout="ii  0.1.0")])
+    result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert result.observed == "interrupted acceptance installation"
+    assert receipt.is_file()
+
+
+def test_malformed_receipt_with_no_installed_package_blocks_new_install(tmp_path: Path) -> None:
+    current = context(tmp_path)
+    receipt = current.state_dir / ubuntu.RECEIPT
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("not json", encoding="utf-8")
+    host = FakeHost([metadata(), completed(1)])
+    result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "receipt" in result.reason
+    assert not any("apt-get" in command for command, _ in host.calls)
+
+
+def test_explicit_interrupted_recipe_resume_never_reinstalls_and_clears_receipt(
+    tmp_path: Path,
+) -> None:
+    current = context(tmp_path, allow_existing=True)
+    artifact = Path(current.environment.artifacts["deb"])
+    receipt = current.state_dir / ubuntu.RECEIPT
+    ubuntu._write_receipt(
+        receipt,
+        digest=ubuntu._artifact_digest(artifact),
+        version="0.1.0",
+        state="installed",
+    )
+    host = FakeHost(
+        [
+            metadata(),
+            completed(stdout="ii  0.1.0"),
+            completed(stdout="already satisfied"),
+            completed(stdout="(@as [],)"),
+            completed(stdout='{"id":1,"result":{"status":"ready"}}\n'),
+            completed(
+                stdout=(
+                    "(@as [':1.9/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv'],)"
+                )
+            ),
+            completed(stdout="(uint32 4242,)"),
+        ]
+    )
+    result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.PASS
+    assert "origin=interrupted acceptance installation" in result.observed
+    assert not any(command[:3] == ("sudo", "-n", "apt-get") for command, _ in host.calls)
+    assert receipt.exists() is False

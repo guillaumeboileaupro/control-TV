@@ -58,6 +58,7 @@ class Policy:
     execute: bool = False
     tv_commands: bool = False
     install_deb: bool = False
+    validate_existing_deb: bool = False
     install_apk: bool = False
     adb: bool = False
 
@@ -122,6 +123,7 @@ class Context:
     environment: Environment
     timeout_seconds: float
     command: CommandRunner
+    state_dir: Path = Path("reports/acceptance")
 
 
 class CommandRunner(Protocol):
@@ -281,7 +283,9 @@ class AcceptanceRunner:
         self.report_dir.mkdir(parents=True, exist_ok=True)
         prior = self._prior_results(resume)
         results: list[Result] = []
-        context = Context(self.policy, self.environment, self.timeout_seconds, self.command)
+        context = Context(
+            self.policy, self.environment, self.timeout_seconds, self.command, self.report_dir
+        )
         for scenario in scenarios:
             if scenario.id in prior:
                 result = prior[scenario.id]

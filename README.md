@@ -66,8 +66,9 @@ Set `CONTROL_TV_DEB` or `CONTROL_TV_APK` to inspect an existing artifact without
 add `--mode execute` (or the compatible shorthand `--execute`) only to run the deterministic
 simulated contract suites. Real Ubuntu installation, launch, bridge and tray validation additionally
 requires `--allow-deb-install`, a configured `.deb`, an interactive GNOME session and
-non-interactive installation privilege. It refuses to alter a pre-existing installation. Android
-device scenarios remain blocked without their separate adapter and authorizations.
+non-interactive installation privilege. It refuses to alter a pre-existing installation; validating
+one requires the separate `--allow-existing-deb-validation` consent. Android device scenarios
+remain blocked without their separate adapter and authorizations.
 
 Google TV preparation reuses the existing R1-R4 and C1-C7 hardware protocol. C6 and C7 can pass
 only with ordered media-session and low-level send-attempt evidence; see

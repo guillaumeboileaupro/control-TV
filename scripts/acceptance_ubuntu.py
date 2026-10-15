@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -19,9 +20,14 @@ APPLICATION = Path("/usr/bin/control-tv")
 BRIDGE = Path("/usr/lib/control-tv/python-bridge/control-tv-bridge")
 WATCHER_DESTINATION = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
+TRAY_PATH = "/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv"
+RECEIPT = "ubuntu-install-receipt.json"
 
 
 class ManagedProcess(Protocol):
+    @property
+    def pid(self) -> int: ...
+
     def poll(self) -> int | None: ...
 
     def terminate(self) -> None: ...
@@ -116,7 +122,7 @@ def _result(
 
 
 def _watcher_items(output: str) -> frozenset[str]:
-    return frozenset(re.findall(r"(?:org\.[A-Za-z0-9_.-]+|/[A-Za-z0-9_./-]+)", output))
+    return frozenset(re.findall(r"(?:[:A-Za-z0-9_.-]+)?/[A-Za-z0-9_./-]+", output))
 
 
 def _watcher(host: UbuntuHost, timeout: float) -> subprocess.CompletedProcess[str]:
@@ -136,6 +142,75 @@ def _watcher(host: UbuntuHost, timeout: float) -> subprocess.CompletedProcess[st
         ),
         timeout=timeout,
     )
+
+
+def _tray_owner_pid(
+    host: UbuntuHost, item: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    bus_name = item.split("/", 1)[0]
+    return host.run(
+        (
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.DBus",
+            "--object-path",
+            "/org/freedesktop/DBus",
+            "--method",
+            "org.freedesktop.DBus.GetConnectionUnixProcessID",
+            bus_name,
+        ),
+        timeout=timeout,
+    )
+
+
+def _receipt_path(context: Context) -> Path:
+    return context.state_dir / RECEIPT
+
+
+def _artifact_digest(artifact: Path) -> str:
+    digest = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_receipt(path: Path) -> Mapping[str, object] | None:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def _write_receipt(path: Path, *, digest: str, version: str, state: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "package": PACKAGE,
+                "artifactSha256": digest,
+                "version": version,
+                "state": state,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _installed_version(completed: subprocess.CompletedProcess[str]) -> str | None:
+    fields = completed.stdout.strip().split(maxsplit=1)
+    if completed.returncode != 0 or len(fields) != 2 or fields[0] != "ii":
+        return None
+    return fields[1]
 
 
 def _stop(process: ManagedProcess, timeout: float, logs: list[str]) -> None:
@@ -213,21 +288,6 @@ def run_ubuntu_acceptance(
         )
 
     timeout = context.timeout_seconds
-    installed = active_host.run(
-        ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
-    )
-    logs.append(_completed_log("dpkg-query installed control-tv", installed))
-    if installed.returncode == 0 and installed.stdout.startswith("ii "):
-        return _result(
-            scenario,
-            Outcome.BLOCKED,
-            "control-tv is already installed; replacement/removal needs separate authorization",
-            started,
-            logs,
-            observed=installed.stdout.strip(),
-            proof="dpkg-query",
-        )
-
     metadata = active_host.run(
         ("dpkg-deb", "-f", str(artifact), "Package", "Architecture", "Version", "Depends"),
         timeout=timeout,
@@ -265,6 +325,76 @@ def run_ubuntu_acceptance(
             proof="dpkg-deb metadata",
         )
 
+    artifact_digest = _artifact_digest(artifact)
+    receipt_path = _receipt_path(context)
+    receipt_present = receipt_path.exists()
+    receipt = _read_receipt(receipt_path)
+    matching_receipt = receipt is not None and all(
+        (
+            receipt.get("schemaVersion") == 1,
+            receipt.get("package") == PACKAGE,
+            receipt.get("artifactSha256") == artifact_digest,
+            receipt.get("version") == version,
+            receipt.get("state") in {"installing", "installed"},
+        )
+    )
+    installed = active_host.run(
+        ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
+    )
+    logs.append(_completed_log("dpkg-query installed control-tv", installed))
+    current_version = _installed_version(installed)
+    installed_cleanly = current_version is not None
+    known_to_dpkg = installed.returncode == 0
+    installation_origin = "new recipe installation"
+    skip_install = False
+    if installed_cleanly:
+        installation_origin = (
+            "interrupted acceptance installation"
+            if matching_receipt
+            else "pre-existing installation"
+        )
+        if current_version != version:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "installed control-tv version differs from the configured artifact",
+                started,
+                logs,
+                observed=f"{installation_origin}: {installed.stdout.strip()}",
+                proof="dpkg-query and acceptance receipt",
+            )
+        if not context.policy.validate_existing_deb:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "existing control-tv validation needs --allow-existing-deb-validation",
+                started,
+                logs,
+                observed=installation_origin,
+                proof="dpkg-query and acceptance receipt",
+            )
+        skip_install = True
+    elif known_to_dpkg:
+        return _result(
+            scenario,
+            Outcome.BLOCKED,
+            "control-tv has a non-clean package state; manual recovery is required",
+            started,
+            logs,
+            observed=installed.stdout.strip() or installed.stderr.strip(),
+            proof="dpkg-query; no package mutation attempted",
+        )
+    elif receipt_present:
+        return _result(
+            scenario,
+            Outcome.BLOCKED,
+            "an interrupted-install receipt exists but no clean installation can be identified",
+            started,
+            logs,
+            observed="manual receipt and package-state review required",
+            proof=str(receipt_path),
+        )
+
     dependency_probe = active_host.run(
         ("apt-get", "-s", "install", "--no-install-recommends", str(artifact.resolve())),
         timeout=timeout,
@@ -294,61 +424,60 @@ def run_ubuntu_acceptance(
             proof="gdbus session query",
         )
 
-    privilege = active_host.run(("sudo", "-n", "true"), timeout=timeout)
-    logs.append(_completed_log("non-interactive installation authorization", privilege))
-    if privilege.returncode != 0:
-        return _result(
-            scenario,
-            Outcome.BLOCKED,
-            "non-interactive sudo authorization is required for installation",
-            started,
-            logs,
-            observed="sudo -n refused",
-            proof="sudo preflight",
-        )
+    if not skip_install:
+        privilege = active_host.run(("sudo", "-n", "true"), timeout=timeout)
+        logs.append(_completed_log("non-interactive installation authorization", privilege))
+        if privilege.returncode != 0:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "non-interactive sudo authorization is required for installation",
+                started,
+                logs,
+                observed="sudo -n refused",
+                proof="sudo preflight",
+            )
 
-    install = active_host.run(
-        (
-            "sudo",
-            "-n",
-            "apt-get",
-            "install",
-            "--no-install-recommends",
-            "-y",
-            str(artifact.resolve()),
-        ),
-        timeout=timeout,
-    )
-    logs.append(_completed_log("authorized Debian package installation", install))
-    if install.returncode != 0:
-        return _result(
-            scenario,
-            Outcome.FAIL,
-            "Debian package installation failed",
-            started,
-            logs,
-            observed="APT install failed",
-            proof="apt-get install",
+        _write_receipt(receipt_path, digest=artifact_digest, version=version, state="installing")
+        install = active_host.run(
+            (
+                "sudo",
+                "-n",
+                "apt-get",
+                "install",
+                "--no-install-recommends",
+                "-y",
+                str(artifact.resolve()),
+            ),
+            timeout=timeout,
         )
+        logs.append(_completed_log("authorized Debian package installation", install))
+        if install.returncode != 0:
+            return _result(
+                scenario,
+                Outcome.FAIL,
+                "Debian package installation failed; recovery receipt retained",
+                started,
+                logs,
+                observed="APT install failed",
+                proof=str(receipt_path),
+            )
 
-    installed_version = active_host.run(
-        ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
-    )
-    logs.append(_completed_log("dpkg-query installed version", installed_version))
-    if (
-        installed_version.returncode != 0
-        or not installed_version.stdout.startswith("ii ")
-        or version not in installed_version.stdout
-    ):
-        return _result(
-            scenario,
-            Outcome.FAIL,
-            "installed package version does not match the artifact",
-            started,
-            logs,
-            observed=installed_version.stdout.strip(),
-            proof="post-install dpkg-query",
+        installed_version = active_host.run(
+            ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
         )
+        logs.append(_completed_log("dpkg-query installed version", installed_version))
+        if installed_version.returncode != 0 or _installed_version(installed_version) != version:
+            return _result(
+                scenario,
+                Outcome.FAIL,
+                "installed package version does not match the artifact; recovery receipt retained",
+                started,
+                logs,
+                observed=installed_version.stdout.strip(),
+                proof=str(receipt_path),
+            )
+        _write_receipt(receipt_path, digest=artifact_digest, version=version, state="installed")
 
     process = active_host.launch((str(APPLICATION),))
     outcome = Outcome.FAIL
@@ -387,17 +516,46 @@ def run_ubuntu_acceptance(
                 new_items = _watcher_items(watcher_after.stdout) - _watcher_items(
                     watcher_before.stdout
                 )
-                if watcher_after.returncode != 0 or not new_items:
-                    reason = "no new tray item was registered by the running application"
+                matching_items = sorted(
+                    item for item in new_items if item.endswith(TRAY_PATH) and "/" in item
+                )
+                if watcher_after.returncode != 0 or len(matching_items) != 1:
+                    reason = "control-TV tray identity was not registered exactly once"
                     observed = f"new tray items: {sorted(new_items)}"
-                    proof = "before/after gdbus watcher queries and application logs"
+                    proof = "exact StatusNotifier path and before/after gdbus queries"
                 else:
-                    outcome = Outcome.PASS
-                    reason = "installed Tauri app, Python bridge and GNOME tray are operational"
-                    observed = f"version={version}; new tray items={sorted(new_items)}"
-                    proof = "dpkg-query, process state, bridge ping, gdbus and application logs"
+                    owner = _tray_owner_pid(active_host, matching_items[0], timeout)
+                    logs.append(_completed_log("control-TV tray DBus owner PID", owner))
+                    owner_match = re.search(r"uint32\s+(\d+)", owner.stdout)
+                    if (
+                        owner.returncode != 0
+                        or owner_match is None
+                        or int(owner_match.group(1)) != process.pid
+                    ):
+                        reason = "control-TV tray item is not owned by the launched Tauri process"
+                        observed = (
+                            f"item={matching_items[0]!r}; owner={owner.stdout.strip()!r}; "
+                            f"tauri_pid={process.pid}"
+                        )
+                        proof = "StatusNotifier identity and DBus owner PID"
+                    else:
+                        outcome = Outcome.PASS
+                        reason = (
+                            "installed Tauri app, Python bridge and identified GNOME tray "
+                            "are operational"
+                        )
+                        observed = (
+                            f"version={version}; origin={installation_origin}; "
+                            f"tray={matching_items[0]}; pid={process.pid}"
+                        )
+                        proof = (
+                            "dpkg-query, process state, bridge ping, exact StatusNotifier "
+                            "identity, DBus owner PID and application logs"
+                        )
     finally:
         _stop(process, min(timeout, 5.0), logs)
+    if outcome is Outcome.PASS and (matching_receipt or not skip_install):
+        receipt_path.unlink(missing_ok=True)
     return _result(
         scenario,
         outcome,

@@ -49,6 +49,15 @@ def test_execute_alias_and_explicit_mode_are_mutually_exclusive() -> None:
         run_acceptance.parser().parse_args(["--mode", "dry-run", "--execute"])
 
 
+def test_existing_deb_validation_requires_its_own_explicit_flag() -> None:
+    default = run_acceptance.parser().parse_args(["--execute", "--allow-deb-install"])
+    resumed = run_acceptance.parser().parse_args(
+        ["--execute", "--allow-deb-install", "--allow-existing-deb-validation"]
+    )
+    assert default.allow_existing_deb_validation is False
+    assert resumed.allow_existing_deb_validation is True
+
+
 def passing(scenario: Any) -> Any:
     def run(context: Any) -> Any:
         del context
