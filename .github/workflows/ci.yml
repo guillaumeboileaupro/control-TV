@@ -44,6 +44,11 @@ jobs:
       - name: Enforce test coverage of the shared control/domain layer
         run: python3 scripts/dev.py coverage
 
+      # Every advisory of a locked Python package (all groups) fails the job unless
+      # python-audit-waivers.json waives it until a date.
+      - name: Audit the locked Python dependencies
+        run: python3 scripts/dev.py python-audit
+
       - name: Inspect remaining project-owned generated footprint
         if: always()
         run: python3 scripts/dev.py disk-usage
@@ -106,6 +111,13 @@ jobs:
       # them until a date (an expired waiver fails too).
       - name: Audit the frontend dependencies
         run: python3 scripts/dev.py npm-audit
+
+      # A RustSec vulnerability of the Tauri crate fails the job unless
+      # src-tauri/cargo-audit-waivers.json waives it until a date; warnings are printed.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit the Tauri crate's Rust dependencies
+        run: python3 scripts/dev.py rust-audit
 
       - name: Type-check and format-check the frontend
         run: python3 scripts/dev.py ui-check

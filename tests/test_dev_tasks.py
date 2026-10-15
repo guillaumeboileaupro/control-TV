@@ -811,7 +811,7 @@ def test_npm_audit_blocks_high_and_critical_only() -> None:
         _report(("a", "high", "u1"), ("b", "critical", "u2"), ("c", "moderate", "u3"))
     )
 
-    verdict = dev.npm_audit_verdict(findings, [], dev.date(2026, 10, 14))
+    verdict = dev.audit_verdict(findings, [], dev.date(2026, 10, 14))
 
     assert [f.package for f in verdict.blocking] == ["a", "b"]
     assert [f.package for f in verdict.reported] == ["c"]
@@ -820,12 +820,12 @@ def test_npm_audit_blocks_high_and_critical_only() -> None:
 
 def test_an_in_date_waiver_lifts_the_block_and_an_expired_one_fails() -> None:
     findings = [dev.AuditFinding("source-map-js", "high", GHSA)]
-    waiver = dev.npm_audit_waivers(
+    waiver = dev.audit_waivers(
         {"waivers": [{"advisory": GHSA, "reason": "build tooling only", "expires": "2026-10-31"}]}
     )
 
-    in_date = dev.npm_audit_verdict(findings, waiver, dev.date(2026, 10, 31))
-    expired = dev.npm_audit_verdict([], waiver, dev.date(2026, 11, 1))
+    in_date = dev.audit_verdict(findings, waiver, dev.date(2026, 10, 31))
+    expired = dev.audit_verdict([], waiver, dev.date(2026, 11, 1))
 
     assert in_date.passed and in_date.waived == tuple(findings)
     assert not expired.passed and expired.expired == tuple(waiver)
@@ -842,7 +842,7 @@ def test_an_in_date_waiver_lifts_the_block_and_an_expired_one_fails() -> None:
 )
 def test_a_waiver_needs_an_advisory_a_reason_and_a_date(document: dict[str, object]) -> None:
     with pytest.raises(ValueError):
-        dev.npm_audit_waivers(document)
+        dev.audit_waivers(document)
 
 
 def test_npm_audit_command_reports_and_fails_on_an_unwaived_advisory(
@@ -860,3 +860,129 @@ def test_npm_audit_command_reports_and_fails_on_an_unwaived_advisory(
 
     monkeypatch.setattr(dev, "_npm_audit_report", lambda root: _report())
     assert dev.cmd_npm_audit(repo) == 0
+
+
+def _pip_report(*vulns: tuple[str, str]) -> dict[str, object]:
+    dependencies: list[dict[str, object]] = [{"name": "requests", "version": "2.34.2", "vulns": []}]
+    for name, advisory in vulns:
+        dependencies.append({"name": name, "version": "1", "vulns": [{"id": advisory}]})
+    return {"dependencies": dependencies, "fixes": []}
+
+
+def _cargo_report(*vulns: tuple[str, str]) -> dict[str, object]:
+    listed = [{"advisory": {"id": a, "title": "t"}, "package": {"name": n}} for n, a in vulns]
+    return {
+        "vulnerabilities": {"found": bool(listed), "count": len(listed), "list": listed},
+        "warnings": {"unmaintained": [{"package": {"name": "proc-macro-error"}}]},
+    }
+
+
+def test_pip_audit_findings_read_every_advisory() -> None:
+    report = _pip_report(
+        ("pip", "PYSEC-2026-196"), ("wheel", "GHSA-8rrh-rw8j-w5fx"), ("pip", "PYSEC-2026-196")
+    )
+
+    assert dev.pip_audit_findings(report) == [
+        dev.AuditFinding("pip", "advisory", "PYSEC-2026-196"),
+        dev.AuditFinding("wheel", "advisory", "GHSA-8rrh-rw8j-w5fx"),
+    ]
+    assert dev.pip_audit_findings(_pip_report()) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"dependencies": {}},
+        {"dependencies": [{"version": "1", "vulns": []}]},
+        {"dependencies": [{"name": "a", "skip_reason": "not on PyPI"}]},
+        {"dependencies": [{"name": "a", "version": "1"}]},
+        {"dependencies": [{"name": "a", "version": "1", "vulns": [{}]}]},
+    ],
+)
+def test_an_unreadable_or_incomplete_pip_audit_report_fails_closed(
+    report: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        dev.pip_audit_findings(report)
+
+
+def test_cargo_audit_findings_are_vulnerabilities_and_warnings_are_notes() -> None:
+    report = _cargo_report(("time", "RUSTSEC-2020-0071"))
+
+    assert dev.cargo_audit_findings(report) == [
+        dev.AuditFinding("time", "vulnerability", "RUSTSEC-2020-0071")
+    ]
+    assert dev.cargo_audit_warnings(report) == ["unmaintained: proc-macro-error"]
+    assert dev.cargo_audit_findings(_cargo_report()) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"vulnerabilities": {"count": 0}},
+        {"vulnerabilities": {"list": [{"package": {"name": "time"}}]}},
+        {"vulnerabilities": {"list": [{"advisory": {"id": "RUSTSEC-1"}}]}},
+    ],
+)
+def test_an_unreadable_cargo_audit_report_fails_closed(report: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        dev.cargo_audit_findings(report)
+
+
+def test_python_and_rust_audits_block_every_advisory_unless_waived() -> None:
+    findings = [dev.AuditFinding("pip", "advisory", "PYSEC-2026-196")]
+    waiver = dev.audit_waivers(
+        {
+            "waivers": [
+                {"advisory": "PYSEC-2026-196", "reason": "build only", "expires": "2026-11-01"}
+            ]
+        }
+    )
+
+    assert not dev.audit_verdict(findings, [], dev.date(2026, 10, 15), None).passed
+    assert dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15), None).passed
+
+
+@pytest.mark.parametrize(
+    ("command", "reader", "waivers", "report", "advisory"),
+    [
+        (
+            "cmd_python_audit",
+            "_python_audit_report",
+            "python-audit-waivers.json",
+            _pip_report(("pip", "PYSEC-2026-196")),
+            "PYSEC-2026-196",
+        ),
+        (
+            "cmd_rust_audit",
+            "_rust_audit_report",
+            "src-tauri/cargo-audit-waivers.json",
+            _cargo_report(("time", "RUSTSEC-2020-0071")),
+            "RUSTSEC-2020-0071",
+        ),
+    ],
+)
+def test_python_and_rust_audit_commands_fail_on_an_unwaived_advisory(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    reader: str,
+    waivers: str,
+    report: dict[str, object],
+    advisory: str,
+) -> None:
+    (repo / waivers).parent.mkdir(parents=True, exist_ok=True)
+    (repo / waivers).write_text('{"waivers": []}', encoding="utf-8")
+    monkeypatch.setattr(dev.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dev, reader, lambda root: report)
+
+    assert getattr(dev, command)(repo) == 1
+    assert advisory in capsys.readouterr().err
+
+    monkeypatch.setattr(
+        dev, reader, lambda root: {"dependencies": []} if "python" in command else _cargo_report()
+    )
+    assert getattr(dev, command)(repo) == 0
