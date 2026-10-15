@@ -620,7 +620,26 @@ def pip_audit_findings(report: object) -> list[AuditFinding]:
 
 
 def cargo_audit_findings(report: object) -> list[AuditFinding]:
-    """Every vulnerability of a `cargo audit --json` report (its warnings are not findings)."""
+    """Every vulnerability of a `cargo audit --json` report (its warnings are not findings).
+
+    cargo audit applies any `audit.toml` it finds (the user's or the crate's) before it reports:
+    an ignore or a filter there would hide a vulnerability from this gate without a dated
+    waiver. Such a report is refused: only the repository's waiver file may lift a block.
+    """
+    settings = report.get("settings") if isinstance(report, dict) else None
+    if not isinstance(settings, dict):
+        raise ValueError("not a cargo audit report (no `settings`)")
+    for key in ("ignore", "target_arch", "target_os"):
+        if settings.get(key) != []:
+            raise ValueError(
+                f"cargo audit ran with `{key}` = {settings.get(key)!r} from an audit.toml; "
+                "remove it and waive advisories in src-tauri/cargo-audit-waivers.json instead"
+            )
+    if settings.get("severity") is not None:
+        raise ValueError(
+            f"cargo audit ran with a severity filter ({settings.get('severity')!r}) from an "
+            "audit.toml; remove it"
+        )
     vulnerabilities = report.get("vulnerabilities") if isinstance(report, dict) else None
     listed = vulnerabilities.get("list") if isinstance(vulnerabilities, dict) else None
     if not isinstance(listed, list):

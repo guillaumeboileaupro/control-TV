@@ -872,6 +872,7 @@ def _pip_report(*vulns: tuple[str, str]) -> dict[str, object]:
 def _cargo_report(*vulns: tuple[str, str]) -> dict[str, object]:
     listed = [{"advisory": {"id": a, "title": "t"}, "package": {"name": n}} for n, a in vulns]
     return {
+        "settings": {"target_arch": [], "target_os": [], "severity": None, "ignore": []},
         "vulnerabilities": {"found": bool(listed), "count": len(listed), "list": listed},
         "warnings": {"unmaintained": [{"package": {"name": "proc-macro-error"}}]},
     }
@@ -921,13 +922,39 @@ def test_cargo_audit_findings_are_vulnerabilities_and_warnings_are_notes() -> No
     "report",
     [
         {},
-        {"vulnerabilities": {"count": 0}},
-        {"vulnerabilities": {"list": [{"package": {"name": "time"}}]}},
-        {"vulnerabilities": {"list": [{"advisory": {"id": "RUSTSEC-1"}}]}},
+        {"vulnerabilities": {"list": []}},
+        {"settings": _cargo_report()["settings"], "vulnerabilities": {"count": 0}},
+        {
+            "settings": _cargo_report()["settings"],
+            "vulnerabilities": {"list": [{"package": {"name": "time"}}]},
+        },
+        {
+            "settings": _cargo_report()["settings"],
+            "vulnerabilities": {"list": [{"advisory": {"id": "RUSTSEC-1"}}]},
+        },
     ],
 )
 def test_an_unreadable_cargo_audit_report_fails_closed(report: dict[str, object]) -> None:
     with pytest.raises(ValueError):
+        dev.cargo_audit_findings(report)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("ignore", ["RUSTSEC-2020-0071"]),
+        ("target_arch", ["x86_64"]),
+        ("target_os", ["linux"]),
+        ("severity", "high"),
+    ],
+)
+def test_a_cargo_audit_report_filtered_by_an_audit_toml_is_refused(key: str, value: object) -> None:
+    report = _cargo_report()
+    settings = report["settings"]
+    assert isinstance(settings, dict)
+    settings[key] = value
+
+    with pytest.raises(ValueError, match=key):
         dev.cargo_audit_findings(report)
 
 
