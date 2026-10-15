@@ -16,6 +16,11 @@ Commands:
   ui-check     tsc --noEmit, prettier --check and UI model tests (ui/, after `npm install`)
   npm-audit    npm audit of ui/ (needs the network): a high or critical advisory fails unless
                ui/npm-audit-waivers.json waives it until a date
+  python-audit pip-audit of every locked Python package (network): any advisory fails unless
+               python-audit-waivers.json waives it until a date
+  rust-audit   cargo audit of src-tauri/ (network, needs cargo-audit): any vulnerability or
+               unsound crate fails unless src-tauri/cargo-audit-waivers.json waives it; other
+               warnings (unmaintained, yanked) are printed
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
@@ -48,7 +53,8 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterator, Sequence
+import tempfile
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -525,17 +531,21 @@ def cmd_ui_check(root: Path) -> int:
     return 0
 
 
-# npm advisories: what blocks, and the dated waivers that may lift a block for a while. The
-# policy is pure (findings, waivers and today in, verdict out); only cmd_npm_audit runs npm.
-BLOCKING_SEVERITIES = ("high", "critical")
+# Dependency advisories (npm, Python, Rust): what blocks, and the dated waivers that may lift a
+# block for a while. Parsing and policy are pure (report, waivers and today in, verdict out);
+# only the `*_report` readers run a tool, and each parser fails closed on what it cannot read.
+BLOCKING_SEVERITIES = ("high", "critical")  # npm; pip-audit and cargo audit: every advisory
 NPM_AUDIT_WAIVERS = Path("ui") / "npm-audit-waivers.json"
+PYTHON_AUDIT_WAIVERS = Path("python-audit-waivers.json")
+RUST_AUDIT_WAIVERS = Path("src-tauri") / "cargo-audit-waivers.json"
+PIP_AUDIT = "pip-audit==2.10.1"
 
 
 @dataclass(frozen=True)
 class AuditFinding:
     package: str
     severity: str
-    advisory: str  # the advisory URL npm reports, e.g. https://github.com/advisories/GHSA-...
+    advisory: str  # the advisory's URL (npm) or id (PYSEC-..., GHSA-..., RUSTSEC-...)
 
 
 @dataclass(frozen=True)
@@ -543,6 +553,14 @@ class AuditWaiver:
     advisory: str
     reason: str
     expires: date
+    package: str | None = None  # when set, the waiver covers that advisory for this package only
+
+    def covers(self, finding: AuditFinding, today: date) -> bool:
+        return (
+            self.expires >= today
+            and self.advisory == finding.advisory
+            and self.package in (None, finding.package)
+        )
 
 
 @dataclass(frozen=True)
@@ -585,8 +603,102 @@ def npm_audit_findings(report: object) -> list[AuditFinding]:
     return sorted(found.values(), key=lambda f: (f.package, f.advisory))
 
 
-def npm_audit_waivers(document: object) -> list[AuditWaiver]:
-    """The waivers file: {"waivers": [{"advisory", "reason", "expires": "YYYY-MM-DD"}]}."""
+def pip_audit_findings(report: object) -> list[AuditFinding]:
+    """Every advisory of a `pip-audit -f json` report. A dependency pip-audit skipped (it could
+    not check it) fails the gate rather than pass unchecked."""
+    dependencies = report.get("dependencies") if isinstance(report, dict) else None
+    if not isinstance(dependencies, list):
+        raise ValueError("not a pip-audit report (no `dependencies` list)")
+    found: dict[tuple[str, str], AuditFinding] = {}
+    for dependency in dependencies:
+        name = dependency.get("name") if isinstance(dependency, dict) else None
+        if not isinstance(name, str) or not name:
+            raise ValueError("unreadable pip-audit dependency: no `name`")
+        if dependency.get("skip_reason") is not None:
+            raise ValueError(f"pip-audit could not check {name}: {dependency['skip_reason']}")
+        vulns = dependency.get("vulns")
+        if not isinstance(vulns, list):
+            raise ValueError(f"unreadable pip-audit dependency {name}: no `vulns` list")
+        for vuln in vulns:
+            advisory = vuln.get("id") if isinstance(vuln, dict) else None
+            if not isinstance(advisory, str) or not advisory:
+                raise ValueError(f"unreadable pip-audit advisory for {name}: no `id`")
+            # The export can list one package twice (one line per environment marker).
+            found[(name, advisory)] = AuditFinding(name, "advisory", advisory)
+    return sorted(found.values(), key=lambda f: (f.package, f.advisory))
+
+
+def cargo_audit_findings(report: object) -> list[AuditFinding]:
+    """Every vulnerability of a `cargo audit --json` report (its warnings are not findings).
+
+    cargo audit applies any `audit.toml` it finds (the user's or the crate's) before it reports:
+    an ignore or a filter there would hide a vulnerability from this gate without a dated
+    waiver. Such a report is refused: only the repository's waiver file may lift a block.
+    """
+    settings = report.get("settings") if isinstance(report, dict) else None
+    if not isinstance(settings, dict):
+        raise ValueError("not a cargo audit report (no `settings`)")
+    for key in ("ignore", "target_arch", "target_os"):
+        if settings.get(key) != []:
+            raise ValueError(
+                f"cargo audit ran with `{key}` = {settings.get(key)!r} from an audit.toml; "
+                "remove it and waive advisories in src-tauri/cargo-audit-waivers.json instead"
+            )
+    if settings.get("severity") is not None:
+        raise ValueError(
+            f"cargo audit ran with a severity filter ({settings.get('severity')!r}) from an "
+            "audit.toml; remove it"
+        )
+    vulnerabilities = report.get("vulnerabilities") if isinstance(report, dict) else None
+    listed = vulnerabilities.get("list") if isinstance(vulnerabilities, dict) else None
+    if not isinstance(listed, list):
+        raise ValueError("not a cargo audit report (no `vulnerabilities.list`)")
+    found: list[AuditFinding] = []
+    for item in listed:
+        advisory = item.get("advisory") if isinstance(item, dict) else None
+        package = item.get("package") if isinstance(item, dict) else None
+        advisory_id = advisory.get("id") if isinstance(advisory, dict) else None
+        name = package.get("name") if isinstance(package, dict) else None
+        if not (isinstance(advisory_id, str) and advisory_id and isinstance(name, str) and name):
+            raise ValueError("unreadable cargo audit vulnerability: no advisory id or package")
+        found.append(AuditFinding(name, "vulnerability", advisory_id))
+    # An unsound crate (a memory-safety bug RustSec reports as a warning) blocks like a
+    # vulnerability: only a dated waiver may lift it.
+    warnings = report.get("warnings") if isinstance(report, dict) else None
+    unsound = warnings.get("unsound", []) if isinstance(warnings, dict) else []
+    if not isinstance(unsound, list):
+        raise ValueError("unreadable cargo audit report: `warnings.unsound` is not a list")
+    for item in unsound:
+        advisory = item.get("advisory") if isinstance(item, dict) else None
+        package = item.get("package") if isinstance(item, dict) else None
+        advisory_id = advisory.get("id") if isinstance(advisory, dict) else None
+        name = package.get("name") if isinstance(package, dict) else None
+        if not (isinstance(advisory_id, str) and advisory_id and isinstance(name, str) and name):
+            raise ValueError("unreadable cargo audit unsound warning: no advisory id or package")
+        found.append(AuditFinding(name, "unsound", advisory_id))
+    return sorted(found, key=lambda f: (f.package, f.advisory))
+
+
+def cargo_audit_warnings(report: object) -> list[str]:
+    """cargo audit's other warnings (unmaintained, yanked...), as `kind: package` lines; an
+    unsound crate is a finding, not a note."""
+    warnings = report.get("warnings") if isinstance(report, dict) else None
+    if not isinstance(warnings, dict):
+        return []
+    lines: set[str] = set()
+    for kind, items in warnings.items():
+        if kind == "unsound":
+            continue
+        for item in items if isinstance(items, list) else []:
+            package = item.get("package") if isinstance(item, dict) else None
+            name = package.get("name") if isinstance(package, dict) else None
+            lines.add(f"{kind}: {name if isinstance(name, str) else '?'}")
+    return sorted(lines)
+
+
+def audit_waivers(document: object) -> list[AuditWaiver]:
+    """A waivers file: {"waivers": [{"advisory", "reason", "expires": "YYYY-MM-DD",
+    "package" (optional)}]}."""
     waivers = document.get("waivers") if isinstance(document, dict) else None
     if not isinstance(waivers, list):
         raise ValueError("the waivers file needs a `waivers` list")
@@ -596,26 +708,32 @@ def npm_audit_waivers(document: object) -> list[AuditWaiver]:
         reason = item.get("reason") if isinstance(item, dict) else None
         expires = item.get("expires") if isinstance(item, dict) else None
         if not (isinstance(advisory, str) and advisory and isinstance(reason, str) and reason):
-            raise ValueError("each waiver needs an `advisory` URL and a `reason`")
+            raise ValueError("each waiver needs an `advisory` and a `reason`")
         if not isinstance(expires, str):
             raise ValueError(f"the waiver of {advisory} needs an `expires` date")
-        parsed.append(AuditWaiver(advisory, reason, date.fromisoformat(expires)))
+        package = item.get("package") if isinstance(item, dict) else None
+        if package is not None and not (isinstance(package, str) and package):
+            raise ValueError(f"the waiver of {advisory} has an unreadable `package`")
+        parsed.append(AuditWaiver(advisory, reason, date.fromisoformat(expires), package))
     return parsed
 
 
-def npm_audit_verdict(
-    findings: Sequence[AuditFinding], waivers: Sequence[AuditWaiver], today: date
+def audit_verdict(
+    findings: Sequence[AuditFinding],
+    waivers: Sequence[AuditWaiver],
+    today: date,
+    blocking_severities: Sequence[str] | None = BLOCKING_SEVERITIES,
 ) -> AuditVerdict:
-    """High and critical advisories block unless a waiver still in date names them; an expired
-    waiver blocks by itself, so a waiver is never forgotten."""
-    valid = {w.advisory for w in waivers if w.expires >= today}
+    """Findings of a blocking severity (all of them when `blocking_severities` is None) block
+    unless a waiver still in date names them; an expired waiver blocks by itself, so a waiver
+    is never forgotten."""
     blocking: list[AuditFinding] = []
     reported: list[AuditFinding] = []
     waived: list[AuditFinding] = []
     for finding in findings:
-        if finding.severity not in BLOCKING_SEVERITIES:
+        if blocking_severities is not None and finding.severity not in blocking_severities:
             reported.append(finding)
-        elif finding.advisory in valid:
+        elif any(waiver.covers(finding, today) for waiver in waivers):
             waived.append(finding)
         else:
             blocking.append(finding)
@@ -623,28 +741,80 @@ def npm_audit_verdict(
     return AuditVerdict(tuple(blocking), tuple(reported), tuple(waived), expired)
 
 
-def _npm_audit_report(root: Path) -> object:
-    """`npm audit --json` of ui/ (npm exits non-zero when it finds advisories: the JSON says)."""
-    print("+ npm audit --json (in ui)")
-    result = subprocess.run(
-        ["npm", "audit", "--json"], cwd=root / "ui", capture_output=True, text=True, check=False
-    )
+def _json_output(args: Sequence[str], cwd: Path) -> object:
+    """The JSON a tool prints (audit tools exit non-zero when they find something: the JSON
+    says what)."""
+    print("+", " ".join(args))
+    result = subprocess.run(list(args), cwd=cwd, capture_output=True, text=True, check=False)
     report: object = json.loads(result.stdout)
     return report
 
 
-def cmd_npm_audit(root: Path) -> int:
-    """Fail on a high or critical npm advisory that no in-date waiver covers."""
-    if shutil.which("npm") is None:
-        return _missing_tool("npm", "https://nodejs.org/")
+def _npm_audit_report(root: Path) -> object:
+    return _json_output(["npm", "audit", "--json"], root / "ui")
+
+
+def _python_audit_report(root: Path) -> object:
+    """pip-audit of every locked package (all groups and extras), hash-checked, without pip."""
+    exported = subprocess.run(
+        [
+            "uv",
+            "export",
+            "--frozen",
+            "--all-extras",
+            "--all-groups",
+            "--no-emit-project",
+            "--format",
+            "requirements-txt",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    with tempfile.TemporaryDirectory(prefix="control-tv-audit-") as scratch:
+        requirements = Path(scratch) / "requirements.txt"
+        requirements.write_text(exported, encoding="utf-8")
+        return _json_output(
+            [
+                "uvx",
+                "--from",
+                PIP_AUDIT,
+                "pip-audit",
+                "--disable-pip",
+                "--require-hashes",
+                "-r",
+                str(requirements),
+                "-f",
+                "json",
+            ],
+            root,
+        )
+
+
+def _rust_audit_report(root: Path) -> object:
+    return _json_output(["cargo", "audit", "--json"], root / "src-tauri")
+
+
+def _audit(
+    name: str,
+    read: Callable[[], object],
+    parse: Callable[[object], list[AuditFinding]],
+    waivers_path: Path,
+    blocking_severities: Sequence[str] | None,
+    notes: Callable[[object], list[str]] = lambda report: [],
+) -> int:
+    """Read one tool's report, apply the policy and the waivers, print the verdict."""
     try:
-        findings = npm_audit_findings(_npm_audit_report(root))
-        waivers_path = root / NPM_AUDIT_WAIVERS
-        waivers = npm_audit_waivers(json.loads(waivers_path.read_text(encoding="utf-8")))
-    except (ValueError, OSError) as error:
-        print(f"error: npm audit could not be evaluated: {error}", file=sys.stderr)
+        report = read()
+        findings = parse(report)
+        waivers = audit_waivers(json.loads(waivers_path.read_text(encoding="utf-8")))
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(f"error: {name} could not be evaluated: {error}", file=sys.stderr)
         return 2
-    verdict = npm_audit_verdict(findings, waivers, date.today())
+    verdict = audit_verdict(findings, waivers, date.today(), blocking_severities)
+    for line in notes(report):
+        print(f"note: {line}")
     for finding in verdict.reported:
         print(f"note: {finding.package}: {finding.severity} {finding.advisory} (below the policy)")
     for finding in verdict.waived:
@@ -657,9 +827,51 @@ def cmd_npm_audit(root: Path) -> int:
             file=sys.stderr,
         )
     if verdict.passed:
-        print(f"npm audit: no unwaived {' or '.join(BLOCKING_SEVERITIES)} advisory")
+        print(f"{name}: no unwaived blocking advisory")
         return 0
     return 1
+
+
+def cmd_npm_audit(root: Path) -> int:
+    """Fail on a high or critical npm advisory that no in-date waiver covers."""
+    if shutil.which("npm") is None:
+        return _missing_tool("npm", "https://nodejs.org/")
+    return _audit(
+        "npm audit",
+        lambda: _npm_audit_report(root),
+        npm_audit_findings,
+        root / NPM_AUDIT_WAIVERS,
+        BLOCKING_SEVERITIES,
+    )
+
+
+def cmd_python_audit(root: Path) -> int:
+    """Fail on any advisory of a locked Python package that no in-date waiver covers."""
+    for tool in ("uv", "uvx"):
+        if shutil.which(tool) is None:
+            return _missing_tool(tool, "https://docs.astral.sh/uv/")
+    return _audit(
+        "python audit",
+        lambda: _python_audit_report(root),
+        pip_audit_findings,
+        root / PYTHON_AUDIT_WAIVERS,
+        None,
+    )
+
+
+def cmd_rust_audit(root: Path) -> int:
+    """Fail on any RustSec vulnerability or unsound crate of the Tauri crate that no in-date
+    waiver covers; cargo audit's other warnings (unmaintained, yanked) are printed only."""
+    if shutil.which("cargo") is None:
+        return _missing_tool("cargo", "https://rustup.rs/")
+    return _audit(
+        "rust audit",
+        lambda: _rust_audit_report(root),
+        cargo_audit_findings,
+        root / RUST_AUDIT_WAIVERS,
+        None,
+        cargo_audit_warnings,
+    )
 
 
 def _run_bridge_packaging(root: Path, *action: str) -> int:
@@ -727,6 +939,8 @@ def build_parser() -> argparse.ArgumentParser:
         "rust-check",
         "ui-check",
         "npm-audit",
+        "python-audit",
+        "rust-audit",
         "bridge-build",
         "bridge-smoke",
         "release-deb",
@@ -761,6 +975,8 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "rust-check": cmd_rust_check,
         "ui-check": cmd_ui_check,
         "npm-audit": cmd_npm_audit,
+        "python-audit": cmd_python_audit,
+        "rust-audit": cmd_rust_audit,
         "bridge-build": cmd_bridge_build,
         "bridge-smoke": cmd_bridge_smoke,
         "release-deb": cmd_release_deb,

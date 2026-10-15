@@ -811,7 +811,7 @@ def test_npm_audit_blocks_high_and_critical_only() -> None:
         _report(("a", "high", "u1"), ("b", "critical", "u2"), ("c", "moderate", "u3"))
     )
 
-    verdict = dev.npm_audit_verdict(findings, [], dev.date(2026, 10, 14))
+    verdict = dev.audit_verdict(findings, [], dev.date(2026, 10, 14))
 
     assert [f.package for f in verdict.blocking] == ["a", "b"]
     assert [f.package for f in verdict.reported] == ["c"]
@@ -820,12 +820,12 @@ def test_npm_audit_blocks_high_and_critical_only() -> None:
 
 def test_an_in_date_waiver_lifts_the_block_and_an_expired_one_fails() -> None:
     findings = [dev.AuditFinding("source-map-js", "high", GHSA)]
-    waiver = dev.npm_audit_waivers(
+    waiver = dev.audit_waivers(
         {"waivers": [{"advisory": GHSA, "reason": "build tooling only", "expires": "2026-10-31"}]}
     )
 
-    in_date = dev.npm_audit_verdict(findings, waiver, dev.date(2026, 10, 31))
-    expired = dev.npm_audit_verdict([], waiver, dev.date(2026, 11, 1))
+    in_date = dev.audit_verdict(findings, waiver, dev.date(2026, 10, 31))
+    expired = dev.audit_verdict([], waiver, dev.date(2026, 11, 1))
 
     assert in_date.passed and in_date.waived == tuple(findings)
     assert not expired.passed and expired.expired == tuple(waiver)
@@ -842,7 +842,7 @@ def test_an_in_date_waiver_lifts_the_block_and_an_expired_one_fails() -> None:
 )
 def test_a_waiver_needs_an_advisory_a_reason_and_a_date(document: dict[str, object]) -> None:
     with pytest.raises(ValueError):
-        dev.npm_audit_waivers(document)
+        dev.audit_waivers(document)
 
 
 def test_npm_audit_command_reports_and_fails_on_an_unwaived_advisory(
@@ -860,3 +860,256 @@ def test_npm_audit_command_reports_and_fails_on_an_unwaived_advisory(
 
     monkeypatch.setattr(dev, "_npm_audit_report", lambda root: _report())
     assert dev.cmd_npm_audit(repo) == 0
+
+
+def _pip_report(*vulns: tuple[str, str]) -> dict[str, object]:
+    dependencies: list[dict[str, object]] = [{"name": "requests", "version": "2.34.2", "vulns": []}]
+    for name, advisory in vulns:
+        dependencies.append({"name": name, "version": "1", "vulns": [{"id": advisory}]})
+    return {"dependencies": dependencies, "fixes": []}
+
+
+def _cargo_report(
+    *vulns: tuple[str, str], unsound: tuple[tuple[str, str], ...] = ()
+) -> dict[str, object]:
+    listed = [{"advisory": {"id": a, "title": "t"}, "package": {"name": n}} for n, a in vulns]
+    return {
+        "settings": {"target_arch": [], "target_os": [], "severity": None, "ignore": []},
+        "vulnerabilities": {"found": bool(listed), "count": len(listed), "list": listed},
+        "warnings": {
+            "unmaintained": [{"package": {"name": "proc-macro-error"}}],
+            "unsound": [{"advisory": {"id": a}, "package": {"name": n}} for n, a in unsound],
+        },
+    }
+
+
+def test_pip_audit_findings_read_every_advisory() -> None:
+    report = _pip_report(
+        ("pip", "PYSEC-2026-196"), ("wheel", "GHSA-8rrh-rw8j-w5fx"), ("pip", "PYSEC-2026-196")
+    )
+
+    assert dev.pip_audit_findings(report) == [
+        dev.AuditFinding("pip", "advisory", "PYSEC-2026-196"),
+        dev.AuditFinding("wheel", "advisory", "GHSA-8rrh-rw8j-w5fx"),
+    ]
+    assert dev.pip_audit_findings(_pip_report()) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"dependencies": {}},
+        {"dependencies": [{"version": "1", "vulns": []}]},
+        {"dependencies": [{"name": "a", "skip_reason": "not on PyPI"}]},
+        {"dependencies": [{"name": "a", "version": "1"}]},
+        {"dependencies": [{"name": "a", "version": "1", "vulns": [{}]}]},
+    ],
+)
+def test_an_unreadable_or_incomplete_pip_audit_report_fails_closed(
+    report: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError):
+        dev.pip_audit_findings(report)
+
+
+def test_cargo_audit_findings_are_vulnerabilities_and_warnings_are_notes() -> None:
+    report = _cargo_report(("time", "RUSTSEC-2020-0071"))
+
+    assert dev.cargo_audit_findings(report) == [
+        dev.AuditFinding("time", "vulnerability", "RUSTSEC-2020-0071")
+    ]
+    assert dev.cargo_audit_warnings(report) == ["unmaintained: proc-macro-error"]
+    assert dev.cargo_audit_findings(_cargo_report()) == []
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"vulnerabilities": {"list": []}},
+        {"settings": _cargo_report()["settings"], "vulnerabilities": {"count": 0}},
+        {
+            "settings": _cargo_report()["settings"],
+            "vulnerabilities": {"list": [{"package": {"name": "time"}}]},
+        },
+        {
+            "settings": _cargo_report()["settings"],
+            "vulnerabilities": {"list": [{"advisory": {"id": "RUSTSEC-1"}}]},
+        },
+    ],
+)
+def test_an_unreadable_cargo_audit_report_fails_closed(report: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        dev.cargo_audit_findings(report)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("ignore", ["RUSTSEC-2020-0071"]),
+        ("target_arch", ["x86_64"]),
+        ("target_os", ["linux"]),
+        ("severity", "high"),
+    ],
+)
+def test_a_cargo_audit_report_filtered_by_an_audit_toml_is_refused(key: str, value: object) -> None:
+    report = _cargo_report()
+    settings = report["settings"]
+    assert isinstance(settings, dict)
+    settings[key] = value
+
+    with pytest.raises(ValueError, match=key):
+        dev.cargo_audit_findings(report)
+
+
+def test_python_and_rust_audits_block_every_advisory_unless_waived() -> None:
+    findings = [dev.AuditFinding("pip", "advisory", "PYSEC-2026-196")]
+    waiver = dev.audit_waivers(
+        {
+            "waivers": [
+                {"advisory": "PYSEC-2026-196", "reason": "build only", "expires": "2026-11-01"}
+            ]
+        }
+    )
+
+    assert not dev.audit_verdict(findings, [], dev.date(2026, 10, 15), None).passed
+    assert dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15), None).passed
+
+
+@pytest.mark.parametrize(
+    ("command", "reader", "waivers", "report", "advisory"),
+    [
+        (
+            "cmd_python_audit",
+            "_python_audit_report",
+            "python-audit-waivers.json",
+            _pip_report(("pip", "PYSEC-2026-196")),
+            "PYSEC-2026-196",
+        ),
+        (
+            "cmd_rust_audit",
+            "_rust_audit_report",
+            "src-tauri/cargo-audit-waivers.json",
+            _cargo_report(("time", "RUSTSEC-2020-0071")),
+            "RUSTSEC-2020-0071",
+        ),
+    ],
+)
+def test_python_and_rust_audit_commands_fail_on_an_unwaived_advisory(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    reader: str,
+    waivers: str,
+    report: dict[str, object],
+    advisory: str,
+) -> None:
+    (repo / waivers).parent.mkdir(parents=True, exist_ok=True)
+    (repo / waivers).write_text('{"waivers": []}', encoding="utf-8")
+    monkeypatch.setattr(dev.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(dev, reader, lambda root: report)
+
+    assert getattr(dev, command)(repo) == 1
+    assert advisory in capsys.readouterr().err
+
+    monkeypatch.setattr(
+        dev, reader, lambda root: {"dependencies": []} if "python" in command else _cargo_report()
+    )
+    assert getattr(dev, command)(repo) == 0
+
+
+def test_an_unsound_crate_blocks_like_a_vulnerability_and_is_not_a_note() -> None:
+    report = _cargo_report(unsound=(("glib", "RUSTSEC-2024-0429"),))
+
+    findings = dev.cargo_audit_findings(report)
+
+    assert findings == [dev.AuditFinding("glib", "unsound", "RUSTSEC-2024-0429")]
+    assert dev.cargo_audit_warnings(report) == ["unmaintained: proc-macro-error"]
+    assert not dev.audit_verdict(findings, [], dev.date(2026, 10, 15), None).passed
+    waiver = dev.audit_waivers(
+        {"waivers": [{"advisory": "RUSTSEC-2024-0429", "reason": "r", "expires": "2026-12-31"}]}
+    )
+    assert dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15), None).passed
+
+
+@pytest.mark.parametrize(
+    "unsound",
+    [{"package": {"name": "glib"}}, {"advisory": {"id": "RUSTSEC-2024-0429"}}, "glib"],
+)
+def test_an_unreadable_unsound_warning_fails_closed(unsound: object) -> None:
+    report = _cargo_report()
+    warnings = report["warnings"]
+    assert isinstance(warnings, dict)
+    warnings["unsound"] = [unsound]
+
+    with pytest.raises(ValueError):
+        dev.cargo_audit_findings(report)
+
+
+GLIB_ADVISORY = "RUSTSEC-2024-0429"
+
+
+def _repo_rust_waivers() -> list[object]:
+    path = DEV_PATH.parents[1] / "src-tauri" / "cargo-audit-waivers.json"
+    return list(dev.audit_waivers(json.loads(path.read_text(encoding="utf-8"))))
+
+
+def test_the_rust_waiver_file_waives_only_glib_rustsec_2024_0429_until_2027_01_15() -> None:
+    waivers = _repo_rust_waivers()
+
+    assert len(waivers) == 1
+    waiver = waivers[0]
+    assert isinstance(waiver, dev.AuditWaiver)
+    assert (waiver.advisory, waiver.package, waiver.expires) == (
+        GLIB_ADVISORY,
+        "glib",
+        dev.date(2027, 1, 15),
+    )
+    assert "SECURITY.md" in waiver.reason
+
+
+def test_the_glib_waiver_lifts_that_advisory_until_it_expires() -> None:
+    waivers = _repo_rust_waivers()
+    findings = [dev.AuditFinding("glib", "unsound", GLIB_ADVISORY)]
+
+    last_day = dev.audit_verdict(findings, waivers, dev.date(2027, 1, 15), None)
+    expired = dev.audit_verdict(findings, waivers, dev.date(2027, 1, 16), None)
+
+    assert last_day.passed and last_day.waived == tuple(findings)
+    assert not expired.passed
+    assert expired.blocking == tuple(findings)
+    assert [w.advisory for w in expired.expired] == [GLIB_ADVISORY]
+
+
+def test_the_glib_waiver_covers_no_other_advisory_or_package() -> None:
+    waivers = _repo_rust_waivers()
+    findings = [
+        dev.AuditFinding("glib", "unsound", GLIB_ADVISORY),
+        dev.AuditFinding("glib", "unsound", "RUSTSEC-2099-0001"),
+        dev.AuditFinding("gtk", "unsound", "RUSTSEC-2099-0002"),
+        dev.AuditFinding("gio", "unsound", GLIB_ADVISORY),
+        dev.AuditFinding("time", "vulnerability", "RUSTSEC-2020-0071"),
+    ]
+
+    verdict = dev.audit_verdict(findings, waivers, dev.date(2026, 10, 15), None)
+
+    assert verdict.waived == (findings[0],)
+    assert verdict.blocking == tuple(findings[1:])
+    assert not verdict.passed
+
+
+def test_a_waiver_without_a_package_still_matches_its_advisory_only() -> None:
+    waiver = dev.audit_waivers(
+        {"waivers": [{"advisory": "A-1", "reason": "r", "expires": "2026-12-31"}]}
+    )
+    findings = [dev.AuditFinding("x", "high", "A-1"), dev.AuditFinding("y", "high", "A-2")]
+
+    verdict = dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15))
+
+    assert verdict.waived == (findings[0],) and verdict.blocking == (findings[1],)
+    with pytest.raises(ValueError):
+        dev.audit_waivers(
+            {"waivers": [{"advisory": "A-1", "reason": "r", "expires": "2026-12-31", "package": 3}]}
+        )

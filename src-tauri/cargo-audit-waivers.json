@@ -1,0 +1,10 @@
+{
+  "waivers": [
+    {
+      "advisory": "RUSTSEC-2024-0429",
+      "package": "glib",
+      "reason": "glib 0.18.5 (unsound VariantStrIter iterators) comes with Tauri 2's GTK 0.18 Linux stack and the fix needs glib >= 0.20; neither control-TV nor any locked crate with sources present uses VariantStrIter. Owner-approved 2026-10-15; see SECURITY.md, Dependency advisories.",
+      "expires": "2027-01-15"
+    }
+  ]
+}
