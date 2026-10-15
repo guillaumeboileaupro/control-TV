@@ -5,6 +5,7 @@
 // `describeRemote` says of the state `main.ts` hands in.
 
 import { disclosure, icon, setBusy, text } from "./dom.ts";
+import { appLogo } from "./app-logos.ts";
 import type { AppState } from "./model.ts";
 import {
   appHue,
@@ -171,9 +172,23 @@ export function createRemotePanel(
       button.dataset["package"] = app.package;
       button.title = app.package;
       button.setAttribute("aria-label", `Open ${appLabel(app)} on the TV`);
-      const avatar = text("span", "app-avatar", appInitial(appLabel(app)));
+      const avatar = text("span", "app-avatar", "");
       avatar.setAttribute("aria-hidden", "true");
-      avatar.style.setProperty("--hue", String(appHue(app.package)));
+      const logo = appLogo(app.package);
+      if (logo === null) {
+        avatar.textContent = appInitial(appLabel(app));
+        avatar.style.setProperty("--hue", String(appHue(app.package)));
+      } else {
+        avatar.classList.add("has-logo");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("focusable", "false");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", logo.path);
+        path.setAttribute("fill", `#${logo.hex}`);
+        svg.append(path);
+        avatar.append(svg);
+      }
       button.append(avatar, text("span", "app-name", appLabel(app)));
       const opening = remote.pendingApp === app.package;
       setBusy(button, !remote.launchEnabled);

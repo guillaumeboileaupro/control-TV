@@ -23,6 +23,7 @@ This is an engineering inventory of what the Linux release `.deb` contains and o
 | typing_extensions | 4.16.0 | frozen archive | PSF-2.0 | yes |
 | Rust crates linked into the binary | 216 crates | `/usr/bin/control-tv` | mostly MIT and/or Apache-2.0; also Unicode-3.0, MPL-2.0 (4), Zlib, BSD-3-Clause, Unlicense | `/usr/share/doc/control-tv/rust-licenses/` (**9 crates publish no license file**) |
 | Rust standard library | toolchain | `/usr/bin/control-tv` | MIT OR Apache-2.0 | `rust-licenses/rust-std/` |
+| Simple Icons | 16.33.0 | selected TV-app SVG paths compiled into the UI | CC0-1.0; individual brand trademarks remain owned by their respective owners | npm lockfile and upstream `DISCLAIMER.md` |
 
 The Python list comes from the distributions whose modules are actually frozen (not from `uv.lock`); setuptools is excluded from the bundle. The Rust list is the crates reachable through normal dependencies for `x86_64-unknown-linux-gnu`, proc-macros and build dependencies excluded. WebKitGTK, GTK and the C library are system packages the `.deb` depends on; they are not shipped.
 
