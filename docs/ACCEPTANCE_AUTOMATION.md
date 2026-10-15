@@ -92,3 +92,5 @@ runner never enables Android developer options or ADB itself.
 
 The Google TV and two-controller catalog, including the mandatory C6/C7 trace contracts, is
 documented in [GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](GOOGLE_TV_ACCEPTANCE_AUTOMATION.md).
+K1-K3 timing phases, statistics and report provenance are documented in
+[ACCEPTANCE_PERFORMANCE.md](ACCEPTANCE_PERFORMANCE.md).

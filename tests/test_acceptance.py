@@ -62,6 +62,12 @@ def test_default_policy_blocks_execution_and_writes_all_formats(tmp_path: Path) 
     assert (tmp_path / "reports" / "acceptance.html").is_file()
     skipped = ET.parse(tmp_path / "reports" / "acceptance.junit.xml").find(".//skipped")
     assert skipped is not None
+    properties = {
+        item.attrib["name"]: item.attrib["value"]
+        for item in ET.parse(tmp_path / "reports" / "acceptance.junit.xml").findall(".//property")
+    }
+    assert properties["execution_origin"] == "local"
+    assert properties["git_sha"] == "abc"
 
 
 @pytest.mark.parametrize(

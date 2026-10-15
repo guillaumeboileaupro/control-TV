@@ -13,6 +13,7 @@ import platform
 import shutil
 import subprocess
 import time
+import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -83,6 +84,9 @@ class Environment:
     tools: Mapping[str, str | None]
     artifacts: Mapping[str, str | None]
     devices: Mapping[str, str]
+    application_versions: Mapping[str, str] = field(default_factory=dict)
+    device_versions: Mapping[str, str] = field(default_factory=dict)
+    execution_origin: str = "local"
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,7 @@ class Result:
     evidence: Evidence = Evidence.STATIC
     observed: str = "not executed"
     proof: str = "none"
+    metrics: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,26 @@ def detect_environment(
         }.items()
         if value
     }
+    project_path = root / "pyproject.toml"
+    project = (
+        tomllib.loads(project_path.read_text(encoding="utf-8")) if project_path.is_file() else {}
+    )
+    application_versions = {"control-tv": str(project.get("project", {}).get("version", "unknown"))}
+    application_versions.update(
+        {
+            key.removeprefix("CONTROL_TV_").removesuffix("_VERSION").lower(): value
+            for key, value in values.items()
+            if key.startswith("CONTROL_TV_")
+            and not key.startswith("CONTROL_TV_DEVICE_")
+            and key.endswith("_VERSION")
+            and value
+        }
+    )
+    device_versions = {
+        key.removeprefix("CONTROL_TV_DEVICE_").removesuffix("_VERSION").lower(): value
+        for key, value in values.items()
+        if key.startswith("CONTROL_TV_DEVICE_") and key.endswith("_VERSION") and value
+    }
     return Environment(
         system=platform.system(),
         machine=platform.machine(),
@@ -178,6 +203,9 @@ def detect_environment(
         tools=tools,
         artifacts=artifacts,
         devices=devices,
+        application_versions=application_versions,
+        device_versions=device_versions,
+        execution_origin="ci" if values.get("GITHUB_ACTIONS") == "true" else "local",
     )
 
 
@@ -190,6 +218,7 @@ def make_result(
     log: str = "",
     observed: str = "not executed",
     proof: str = "none",
+    metrics: Mapping[str, object] | None = None,
 ) -> Result:
     return Result(
         scenario_id=scenario.id,
@@ -202,6 +231,7 @@ def make_result(
         evidence=scenario.evidence,
         observed=observed,
         proof=proof,
+        metrics={} if metrics is None else metrics,
     )
 
 
@@ -309,6 +339,21 @@ class AcceptanceRunner:
                 }
                 for result in results
             ],
+            "summary": {
+                "failures": [
+                    result.scenario_id for result in results if result.outcome is Outcome.FAIL
+                ],
+                "not_executed": [
+                    result.scenario_id
+                    for result in results
+                    if result.outcome in {Outcome.SKIP, Outcome.BLOCKED}
+                ],
+                "by_evidence": {
+                    evidence.value: sum(result.evidence is evidence for result in results)
+                    for evidence in Evidence
+                },
+                "duration_seconds": round(sum(result.duration_seconds for result in results), 6),
+            },
         }
         self.checkpoint_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -317,6 +362,26 @@ class AcceptanceRunner:
         self._write_junit(results)
 
     def _write_html(self, results: Sequence[Result]) -> None:
+        def items(selected: Sequence[Result]) -> str:
+            return (
+                "<ul>"
+                + "".join(
+                    f"<li>{html.escape(result.scenario_id)}: {html.escape(result.reason)}</li>"
+                    for result in selected
+                )
+                + "</ul>"
+            )
+
+        failures = [result for result in results if result.outcome is Outcome.FAIL]
+        not_executed = [
+            result for result in results if result.outcome in {Outcome.SKIP, Outcome.BLOCKED}
+        ]
+        application_versions = html.escape(
+            json.dumps(dict(self.environment.application_versions), sort_keys=True)
+        )
+        device_versions = html.escape(
+            json.dumps(dict(self.environment.device_versions), sort_keys=True)
+        )
         rows = "".join(
             "<tr>"
             f"<td>{html.escape(result.scenario_id)}</td>"
@@ -333,6 +398,13 @@ class AcceptanceRunner:
         document = (
             '<!doctype html><html lang="en"><meta charset="utf-8">'
             "<title>control-TV acceptance</title><h1>Acceptance results</h1>"
+            f"<p>Origin: {html.escape(self.environment.execution_origin)} · "
+            f"Git SHA: {html.escape(self.environment.commit or 'unknown')}</p>"
+            f"<h2>Application versions</h2><pre>{application_versions}</pre>"
+            f"<h2>Device versions</h2><pre>{device_versions}</pre>"
+            f"<h2>Failures</h2>{items(failures)}"
+            f"<h2>Not executed</h2>{items(not_executed)}"
+            f"<h2>Scenario table</h2>"
             "<table><thead><tr><th>Scenario</th><th>Category</th><th>Evidence</th><th>Outcome</th>"
             f"<th>Reason</th><th>Observed</th><th>Proof</th><th>Seconds</th></tr>"
             f"</thead><tbody>{rows}</tbody></table></html>\n"
@@ -349,6 +421,20 @@ class AcceptanceRunner:
                 sum(result.outcome in {Outcome.SKIP, Outcome.BLOCKED} for result in results)
             ),
         )
+        properties = ET.SubElement(suite, "properties")
+        for name, value in (
+            ("execution_origin", self.environment.execution_origin),
+            ("git_sha", self.environment.commit or "unknown"),
+            (
+                "application_versions",
+                json.dumps(dict(self.environment.application_versions), sort_keys=True),
+            ),
+            (
+                "device_versions",
+                json.dumps(dict(self.environment.device_versions), sort_keys=True),
+            ),
+        ):
+            ET.SubElement(properties, "property", name=name, value=value)
         for result in results:
             case = ET.SubElement(
                 suite,
