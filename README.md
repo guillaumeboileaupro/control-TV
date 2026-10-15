@@ -40,7 +40,7 @@ python3 scripts/dev.py check        # ruff, ruff format --check, mypy --strict, 
 python3 scripts/dev.py type-rules   # no `any` / `unknown` in the window's TypeScript (also part of `check`); mypy refuses explicit `Any` in Python
 python3 scripts/dev.py npm-audit    # npm advisories of ui/ (network): high or critical fail unless waived until a date in ui/npm-audit-waivers.json (also in CI)
 python3 scripts/dev.py python-audit # pip-audit of every locked Python package (network): any advisory fails unless waived in python-audit-waivers.json (also in CI)
-python3 scripts/dev.py rust-audit   # cargo audit of src-tauri/ (network, needs `cargo install cargo-audit`): any vulnerability fails unless waived in src-tauri/cargo-audit-waivers.json (also in CI)
+python3 scripts/dev.py rust-audit   # cargo audit of src-tauri/ (network, needs `cargo install cargo-audit`): any vulnerability or unsound crate fails unless waived in src-tauri/cargo-audit-waivers.json (also in CI)
 python3 scripts/dev.py coverage     # pytest coverage for the shared control package (minimum enforced)
 python3 scripts/dev.py depcheck     # verify installed dependency consistency
 python3 scripts/dev.py lint         # lint and format check only

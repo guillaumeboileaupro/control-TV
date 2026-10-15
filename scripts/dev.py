@@ -18,8 +18,9 @@ Commands:
                ui/npm-audit-waivers.json waives it until a date
   python-audit pip-audit of every locked Python package (network): any advisory fails unless
                python-audit-waivers.json waives it until a date
-  rust-audit   cargo audit of src-tauri/ (network, needs cargo-audit): any vulnerability fails
-               unless src-tauri/cargo-audit-waivers.json waives it; warnings are printed
+  rust-audit   cargo audit of src-tauri/ (network, needs cargo-audit): any vulnerability or
+               unsound crate fails unless src-tauri/cargo-audit-waivers.json waives it; other
+               warnings (unmaintained, yanked) are printed
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
@@ -653,16 +654,33 @@ def cargo_audit_findings(report: object) -> list[AuditFinding]:
         if not (isinstance(advisory_id, str) and advisory_id and isinstance(name, str) and name):
             raise ValueError("unreadable cargo audit vulnerability: no advisory id or package")
         found.append(AuditFinding(name, "vulnerability", advisory_id))
+    # An unsound crate (a memory-safety bug RustSec reports as a warning) blocks like a
+    # vulnerability: only a dated waiver may lift it.
+    warnings = report.get("warnings") if isinstance(report, dict) else None
+    unsound = warnings.get("unsound", []) if isinstance(warnings, dict) else []
+    if not isinstance(unsound, list):
+        raise ValueError("unreadable cargo audit report: `warnings.unsound` is not a list")
+    for item in unsound:
+        advisory = item.get("advisory") if isinstance(item, dict) else None
+        package = item.get("package") if isinstance(item, dict) else None
+        advisory_id = advisory.get("id") if isinstance(advisory, dict) else None
+        name = package.get("name") if isinstance(package, dict) else None
+        if not (isinstance(advisory_id, str) and advisory_id and isinstance(name, str) and name):
+            raise ValueError("unreadable cargo audit unsound warning: no advisory id or package")
+        found.append(AuditFinding(name, "unsound", advisory_id))
     return sorted(found, key=lambda f: (f.package, f.advisory))
 
 
 def cargo_audit_warnings(report: object) -> list[str]:
-    """cargo audit's warnings (unmaintained, unsound, yanked...), as `kind: package` lines."""
+    """cargo audit's other warnings (unmaintained, yanked...), as `kind: package` lines; an
+    unsound crate is a finding, not a note."""
     warnings = report.get("warnings") if isinstance(report, dict) else None
     if not isinstance(warnings, dict):
         return []
     lines: set[str] = set()
     for kind, items in warnings.items():
+        if kind == "unsound":
+            continue
         for item in items if isinstance(items, list) else []:
             package = item.get("package") if isinstance(item, dict) else None
             name = package.get("name") if isinstance(package, dict) else None
@@ -831,8 +849,8 @@ def cmd_python_audit(root: Path) -> int:
 
 
 def cmd_rust_audit(root: Path) -> int:
-    """Fail on any RustSec vulnerability of the Tauri crate that no in-date waiver covers;
-    cargo audit's warnings (unmaintained, unsound, yanked) are printed, not blocking."""
+    """Fail on any RustSec vulnerability or unsound crate of the Tauri crate that no in-date
+    waiver covers; cargo audit's other warnings (unmaintained, yanked) are printed only."""
     if shutil.which("cargo") is None:
         return _missing_tool("cargo", "https://rustup.rs/")
     return _audit(

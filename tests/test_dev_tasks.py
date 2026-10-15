@@ -869,12 +869,17 @@ def _pip_report(*vulns: tuple[str, str]) -> dict[str, object]:
     return {"dependencies": dependencies, "fixes": []}
 
 
-def _cargo_report(*vulns: tuple[str, str]) -> dict[str, object]:
+def _cargo_report(
+    *vulns: tuple[str, str], unsound: tuple[tuple[str, str], ...] = ()
+) -> dict[str, object]:
     listed = [{"advisory": {"id": a, "title": "t"}, "package": {"name": n}} for n, a in vulns]
     return {
         "settings": {"target_arch": [], "target_os": [], "severity": None, "ignore": []},
         "vulnerabilities": {"found": bool(listed), "count": len(listed), "list": listed},
-        "warnings": {"unmaintained": [{"package": {"name": "proc-macro-error"}}]},
+        "warnings": {
+            "unmaintained": [{"package": {"name": "proc-macro-error"}}],
+            "unsound": [{"advisory": {"id": a}, "package": {"name": n}} for n, a in unsound],
+        },
     }
 
 
@@ -1013,3 +1018,31 @@ def test_python_and_rust_audit_commands_fail_on_an_unwaived_advisory(
         dev, reader, lambda root: {"dependencies": []} if "python" in command else _cargo_report()
     )
     assert getattr(dev, command)(repo) == 0
+
+
+def test_an_unsound_crate_blocks_like_a_vulnerability_and_is_not_a_note() -> None:
+    report = _cargo_report(unsound=(("glib", "RUSTSEC-2024-0429"),))
+
+    findings = dev.cargo_audit_findings(report)
+
+    assert findings == [dev.AuditFinding("glib", "unsound", "RUSTSEC-2024-0429")]
+    assert dev.cargo_audit_warnings(report) == ["unmaintained: proc-macro-error"]
+    assert not dev.audit_verdict(findings, [], dev.date(2026, 10, 15), None).passed
+    waiver = dev.audit_waivers(
+        {"waivers": [{"advisory": "RUSTSEC-2024-0429", "reason": "r", "expires": "2026-12-31"}]}
+    )
+    assert dev.audit_verdict(findings, waiver, dev.date(2026, 10, 15), None).passed
+
+
+@pytest.mark.parametrize(
+    "unsound",
+    [{"package": {"name": "glib"}}, {"advisory": {"id": "RUSTSEC-2024-0429"}}, "glib"],
+)
+def test_an_unreadable_unsound_warning_fails_closed(unsound: object) -> None:
+    report = _cargo_report()
+    warnings = report["warnings"]
+    assert isinstance(warnings, dict)
+    warnings["unsound"] = [unsound]
+
+    with pytest.raises(ValueError):
+        dev.cargo_audit_findings(report)
