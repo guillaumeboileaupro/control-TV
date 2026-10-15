@@ -190,6 +190,7 @@ class FakeTransport:
 
     def stop(self, device_id: DeviceId, media_session_id: int) -> None:
         self.media_session_targets.append(("stop", media_session_id))
+
         def effect() -> None:
             if self.clears_media_on_stop:
                 self.tv.has_media = False

@@ -470,9 +470,7 @@ def test_all_commands_use_bounded_library_calls() -> None:
     ]
     assert calls[0][1] == ("https://media.local/movie.mp4", "video/mp4")
     assert calls[0][2]["title"] is None
-    assert [
-        cast(dict[str, object], call[1][0])["mediaSessionId"] for call in calls[1:]
-    ] == [41] * 4
+    assert [cast(dict[str, object], call[1][0])["mediaSessionId"] for call in calls[1:]] == [41] * 4
     assert cast_device.volume_calls == [(0.7, 4.0)]
     assert cast_device.mute_calls == [(True, 4.0)]
 

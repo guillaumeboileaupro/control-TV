@@ -418,9 +418,7 @@ def dispatch(control: TvControl, request: JsonObject) -> JsonObject:
             raise InvalidArgumentError("params must be an object")
         result = _HANDLERS[method](control, params)
     except ControlError as error:
-        return _error_response(
-            request_id, error.code.value, error.message, delivery=error.delivery
-        )
+        return _error_response(request_id, error.code.value, error.message, delivery=error.delivery)
     except Exception as error:
         # A process boundary: an unexpected exception must not kill this long-lived process
         # (every later request from the app would then fail), and must never look like success.
