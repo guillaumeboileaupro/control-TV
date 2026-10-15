@@ -46,8 +46,8 @@ packaging = [
 # distutils zeroconf's build script imports) and poetry-core (zeroconf). wheel retags the
 # zeroconf wheel, built without its optional Cython extensions, as pure Python.
 android = [
-    "pip==25.3",
-    "wheel==0.45.1",
+    "pip==26.2.1",
+    "wheel==0.46.3",
     "poetry-core==2.5.0",
     "setuptools==84.0.0",
 ]
