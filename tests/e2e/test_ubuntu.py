@@ -10,6 +10,7 @@ from acceptance_platforms import (
     command_check,
     configured_artifact,
     csp_check,
+    deb_contents_check,
     real_adapter_blocked,
     source_check,
 )
@@ -50,19 +51,7 @@ def deb_contents(context: Context) -> Result:
     if isinstance(artifact, Result):
         return artifact
 
-    def validate(output: str) -> tuple[bool, str]:
-        required = (
-            "./usr/bin/control-tv",
-            "./usr/lib/control-tv/python-bridge/control-tv-bridge",
-            "libpython3.12.so.1.0",
-            "./usr/share/icons/",
-        )
-        missing = [entry for entry in required if entry not in output]
-        if missing:
-            return False, "missing package entries: " + ", ".join(missing)
-        return True, "Tauri binary, Python bridge and desktop icon present"
-
-    return command_check(context, scenario, ["dpkg-deb", "-c", str(artifact)], validate)
+    return command_check(context, scenario, ["dpkg-deb", "-c", str(artifact)], deb_contents_check)
 
 
 def csp(context: Context) -> Result:

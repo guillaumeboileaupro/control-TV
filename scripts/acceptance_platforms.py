@@ -123,6 +123,22 @@ def apk_archive_check(path: Path) -> tuple[bool, str]:
     return not problems, reason
 
 
+def deb_contents_check(output: str) -> tuple[bool, str]:
+    """Validate dpkg-deb's inventory with or without its version-dependent ``./`` prefix."""
+    normalized = output.replace(" ./", " ")
+    required = (
+        "usr/bin/control-tv",
+        "usr/lib/control-tv/python-bridge/control-tv-bridge",
+        "libpython3.12.so.1.0",
+        "usr/share/icons/",
+        "usr/share/applications/control-tv.desktop",
+    )
+    missing = [entry for entry in required if entry not in normalized]
+    if missing:
+        return False, "missing package entries: " + ", ".join(missing)
+    return True, "Tauri binary, Python bridge, desktop entry and icon present"
+
+
 def always_success(output: str) -> tuple[bool, str]:
     del output
     return True, "simulated contract suite passed"

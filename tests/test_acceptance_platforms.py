@@ -84,6 +84,30 @@ def test_invalid_apk_fails_closed(tmp_path: Path) -> None:
     assert platforms.apk_archive_check(path)[0] is False
 
 
+@pytest.mark.parametrize("prefix", ["", "./"])
+def test_deb_inventory_accepts_both_dpkg_path_formats(prefix: str) -> None:
+    inventory = "\n".join(
+        f"-rwxr-xr-x root/root 1 {prefix}{path}"
+        for path in (
+            "usr/bin/control-tv",
+            "usr/lib/control-tv/python-bridge/control-tv-bridge",
+            "usr/lib/control-tv/python-bridge/_internal/libpython3.12.so.1.0",
+            "usr/share/icons/hicolor/32x32/apps/control-tv.png",
+            "usr/share/applications/control-tv.desktop",
+        )
+    )
+    assert platforms.deb_contents_check(inventory)[0] is True
+
+
+def test_deb_inventory_still_fails_when_the_bridge_is_absent() -> None:
+    valid, reason = platforms.deb_contents_check(
+        "usr/bin/control-tv\nusr/share/icons/hicolor/control-tv.png\n"
+        "usr/share/applications/control-tv.desktop"
+    )
+    assert valid is False
+    assert "python-bridge/control-tv-bridge" in reason
+
+
 def test_source_check_reports_the_exact_missing_contract(tmp_path: Path) -> None:
     acceptance = sys.modules["acceptance"]
     source = tmp_path / "source.txt"
