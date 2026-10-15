@@ -461,18 +461,11 @@ def test_all_commands_use_bounded_library_calls() -> None:
     transport.set_muted(DEVICE_ID, True)
 
     calls = cast_device.media_controller.calls
-    assert [call[0] for call in calls] == ["load_media", *("send_message",) * 4]
+    assert [call[0] for call in calls] == ["load_media", "play", "pause", "stop", "seek"]
     assert calls[0][1] == ("https://media.local/movie.mp4", "video/mp4")
     assert calls[0][2]["title"] is None
-    messages = [cast(dict[str, object], calls[index][1][0]) for index in (1, 2, 3, 4)]
-    assert [message["type"] for message in messages] == [
-        "PLAY",
-        "PAUSE",
-        "STOP",
-        "SEEK",
-    ]
-    assert [message["mediaSessionId"] for message in messages] == [None] * 4
-    assert messages[3]["currentTime"] == 25.0
+    assert [calls[index][2]["timeout"] for index in (1, 2, 3, 4)] == [4.0] * 4
+    assert calls[4][1] == (25.0,)
     assert cast_device.volume_calls == [(0.7, 4.0)]
     assert cast_device.mute_calls == [(True, 4.0)]
 
@@ -511,9 +504,7 @@ def test_each_playback_command_error_is_translated_without_replay(
     with pytest.raises(expected_error):
         send_playback_command(transport, command)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
-    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
-    assert message["type"] == command.upper()
+    assert [call[0] for call in cast_device.media_controller.calls] == [command]
     assert cast_device.wait_timeouts == [3.0]
 
 
@@ -620,9 +611,7 @@ def test_stale_connection_is_rediscovered_once_by_uuid_before_command() -> None:
     assert calls == [2.5, 1.0]
     assert stale.disconnect_calls == [3.0]
     assert [call[0] for call in stale.media_controller.calls] == []
-    assert [call[0] for call in recovered.media_controller.calls] == ["send_message"]
-    message = cast(dict[str, object], recovered.media_controller.calls[0][1][0])
-    assert message["type"] == "PLAY"
+    assert [call[0] for call in recovered.media_controller.calls] == ["play"]
 
 
 def test_rediscovery_without_same_uuid_does_not_send_command() -> None:
@@ -658,9 +647,7 @@ def test_command_failure_is_not_replayed_automatically() -> None:
     with pytest.raises(DeviceUnavailableError):
         transport.play(DEVICE_ID)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
-    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
-    assert message["type"] == "PLAY"
+    assert [call[0] for call in cast_device.media_controller.calls] == ["play"]
     assert cast_device.wait_timeouts == [3.0]
 
 
@@ -1057,9 +1044,7 @@ def test_request_not_sent_is_unavailable_not_receiver_rejection_and_is_not_repla
     with pytest.raises(DeviceUnavailableError, match="unavailable"):
         transport.pause(DEVICE_ID)
 
-    assert [call[0] for call in cast_device.media_controller.calls] == ["send_message"]
-    message = cast(dict[str, object], cast_device.media_controller.calls[0][1][0])
-    assert message["type"] == "PAUSE"
+    assert [call[0] for call in cast_device.media_controller.calls] == ["pause"]
 
 
 def test_load_not_sent_is_unavailable_and_is_not_replayed() -> None:
