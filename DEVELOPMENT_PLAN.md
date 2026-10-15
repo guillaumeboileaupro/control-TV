@@ -1035,6 +1035,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 
 **2F — CLAVIER DISTANT : remplir un champ de saisie TV (exigence propriétaire)**
 - [ ] Étudier le protocole permettant de saisir du texte dans les champs Android/Google TV ; Cast seul peut être insuffisant. Protocole retenu : méthode de saisie (IME) du canal Android TV Remote. **Implémenté** (#42, non fusionnée) : champ « Text for the TV » dans les deux interfaces, envoi unique qui **remplace** le contenu du champ actif, Backspace et Entrée, texte jamais journalisé ni renvoyé, résultat `not_checked` avec indication « champ actif signalé ou non ». **0 % confirmé sur TV** ; détection du champ actif non vérifiée (lecture seule du 2026-10-12 faite TV en veille : aucun champ, aucune application signalés).
+  - Audit Codex AUD-008 (2026-10-14, branche `fix/text-length-code-points`) : l'interface compte désormais le texte en caractères Unicode (points de code), comme la couche Python (`len`), et non en unités UTF-16 ; 256 emoji sont acceptés des deux côtés. L'attribut HTML `maxlength="256"` du champ, qui comptait aussi en unités UTF-16 (128 emoji au plus), est retiré après la fusion de la refonte (#55) : la règle des 256 caractères et son message restent appliqués par l'interface avant tout envoi.
 - [ ] Vérifier appairage, authentification, permissions, chiffrement et compatibilité selon TV.
 - [ ] Ajouter dans **Ubuntu** une zone de saisie utilisant le clavier physique du PC.
 - [ ] Ajouter dans **Android** une zone de saisie utilisant le clavier virtuel du téléphone.
