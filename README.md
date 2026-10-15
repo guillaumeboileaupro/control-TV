@@ -52,7 +52,7 @@ Acceptance infrastructure is dry-run by default and does not contact a TV, start
 an artifact. It writes JSON, HTML and JUnit reports and supports checkpoints:
 
 ```bash
-python3 scripts/run_acceptance.py
+python3 scripts/run_acceptance.py --mode dry-run
 python3 scripts/run_acceptance.py --category ubuntu
 python3 scripts/run_acceptance.py --resume
 ```
@@ -63,7 +63,8 @@ separate explicit authorizations required by future executable scenarios.
 
 Ubuntu and Android acceptance results explicitly identify static, simulated or real evidence.
 Set `CONTROL_TV_DEB` or `CONTROL_TV_APK` to inspect an existing artifact without installing it;
-add `--execute` only to run the deterministic simulated contract suites. Real installation,
+add `--mode execute` (or the compatible shorthand `--execute`) only to run the deterministic
+simulated contract suites. Real installation,
 launch, tray interaction and device-log scenarios remain blocked without their separate adapters
 and authorizations.
 

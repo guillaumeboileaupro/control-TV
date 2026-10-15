@@ -33,6 +33,22 @@ def environment(*, tools: dict[str, str | None] | None = None) -> Any:
     return acceptance.Environment("Linux", "x86_64", "3.12", "abc", tools or {}, {}, {})
 
 
+def test_explicit_dry_run_mode_is_supported_and_is_the_default() -> None:
+    assert run_acceptance.parser().parse_args([]).mode == "dry-run"
+    explicit = run_acceptance.parser().parse_args(["--mode", "dry-run"])
+    assert explicit.mode == "dry-run"
+    assert explicit.execute is False
+
+
+def test_execute_alias_and_explicit_mode_are_mutually_exclusive() -> None:
+    execute = run_acceptance.parser().parse_args(["--mode", "execute"])
+    alias = run_acceptance.parser().parse_args(["--execute"])
+    assert execute.mode == "execute"
+    assert alias.execute is True
+    with pytest.raises(SystemExit):
+        run_acceptance.parser().parse_args(["--mode", "dry-run", "--execute"])
+
+
 def passing(scenario: Any) -> Any:
     def run(context: Any) -> Any:
         del context

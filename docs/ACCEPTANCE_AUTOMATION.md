@@ -26,7 +26,7 @@ The default is a dry run. It detects the host, configured artifact paths, tool p
 configured device hints, then records every executable scenario as `BLOCKED`:
 
 ```bash
-python3 scripts/run_acceptance.py
+python3 scripts/run_acceptance.py --mode dry-run
 python3 scripts/run_acceptance.py --category ubuntu
 python3 scripts/run_acceptance.py --resume
 ```
@@ -36,10 +36,12 @@ Reports are written as `acceptance.json`, `acceptance.html` and `acceptance.juni
 `CONTROL_TV_ANDROID_SERIAL` only when preparing the matching adapter. Device hints are read as
 configuration; detection never invokes ADB or contacts a TV.
 
-`--execute` leaves dry-run mode but grants no sensitive capability. Future hardware adapters
+`--mode execute` (or its compatibility alias `--execute`) leaves dry-run mode but grants no
+sensitive capability. Future hardware adapters
 must additionally require the relevant explicit flag: `--allow-tv-commands`,
-`--allow-deb-install`, `--allow-apk-install`, or `--enable-adb`. Flags without `--execute` grant
-nothing. This infrastructure iteration must not be run with those flags against real devices.
+`--allow-deb-install`, `--allow-apk-install`, or `--enable-adb`. Sensitive flags without execute
+mode grant nothing. This infrastructure iteration must not be run with those flags against real
+devices.
 
 ## Outcomes and restart
 
@@ -76,7 +78,8 @@ actions. Android verifies the APK archive and arm64 ABI, embedded Python, packag
 permissions (when `aapt` is available), production CSP, embedded-bridge sources and widget
 isolation/wiring.
 
-The simulated suites require `--execute`; they exercise the existing bridge, IPC, packaging,
+The simulated suites require `--mode execute` or `--execute`; they exercise the existing bridge,
+IPC, packaging,
 widget and startup-error tests and include captured stdout/stderr in the report. They do not install
 or launch an application and do not invoke ADB:
 
