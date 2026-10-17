@@ -37,22 +37,33 @@ Running this encodes on the local machine; it is **not** run by the test suite o
 
 ## Design
 
-| Module            | Responsibility                                                                                                                                                                                                                                                                                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model.py`        | validated values (render node `/dev/dri/renderD<n>`, even size 16–4096, 1–60 fps, 1–120 s, QP 1–51 and CRF 0–51 checked when the request is built, x264 presets), the `VideoSource` port, plans, states, errors                                                                                                                                                 |
-| `source.py`       | `SyntheticSource`: FFmpeg's generated test pictures (`lavfi`), the only `VideoSource` in D0                                                                                                                                                                                                                                                                     |
-| `ffmpeg.py`       | pure argument vectors built from any `VideoSource`; VA-API always `-rc_mode CQP -qp N` and **never** `-b:v`; every encode bounded by `-t` and `-fs 256 MiB`; parsing of `ffmpeg -encoders`                                                                                                                                                                      |
-| `capabilities.py` | `CapabilityProbe` port; FFmpeg probe (encoder list read as UTF-8 with replacement, render node access); `select_encoder` policy — the software fallback only with `VAAPI_THEN_SOFTWARE`, with its reason                                                                                                                                                        |
-| `process.py`      | `ProcessRunner` / `ManagedProcess` ports; `SubprocessRunner` (argument vector, no shell, no stdin, stderr to a private file, own process group); `stop_process` (SIGTERM to the group, then SIGKILL; `None` when the process survives SIGKILL)                                                                                                                  |
-| `service.py`      | `ScreenCastService` state machine `idle → starting → running → (stopping →) stopped / failed`; the D0 restriction to the synthetic source kind; private 0700 working directory per session; timeout stops the encoder; `close()` / `with` always stops and cleans and never raises; an `atexit` hook stops a running encode when the interpreter exits normally |
+| Module            | Responsibility                                                                                                                                                                                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model.py`        | validated values (render node `/dev/dri/renderD<n>`, even size 16–4096, 1–60 fps, 1–120 s, QP 1–51, CRF 0–51, x264 presets); sources as typed **specifications** (`SyntheticSource`, the only `VideoSource` in D0, accepted by exact type); `EncodeRequest.revalidated()` rebuilds a request from plain values; plans, states, errors               |
+| `ffmpeg.py`       | pure argument vectors; `source_arguments` alone turns a known source type into input arguments and refuses anything else; VA-API always `-rc_mode CQP -qp N` and **never** `-b:v`; every encode bounded by `-t` and `-fs 256 MiB`; parsing of `ffmpeg -encoders`                                                                                    |
+| `capabilities.py` | `CapabilityProbe` port; FFmpeg probe (encoder list read as UTF-8 with replacement, render node access); `select_encoder` policy — the software fallback only with `VAAPI_THEN_SOFTWARE`, with its reason                                                                                                                                            |
+| `process.py`      | `ProcessRunner` / `ManagedProcess` ports over a whole **process group**; `SubprocessRunner` (argument vector, no shell, no stdin, stderr to a private file, new session); the leader is reaped only once its group is empty, so the group id cannot be recycled while signals may reach it; `stop_process` (SIGTERM, then SIGKILL, to the group)    |
+| `service.py`      | `ScreenCastService` state machine `idle → starting → running → (stopping →) stopped / failed`; D0 source policy on a rebuilt request before any probe; private 0700 working directory per session; one result check for `wait()` and `stop()`; kept groups and `reclaim()`; one call at a time; `close()` / `with` / `atexit` always stop and clean |
 
-Failures never pass silently and only `ScreenCastError` subclasses escape: an unavailable encoder,
-a session directory that cannot be created, a process that cannot start or be waited for, a
-non-zero exit (with the end of FFmpeg's stderr, also when found by `stop()`), an empty output or a
-timeout all end in `failed` with a message. `stopping` never outlives a call. An encoder that
-survives SIGKILL (for example blocked in a GPU driver) is **not** claimed stopped: the session
-fails, the error names its PID, and `unstoppable_pids` keeps it; the session's directory is still
-removed.
+Failures never pass silently and only `ScreenCastError` subclasses escape (an interruption such as
+Ctrl-C is cleaned, then re-raised): an unavailable encoder, a session directory that cannot be
+created or made private, a process that cannot start or be waited for, unreadable output or stderr
+and any internal error all end in `failed` with a message, and leave no directory behind.
+`stopping` never outlives a call.
+
+**What counts as a result** (same check whether `wait()` or `stop()` sees the end): the whole group
+is gone, the leader exited 0, the output is a non-empty regular file (not a link) below 256 MiB
+(reaching the limit means FFmpeg cut it), and FFmpeg logged nothing at `-loglevel error`.
+Anything else is `failed`.
+
+**Groups that survive SIGKILL** (for example blocked in a GPU driver) are **not** claimed stopped:
+the session fails, the error names the PID, and the group is kept unreaped (its id stays
+reserved) in `unstoppable_pids`. `reclaim()`, `start()` and `close()` poll it again, send SIGKILL
+again and release it once the kernel lets it go. While one is kept, `start()` refuses a new encode.
+If the kernel never lets it go, it stays listed until the application exits.
+
+**Concurrency:** one call at a time. A call made while another is running (another thread) is
+refused with `ScreenCastStateError`; a refused `close()` does nothing and keeps the exit hook.
 
 ## Verified vs not verified
 
@@ -71,8 +82,12 @@ removed.
   by itself after its duration (at most 120 s) and its file cannot exceed 256 MiB, in a
   `control-tv-screencast-*` directory under the system temporary directory that is then left
   behind. Normal exit, exceptions and `close()` stop the encoder and remove the directory.
-- An encoder stuck in the kernel (uninterruptible GPU wait) survives SIGKILL; it is reported,
-  not hidden, and only the kernel can reclaim it.
+- A descendant that leaves the group on purpose (`setsid`, `setpgid`) is not covered (FFmpeg does
+  not do this); group membership is read from `/proc` (Linux).
+- A process stuck in the kernel (uninterruptible GPU wait) survives SIGKILL; it is reported and
+  kept, never hidden, and only the kernel can end it; no new encode starts meanwhile.
+- With `-loglevel error`, any line FFmpeg writes fails the encode, even with exit status 0: strict
+  on purpose for D0 (a false failure is visible, a false success is not).
 - One session per service; a new session replaces the last one's files.
 - `h264_qsv` is listed by the host's FFmpeg but not used (VA-API is the measured path).
 - Not wired to the bridge or the UI (deferred until D1, per the issue).

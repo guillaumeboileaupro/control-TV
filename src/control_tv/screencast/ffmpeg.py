@@ -1,9 +1,10 @@
 """FFmpeg argument vectors (pure: no process is started here).
 
 Commands are argument tuples for `subprocess`, never shell strings; every value comes from a
-validated model object, and the input arguments come from the `VideoSource` port, so the command
-does not depend on the kind of source. The VA-API command always uses constant QP and never a
-bitrate. Every command is bounded in time (`-t`) and output size (`-fs`).
+validated model object. Sources are typed specifications: this adapter alone turns a known source
+type into input arguments (`source_arguments`), and refuses anything else, so no source can hand
+FFmpeg its own arguments. The VA-API command always uses constant QP and never a bitrate. Every
+command is bounded in time (`-t`) and output size (`-fs`).
 """
 
 from __future__ import annotations
@@ -12,12 +13,24 @@ from pathlib import Path
 
 from control_tv.screencast.model import (
     MAX_OUTPUT_BYTES,
+    SYNTHETIC_PATTERNS,
     EncoderPlan,
+    InvalidScreenCastOption,
     SoftwareX264,
     VaapiCqp,
     VideoProfile,
     VideoSource,
+    require_d0_source,
 )
+
+
+def source_arguments(source: VideoSource, profile: VideoProfile) -> tuple[str, ...]:
+    """FFmpeg input arguments for a known source type; `InvalidScreenCastOption` otherwise."""
+    synthetic = require_d0_source(source)
+    if synthetic.pattern not in SYNTHETIC_PATTERNS:  # changed after construction
+        raise InvalidScreenCastOption(f"unknown synthetic pattern: {synthetic.pattern!r}")
+    size = f"{profile.width}x{profile.height}"
+    return ("-f", "lavfi", "-i", f"{synthetic.pattern}=size={size}:rate={profile.fps}")
 
 
 def encoder_arguments(plan: EncoderPlan) -> tuple[str, ...]:
@@ -66,7 +79,7 @@ def encode_command(
         "-loglevel",
         "error",
         *device,
-        *source.input_arguments(profile),
+        *source_arguments(source, profile),
         "-t",
         str(profile.duration_seconds),
         *encoder_arguments(plan),

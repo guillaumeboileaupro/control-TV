@@ -20,11 +20,11 @@ from control_tv.screencast.model import (
     EncoderPreference,
     EncoderUnavailableError,
     SoftwareX264,
+    SyntheticSource,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
 )
-from control_tv.screencast.source import SyntheticSource
 
 BOTH = frozenset({"h264_vaapi", "libx264"})
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from control_tv.screencast.ffmpeg import (
     encode_command,
     encoders_listing_command,
     parse_encoder_names,
+    source_arguments,
 )
 from control_tv.screencast.model import (
     MAX_OUTPUT_BYTES,
@@ -18,11 +20,11 @@ from control_tv.screencast.model import (
     InvalidScreenCastOption,
     SoftwareX264,
     SourceKind,
+    SyntheticSource,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
 )
-from control_tv.screencast.source import SyntheticSource
 
 OUT = Path("/private/session/synthetic.mp4")
 
@@ -145,24 +147,84 @@ def test_the_encoder_listing_is_parsed_without_its_legend() -> None:
     assert encoders_listing_command("ffmpeg")[-1] == "-encoders"
 
 
-class FakeSource:
-    """Any `VideoSource`: the command only uses its input arguments."""
+class LookAlikeSource:
+    """Claims to be synthetic but would hand FFmpeg a desktop capture (the P1 bypass)."""
 
     @property
     def kind(self) -> SourceKind:
         return SourceKind.SYNTHETIC
 
     def input_arguments(self, profile: VideoProfile) -> tuple[str, ...]:
-        return ("-f", "fake", "-i", f"fake:{profile.width}")
+        return ("-f", "x11grab", "-i", ":0.0")
 
 
-def test_the_command_takes_its_input_from_the_source_port_only() -> None:
-    argv = encode_command(
-        "ffmpeg", FakeSource(), VideoProfile(width=640, height=480), SoftwareX264(), OUT
+@dataclass(frozen=True)
+class SubclassedSource(SyntheticSource):
+    """A subclass of the real source: refused too (it could override anything)."""
+
+
+def forged(pattern: str) -> SyntheticSource:
+    """A real source whose pattern was changed after its validation."""
+    source = SyntheticSource()
+    object.__setattr__(source, "pattern", pattern)
+    return source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [LookAlikeSource(), SubclassedSource(), "testsrc2", None],
+    ids=["look-alike", "subclass", "string", "none"],
+)
+def test_only_the_exact_synthetic_source_type_is_accepted(source: object) -> None:
+    with pytest.raises(InvalidScreenCastOption, match="only the synthetic test source"):
+        EncodeRequest(source, VideoProfile(), EncoderPreference.SOFTWARE_ONLY)  # type: ignore[arg-type]
+    with pytest.raises(InvalidScreenCastOption, match="only the synthetic test source"):
+        source_arguments(source, VideoProfile())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "pattern", ["x11grab", "movie=/etc/passwd", "testsrc2,format=rgb24", "testsrc2:size=1x1"]
+)
+def test_a_pattern_forged_after_validation_never_reaches_the_command(pattern: str) -> None:
+    with pytest.raises(InvalidScreenCastOption, match="unknown synthetic pattern"):
+        encode_command("ffmpeg", forged(pattern), VideoProfile(), SoftwareX264(), OUT)
+
+
+def test_the_adapter_alone_turns_the_source_into_input_arguments() -> None:
+    source = SyntheticSource("smptebars")
+
+    assert source_arguments(source, VideoProfile(width=640, height=480, fps=25)) == (
+        "-f",
+        "lavfi",
+        "-i",
+        "smptebars=size=640x480:rate=25",
     )
+    assert not hasattr(source, "input_arguments")  # a specification, not a command
 
-    assert argv[5:9] == ("-f", "fake", "-i", "fake:640")
-    assert "lavfi" not in argv
+
+def test_a_request_is_rebuilt_and_checked_again_from_plain_values() -> None:
+    request = EncodeRequest(SyntheticSource(), VideoProfile(), EncoderPreference.VAAPI_ONLY)
+
+    assert request.revalidated() == request
+
+    for name, value in [
+        ("source", LookAlikeSource()),
+        ("source", forged("x11grab")),
+        ("qp", 0),
+        ("preference", "anything"),
+        ("device", VaapiDevice.__new__(VaapiDevice)),
+    ]:
+        broken = EncodeRequest(SyntheticSource(), VideoProfile(), EncoderPreference.VAAPI_ONLY)
+        object.__setattr__(broken, name, value)
+        with pytest.raises(InvalidScreenCastOption):
+            broken.revalidated()
+
+    profile = VideoProfile()
+    object.__setattr__(profile, "fps", "30:x")
+    broken = EncodeRequest(SyntheticSource(), VideoProfile(), EncoderPreference.VAAPI_ONLY)
+    object.__setattr__(broken, "profile", profile)
+    with pytest.raises(InvalidScreenCastOption, match="fps"):
+        broken.revalidated()
 
 
 def test_every_command_is_bounded_in_time_and_size() -> None:

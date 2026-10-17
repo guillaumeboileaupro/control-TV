@@ -1,7 +1,17 @@
-"""ScreenCastService state machine with fake processes: no FFmpeg, GPU, display or network."""
+"""ScreenCastService state machine with fake process groups: no FFmpeg, GPU, display or network.
+
+Besides the normal paths, these tests attack the contracts: forged sources and requests, groups
+that outlive their leader or SIGKILL, encodes that "succeed" without a valid output, file and
+directory errors, invalid durations and concurrent calls.
+"""
 
 from __future__ import annotations
 
+import itertools
+import math
+import shutil
+import signal
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,36 +29,54 @@ from control_tv.screencast.model import (
     ScreenCastState,
     ScreenCastStateError,
     SoftwareX264,
+    SourceKind,
+    SyntheticSource,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
 )
 from control_tv.screencast.process import ManagedProcess, ProcessTimeout
-from control_tv.screencast.service import OUTPUT_NAME, STDERR_NAME, ScreenCastService
-from control_tv.screencast.source import SyntheticSource
+from control_tv.screencast.service import (
+    OUTPUT_NAME,
+    STDERR_NAME,
+    ScreenCastService,
+)
+
+TERM, KILL = signal.SIGTERM, signal.SIGKILL
 
 
 @dataclass
 class FakeProcess:
-    """Exits with `status` after `timeouts` waits time out; records the signals it got."""
+    """A process group. The leader exits with `status` after `timeouts` waits time out;
+    `lingering_child` keeps a member running after the leader exits until it is signalled;
+    `survives_sigkill` keeps the group alive whatever it is sent (clear it to let it go)."""
 
     status: int = 0
     timeouts: int = 0
     ignores_sigterm: bool = False
     survives_sigkill: bool = False
+    lingering_child: bool = False
     wait_error: OSError | None = None
     signal_error: OSError | None = None
-    signals: list[str] = field(default_factory=list)
+    alive_error: RuntimeError | None = None
+    gate: threading.Event | None = None
+    entered: threading.Event = field(default_factory=threading.Event)
+    signals: list[signal.Signals] = field(default_factory=list)
     ended: bool = False
+    released: bool = False
+    signals_after_release: int = 0
 
     @property
     def pid(self) -> int:
         return 4242
 
-    def poll(self) -> int | None:
+    def exit_status(self) -> int | None:
         return self.status if self.ended else None
 
-    def wait(self, timeout: float) -> int:
+    def wait_exit(self, timeout: float) -> int:
+        self.entered.set()
+        if self.gate is not None:
+            self.gate.wait(5.0)
         if self.wait_error is not None:
             raise self.wait_error
         if not self.ended and (self.survives_sigkill or self.timeouts > 0):
@@ -57,17 +85,31 @@ class FakeProcess:
         self.ended = True
         return self.status
 
-    def terminate(self) -> None:
+    def group_alive(self) -> bool:
+        if self.alive_error is not None:
+            raise self.alive_error
+        if self.released:
+            return False
+        return self.survives_sigkill or not self.ended or self.lingering_child
+
+    def signal_group(self, sig: signal.Signals) -> None:
         if self.signal_error is not None:
             raise self.signal_error
-        self.signals.append("TERM")
-        if not (self.ignores_sigterm or self.survives_sigkill):
-            self.ended, self.status = True, -15
+        if self.released:
+            self.signals_after_release += 1
+            return
+        self.signals.append(sig)
+        if self.survives_sigkill or (sig is TERM and self.ignores_sigterm):
+            return
+        self.lingering_child = False
+        if not self.ended:
+            self.ended, self.status = True, -sig
 
-    def kill(self) -> None:
-        self.signals.append("KILL")
-        if not self.survives_sigkill:
-            self.ended, self.status = True, -9
+    def release(self) -> int | None:
+        if self.group_alive():
+            return None
+        self.released = True
+        return self.status
 
 
 @dataclass
@@ -75,7 +117,7 @@ class FakeRunner:
     process: FakeProcess = field(default_factory=FakeProcess)
     output: bytes = b"\x00\x00\x00\x18ftypisom"
     stderr: str = ""
-    error: OSError | None = None
+    error: BaseException | None = None
     argv: list[tuple[str, ...]] = field(default_factory=list)
 
     def start(self, argv: Sequence[str], *, stderr_path: Path) -> ManagedProcess:
@@ -94,9 +136,36 @@ BOTH_ENCODERS = EncoderCapabilities(frozenset({"h264_vaapi", "libx264"}), True)
 @dataclass
 class FakeProbe:
     capabilities: EncoderCapabilities = field(default_factory=lambda: BOTH_ENCODERS)
+    error: Exception | None = None
+    calls: int = 0
 
     def probe(self, device: VaapiDevice) -> EncoderCapabilities:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
         return self.capabilities
+
+
+@dataclass
+class ExitHooks:
+    """Records the interpreter-exit hooks instead of registering real `atexit` callbacks."""
+
+    registered: list[Callable[[], None]] = field(default_factory=list)
+    error: Exception | None = None
+
+    def register(self, callback: Callable[[], None]) -> None:
+        if self.error is not None:
+            raise self.error
+        self.registered.append(callback)
+
+    def forget(self, callback: Callable[[], None]) -> None:
+        if callback in self.registered:
+            self.registered.remove(callback)
+
+
+def pids(cast: ScreenCastService) -> tuple[int, ...]:
+    """Reads the kept PIDs through a call, so each check sees the current value."""
+    return cast.unstoppable_pids
 
 
 def state(cast: ScreenCastService) -> ScreenCastState:
@@ -109,20 +178,6 @@ REQUEST = EncodeRequest(
 )
 
 
-@dataclass
-class ExitHooks:
-    """Records the interpreter-exit hooks instead of registering real `atexit` callbacks."""
-
-    registered: list[Callable[[], None]] = field(default_factory=list)
-
-    def register(self, callback: Callable[[], None]) -> None:
-        self.registered.append(callback)
-
-    def forget(self, callback: Callable[[], None]) -> None:
-        if callback in self.registered:
-            self.registered.remove(callback)
-
-
 def service(
     tmp_path: Path,
     runner: FakeRunner,
@@ -130,8 +185,8 @@ def service(
     hooks: ExitHooks | None = None,
 ) -> ScreenCastService:
     exit_hooks = hooks or ExitHooks()
-    ticks = iter([100.0, 102.5, 103.0, 104.0])
-    counter = iter(range(100))
+    ticks = itertools.chain([100.0, 102.5], itertools.count(103.0))
+    counter = itertools.count()
 
     def workdir() -> Path:
         path = tmp_path / f"session-{next(counter)}"
@@ -141,12 +196,19 @@ def service(
     return ScreenCastService(
         runner,
         probe or FakeProbe(),
-        stop_grace_seconds=0.1,
+        stop_grace_seconds=0.05,
         clock=lambda: next(ticks),
         make_workdir=workdir,
         on_exit=exit_hooks.register,
         forget_on_exit=exit_hooks.forget,
     )
+
+
+def nothing_left(tmp_path: Path) -> bool:
+    return list(tmp_path.iterdir()) == []
+
+
+# Normal paths --------------------------------------------------------------------------------
 
 
 def test_a_successful_encode_goes_idle_running_stopped(tmp_path: Path) -> None:
@@ -164,6 +226,7 @@ def test_a_successful_encode_goes_idle_running_stopped(tmp_path: Path) -> None:
     assert result.output.name == OUTPUT_NAME and result.output_bytes > 0
     assert result.elapsed_seconds == 2.5
     assert "-b:v" not in runner.argv[0] and runner.argv[0][-1] == str(result.output)
+    assert runner.process.released
     workdir = result.output.parent
     assert workdir.stat().st_mode & 0o777 == 0o700
 
@@ -191,18 +254,16 @@ def test_an_unavailable_encoder_fails_before_any_process(tmp_path: Path) -> None
         cast.start(only_gpu)
 
     assert state(cast) is ScreenCastState.FAILED and cast.last_error
-    assert runner.argv == []
-    assert list(tmp_path.iterdir()) == []
+    assert runner.argv == [] and nothing_left(tmp_path)
 
 
 def test_a_process_that_cannot_start_leaves_nothing_behind(tmp_path: Path) -> None:
     cast = service(tmp_path, FakeRunner(error=FileNotFoundError("ffmpeg")))
 
-    with pytest.raises(EncodeFailedError, match="could not start"):
+    with pytest.raises(EncodeFailedError, match="could not start: FileNotFoundError"):
         cast.start(REQUEST)
 
-    assert state(cast) is ScreenCastState.FAILED
-    assert list(tmp_path.iterdir()) == []
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
 
 
 def test_a_failing_encoder_reports_its_stderr_and_cleans_up(tmp_path: Path) -> None:
@@ -217,17 +278,17 @@ def test_a_failing_encoder_reports_its_stderr_and_cleans_up(tmp_path: Path) -> N
     with pytest.raises(EncodeFailedError, match="status 1: Driver does not support"):
         cast.wait(30.0)
 
-    assert state(cast) is ScreenCastState.FAILED
-    assert list(tmp_path.iterdir()) == []
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
 
 
-def test_an_empty_output_is_a_failure_even_with_status_zero(tmp_path: Path) -> None:
-    cast = service(tmp_path, FakeRunner(output=b""))
+def test_a_failure_without_stderr_still_reports_its_status(tmp_path: Path) -> None:
+    runner = FakeRunner(process=FakeProcess(status=2))
+    cast = service(tmp_path, runner)
     cast.start(REQUEST)
+    (Path(runner.argv[0][-1]).parent / STDERR_NAME).unlink()
 
-    with pytest.raises(EncodeFailedError, match="status 0"):
-        cast.wait(30.0)
-    assert state(cast) is ScreenCastState.FAILED
+    with pytest.raises(EncodeFailedError, match=r"^the encoder exited with status 2$"):
+        cast.wait(1.0)
 
 
 def test_a_timeout_terminates_then_kills_and_fails(tmp_path: Path) -> None:
@@ -238,9 +299,8 @@ def test_a_timeout_terminates_then_kills_and_fails(tmp_path: Path) -> None:
     with pytest.raises(EncodeFailedError, match="did not finish within 1 s"):
         cast.wait(1.0)
 
-    assert process.signals == ["TERM", "KILL"]
-    assert state(cast) is ScreenCastState.FAILED
-    assert list(tmp_path.iterdir()) == []
+    assert process.signals == [TERM, KILL]
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
 
 
 def test_stop_is_idempotent_and_close_always_cleans(tmp_path: Path) -> None:
@@ -253,10 +313,10 @@ def test_stop_is_idempotent_and_close_always_cleans(tmp_path: Path) -> None:
     cast.stop()
 
     assert state(cast) is ScreenCastState.STOPPED
-    assert process.signals == ["TERM"]
+    assert process.signals == [TERM] and process.released
     cast.close()
     cast.close()
-    assert list(tmp_path.iterdir()) == []
+    assert nothing_left(tmp_path)
 
 
 def test_illegal_transitions_are_refused(tmp_path: Path) -> None:
@@ -287,33 +347,168 @@ def test_leaving_the_with_block_on_an_error_stops_and_cleans(tmp_path: Path) -> 
         cast.start(REQUEST)
         raise RuntimeError("caller failed")
 
-    assert process.signals == ["TERM"]
-    assert list(tmp_path.iterdir()) == []
+    assert process.signals == [TERM] and nothing_left(tmp_path)
 
 
-# M1: an encoder that survives SIGKILL is reported, never claimed stopped ------------------------
+# P1-1: the whole group is cleaned, never only its leader -----------------------------------
 
 
-def test_an_encoder_surviving_sigkill_on_stop_fails_and_is_reported(tmp_path: Path) -> None:
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+def test_a_member_left_after_the_leader_exits_is_stopped_before_the_result(
+    tmp_path: Path, finish: str
+) -> None:
+    process = FakeProcess(lingering_child=True)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    process.ended = True  # the leader exited 0, a descendant still runs
+
+    if finish == "wait":
+        cast.wait(1.0)
+    else:
+        cast.stop()
+
+    assert process.signals == [TERM] and process.released
+    assert state(cast) is ScreenCastState.STOPPED
+
+
+def test_no_signal_reaches_a_group_once_released(tmp_path: Path) -> None:
+    process = FakeProcess()
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    cast.wait(1.0)
+
+    cast.stop()
+    cast.close()
+    cast.reclaim()
+
+    assert process.released and process.signals == [] and process.signals_after_release == 0
+
+
+# P1-2: no source other than the validated synthetic one, before any probe or process -------
+
+
+class LookAlikeSource:
+    @property
+    def kind(self) -> SourceKind:
+        return SourceKind.SYNTHETIC
+
+    def input_arguments(self, profile: VideoProfile) -> tuple[str, ...]:
+        return ("-f", "x11grab", "-i", ":0.0")
+
+
+def forged_request(name: str, value: object) -> EncodeRequest:
+    request = EncodeRequest(SyntheticSource(), VideoProfile(), EncoderPreference.SOFTWARE_ONLY)
+    object.__setattr__(request, name, value)
+    return request
+
+
+def forged_pattern(pattern: str) -> SyntheticSource:
+    source = SyntheticSource()
+    object.__setattr__(source, "pattern", pattern)
+    return source
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        forged_request("source", LookAlikeSource()),
+        forged_request("source", forged_pattern("x11grab")),
+        forged_request("source", forged_pattern("movie=/home/user/video.mp4")),
+        forged_request("preference", "anything"),
+        "not a request",
+    ],
+    ids=["look-alike", "x11grab-pattern", "file-pattern", "preference", "not-a-request"],
+)
+def test_a_forged_request_is_refused_before_any_probe_or_process(
+    tmp_path: Path, request_: EncodeRequest
+) -> None:
+    runner, probe = FakeRunner(), FakeProbe()
+    cast = service(tmp_path, runner, probe)
+
+    with pytest.raises(InvalidScreenCastOption):
+        cast.start(request_)
+
+    assert state(cast) is ScreenCastState.FAILED
+    assert probe.calls == 0 and runner.argv == [] and nothing_left(tmp_path)
+
+
+def test_the_command_is_built_from_the_rebuilt_request(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    cast = service(tmp_path, runner)
+
+    cast.start(REQUEST)
+
+    assert "testsrc2=size=1920x1080:rate=30" in runner.argv[0]
+    assert "x11grab" not in runner.argv[0]
+    cast.close()
+
+
+# P1-3: groups that survive SIGKILL are kept, polled again and released -------------------
+
+
+def test_a_group_surviving_sigkill_on_stop_is_kept_and_reported(tmp_path: Path) -> None:
     process = FakeProcess(survives_sigkill=True)
     hooks = ExitHooks()
     cast = service(tmp_path, FakeRunner(process=process), hooks=hooks)
     cast.start(REQUEST)
 
-    with pytest.raises(EncodeFailedError, match=r"pid 4242\) did not stop after SIGKILL"):
+    with pytest.raises(EncodeFailedError, match=r"pid 4242\) could not be confirmed stopped"):
         cast.stop()
 
-    assert process.signals == ["TERM", "KILL"]
+    assert process.signals == [TERM, KILL] and not process.released
     assert state(cast) is ScreenCastState.FAILED
     assert cast.unstoppable_pids == (4242,)
-    assert cast.last_error is not None and "may still be running" in cast.last_error
-    assert list(tmp_path.iterdir()) == []  # recoverable resources are still removed
-    cast.close()  # never raises, and does not signal the process again
-    assert process.signals == ["TERM", "KILL"]
-    assert hooks.registered == []
+    assert nothing_left(tmp_path)  # recoverable resources are still removed
+    cast.close()  # never raises; the group stays kept while it lives
+    assert cast.unstoppable_pids == (4242,) and hooks.registered == []
 
 
-def test_an_encoder_surviving_sigkill_after_a_timeout_says_both(tmp_path: Path) -> None:
+def test_a_kept_group_blocks_new_encodes_until_the_kernel_lets_it_go(tmp_path: Path) -> None:
+    process = FakeProcess(survives_sigkill=True)
+    runner, probe = FakeRunner(process=process), FakeProbe()
+    cast = service(tmp_path, runner, probe)
+    cast.start(REQUEST)
+    with pytest.raises(EncodeFailedError):
+        cast.stop()
+
+    with pytest.raises(EncodeFailedError, match=r"earlier encoder \(pid 4242\) still runs"):
+        cast.start(REQUEST)
+    assert probe.calls == 1 and len(runner.argv) == 1
+    assert cast.reclaim() == (4242,)
+
+    process.survives_sigkill = False  # the kernel finally ends it
+    assert cast.reclaim() == ()
+    assert process.released and process.signals[-1] is KILL
+    runner.process = FakeProcess()
+    cast.start(REQUEST)
+    assert state(cast) is ScreenCastState.RUNNING
+    cast.close()
+
+
+def test_close_and_start_poll_kept_groups_again(tmp_path: Path) -> None:
+    process = FakeProcess(survives_sigkill=True)
+    runner = FakeRunner(process=process)
+    cast = service(tmp_path, runner)
+    cast.start(REQUEST)
+    cast.close()
+    assert cast.unstoppable_pids == (4242,) and state(cast) is ScreenCastState.FAILED
+
+    process.survives_sigkill = False
+    cast.close()
+    assert pids(cast) == ()
+
+
+def test_a_kept_group_whose_state_cannot_be_read_stays_kept(tmp_path: Path) -> None:
+    process = FakeProcess(survives_sigkill=True)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    cast.close()
+
+    process.alive_error = RuntimeError("proc unreadable")
+    assert cast.reclaim() == (4242,)
+
+
+def test_a_group_surviving_sigkill_after_a_timeout_says_both(tmp_path: Path) -> None:
     cast = service(tmp_path, FakeRunner(process=FakeProcess(survives_sigkill=True)))
     cast.start(REQUEST)
 
@@ -321,40 +516,119 @@ def test_an_encoder_surviving_sigkill_after_a_timeout_says_both(tmp_path: Path) 
         cast.wait(1.0)
 
     assert state(cast) is ScreenCastState.FAILED and cast.unstoppable_pids == (4242,)
-    assert list(tmp_path.iterdir()) == []
+    assert nothing_left(tmp_path)
 
 
-def test_close_reports_an_encoder_surviving_sigkill_without_raising(tmp_path: Path) -> None:
-    cast = service(tmp_path, FakeRunner(process=FakeProcess(survives_sigkill=True)))
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+def test_a_descendant_surviving_sigkill_after_a_clean_exit_is_no_success(
+    tmp_path: Path, finish: str
+) -> None:
+    process = FakeProcess(survives_sigkill=True)
+    cast = service(tmp_path, FakeRunner(process=process))
     cast.start(REQUEST)
+    process.ended = True  # the leader exited 0; a member of its group cannot be killed
 
-    cast.close()
+    with pytest.raises(EncodeFailedError, match="could not be confirmed stopped"):
+        if finish == "wait":
+            cast.wait(1.0)
+        else:
+            cast.stop()
 
-    assert state(cast) is ScreenCastState.FAILED
-    assert cast.unstoppable_pids == (4242,)
-    assert list(tmp_path.iterdir()) == []
+    assert state(cast) is ScreenCastState.FAILED and pids(cast) == (4242,)
+    assert nothing_left(tmp_path)
 
 
-def test_a_signal_error_while_stopping_is_reported_not_raised_raw(tmp_path: Path) -> None:
+def test_a_signal_error_keeps_the_group_rather_than_claiming_it_stopped(tmp_path: Path) -> None:
     process = FakeProcess(timeouts=10, signal_error=PermissionError("not allowed"))
     cast = service(tmp_path, FakeRunner(process=process))
     cast.start(REQUEST)
 
-    with pytest.raises(EncodeFailedError, match="did not stop"):
+    with pytest.raises(EncodeFailedError, match="could not be confirmed stopped"):
         cast.stop()
-    assert state(cast) is ScreenCastState.FAILED
+    assert state(cast) is ScreenCastState.FAILED and cast.unstoppable_pids == (4242,)
 
 
-def test_waiting_that_fails_with_an_os_error_becomes_an_encode_failure(tmp_path: Path) -> None:
-    process = FakeProcess(wait_error=ChildProcessError("gone"))
-    cast = service(tmp_path, FakeRunner(process=process))
+# P2-1: stopped only with a valid result, whether wait() or stop() sees the end -------------
+
+
+def end_on_its_own(tmp_path: Path, runner: FakeRunner) -> ScreenCastService:
+    cast = service(tmp_path, runner)
     cast.start(REQUEST)
+    runner.process.ended = True
+    return cast
 
-    with pytest.raises(EncodeFailedError, match="could not be waited for: ChildProcessError"):
+
+def finish_with(cast: ScreenCastService, finish: str) -> None:
+    if finish == "wait":
         cast.wait(1.0)
+    else:
+        cast.stop()
 
-    assert state(cast) is ScreenCastState.FAILED
-    assert list(tmp_path.iterdir()) == []
+
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+@pytest.mark.parametrize(
+    ("runner", "message"),
+    [
+        (FakeRunner(output=b""), "status 0 but produced no output"),
+        (FakeRunner(stderr="Invalid data found"), "status 0 but reported errors: Invalid data"),
+        (FakeRunner(process=FakeProcess(status=1), stderr="boom"), "status 1: boom"),
+    ],
+    ids=["missing-output", "stderr-errors", "non-zero"],
+)
+def test_an_ended_encode_without_a_valid_result_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish: str, runner: FakeRunner, message: str
+) -> None:
+    runner = FakeRunner(
+        process=FakeProcess(status=runner.process.status),
+        output=runner.output,
+        stderr=runner.stderr,
+    )
+    cast = end_on_its_own(tmp_path, runner)
+
+    with pytest.raises(EncodeFailedError, match=message):
+        finish_with(cast, finish)
+
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+
+
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+def test_an_empty_output_file_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish: str
+) -> None:
+    runner = FakeRunner()
+    cast = end_on_its_own(tmp_path, runner)
+    Path(runner.argv[0][-1]).write_bytes(b"")
+
+    with pytest.raises(EncodeFailedError, match="produced no output"):
+        finish_with(cast, finish)
+
+
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+def test_an_output_that_is_not_a_regular_file_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish: str
+) -> None:
+    runner = FakeRunner(output=b"")
+    cast = end_on_its_own(tmp_path, runner)
+    output = Path(runner.argv[0][-1])
+    (tmp_path / "elsewhere").write_bytes(b"not the encode")
+    output.symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(EncodeFailedError, match="not a regular file"):
+        finish_with(cast, finish)
+
+
+@pytest.mark.parametrize("finish", ["wait", "stop"])
+def test_an_output_at_the_size_limit_was_cut_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish: str
+) -> None:
+    monkeypatch.setattr(service_module, "MAX_OUTPUT_BYTES", 4)
+    cast = end_on_its_own(tmp_path, FakeRunner(output=b"12345"))
+
+    with pytest.raises(EncodeFailedError, match="reached the 4 byte limit"):
+        finish_with(cast, finish)
+
+
+# P2-2: exceptions become ScreenCastError and every resource is cleaned -------------------
 
 
 def test_a_session_directory_that_cannot_be_created_fails_cleanly(tmp_path: Path) -> None:
@@ -371,51 +645,192 @@ def test_a_session_directory_that_cannot_be_created_fails_cleanly(tmp_path: Path
     assert state(cast) is ScreenCastState.FAILED and runner.argv == []
 
 
-# A4: an encode that already ended in error stays failed ---------------------------------------
-
-
-def test_stop_after_an_encoder_error_keeps_the_failure(tmp_path: Path) -> None:
-    process = FakeProcess(status=1)
-    cast = service(tmp_path, FakeRunner(process=process, stderr="Invalid argument"))
-    cast.start(REQUEST)
-    process.ended = True
-
-    with pytest.raises(EncodeFailedError, match="status 1: Invalid argument"):
-        cast.stop()
-
-    assert state(cast) is ScreenCastState.FAILED and process.signals == []
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_stop_after_a_clean_end_is_stopped_without_signals(tmp_path: Path) -> None:
-    process = FakeProcess()
-    cast = service(tmp_path, FakeRunner(process=process))
-    cast.start(REQUEST)
-    process.ended = True
-
-    cast.stop()
-
-    assert state(cast) is ScreenCastState.STOPPED and process.signals == []
-
-
-# M2: the D0 restriction to synthetic sources is the service's -------------------------------
-
-
-def test_a_source_kind_outside_d0_is_refused_before_any_probe_or_process(
+def test_a_directory_that_cannot_be_made_private_is_removed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(service_module, "D0_ALLOWED_SOURCES", frozenset())
     runner = FakeRunner()
     cast = service(tmp_path, runner)
 
-    with pytest.raises(InvalidScreenCastOption, match="only the synthetic test source"):
+    def refuse(self: Path, mode: int) -> None:
+        raise PermissionError("chmod refused")
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+    with pytest.raises(EncodeFailedError, match="could not be made private: PermissionError"):
         cast.start(REQUEST)
 
-    assert state(cast) is ScreenCastState.FAILED
-    assert runner.argv == [] and list(tmp_path.iterdir()) == []
+    assert nothing_left(tmp_path) and runner.argv == []
 
 
-# Interpreter exit ---------------------------------------------------------------------------
+def test_an_unreadable_output_fails_and_cleans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cast = service(tmp_path, FakeRunner())
+    cast.start(REQUEST)
+
+    def unreadable(path: Path) -> int | None:
+        raise PermissionError("stat refused")
+
+    monkeypatch.setattr(ScreenCastService, "_regular_file_size", staticmethod(unreadable))
+    with pytest.raises(EncodeFailedError, match="files could not be read: PermissionError"):
+        cast.wait(1.0)
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+
+
+def test_an_unreadable_stderr_fails_and_cleans(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    cast = service(tmp_path, runner)
+    cast.start(REQUEST)
+    stderr = Path(runner.argv[0][-1]).parent / STDERR_NAME
+    stderr.unlink()
+    stderr.mkdir()
+
+    with pytest.raises(EncodeFailedError, match="files could not be read: IsADirectoryError"):
+        cast.wait(1.0)
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+
+
+def test_a_command_that_cannot_be_built_fails_before_any_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    cast = service(tmp_path, runner)
+
+    def refuse(*args: object) -> tuple[str, ...]:
+        raise InvalidScreenCastOption("no arguments for this source")
+
+    monkeypatch.setattr(service_module, "encode_command", refuse)
+    with pytest.raises(InvalidScreenCastOption, match="no arguments"):
+        cast.start(REQUEST)
+    assert runner.argv == [] and nothing_left(tmp_path)
+
+
+def test_an_internal_error_becomes_an_encode_failure(tmp_path: Path) -> None:
+    cast = service(tmp_path, FakeRunner(), FakeProbe(error=RuntimeError("bug")))
+
+    with pytest.raises(EncodeFailedError, match="could not start: RuntimeError"):
+        cast.start(REQUEST)
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+
+
+def test_an_exit_hook_that_fails_stops_the_started_encoder(tmp_path: Path) -> None:
+    process = FakeProcess(timeouts=10)
+    hooks = ExitHooks(error=RuntimeError("no atexit"))
+    cast = service(tmp_path, FakeRunner(process=process), hooks=hooks)
+
+    with pytest.raises(EncodeFailedError, match="could not start: RuntimeError"):
+        cast.start(REQUEST)
+    assert process.signals == [TERM] and process.released and nothing_left(tmp_path)
+
+
+def test_an_interrupted_start_cleans_then_re_raises(tmp_path: Path) -> None:
+    cast = service(tmp_path, FakeRunner(error=KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        cast.start(REQUEST)
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+    assert cast.last_error == "the start was interrupted"
+
+
+def test_waiting_that_fails_with_an_os_error_becomes_an_encode_failure(tmp_path: Path) -> None:
+    process = FakeProcess(timeouts=10, wait_error=ChildProcessError("gone"))
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+
+    with pytest.raises(EncodeFailedError, match="could not be waited for: ChildProcessError"):
+        cast.wait(1.0)
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+
+
+def test_close_survives_an_internal_error(tmp_path: Path) -> None:
+    hooks = ExitHooks()
+    cast = service(tmp_path, FakeRunner(process=FakeProcess(timeouts=10)), hooks=hooks)
+    cast.start(REQUEST)
+
+    def broken(callback: Callable[[], None]) -> None:
+        raise RuntimeError("atexit broken")
+
+    cast._forget_on_exit = broken
+    cast.close()
+
+    assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
+    assert cast.last_error == "close() met an internal error: RuntimeError"
+
+
+def test_a_directory_that_cannot_be_removed_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cast = service(tmp_path, FakeRunner())
+    cast.start(REQUEST)
+    cast.wait(1.0)
+    monkeypatch.setattr(shutil, "rmtree", lambda path, ignore_errors: None)
+
+    cast.close()
+
+    assert cast.last_error is not None and "could not be removed" in cast.last_error
+
+
+# Durations -------------------------------------------------------------------------------
+
+
+BAD_SECONDS = [-1.0, math.nan, math.inf, -math.inf, True, 1e9]
+
+
+@pytest.mark.parametrize("value", BAD_SECONDS)
+def test_an_invalid_stop_grace_is_refused(tmp_path: Path, value: float) -> None:
+    with pytest.raises(InvalidScreenCastOption, match="stop_grace_seconds"):
+        ScreenCastService(FakeRunner(), FakeProbe(), stop_grace_seconds=value)
+
+
+@pytest.mark.parametrize("value", [*BAD_SECONDS, 0.0])
+def test_an_invalid_wait_timeout_is_refused_without_changing_the_encode(
+    tmp_path: Path, value: float
+) -> None:
+    process = FakeProcess(timeouts=10)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+
+    with pytest.raises(InvalidScreenCastOption, match="timeout"):
+        cast.wait(value)
+
+    assert state(cast) is ScreenCastState.RUNNING and process.signals == []
+    cast.close()
+
+
+def test_a_zero_stop_grace_is_allowed(tmp_path: Path) -> None:
+    ScreenCastService(FakeRunner(), FakeProbe(), stop_grace_seconds=0)
+
+
+# Concurrency: one call at a time, others refused -----------------------------------------
+
+
+def test_a_concurrent_call_is_refused_and_close_defers_to_the_exit_hook(tmp_path: Path) -> None:
+    gate = threading.Event()
+    process = FakeProcess(gate=gate)
+    hooks = ExitHooks()
+    cast = service(tmp_path, FakeRunner(process=process), hooks=hooks)
+    cast.start(REQUEST)
+    results: list[object] = []
+    waiter = threading.Thread(target=lambda: results.append(cast.wait(5.0)))
+    waiter.start()
+    assert process.entered.wait(5.0)
+
+    try:
+        for call in (cast.stop, cast.reclaim, lambda: cast.start(REQUEST)):
+            with pytest.raises(ScreenCastStateError, match="one call at a time"):
+                call()
+        cast.close()  # refused too, but never raises
+        assert cast.last_error is not None and "refused" in cast.last_error
+        assert hooks.registered == [cast.close]  # interpreter exit still stops the encoder
+    finally:
+        gate.set()
+        waiter.join(5.0)
+
+    assert len(results) == 1 and state(cast) is ScreenCastState.STOPPED
+    cast.close()
+    assert hooks.registered == [] and nothing_left(tmp_path)
+
+
+# Interpreter exit ------------------------------------------------------------------------
 
 
 def test_a_running_encode_is_hooked_to_interpreter_exit_until_closed(tmp_path: Path) -> None:
@@ -427,8 +842,7 @@ def test_a_running_encode_is_hooked_to_interpreter_exit_until_closed(tmp_path: P
 
     hooks.registered[0]()  # what `atexit` would run
 
-    assert process.signals == ["TERM"] and hooks.registered == []
-    assert list(tmp_path.iterdir()) == []
+    assert process.signals == [TERM] and hooks.registered == [] and nothing_left(tmp_path)
 
 
 def test_the_default_session_directory_is_private_and_temporary() -> None:
@@ -449,13 +863,3 @@ def test_the_default_exit_hooks_register_and_unregister() -> None:
     service_module._register_at_exit(callback)
     service_module._unregister_at_exit(callback)
     assert calls == []
-
-
-def test_a_failure_without_stderr_still_reports_its_status(tmp_path: Path) -> None:
-    runner = FakeRunner(process=FakeProcess(status=2))
-    cast = service(tmp_path, runner)
-    cast.start(REQUEST)
-    (Path(runner.argv[0][-1]).parent / STDERR_NAME).unlink()
-
-    with pytest.raises(EncodeFailedError, match=r"^the encoder exited with status 2$"):
-        cast.wait(1.0)

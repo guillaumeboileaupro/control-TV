@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
 
 _RENDER_NODE = re.compile(r"/dev/dri/renderD[0-9]{3}")
 
@@ -141,17 +140,45 @@ class EncoderChoice:
     fallback_reason: str | None = None
 
 
-class VideoSource(Protocol):
-    """Where the picture comes from, as FFmpeg input arguments (no shell, validated values).
+# FFmpeg's built-in test patterns the synthetic source may generate.
+SYNTHETIC_PATTERNS = frozenset({"testsrc2", "testsrc", "smptebars", "smptehdbars"})
 
-    The encoder command does not know which source it encodes; the service decides which kinds it
-    accepts (D0: synthetic only).
+
+@dataclass(frozen=True)
+class SyntheticSource:
+    """FFmpeg's generated test picture (`lavfi`) at the profile's size and rate.
+
+    A source is a typed **specification**, not a command: it carries no FFmpeg arguments, and only
+    the FFmpeg adapter (`ffmpeg.source_arguments`) turns a known source type into arguments.
     """
 
-    @property
-    def kind(self) -> SourceKind: ...
+    pattern: str = "testsrc2"
 
-    def input_arguments(self, profile: VideoProfile) -> tuple[str, ...]: ...
+    def __post_init__(self) -> None:
+        if not isinstance(self.pattern, str) or self.pattern not in SYNTHETIC_PATTERNS:
+            allowed = ", ".join(sorted(SYNTHETIC_PATTERNS))
+            raise InvalidScreenCastOption(
+                f"the synthetic pattern must be one of {allowed}: {self.pattern!r}"
+            )
+
+    @property
+    def kind(self) -> SourceKind:
+        return SourceKind.SYNTHETIC
+
+
+# Every source the package knows, as a closed union of specifications (D0: the synthetic picture
+# only; D1 adds a display source here and its translation in the FFmpeg adapter).
+VideoSource = SyntheticSource
+
+
+def require_d0_source(source: object) -> VideoSource:
+    """`source` if it is exactly a D0 source type (no subclass, no look-alike), else
+    `InvalidScreenCastOption`."""
+    if type(source) is not SyntheticSource:
+        raise InvalidScreenCastOption(
+            f"only the synthetic test source is allowed in D0, not {type(source).__name__}"
+        )
+    return source
 
 
 @dataclass(frozen=True)
@@ -167,8 +194,32 @@ class EncodeRequest:
     crf: int = 23
 
     def __post_init__(self) -> None:
+        require_d0_source(self.source)
         _require_int("qp", self.qp, 1, 51)
         _require_int("crf", self.crf, 0, 51)
+
+    def revalidated(self) -> EncodeRequest:
+        """A copy rebuilt from its plain fields, so every value is checked again: a request (or
+        one of its parts) changed after construction cannot reach a command line."""
+        source = require_d0_source(self.source)
+        try:
+            return EncodeRequest(
+                source=SyntheticSource(source.pattern),
+                profile=VideoProfile(
+                    self.profile.width,
+                    self.profile.height,
+                    self.profile.fps,
+                    self.profile.duration_seconds,
+                ),
+                preference=EncoderPreference(self.preference),
+                device=VaapiDevice(self.device.path),
+                qp=self.qp,
+                crf=self.crf,
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise InvalidScreenCastOption(
+                f"the encode request is malformed: {type(error).__name__}"
+            ) from None
 
 
 @dataclass(frozen=True)

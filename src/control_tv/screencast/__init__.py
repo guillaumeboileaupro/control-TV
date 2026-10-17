@@ -25,6 +25,7 @@ from control_tv.screencast.model import (
     ScreenCastStateError,
     SoftwareX264,
     SourceKind,
+    SyntheticSource,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
@@ -32,7 +33,6 @@ from control_tv.screencast.model import (
 )
 from control_tv.screencast.process import ManagedProcess, ProcessRunner, SubprocessRunner
 from control_tv.screencast.service import ScreenCastService
-from control_tv.screencast.source import SyntheticSource
 
 __all__ = [
     "MAX_DURATION_SECONDS",
