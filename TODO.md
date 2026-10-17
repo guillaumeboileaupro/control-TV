@@ -1,5 +1,28 @@
 # control-TV — TODO
 
+## Temps restant consolidé — 2026-10-17 (estimations, non mesuré)
+
+**TOTAL RESTANT POUR LE PÉRIMÈTRE ACTUEL : 64 à 102,5 heures de travail.**
+Cela inclut D0 à D4 **et** la recette matérielle R1–R4 / séances A–D. D2 est inclus ; ce n'est pas uniquement D0+D1. Les durées ne sont ni des délais calendaires ni des garanties et pourront évoluer après les essais réels.
+
+| Étape | Restant | Durée estimée |
+|---|---|---:|
+| D0 — socle screencast | Corriger les deux P1 restants de la PR #81 (course `reclaim()` ; fuite `close()`), tests ciblés, revue Codex du nouveau commit, finaliser #79/#81 **uniquement après accord de fusion** | **1–2 h** |
+| D1 — duplication X11 vers Freebox | Spikes de réception sur flux synthétique, capture locale avec consentement, développement de la duplication, essais et recette | **29–42,5 h** |
+| D2 — extension X11 | Écran virtuel indépendant, intégration au bureau et diffusion, faisabilité dépendante du pilote Intel | **12–24 h** |
+| D3 — interface | Choix TV/écran, modes Dupliquer/Étendre/Arrêter, profils, états et réglages avancés ; éviter de recompter le Start/Stop minimal déjà prévu dans D1 | **8–12 h** |
+| D4 — sécurité et validation | Consentement, authentification et confinement LAN, nettoyage, régressions, validation réelle, documentation | **8–12 h** |
+| R1–R4 / séances A–D | Recette matérielle télécommandes Ubuntu et Android, commandes C1–C7, latence K1–K3, preuves distinctes CI/simulation/matériel | **6–10 h** |
+| **TOTAL** | **D0 + D1 + D2 + D3 + D4 + recette télécommandes** | **64–102,5 h** |
+
+**Hypothèses et incertitudes :** D1 dépend de la compatibilité réelle du récepteur Freebox (HLS / fMP4 / Cast Streaming) ; D2 dépend de la possibilité de créer un affichage virtuel avec X11/i915. En cas d'échec des spikes, réestimer avant développement. Les chiffres D1 reprennent l'étude détaillée de Claude (23–34 h implémentation, 3–4,5 h spikes, 3–4 h recette, arrondis en enveloppe 29–42,5 h) ; les autres plages proviennent du plan antérieur et des dernières revues. Pas de double comptage des essais D1 dans D4.
+
+**État des PR :** #79 architecture documentaire ouverte ; #81 socle D0 ouvert au dernier commit connu `414e74a`. Codex a validé trois corrections et signalé deux P1 résiduels : `reclaim()` perd un handle si le groupe termine entre deux observations ; `close()` peut oublier un processus si le retrait du hook atexit échoue. CI verte ne signifie pas revue approuvée ni validation matérielle.
+
+**Séquence et consentement :** terminer D0 ; recette télécommandes ; spikes synthétiques D1 avec accord explicite pour TV/réseau ; capture du bureau uniquement après accord distinct ; D2 ; D3 ; D4. Aucune fusion, installation, capture, activation ADB, commande TV ou test matériel sans autorisation expresse. Travail sur branche et PR, pas sur `main`.
+
+---
+
 ## 0. Suivi de la recette finale et de l'affichage distant — 2026-10-17
 
 **État de référence :** PR #71 (logos) et #72 (recette automatisée) fusionnées dans `main` ; commit `7569c1c`, CI push `39021854559` réussie. Artefacts de cette CI récupérés localement dans `dist/final-acceptance/` : `control-tv_0.1.0_amd64.deb` et `app-universal-debug.apk`. Les anciens artefacts du 15 octobre ne sont pas des preuves pour cette version.
