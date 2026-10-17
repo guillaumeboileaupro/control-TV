@@ -5,7 +5,7 @@
 // `describeRemote` says of the state `main.ts` hands in.
 
 import { disclosure, icon, setBusy, text } from "./dom.ts";
-import { appLogo } from "./app-logos.ts";
+import { appLogo, type AppLogo } from "./app-logos.ts";
 import type { AppState } from "./model.ts";
 import {
   appHue,
@@ -181,15 +181,7 @@ export function createRemotePanel(
         avatar.textContent = appInitial(appLabel(app));
         avatar.style.setProperty("--hue", String(appHue(app.package)));
       } else {
-        avatar.classList.add("has-logo");
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("viewBox", "0 0 24 24");
-        svg.setAttribute("focusable", "false");
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", logo.path);
-        path.setAttribute("fill", `#${logo.hex}`);
-        svg.append(path);
-        avatar.append(svg);
+        drawLogo(avatar, logo);
       }
       const name = text("span", "app-name", presentation.label);
       name.classList.toggle("is-technical", presentation.technicalLabel);
@@ -210,4 +202,28 @@ export function createRemotePanel(
   }
 
   return { render };
+}
+
+// The tile's mark: a Simple Icons path drawn inline, or the app's own logo file (local, decorative:
+// the tile's button already carries the app's name).
+function drawLogo(avatar: HTMLElement, logo: AppLogo): void {
+  avatar.classList.add("has-logo");
+  if (logo.kind === "image") {
+    avatar.classList.add("has-image", `on-${logo.background}`);
+    const image = document.createElement("img");
+    image.src = logo.src;
+    image.alt = "";
+    image.decoding = "async";
+    image.draggable = false;
+    avatar.append(image);
+    return;
+  }
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", logo.path);
+  path.setAttribute("fill", `#${logo.hex}`);
+  svg.append(path);
+  avatar.append(svg);
 }
