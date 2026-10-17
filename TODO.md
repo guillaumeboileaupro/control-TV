@@ -36,28 +36,43 @@ Constat après installation du `.deb` de #74 : un seul logo (Apple TV) dans la g
 - [ ] **Propriétaire — contrôle visuel** sur Ubuntu puis Android après installation autorisée, en particulier CANAL+ (dessin de 1995), Disney+ (version 2019) et TF1+ (reproduction CC0).
 - [ ] **Restant** : logo M6+ si une source sous licence redistribuable apparaît ; noms et logos des applications réellement installées encore inconnues du catalogue, à relever via ADB (après accord) ; Paramètres et Recommandations restent en initiale par choix.
 
-#### B ter. Applications réellement installées sur la Freebox — 2026-10-17 (branche `feat/freebox-app-logos`)
+#### B ter. Applications réellement installées sur la Freebox — inventaire complet (2026-10-17)
 
-La TV est une Freebox sous Android TV : 28 applications listées. Seules **12** sont visibles dans les deux captures disponibles (`Captures d'écran` du 2026-10-17) ; les **16 autres n'ont pas été transmises** à Claude (ni texte ni capture complète) et ne sont donc pas traitées. Aucun identifiant n'est deviné.
+La TV est une Freebox sous Android TV ; 28 applications, relevées sur quatre captures de la grille (11 h 57, 13 h 43, 14 h 31, 14 h 32). Noms vérifiés sur la fiche Google Play de chaque identifiant ; aucun identifiant deviné.
 
-| Identifiant exact | Nom affiché | Logo | Source / licence | Remarque |
-|---|---|---|---|---|
-| `com.apple.atve.androidtv.appletv` | Apple TV | oui | Simple Icons, CC0 | — |
-| `tv.arte.plus7` | ARTE | oui | Commons, domaine public | #75 |
-| `com.canal.android.canal` | CANAL+ | oui | Commons, domaine public | #75 |
-| `com.disney.disneyplus` | Disney+ | oui | Commons, domaine public | #75 |
-| `com.cbs.ca` | Paramount+ | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
-| `com.google.android.videos` | Google TV | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
-| `com.wbd.stream` | HBO Max | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
-| `fr.francetv.zouzous` | Okoo | oui | Commons, domaine public | nom vérifié sur Google Play |
-| `com.nextinteractive.rmcbfmplay.tv.free` | identifiant | non | — | édition Free, absente de Google Play : nom et logo invérifiables |
-| `fr.free.aktu` | identifiant | non | — | application Free, absente de Google Play |
-| `fr.freebox.disneypluslauncher` | identifiant | non | — | **lanceur Freebox** de Disney+, pas l'application Disney+ |
-| `fr.freebox.fbx8lc.fbxdiags` | identifiant | non | — | outil de diagnostic Freebox |
-| 16 autres | — | — | — | **non communiquées** : liste complète à fournir (texte ou captures de toute la grille) |
+| # | Identifiant exact | Nom affiché | Logo | Source / licence | Raison si absent |
+|---|---|---|---|---|---|
+| 1 | `com.apple.atve.androidtv.appletv` | Apple TV | oui | Simple Icons, CC0 | — |
+| 2 | `tv.arte.plus7` | ARTE | oui | Commons, domaine public | — |
+| 3 | `com.canal.android.canal` | CANAL+ | oui | Commons, domaine public | — |
+| 4 | `com.disney.disneyplus` | Disney+ | oui | Commons, domaine public | — |
+| 5 | `fr.francetv.pluzz` | france.tv | oui | Commons, domaine public | — |
+| 6 | `com.google.android.play.games` | Google Play Games | oui | Commons, domaine public | — |
+| 7 | `com.android.vending` | Google Play Store | oui | Simple Icons, CC0 | — |
+| 8 | `com.google.android.videos` | Google TV | oui | Simple Icons, CC0 | — |
+| 9 | `com.wbd.stream` | HBO Max | oui | Simple Icons, CC0 | — |
+| 10 | `com.netflix.ninja` | Netflix | oui | Simple Icons, CC0 | — |
+| 11 | `fr.francetv.zouzous` | Okoo | oui | Commons, domaine public | — |
+| 12 | `com.cbs.ca` | Paramount+ | oui | Simple Icons, CC0 | — |
+| 13 | `com.amazon.amazonvideo.livingroom` | Prime Video | oui | Commons, domaine public | — |
+| 14 | `com.spotify.tv.android` | Spotify | oui | Simple Icons, CC0 | — |
+| 15 | `fr.tf1.mytf1.free` | TF1+ | **oui (ajout)** | Commons, CC0 | édition Freebox de TF1+ (« TF1+ : Streaming pour Freebox ») |
+| 16 | `tv.twitch.android.app` | Twitch | **oui (ajout)** | Simple Icons, CC0 | — |
+| 17–20 | 4 tuiles de la dernière ligne, coupées sur les captures | non lisible | un logo s'affiche, donc leur identifiant est déjà au catalogue | — | identifiants à relever sur une capture complète |
+| 21 | `fr.tfou.max` | TFOU MAX (**ajout**) | non | — | aucun logo sous licence redistribuable |
+| 22 | `fr.m6.m6replay.free` | identifiant | non | — | édition Freebox de M6+, absente de Google Play ; aucun logo M6+ sous licence |
+| 23 | `net.oqee.androidtv` | identifiant | non | — | absente de Google Play ; seul logo Commons en CC BY-SA par un tiers : refusé |
+| 24 | `net.oqee.launcher` | identifiant | non | — | **lanceur** OQEE, pas l'application |
+| 25 | `com.nextinteractive.rmcbfmplay.tv.free` | identifiant | non | — | édition Free, absente de Google Play |
+| 26 | `fr.free.aktu` | identifiant | non | — | application Free, absente de Google Play |
+| 27 | `fr.freebox.disneypluslauncher` | identifiant | non | — | **lanceur Freebox** de Disney+, pas Disney+ |
+| 28 | `fr.freebox.fbx8lc.fbxdiags` | identifiant | non | — | outil de diagnostic Freebox |
 
-- [x] Logos et noms ajoutés pour les 4 applications vérifiées ; applications Freebox laissées en initiale avec raison ; tests de correspondance et de repli.
-- [ ] **Propriétaire** : fournir les 16 identifiants manquants (« List again » puis captures de toute la grille, ou copie texte) pour terminer la couverture.
+Bilan : 20 applications avec logo, 8 sans (raisons ci-dessus). Anomalie relevée : `fr.m6.m6replay.by` (nom « M6+ » dans le backend) n'existe pas sur Google Play ; l'identifiant vérifié de M6+ est `fr.m6.m6replay`, ajouté.
+
+- [x] Logos et noms ajoutés : Twitch, TF1+ (édition Freebox), noms TFOU MAX et M6+ ; tests de correspondance et de repli.
+- [ ] **Propriétaire** : une capture de la dernière ligne complète pour confirmer les identifiants 17–20.
+- [ ] Logos OQEE, M6+, TFOU MAX : seulement si une source sous licence redistribuable apparaît (ou un accord écrit des éditeurs).
 
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
