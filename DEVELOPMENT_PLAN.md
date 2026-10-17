@@ -645,6 +645,27 @@ Verify:
 - [ ] `SECURITY.md` matches the released versions and private vulnerability reporting has been verified to work;
 - [ ] build disk usage remains understood and controlled.
 
+
+## Phase 10 - Remote display: Ubuntu (X11) to the TV
+
+Owner request (2026-10-17): show the Ubuntu desktop on the Freebox (Google TV), first as a
+**duplication** of an existing monitor, then as a real **extension** (an additional monitor).
+Study: [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md). Starts after the
+remote-control hardware acceptance ([`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md))
+unless the owner reprioritizes. Nothing below is implemented or validated.
+
+- [x] feasibility study: receivers (HLS to the Default Media Receiver, Cast Streaming mirroring,
+  custom web receiver, Sunshine/Moonlight, VNC), capture and encoding, virtual monitors (evdi,
+  driver virtual heads, `xrandr --setmonitor`), architecture, security, tests, risks (documentation
+  only, 2026-10-17);
+- [ ] D0: read-only inventory (GPU, hardware encoders, outputs, Secure Boot) and spikes on a test
+  stream (HLS to the Default Media Receiver; Cast Streaming sender);
+- [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
+  `ScreenCastService`, automated tests;
+- [ ] D2: extension (virtual monitor), guaranteed removal;
+- [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
+- [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
+  owner).
 ## Mandatory build/temp cleanup
 
 At every build/test/package iteration:
