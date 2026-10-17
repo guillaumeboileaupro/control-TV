@@ -26,6 +26,9 @@ entries can have their own terms. Brand marks are shown only to identify the cor
 | YouTube          | `com.google.android.youtube.tv`        | [YouTube brand resources](https://www.youtube.com/howyoutubeworks/resources/brand-resources/)                                                                        |
 | YouTube Kids     | `com.google.android.youtube.tvkids`    | [YouTube Kids](https://www.youtube.com/intl/ALL_us/kids/)                                                                                                            |
 | YouTube Music    | `com.google.android.youtube.tvmusic`   | [Google partner brand resources](https://partnermarketinghub.withgoogle.com/)                                                                                        |
+| Google TV        | `com.google.android.videos`            | Google Play lists this package as "Google TV" (2026-10-17)                                                                                                           |
+| Paramount+       | `com.cbs.ca`                           | Google Play lists this package as "Paramount+" (2026-10-17)                                                                                                          |
+| HBO Max          | `com.wbd.stream`                       | Google Play lists this package as "HBO Max" (2026-10-17)                                                                                                             |
 
 ## Official logo files (`assets/app-logos/`)
 
@@ -47,6 +50,7 @@ The drawing itself is unchanged.
 | `molotov.svg`           | Molotov           | `com.molotov.app`                   | [Logo Molotov.tv.svg](https://commons.wikimedia.org/wiki/File:Logo_Molotov.tv.svg)                               | Public domain (PD-textlogo)                         | white letters: drawn on a dark tile, colours unchanged                             |
 | `prime-video.svg`       | Prime Video       | `com.amazon.amazonvideo.livingroom` | [Prime Video logo (2024).svg](<https://commons.wikimedia.org/wiki/File:Prime_Video_logo_(2024).svg>)             | Public domain (PD-textlogo)                         | logo in use since 2024                                                             |
 | `tf1-plus.svg`          | TF1+              | `fr.tf1.mytf1`                      | [Logo TF1+.svg](https://commons.wikimedia.org/wiki/File:Logo_TF1%2B.svg)                                         | CC0 (uploader's reproduction of the TF1+ text logo) | **owner to confirm visually**                                                      |
+| `okoo.svg`              | Okoo              | `fr.francetv.zouzous`               | [Logo Okoo 2019.svg](https://commons.wikimedia.org/wiki/File:Logo_Okoo_2019.svg)                                 | Public domain (PD-textlogo)                         | traced from france.tv's own Okoo SVG                                               |
 
 ## Apps without a mark
 
@@ -55,6 +59,11 @@ The drawing itself is unchanged.
 - **Android Settings** (`com.android.tv.settings`) and **Google TV recommendations**
   (`com.google.android.tvrecommendations`): the Android and Google TV marks identify different
   products. Keep the initial.
+- **Freebox-specific packages** (not on Google Play, so neither their official name nor their
+  logo can be verified): `fr.freebox.disneypluslauncher` (a Freebox launcher that opens Disney+;
+  a launcher is not the app it opens), `fr.freebox.fbx8lc.fbxdiags` (Freebox diagnostics),
+  `fr.free.aktu` and `com.nextinteractive.rmcbfmplay.tv.free` (Free editions). They keep their
+  package as label and the initial.
 - Any package not listed above keeps the initial. A logo must not be approximated, or copied from
   an unofficial source or a source whose licence does not allow redistribution, merely to replace
   that fallback.

@@ -36,6 +36,29 @@ Constat après installation du `.deb` de #74 : un seul logo (Apple TV) dans la g
 - [ ] **Propriétaire — contrôle visuel** sur Ubuntu puis Android après installation autorisée, en particulier CANAL+ (dessin de 1995), Disney+ (version 2019) et TF1+ (reproduction CC0).
 - [ ] **Restant** : logo M6+ si une source sous licence redistribuable apparaît ; noms et logos des applications réellement installées encore inconnues du catalogue, à relever via ADB (après accord) ; Paramètres et Recommandations restent en initiale par choix.
 
+#### B ter. Applications réellement installées sur la Freebox — 2026-10-17 (branche `feat/freebox-app-logos`)
+
+La TV est une Freebox sous Android TV : 28 applications listées. Seules **12** sont visibles dans les deux captures disponibles (`Captures d'écran` du 2026-10-17) ; les **16 autres n'ont pas été transmises** à Claude (ni texte ni capture complète) et ne sont donc pas traitées. Aucun identifiant n'est deviné.
+
+| Identifiant exact | Nom affiché | Logo | Source / licence | Remarque |
+|---|---|---|---|---|
+| `com.apple.atve.androidtv.appletv` | Apple TV | oui | Simple Icons, CC0 | — |
+| `tv.arte.plus7` | ARTE | oui | Commons, domaine public | #75 |
+| `com.canal.android.canal` | CANAL+ | oui | Commons, domaine public | #75 |
+| `com.disney.disneyplus` | Disney+ | oui | Commons, domaine public | #75 |
+| `com.cbs.ca` | Paramount+ | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
+| `com.google.android.videos` | Google TV | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
+| `com.wbd.stream` | HBO Max | oui | Simple Icons, CC0 | nom vérifié sur Google Play |
+| `fr.francetv.zouzous` | Okoo | oui | Commons, domaine public | nom vérifié sur Google Play |
+| `com.nextinteractive.rmcbfmplay.tv.free` | identifiant | non | — | édition Free, absente de Google Play : nom et logo invérifiables |
+| `fr.free.aktu` | identifiant | non | — | application Free, absente de Google Play |
+| `fr.freebox.disneypluslauncher` | identifiant | non | — | **lanceur Freebox** de Disney+, pas l'application Disney+ |
+| `fr.freebox.fbx8lc.fbxdiags` | identifiant | non | — | outil de diagnostic Freebox |
+| 16 autres | — | — | — | **non communiquées** : liste complète à fournir (texte ou captures de toute la grille) |
+
+- [x] Logos et noms ajoutés pour les 4 applications vérifiées ; applications Freebox laissées en initiale avec raison ; tests de correspondance et de repli.
+- [ ] **Propriétaire** : fournir les 16 identifiants manquants (« List again » puis captures de toute la grille, ou copie texte) pour terminer la couverture.
+
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.

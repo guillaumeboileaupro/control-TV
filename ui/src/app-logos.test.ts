@@ -16,6 +16,9 @@ const MARKS = {
   "com.plexapp.android": "Plex",
   "com.spotify.tv.android": "Spotify",
   "org.videolan.vlc": "VLC media player",
+  "com.cbs.ca": "Paramount+",
+  "com.google.android.videos": "Google TV",
+  "com.wbd.stream": "HBO Max",
 } as const;
 
 const FILES = {
@@ -29,6 +32,7 @@ const FILES = {
   ],
   "com.molotov.app": ["Molotov", "/app-logos/molotov.svg", "dark"],
   "fr.francetv.pluzz": ["france.tv", "/app-logos/france-tv.svg", "light"],
+  "fr.francetv.zouzous": ["Okoo", "/app-logos/okoo.svg", "light"],
   "fr.tf1.mytf1": ["TF1+", "/app-logos/tf1-plus.svg", "light"],
   "tv.arte.plus7": ["ARTE", "/app-logos/arte.svg", "light"],
 } as const;
@@ -69,6 +73,12 @@ describe("TV app logos", () => {
       "fr.m6.m6replay.by",
       "com.android.tv.settings",
       "com.google.android.tvrecommendations",
+      // Freebox-specific packages: no official name or logo can be verified for them, and a
+      // launcher is not the app it opens.
+      "fr.freebox.disneypluslauncher",
+      "fr.freebox.fbx8lc.fbxdiags",
+      "fr.free.aktu",
+      "com.nextinteractive.rmcbfmplay.tv.free",
       // Keys inherited from Object.prototype are never catalogue entries.
       "constructor",
       "__proto__",
