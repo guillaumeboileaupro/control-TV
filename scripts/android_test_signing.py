@@ -1,0 +1,252 @@
+"""The stable test signing identity of the Android debug APK (docs/ANDROID_TEST_SIGNING.md).
+
+Android updates an installed app in place, keeping its data, preferences and home-screen widget,
+only when the new APK has the same signing certificate. Without configuration every builder signs
+with its own debug key (a new one on every CI run), so each build needs an uninstall.
+
+With `CONTROL_TV_ANDROID_KEYSTORE` and `CONTROL_TV_ANDROID_KEYSTORE_PASSWORD` set, Gradle signs
+debug builds with one test key (alias `control-tv-test`). Its public certificate SHA-256 is pinned
+in `packaging/android/test-signing-certificate.sha256`, and `verify-apk` refuses an APK signed by
+any other key when the stable key was meant to be used: a replaced key never passes silently.
+
+The private key and its password never enter the repository, a command line or a log: keytool
+reads the password from the environment (`-storepass:env`), and nothing here prints it.
+
+Usage:
+    CONTROL_TV_ANDROID_KEYSTORE_PASSWORD=... python3 scripts/android_test_signing.py \
+        generate --keystore ~/.config/control-tv/android-test.p12
+    python3 scripts/android_test_signing.py verify-apk --apk APK --apksigner PATH \
+        [--pin FILE] [--stable-key-used] [--require-stable] \
+        [--commit SHA --run-id ID --provenance-output PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+
+KEY_ALIAS = "control-tv-test"
+KEYSTORE_ENV = "CONTROL_TV_ANDROID_KEYSTORE"
+PASSWORD_ENV = "CONTROL_TV_ANDROID_KEYSTORE_PASSWORD"
+PIN = Path(__file__).resolve().parent.parent / "packaging/android/test-signing-certificate.sha256"
+APK_SCHEMA = "control-tv-apk-provenance/1"
+MIN_PASSWORD = 12
+
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_APKSIGNER = re.compile(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$", re.M)
+_KEYTOOL = re.compile(r"^\s*SHA256:\s*((?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})\s*$", re.M)
+
+# Runs a command with exactly the given environment (keytool reads the password from it).
+Runner = Callable[[Sequence[str], Mapping[str, str]], subprocess.CompletedProcess[str]]
+
+
+class SigningError(Exception):
+    """The signing identity is missing, ambiguous or not the expected one."""
+
+
+class Identity(StrEnum):
+    PINNED = "pinned-test-key"
+    EPHEMERAL = "ephemeral-debug-key"
+
+
+@dataclass(frozen=True)
+class Verdict:
+    identity: Identity
+    certificate: str
+    message: str
+
+
+def apksigner_certificates(output: str) -> tuple[str, ...]:
+    """The signer certificate SHA-256 digests printed by `apksigner verify --print-certs`."""
+    return tuple(match.group(1).lower() for match in _APKSIGNER.finditer(output))
+
+
+def keytool_certificate(output: str) -> str:
+    """The certificate SHA-256 printed by `keytool -list -v` (colons removed, lower case)."""
+    found = [match.group(1) for match in _KEYTOOL.finditer(output)]
+    if len(found) != 1:
+        raise SigningError("keytool did not print exactly one SHA-256 certificate fingerprint")
+    return found[0].replace(":", "").lower()
+
+
+def read_pin(path: Path) -> str | None:
+    """The pinned certificate digest, or None when no identity is pinned yet."""
+    try:
+        lines = path.read_text(encoding="ascii").splitlines()
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as error:
+        raise SigningError(f"unreadable pin file: {type(error).__name__}") from None
+    values = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    if len(values) != 1 or not _DIGEST.fullmatch(values[0]):
+        raise SigningError("the pin file must hold one lower-case SHA-256 certificate digest")
+    return values[0]
+
+
+def judge(
+    certificates: Sequence[str],
+    pin: str | None,
+    *,
+    stable_key_used: bool,
+    require_stable: bool,
+) -> Verdict:
+    """Whether an APK's signature is acceptable; `SigningError` says why not."""
+    if len(certificates) != 1:
+        raise SigningError(f"expected exactly one signer, found {len(certificates)}")
+    certificate = certificates[0]
+    if stable_key_used:
+        if pin is None:
+            raise SigningError(
+                "the stable test key was used but no certificate is pinned: commit "
+                "packaging/android/test-signing-certificate.sha256 first"
+            )
+        if certificate != pin:
+            raise SigningError(
+                "the APK is signed by another key than the pinned test identity "
+                "(the key was replaced or the secret is wrong); refusing it"
+            )
+        return Verdict(Identity.PINNED, certificate, "signed with the pinned test identity")
+    if pin is not None and require_stable:
+        raise SigningError(
+            "a test identity is pinned but this build used an ephemeral debug key "
+            "(signing secret unavailable)"
+        )
+    note = (
+        "ephemeral debug key: installing it over another build needs an uninstall"
+        if pin is None
+        else "ephemeral debug key, NOT the pinned test identity: do not install over a pinned build"
+    )
+    return Verdict(Identity.EPHEMERAL, certificate, note)
+
+
+def apk_provenance(
+    apk: Path, verdict: Verdict, *, commit: str, run_id: int | None
+) -> Mapping[str, str | int | None]:
+    if not _COMMIT.fullmatch(commit):
+        raise SigningError("the commit must be a full 40-character Git SHA")
+    digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+    return {
+        "schema": APK_SCHEMA,
+        "commit": commit,
+        "runId": run_id,
+        "apkSha256": digest,
+        "signerCertificateSha256": verdict.certificate,
+        "signingIdentity": verdict.identity.value,
+    }
+
+
+def _run(args: Sequence[str], environ: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(args), capture_output=True, text=True, check=False, shell=False, env=dict(environ)
+    )
+
+
+def generate(keystore: Path, environ: Mapping[str, str], run: Runner = _run) -> str:
+    """Creates the test key in a new PKCS#12 keystore and returns its certificate digest.
+
+    Never replaces an existing keystore; the password comes from `PASSWORD_ENV` only."""
+    if keystore.exists():
+        raise SigningError(f"{keystore} exists; an existing key is never replaced")
+    password = environ.get(PASSWORD_ENV, "")
+    if len(password) < MIN_PASSWORD:
+        raise SigningError(
+            f"set {PASSWORD_ENV} to a password of at least {MIN_PASSWORD} characters"
+        )
+    keystore.parent.mkdir(parents=True, exist_ok=True)
+    # English output whatever the locale, so the fingerprint line can be read back.
+    keytool = ("keytool", "-J-Duser.language=en", "-J-Duser.country=US")
+    common = ("-keystore", str(keystore), "-storetype", "PKCS12", "-alias", KEY_ALIAS)
+    secret = ("-storepass:env", PASSWORD_ENV, "-keypass:env", PASSWORD_ENV)
+    created = run(
+        (
+            *keytool,
+            "-genkeypair",
+            *common,
+            "-keyalg",
+            "RSA",
+            "-keysize",
+            "3072",
+            "-validity",
+            "10000",
+            "-dname",
+            "CN=control-TV test signing, O=control-TV",
+            *secret,
+            "-noprompt",
+        ),
+        environ,
+    )
+    if created.returncode != 0:
+        raise SigningError("keytool could not create the key (its output is not shown)")
+    os.chmod(keystore, 0o600)
+    listed = run((*keytool, "-list", "-v", *common, "-storepass:env", PASSWORD_ENV), environ)
+    if listed.returncode != 0:
+        raise SigningError("keytool could not read the new key back")
+    return keytool_certificate(listed.stdout)
+
+
+def verify_apk(
+    apk: Path, apksigner: Path, environ: Mapping[str, str], run: Runner = _run
+) -> tuple[str, ...]:
+    checked = run((str(apksigner), "verify", "--print-certs", str(apk)), environ)
+    if checked.returncode != 0:
+        raise SigningError("apksigner rejected the APK signature")
+    return apksigner_certificates(checked.stdout)
+
+
+def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.environ) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    create = commands.add_parser("generate", help="create the stable test key (never replaces)")
+    create.add_argument("--keystore", type=Path, required=True)
+    check = commands.add_parser("verify-apk", help="check an APK's signing identity")
+    check.add_argument("--apk", type=Path, required=True)
+    check.add_argument("--apksigner", type=Path, required=True)
+    check.add_argument("--pin", type=Path, default=PIN)
+    check.add_argument("--stable-key-used", action="store_true")
+    check.add_argument("--require-stable", action="store_true")
+    check.add_argument("--commit")
+    check.add_argument("--run-id", type=int)
+    check.add_argument("--provenance-output", type=Path)
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.command == "generate":
+            digest = generate(arguments.keystore.expanduser(), environ)
+            print(f"certificate SHA-256: {digest}")
+            print("pin it: write this digest to packaging/android/test-signing-certificate.sha256")
+            return 0
+        verdict = judge(
+            verify_apk(arguments.apk, arguments.apksigner, environ),
+            read_pin(arguments.pin),
+            stable_key_used=arguments.stable_key_used,
+            require_stable=arguments.require_stable,
+        )
+        print(f"signing identity: {verdict.identity.value}")
+        print(f"signer certificate SHA-256: {verdict.certificate}")
+        print(verdict.message)
+        if arguments.provenance_output is not None:
+            if arguments.commit is None:
+                raise SigningError("--provenance-output needs --commit")
+            document = apk_provenance(
+                arguments.apk, verdict, commit=arguments.commit, run_id=arguments.run_id
+            )
+            arguments.provenance_output.write_text(
+                json.dumps(document, indent=2) + "\n", encoding="utf-8"
+            )
+    except SigningError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

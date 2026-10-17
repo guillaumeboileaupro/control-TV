@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import time
-
-from acceptance import Capability, Context, Outcome, Result, Scenario, make_result
+from acceptance import Capability, Context, Result, Scenario, manual_only
 
 
 def infrastructure_only(context: Context) -> Result:
     del context
-    return make_result(
-        SCENARIOS[0],
-        Outcome.BLOCKED,
-        "hardware adapter is intentionally absent in the infrastructure-only phase",
-        started=time.monotonic(),
-    )
+    return manual_only(SCENARIOS[0], "the two-remote steps R1-R4 and C1-C7")
 
 
 SCENARIOS = (

@@ -23,9 +23,11 @@ keyboard also require TV-command authorization. Application launch additionally 
 already have been enabled and authorized by the owner. The runner never pairs the remote channel,
 enables Android developer options, starts ADB, changes Wi-Fi or sends a command by itself.
 
-Even when flags are supplied, this iteration's real adapter remains blocked. Execution is enabled
-only after a separately reviewed adapter can identify both builds, the selected TV and the private
-evidence destination, and after the owner authorizes the individual step.
+**There is no automated real-TV adapter.** Even when every flag is supplied, each scenario reports
+`BLOCKED` ("no automated adapter exists … run it by hand"), and it is run by hand per
+[MANUAL_ACCEPTANCE_PROTOCOL.md](MANUAL_ACCEPTANCE_PROTOCOL.md), after the owner authorizes that
+individual step. An automated adapter would first have to be written and reviewed, and be able to
+identify both builds, the selected TV and the private evidence destination.
 
 ## C6 instrumentation
 

@@ -1,8 +1,13 @@
-"""Real Ubuntu acceptance adapter, isolated behind an injectable host boundary."""
+"""Real Ubuntu acceptance adapter, isolated behind an injectable host boundary.
+
+The build under test is identified by its provenance manifest (commit, version, package and
+binary SHA-256, see `acceptance_identity`), never by its version alone: every package is 0.1.0.
+A real validation is refused when that identity cannot be established, and an installed package
+is validated only when its application binary is the artifact's.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -13,6 +18,13 @@ from pathlib import Path
 from typing import Protocol
 
 from acceptance import Context, Outcome, Result, Scenario, make_result
+from acceptance_identity import (
+    DebProvenance,
+    IdentityError,
+    read_deb_provenance,
+    sha256_file,
+    verify_deb,
+)
 from acceptance_platforms import configured_artifact
 
 PACKAGE = "control-tv"
@@ -22,6 +34,8 @@ WATCHER_DESTINATION = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
 TRAY_PATH = "/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv"
 RECEIPT = "ubuntu-install-receipt.json"
+RECEIPT_SCHEMA = 2
+PROVENANCE = "provenance.json"
 
 
 class ManagedProcess(Protocol):
@@ -54,6 +68,10 @@ class UbuntuHost(Protocol):
     def launch(self, args: Sequence[str]) -> ManagedProcess: ...
 
     def sleep(self, seconds: float) -> None: ...
+
+    def file_sha256(self, path: Path) -> str | None:
+        """The SHA-256 of an installed file, or None when it cannot be read."""
+        ...
 
 
 class SubprocessUbuntuHost:
@@ -91,6 +109,12 @@ class SubprocessUbuntuHost:
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
+
+    def file_sha256(self, path: Path) -> str | None:
+        try:
+            return sha256_file(path)
+        except IdentityError:
+            return None
 
 
 def _completed_log(label: str, completed: subprocess.CompletedProcess[str]) -> str:
@@ -169,14 +193,6 @@ def _receipt_path(context: Context) -> Path:
     return context.state_dir / RECEIPT
 
 
-def _artifact_digest(artifact: Path) -> str:
-    digest = hashlib.sha256()
-    with artifact.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _read_receipt(path: Path) -> Mapping[str, object] | None:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -185,16 +201,23 @@ def _read_receipt(path: Path) -> Mapping[str, object] | None:
     return document if isinstance(document, dict) else None
 
 
-def _write_receipt(path: Path, *, digest: str, version: str, state: str) -> None:
+def _provenance_path(context: Context, artifact: Path) -> Path:
+    configured = context.environment.artifacts.get("deb-provenance")
+    return Path(configured) if configured else artifact.parent / PROVENANCE
+
+
+def _write_receipt(path: Path, *, provenance: DebProvenance, state: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(
         json.dumps(
             {
-                "schemaVersion": 1,
+                "schemaVersion": RECEIPT_SCHEMA,
                 "package": PACKAGE,
-                "artifactSha256": digest,
-                "version": version,
+                "commit": provenance.commit,
+                "artifactSha256": provenance.deb_sha256,
+                "binarySha256": provenance.binary_sha256,
+                "version": provenance.version,
                 "state": state,
             },
             indent=2,
@@ -325,15 +348,46 @@ def run_ubuntu_acceptance(
             proof="dpkg-deb metadata",
         )
 
-    artifact_digest = _artifact_digest(artifact)
+    provenance_path = _provenance_path(context, artifact)
+    try:
+        provenance = read_deb_provenance(provenance_path)
+        problems = verify_deb(artifact, provenance)
+    except IdentityError as error:
+        return _result(
+            scenario,
+            Outcome.BLOCKED,
+            f"the build identity cannot be established: {error}",
+            started,
+            logs,
+            observed="no package mutation or validation attempted",
+            proof=str(provenance_path),
+        )
+    if problems or provenance.version != version or provenance.architecture != architecture:
+        return _result(
+            scenario,
+            Outcome.FAIL,
+            "the package does not match its provenance: "
+            + "; ".join(problems or ["the dpkg-deb metadata differs from the provenance"]),
+            started,
+            logs,
+            observed=f"commit={provenance.commit}; deb={provenance.deb_sha256}",
+            proof=f"{provenance_path}; recomputed SHA-256 of the package and its binary",
+        )
+    identity = (
+        f"commit={provenance.commit}; deb={provenance.deb_sha256}; "
+        f"binary={provenance.binary_sha256}"
+    )
+
     receipt_path = _receipt_path(context)
     receipt_present = receipt_path.exists()
     receipt = _read_receipt(receipt_path)
     matching_receipt = receipt is not None and all(
         (
-            receipt.get("schemaVersion") == 1,
+            receipt.get("schemaVersion") == RECEIPT_SCHEMA,
             receipt.get("package") == PACKAGE,
-            receipt.get("artifactSha256") == artifact_digest,
+            receipt.get("commit") == provenance.commit,
+            receipt.get("artifactSha256") == provenance.deb_sha256,
+            receipt.get("binarySha256") == provenance.binary_sha256,
             receipt.get("version") == version,
             receipt.get("state") in {"installing", "installed"},
         )
@@ -372,6 +426,30 @@ def run_ubuntu_acceptance(
                 logs,
                 observed=f"{installation_origin}: {installed.stdout.strip()}",
                 proof="dpkg-query and acceptance receipt",
+            )
+        installed_binary = active_host.file_sha256(APPLICATION)
+        if installed_binary is None:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "the installed application binary cannot be read: its build is unknown",
+                started,
+                logs,
+                observed=f"{installation_origin}: {APPLICATION} unreadable",
+                proof="installed binary SHA-256",
+            )
+        if installed_binary != provenance.binary_sha256:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                f"the installed control-tv {version} is another build than the artifact",
+                started,
+                logs,
+                observed=(
+                    f"{installation_origin}: installed binary={installed_binary}; "
+                    f"artifact binary={provenance.binary_sha256}"
+                ),
+                proof="installed binary SHA-256 against the provenance",
             )
         if not context.policy.validate_existing_deb:
             return _result(
@@ -448,7 +526,7 @@ def run_ubuntu_acceptance(
                 proof="sudo preflight",
             )
 
-        _write_receipt(receipt_path, digest=artifact_digest, version=version, state="installing")
+        _write_receipt(receipt_path, provenance=provenance, state="installing")
         install = active_host.run(
             (
                 "sudo",
@@ -487,7 +565,17 @@ def run_ubuntu_acceptance(
                 observed=installed_version.stdout.strip(),
                 proof=str(receipt_path),
             )
-        _write_receipt(receipt_path, digest=artifact_digest, version=version, state="installed")
+        if active_host.file_sha256(APPLICATION) != provenance.binary_sha256:
+            return _result(
+                scenario,
+                Outcome.FAIL,
+                "the installed binary is not the artifact's; recovery receipt retained",
+                started,
+                logs,
+                observed=identity,
+                proof=f"installed binary SHA-256; {receipt_path}",
+            )
+        _write_receipt(receipt_path, provenance=provenance, state="installed")
 
     process = active_host.launch((str(APPLICATION),))
     outcome = Outcome.FAIL
@@ -555,7 +643,7 @@ def run_ubuntu_acceptance(
                             "are operational"
                         )
                         observed = (
-                            f"version={version}; origin={installation_origin}; "
+                            f"version={version}; {identity}; origin={installation_origin}; "
                             f"tray={matching_items[0]}; pid={process.pid}"
                         )
                         proof = (

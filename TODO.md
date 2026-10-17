@@ -76,7 +76,16 @@ Bilan : 20 applications avec logo, 8 sans (raisons ci-dessus). Anomalie relevée
 
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
-Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md) (séances A à D, 6–10 h avec le propriétaire). Constat réel déjà acquis : la liste des 28 applications s'affiche sur Ubuntu (débogage activé sur la Freebox, captures du 2026-10-17).
+Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md) ; étapes manuelles, ordre des séances (1 à 7, ≈ 7,5–12 h dont 6–9 h devant la TV) et fiche de preuve : [`docs/MANUAL_ACCEPTANCE_PROTOCOL.md`](docs/MANUAL_ACCEPTANCE_PROTOCOL.md). Constat réel déjà acquis : la liste des 28 applications s'affiche sur Ubuntu (débogage activé sur la Freebox, captures du 2026-10-17).
+
+**Préparation de la recette — blocages corrigés (branche `fix/hardware-acceptance-readiness`, validation automatisée seulement) :**
+
+- [x] Identité du paquet Ubuntu : le runner exige un manifeste de provenance (commit, run CI, version, architecture, SHA-256 du `.deb` et de `usr/bin/control-tv`), recalcule les empreintes et refuse une version 0.1.0 d'un autre build ; la CI publie `provenance.json`.
+- [x] Signature Android stable : prise en charge d'une clé de test `control-tv-test` (Gradle, CI par secrets, vérification contre un certificat épinglé, `apk-provenance.json`) — [`docs/ANDROID_TEST_SIGNING.md`](docs/ANDROID_TEST_SIGNING.md).
+- [ ] **Propriétaire** : créer la clé, la sauvegarder, définir les deux secrets et publier l'empreinte du certificat ; puis une dernière désinstallation sur chaque téléphone (les APK installés ont des signataires éphémères).
+- [x] Runner : les scénarios TV, téléphone, double télécommande et latence indiquent qu'aucun adaptateur automatique n'existe et renvoient au protocole manuel.
+- [x] Artefacts CI de `main` `de31c94` (run `39034444658`) téléchargés et identifiés dans `dist/acceptance-de31c94/` (ignoré par git) ; le binaire installé sur Ubuntu est ce build. APK : signataire éphémère, expire sur GitHub le 2026-10-24.
+- [ ] Instrumentation C6/C7 (absente : C6/C7 restent NOT RUN sans elle).
 
 
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.

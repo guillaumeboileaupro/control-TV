@@ -89,8 +89,17 @@ python3 scripts/run_acceptance.py --category android --execute
 ```
 
 The real Ubuntu adapter is deliberately fail-closed. It requires an interactive GNOME session,
-session DBus, a configured `.deb`, resolvable dependencies, non-interactive `sudo`, and both
-`--execute` and `--allow-deb-install`. It never replaces or removes an existing `control-tv`
+session DBus, a configured `.deb` **with its provenance manifest**, resolvable dependencies,
+non-interactive `sudo`, and both `--execute` and `--allow-deb-install`.
+
+**Build identity.** Every package is version 0.1.0, so the version never identifies a build. The
+adapter reads `provenance.json` next to the `.deb` (or `CONTROL_TV_DEB_PROVENANCE`), written by CI
+or by `scripts/acceptance_identity.py deb-provenance`; it binds commit, CI run, version,
+architecture, `.deb` SHA-256 and the SHA-256 of `usr/bin/control-tv` inside the package. The
+adapter recomputes both digests: a missing or invalid manifest is `BLOCKED` (identity cannot be
+established), a contradiction is `FAIL`, an installed package whose binary is another build is
+`BLOCKED`, and an installation that leaves another binary is `FAIL`. Its receipt (schema 2)
+records the commit and both digests; a receipt of the earlier version-only schema is stale. It never replaces or removes an existing `control-tv`
 installation. After preflights it installs the package, checks the exact installed version,
 launches `/usr/bin/control-tv`, pings the installed frozen Python bridge, compares GNOME
 StatusNotifier registrations before/after launch, captures stdout/stderr, and terminates only the
@@ -110,11 +119,13 @@ CONTROL_TV_DEB=/absolute/path/control-tv_0.1.0_amd64.deb \
 The first command grants a short-lived sudo credential; the adapter itself accepts only
 non-interactive `sudo -n`. The recipe mutates the host by installing the package. It never sends a
 TV command and never uses ADB. The bridge ping proves the packaged Python service starts and correlates its response;
-it does not replace a separate end-to-end UI interaction check. Android install/launch/log checks
-remain `BLOCKED`; their catalog entry requires both `--allow-apk-install` and `--enable-adb`, and
-the runner never enables Android developer options or ADB itself.
+it does not replace a separate end-to-end UI interaction check. The Android install/launch/log
+check has **no automated adapter**: it is `BLOCKED` whatever flags are given and is run by hand
+per [MANUAL_ACCEPTANCE_PROTOCOL.md](MANUAL_ACCEPTANCE_PROTOCOL.md); the runner never enables
+Android developer options or ADB itself.
 
-If a clean matching package is already installed, the adapter reports whether a matching receipt
+If a clean package of the same version **and the same binary** is already installed, the adapter
+reports whether a matching receipt
 identifies an interrupted acceptance installation or whether the installation is pre-existing. It
 returns `BLOCKED` in both cases unless the owner gives the additional, non-mutating consent:
 

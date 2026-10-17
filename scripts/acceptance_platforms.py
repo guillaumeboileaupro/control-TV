@@ -8,7 +8,7 @@ import zipfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from acceptance import Context, Outcome, Result, Scenario, make_result
+from acceptance import Context, Outcome, Result, Scenario, make_result, manual_only
 
 
 def configured_artifact(context: Context, scenario: Scenario, name: str) -> Path | Result:
@@ -145,10 +145,6 @@ def always_success(output: str) -> tuple[bool, str]:
 
 
 def real_adapter_blocked(context: Context, scenario: Scenario) -> Result:
+    """The real Android checks are manual: no adapter installs or drives the phone."""
     del context
-    return make_result(
-        scenario,
-        Outcome.BLOCKED,
-        "real-device adapter is not configured; no install, launch or ADB action was attempted",
-        started=time.monotonic(),
-    )
+    return manual_only(scenario, "the phone (install, launch, logs)")
