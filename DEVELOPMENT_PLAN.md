@@ -678,6 +678,19 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
     go-ahead;
 - [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
   `ScreenCastService`, automated tests;
+  - [x] isolated receiver/publication preparation: typed source and configuration, injectable
+    `ScreenCapture` / `ScreenEncoder` / `StreamPublisher` / `StreamReceiver` ports and deterministic
+    lifecycle/cleanup orchestration; no capture, encoder implementation, listener, network or
+    device operation; receiver alternatives compared from primary documentation, with Freebox
+    compatibility explicitly unvalidated
+    ([`docs/SCREENCAST_D1_RECEIVER_SPIKE.md`](docs/SCREENCAST_D1_RECEIVER_SPIKE.md)); review
+    follow-ups: a concurrent `close()` is recorded and carried out (no later start, an in-progress
+    start cancels itself), and an interruption during cleanup no longer skips steps or leaves
+    `stopping` (unreleased resources stay owned and are retried once);
+  - [ ] after PR #81 (merged): adapt the D0 encoder to the D1 `ScreenEncoder` port without duplicating its
+    FFmpeg or process-lifecycle implementation;
+  - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
+    Ubuntu-to-Freebox duplication;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
