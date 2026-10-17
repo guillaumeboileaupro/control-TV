@@ -56,6 +56,19 @@ def test_signer_digests_are_read_from_apksigner() -> None:
         f"Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: {PINNED}\n"
     )
     assert signing.apksigner_certificates(ranged) == (PINNED,)
+    # The form printed by the CI runner's apksigner (run 39049338669), one line per scheme.
+    per_scheme = (
+        "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\n"
+        f"V2 Signer: certificate SHA-256 digest: {PINNED}\n"
+        f"V3 Signer: certificate SHA-256 digest: {PINNED}\n"
+        "V2 Signer: certificate SHA-1 digest: e98d07733f2dbe5f231ee4ebdecb503e9f1ca848\n"
+    )
+    assert signing.apksigner_certificates(per_scheme) == (PINNED,)
+    rotated = (
+        f"V2 Signer: certificate SHA-256 digest: {PINNED}\n"
+        f"V3 Signer: certificate SHA-256 digest: {OTHER}\n"
+    )
+    assert signing.apksigner_certificates(rotated) == (PINNED, OTHER)
 
 
 def test_the_certificate_digest_is_read_from_keytool() -> None:

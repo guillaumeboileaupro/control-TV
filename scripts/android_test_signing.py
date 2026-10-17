@@ -43,10 +43,13 @@ MIN_PASSWORD = 12
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
-# "Signer #1 certificate SHA-256 digest: …" or, from newer build-tools and for SDK-ranged
+# apksigner prints "Signer #1 certificate SHA-256 digest: …" (build-tools 35), "V2 Signer:
+# certificate SHA-256 digest: …" (newer build-tools, one line per scheme) or, for SDK-ranged
 # signers, "Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: …".
 _APKSIGNER = re.compile(
-    r"^Signer (?:#\d+|\([^)\n]*\)) certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$", re.M
+    r"^(?:Signer (?:#\d+|\([^)\n]*\))|V\d+(?:\.\d+)? Signer:) certificate SHA-256 digest: "
+    r"([0-9a-fA-F]{64})\s*$",
+    re.M,
 )
 _KEYTOOL = re.compile(r"^\s*SHA256:\s*((?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})\s*$", re.M)
 
@@ -71,8 +74,10 @@ class Verdict:
 
 
 def apksigner_certificates(output: str) -> tuple[str, ...]:
-    """The signer certificate SHA-256 digests printed by `apksigner verify --print-certs`."""
-    return tuple(match.group(1).lower() for match in _APKSIGNER.finditer(output))
+    """The distinct signer certificate SHA-256 digests printed by `apksigner verify
+    --print-certs`, in order."""
+    digests = (match.group(1).lower() for match in _APKSIGNER.finditer(output))
+    return tuple(dict.fromkeys(digests))  # one certificate printed per scheme counts once
 
 
 def keytool_certificate(output: str) -> str:
