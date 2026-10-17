@@ -1,5 +1,51 @@
 # control-TV — TODO
 
+## 0. Suivi de la recette finale et de l'affichage distant — 2026-10-17
+
+**État de référence :** PR #71 (logos) et #72 (recette automatisée) fusionnées dans `main` ; commit `7569c1c`, CI push `39021854559` réussie. Artefacts de cette CI récupérés localement dans `dist/final-acceptance/` : `control-tv_0.1.0_amd64.deb` et `app-universal-debug.apk`. Les anciens artefacts du 15 octobre ne sont pas des preuves pour cette version.
+
+**Constat matériel du 2026-10-17 :** capture de l'interface Ubuntu `control-TV` affichant le média YouTube en cours et la liste des applications de la TV. Les tuiles visibles utilisent des initiales, notamment Apple TV alors qu'un logo est prévu. Des noms techniques `com.*` et des libellés tronqués sont visibles. **Ne pas considérer le rendu des logos comme validé.** La capture seule ne prouve ni la version du binaire installé, ni l'identifiant Android exact renvoyé pour Apple TV, ni la cause de l'absence des SVG.
+
+### A. Traçabilité et environnement
+
+- [x] Fusion #71 et #72 dans `main` ; CI `39021854559` verte.
+- [x] Artefacts finaux téléchargés depuis la CI du commit `7569c1c`.
+- [x] Environnement Ubuntu X11 identifié (`XDG_SESSION_TYPE=x11`).
+- [x] Script de recette lancé avec `.venv/bin/python` (Python 3.12.13) ; `python3` global est Python 3.7.3 et ne dispose pas de `tomllib`.
+- [x] Ancien paquet : cinq contrôles Ubuntu statiques/simulés PASS, réel BLOCKED sans autorisation d'installation.
+- [ ] Refaire les contrôles statiques avec les **artefacts finaux**, relever les rapports et l'état de l'installation Ubuntu existante, sans l'écraser.
+- [ ] Conserver les SHA-256 des artefacts et le SHA Git source dans les rapports.
+
+### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
+
+- [ ] **Codex — diagnostic sans supposition :** relever version et provenance du binaire Ubuntu effectivement lancé ; vérifier si le bundle chargé est celui du commit `7569c1c`, ou un ancien paquet ; vérifier la présence des SVG et du code `appLogo` dans le bundle ; examiner erreurs console/CSP.
+- [ ] **Codex — correspondances :** journaliser de manière non sensible les identifiants Android réels de la liste ; comparer exactement à `ui/src/app-logos.ts` (notamment Apple TV `com.apple.atve.androidtv.appletv`). Ne pas substituer des logos d'une autre application.
+- [ ] **Codex — UI :** corriger uniquement les causes prouvées ; noms lisibles avec identifiant technique accessible en détail/infobulle ; troncature contrôlée sans débordement ; grilles et contraste adaptés à Ubuntu et Android ; fallback par initiale pour les applications inconnues.
+- [ ] **Codex — tests :** mapping exact, SVG valides, fallback, non-régression des logos, rendu visuel et captures ; tests TS stricts, bundle, packaging, CI ; pas de requête réseau à l'exécution.
+- [ ] **Claude — revue indépendante :** vérifier cause racine, licences, conformité des logos, qualité visuelle, tests et risques de régression ; rapport READY/BLOCKED ; aucune fusion sans autorisation.
+- [ ] **Propriétaire — validation réelle :** après build et installation explicitement autorisée, contrôler visuellement Apple TV et les autres logos réellement pris en charge sur Ubuntu puis Android. Conserver la capture avant/après.
+
+### C. Recette matérielle des deux télécommandes — après correction de l'UI
+
+- [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.
+- [ ] Android : autorisation explicite avant installation de l'APK ; lancement, affichage, widget, CSP et journaux ; préserver les données existantes.
+- [ ] Google TV : R1–R4 (lecture seule), puis C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et concurrence des deux télécommandes ; commandes et activation ADB seulement avec accord explicite.
+- [ ] Latence : K1–K3 et `latency.remote-keys`, mesures vidéo et seuils à adopter par le propriétaire.
+- [ ] Distinguer systématiquement PASS simulé, PASS CI et PASS matériel ; rapport de preuves par scénario.
+- [ ] Mettre à jour `DEVELOPMENT_PLAN.md`, `DEVELOPMENT_CHECKLIST.md`, README et rapports à l'issue des essais.
+
+### D. Nouvelle fonctionnalité après recette : affichage Ubuntu X11 vers Google TV
+
+- [ ] **Étude de faisabilité (Claude + Codex) :** distinguer Google Cast natif, streaming vidéo local, WebRTC, Sunshine/Moonlight et nécessité éventuelle d'un récepteur TV ; documenter protocoles, sécurité, latence, audio et limites DRM. Ne pas supposer que Chromecast fournit un moniteur virtuel.
+- [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
+- [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
+- [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
+- [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
+- [ ] Ne pas lancer les travaux D1–D4 avant clôture de la recette de la télécommande, sauf nouvelle priorité explicite du propriétaire.
+
+**Organisation :** Codex implémente sur branche dédiée ; Claude révise indépendamment ; PR, CI et preuve de rendu avant fusion ; aucune modification directe de `main`. Estimations indicatives : diagnostic/correction UI 2–5 h ; recette matérielle 6–10 h ; duplication/extension X11 26–52 h après recette.
+
+
 État au 2026-10-15, `main` `d95fc7b`. Les corrections d'audit et la CI de packaging sont terminées ; les validations matérielles restent distinctes et ouvertes. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
 
 **Objectif :** deux télécommandes autonomes, Ubuntu et Android, qui contrôlent la même Google TV en parallèle, sans serveur permanent. MCP, ChatGPT Voice et Windows sont abandonnés depuis le 2026-10-12.
