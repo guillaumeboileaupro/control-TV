@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -177,6 +178,18 @@ def test_preinstalled_package_is_never_replaced_or_removed(tmp_path: Path) -> No
     assert not any("apt-get" in command for command, _ in host.calls)
 
 
+def test_absent_receipt_cannot_resume_preinstalled_package_without_consent(
+    tmp_path: Path,
+) -> None:
+    current = context(tmp_path)
+    assert (current.state_dir / ubuntu.RECEIPT).exists() is False
+    host = FakeHost([metadata(), completed(stdout="ii  0.1.0")])
+    result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert result.observed == "pre-existing installation"
+    assert len(host.calls) == 2
+
+
 def test_explicit_consent_validates_preexisting_package_without_install(tmp_path: Path) -> None:
     host = FakeHost(
         [
@@ -319,6 +332,38 @@ def test_malformed_receipt_with_no_installed_package_blocks_new_install(tmp_path
     assert result.outcome is acceptance.Outcome.BLOCKED
     assert "receipt" in result.reason
     assert not any("apt-get" in command for command, _ in host.calls)
+
+
+@pytest.mark.parametrize(
+    "receipt_fields",
+    [
+        {"artifactSha256": "stale", "version": "0.1.0", "state": "installed"},
+        {"artifactSha256": None, "version": "0.1.0", "state": "unexpected"},
+    ],
+    ids=["stale", "inconsistent"],
+)
+def test_stale_or_inconsistent_receipt_blocks_existing_package_validation(
+    tmp_path: Path, receipt_fields: dict[str, str | None]
+) -> None:
+    current = context(tmp_path, allow_existing=True)
+    receipt = current.state_dir / ubuntu.RECEIPT
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "package": ubuntu.PACKAGE,
+                **receipt_fields,
+            }
+        ),
+        encoding="utf-8",
+    )
+    host = FakeHost([metadata()])
+    result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "stale or inconsistent" in result.reason
+    assert len(host.calls) == 1
+    assert host.launched == []
 
 
 def test_explicit_interrupted_recipe_resume_never_reinstalls_and_clears_receipt(

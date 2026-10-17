@@ -338,6 +338,16 @@ def run_ubuntu_acceptance(
             receipt.get("state") in {"installing", "installed"},
         )
     )
+    if receipt_present and not matching_receipt:
+        return _result(
+            scenario,
+            Outcome.BLOCKED,
+            "the installation receipt is stale or inconsistent; manual review is required",
+            started,
+            logs,
+            observed="receipt does not match the configured artifact and package metadata",
+            proof=f"{receipt_path}; no package mutation or validation attempted",
+        )
     installed = active_host.run(
         ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
     )
@@ -384,7 +394,7 @@ def run_ubuntu_acceptance(
             observed=installed.stdout.strip() or installed.stderr.strip(),
             proof="dpkg-query; no package mutation attempted",
         )
-    elif receipt_present:
+    elif matching_receipt:
         return _result(
             scenario,
             Outcome.BLOCKED,

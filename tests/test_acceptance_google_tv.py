@@ -44,6 +44,20 @@ def test_c6_accepts_ordered_session_bound_evidence() -> None:
     assert "captured session" in reason
 
 
+def test_c6_accepts_confirmation_consistently_bound_to_captured_session() -> None:
+    valid, _ = google.validate_c6(
+        [
+            event(1, "pre_status", 10),
+            event(2, "send_attempt", 10),
+            event(3, "session_changed", 11),
+            event(4, "confirmation_status", 10),
+            event(5, "command_confirmed", 10),
+        ],
+        "request-1",
+    )
+    assert valid is True
+
+
 @pytest.mark.parametrize(
     "events",
     [
@@ -73,6 +87,20 @@ def test_c6_accepts_ordered_session_bound_evidence() -> None:
             event(4, "confirmation_status", 11),
             event(5, "command_confirmed", 11),
         ],
+        [
+            event(1, "pre_status", 10),
+            event(2, "send_attempt", 10),
+            event(3, "session_changed", 11),
+            event(4, "confirmation_status", 10),
+            event(5, "command_confirmed", 11),
+        ],
+        [
+            event(1, "pre_status", 10),
+            event(2, "send_attempt", 10),
+            event(3, "command_confirmed", 10),
+            event(4, "session_changed", 11),
+            event(5, "confirmation_status", 10),
+        ],
     ],
 )
 def test_c6_rejects_incomplete_retargeted_or_unordered_evidence(events: list[object]) -> None:
@@ -94,6 +122,8 @@ def test_c7_accepts_exactly_one_send_attempt_without_replay() -> None:
         [event(1, "send_attempt"), event(2, "send_attempt"), event(3, "ambiguous_result")],
         [event(1, "send_attempt"), event(2, "automatic_retry"), event(3, "ambiguous_result")],
         [event(1, "send_attempt")],
+        [event(1, "ambiguous_result"), event(2, "send_attempt")],
+        [event(1, "send_attempt"), event(2, "ambiguous_result"), event(3, "ambiguous_result")],
     ],
 )
 def test_c7_never_claims_no_replay_without_complete_instrumentation(events: list[object]) -> None:

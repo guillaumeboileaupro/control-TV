@@ -64,13 +64,23 @@ def validate_c6(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, st
         return False, "C6 needs distinct, non-null old and new mediaSessionId values"
     if sent != old:
         return False, "send attempt was not bound to the captured mediaSessionId"
-    if confirmed == new and any(event.event == "command_confirmed" for event in relevant):
-        return False, "command was retargeted or confirmed from the replacement session"
+    command_confirmed = [event for event in relevant if event.event == "command_confirmed"]
+    if command_confirmed:
+        if confirmed != old:
+            return False, "confirmation status does not belong to the captured mediaSessionId"
+        if any(event.media_session_id != old for event in command_confirmed):
+            return False, "command was confirmed on a session other than the captured one"
+        confirmation_position = names.index("confirmation_status")
+        if any(relevant.index(event) <= confirmation_position for event in command_confirmed):
+            return False, "command confirmation precedes its confirmation status"
     return True, "C6 proves the send used the captured session and did not confirm from the new one"
 
 
 def validate_c7(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, str]:
-    relevant = [event for event in events if event.request_id == request_id]
+    relevant = sorted(
+        (event for event in events if event.request_id == request_id),
+        key=lambda event: event.sequence,
+    )
     counts = Counter(event.event for event in relevant)
     if counts["send_attempt"] != 1:
         return (
@@ -79,8 +89,16 @@ def validate_c7(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, st
         )
     if counts["automatic_retry"] or counts["replay"]:
         return False, "C7 trace records an automatic retry or replay"
-    if not counts["ambiguous_result"]:
-        return False, "C7 needs the ambiguous delivery result in the trace"
+    if counts["ambiguous_result"] != 1:
+        return False, "C7 needs exactly one ambiguous delivery result in the trace"
+    send_position = next(
+        index for index, event in enumerate(relevant) if event.event == "send_attempt"
+    )
+    ambiguous_position = next(
+        index for index, event in enumerate(relevant) if event.event == "ambiguous_result"
+    )
+    if send_position >= ambiguous_position:
+        return False, "C7 ambiguous result must follow the low-level send attempt"
     return True, "C7 proves one local send attempt and no application replay"
 
 
