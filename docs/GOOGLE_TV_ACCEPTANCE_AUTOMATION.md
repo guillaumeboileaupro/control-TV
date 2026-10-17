@@ -23,56 +23,41 @@ keyboard also require TV-command authorization. Application launch additionally 
 already have been enabled and authorized by the owner. The runner never pairs the remote channel,
 enables Android developer options, starts ADB, changes Wi-Fi or sends a command by itself.
 
-The runner never initiates a C6 or C7 command. After an individually authorized hardware step, it
-can validate the product trace when `CONTROL_TV_COMMAND_TRACE` and the matching
-`CONTROL_TV_C6_REQUEST_ID` or `CONTROL_TV_C7_REQUEST_ID` are configured. Missing evidence remains
-`BLOCKED`; malformed or contradictory evidence is `FAIL`, never `PASS`.
-
-## Enabling the product trace
-
-Tracing is off by default. Before launching the Ubuntu or Android bridge for an authorized C6/C7
-step, set `CONTROL_TV_COMMAND_TRACE` to a local JSONL file and set `CONTROL_TV_TRACE_CLIENT` to the
-client role (`ubuntu` or `android`). The bridge appends a mode-0600 record for each phase. It never
-records a device id or address, media URL/title, command argument, credential or exception text.
-Each command gets an opaque request id; use that exact id for acceptance validation.
-
-The command path records `command_prepared`, the playback `pre_status`, exactly one
-`send_attempt`, the transport response or failure, each fresh `confirmation_status`, and the final
-confirmation outcome. A changed session observed during confirmation adds `session_changed` before
-that status. A failure after transport entry adds `ambiguous_result`; it does not trigger a retry.
-Tracing is evidence only: a trace-write failure is ignored and cannot change, suppress or repeat a
-command.
-
-Example validation, only after the owner separately authorized and performed the relevant step:
-
-```bash
-export CONTROL_TV_COMMAND_TRACE="$PWD/.ai-private/hardware/c6-command-trace.jsonl"
-export CONTROL_TV_C6_REQUEST_ID="<opaque request_id from that trace>"
-python3 scripts/run_acceptance.py --category google-tv --execute --allow-tv-commands
-```
+Even when flags are supplied, this iteration's real adapter remains blocked. Execution is enabled
+only after a separately reviewed adapter can identify both builds, the selected TV and the private
+evidence destination, and after the owner authorizes the individual step.
 
 ## C6 instrumentation
 
-The trace schema adds optional `command` and stable `error_code` fields to
-`TraceEvent(sequence, client, event, request_id, media_session_id)`. C6 requires,
-for one request id and in strict order:
+The product trace, the confirmation hold and the independent observer are described in
+[COMMAND_TRACE.md](COMMAND_TRACE.md). Validation is offline and needs no flag:
+`python3 scripts/validate_command_trace.py c6 --request-id <id> REMOTE_TRACE OBSERVER_TRACE`.
 
-1. `pre_status` with the captured old `mediaSessionId`;
-2. `send_attempt` carrying that exact old identifier;
-3. `session_changed` from an independent read-only receiver trace with a distinct new identifier;
-4. `confirmation_status` after the switch.
+C6 passes only when, for one request id:
 
-A `command_confirmed` event tied to the replacement session fails the evidence. Missing identity,
-equal old/new identifiers, an unbound send or unordered events cannot pass. Human timing is never
-accepted as proof.
+- the remote's own stream (one client, `ubuntu` or `android`) is complete: contiguous indexes,
+  no `trace_incomplete`, exactly one final outcome, one command;
+- it shows, in this order, `pre_status` (the captured old `mediaSessionId`), `send_attempt` bound
+  to it, `transport_response`, `confirmation_held`, then `confirmation_released` carrying the
+  observer's token, and no `confirmation_status` before that release;
+- the **observer's** stream (role `observer`, its own process and trace) shows
+  `observer_hold_seen` still on the old session (otherwise the switch may precede the send),
+  then `independent_session_change` to a different session, then `observer_release_sent` with
+  the same token;
+- no `command_confirmed` belongs to another session.
+
+The product's own `confirmation_session_changed` is never accepted as the proof. Order across the
+two streams comes only from the token handshake, never from the two devices' clocks. A hold
+that timed out, failed or was released without the observer's token fails C6.
 
 ## C7 instrumentation
 
-For one request id, C7 requires exactly one event at entry to the low-level `send_attempt`, followed
-by an `ambiguous_result`. Any second send attempt, `automatic_retry` or `replay` fails. Final TV state
-does not prove delivery count; without the instrumented trace, C7 remains blocked. Packet or
-receiver-side capture is still required to claim how many deliveries the TV itself received.
+For one request id, C7 requires a complete remote stream with exactly one `send_attempt` and
+`ambiguous_result` as its final outcome; a `transport_response`, a second send attempt,
+`automatic_retry` or `replay` fails. This proves one **application-side** invocation and no
+application replay; it does not prove how many packets left the device or reached the TV, which
+needs packet or receiver-side capture.
 
 The validators are deterministic and covered with positive, mutation-style negative and
-product-to-validator integration tests. They establish application-side invocation count and
-session binding. They do not prove packet delivery, physical TV behavior or hardware compatibility.
+product-to-validator tests, including an end-to-end simulation (remote, file hold and observer in
+two traces). A simulated PASS is never a hardware result.

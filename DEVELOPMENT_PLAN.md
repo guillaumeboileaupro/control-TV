@@ -784,7 +784,7 @@ Les estimations par fonctionnalité sont provisoires ; certaines commandes peuve
 
 **Concurrence :** si Ubuntu envoie une commande et Android en envoie une autre, les deux applications doivent retrouver l'état réel sans rejouer automatiquement une commande ambiguë. Une tentative peut entraîner zéro ou une réception, jamais une livraison garantie.
 
-Les tests de commandes réelles C1–C7 nécessiteront l'autorisation explicite du propriétaire. C6 et C7 disposent désormais d'une trace applicative structurée pour la session ciblée, la tentative unique, la confirmation et le résultat ambigu. Pour établir le nombre de livraisons réelles de C7, une capture réseau ou récepteur reste nécessaire.
+Les tests de commandes réelles C1–C7 nécessiteront l'autorisation explicite du propriétaire. C6 et C7 disposent désormais d'une trace applicative structurée et vérifiable (index contigus par requête, issue finale obligatoire, `trace_incomplete`, rôle explicite `ubuntu`/`android`/`observer`) ; C6 s'appuie sur une retenue de confirmation réservée à la recette et sur un observateur indépendant dont la preuve est liée à la confirmation par un jeton, jamais par les horloges ; validation hors ligne par `scripts/validate_command_trace.py` ; mode recette Android uniquement dans le build debug ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md)). Validé en simulation seulement. Pour établir le nombre de livraisons réelles de C7, une capture réseau ou récepteur reste nécessaire.
 
 ### 4. Phase 3 — Tests, qualité et livraison
 

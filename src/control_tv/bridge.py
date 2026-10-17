@@ -119,6 +119,7 @@ from control_tv.domain import (
 from control_tv.json_types import JsonObject, JsonValue
 from control_tv.ports import TvControl
 from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
+from control_tv.trace_files import AcceptanceTracing
 
 Handler = Callable[[TvControl, JsonObject], JsonObject]
 INTERNAL_ERROR_CODE = "internal_error"
@@ -449,19 +450,25 @@ def run(control: TvControl, *, stdin: TextIO = sys.stdin, stdout: TextIO = sys.s
         stdout.flush()
 
 
-def default_service() -> ControlService:
-    """The service every host runs: Cast, plus the TV's own remote channel and app list."""
+def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
+    """The service every host runs: Cast, plus the TV's own remote channel and app list.
+
+    Acceptance tracing is off unless configured: by the environment on a desktop host
+    (`docs/COMMAND_TRACE.md`), or by the Android debug build through `tracing`. A configuration
+    that names no valid role is refused rather than guessed."""
     from control_tv.adapters import PyChromecastTransport
     from control_tv.adapters.tv_apps import AdbAppInventory
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
-    from control_tv.command_trace import recorder_from_environment
+    from control_tv.trace_files import tracing_from_environment
 
+    active = tracing_from_environment() if tracing is None else tracing
     credentials = default_credentials_dir()
     return ControlService(
         PyChromecastTransport(),
         remote=TvRemoteChannel(credentials),
         apps=AdbAppInventory(credentials),
-        trace=recorder_from_environment(),
+        trace=active.recorder,
+        gate=active.gate,
     )
 
 

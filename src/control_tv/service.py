@@ -18,10 +18,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from control_tv.command_trace import CommandTrace, TraceRecorder
+from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
     AppLaunchResult,
     Command,
+    CommandRejectedError,
     CommandResult,
     Confirmation,
     ConnectionState,
@@ -336,6 +337,7 @@ class ControlService:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         trace: TraceRecorder | None = None,
+        gate: ConfirmationGate | None = None,
     ) -> None:
         _require(
             confirm_timeout is None or (_is_finite(confirm_timeout) and confirm_timeout >= 0),
@@ -366,6 +368,9 @@ class ControlService:
         self._clock = clock
         self._sleep = sleep
         self._trace = trace or TraceRecorder()
+        # Acceptance only (C6): holds a sent playback command's confirmation until an
+        # independent observer has recorded the session change. None in normal use.
+        self._gate = gate
         self._channels = TvChannels(self._discovered, remote=remote, apps=apps)
         self._devices: dict[DeviceId, Device] = {}
 
@@ -399,6 +404,7 @@ class ControlService:
             lambda: self._transport.play(device_id, target.media_session_id),
             media_session_id=target.media_session_id,
         )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.PLAY,
             device_id,
@@ -421,6 +427,7 @@ class ControlService:
             lambda: self._transport.pause(device_id, target.media_session_id),
             media_session_id=target.media_session_id,
         )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.PAUSE,
             device_id,
@@ -443,6 +450,7 @@ class ControlService:
             lambda: self._transport.stop(device_id, target.media_session_id),
             media_session_id=target.media_session_id,
         )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.STOP,
             device_id,
@@ -478,6 +486,7 @@ class ControlService:
             lambda: self._transport.seek(device_id, position_seconds, target.media_session_id),
             media_session_id=target.media_session_id,
         )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.SEEK,
             device_id,
@@ -633,6 +642,28 @@ class ControlService:
         trace.record("command_failed", media_session_id=media_session_id, error_code=error.code)
         trace.record("not_sent", media_session_id=media_session_id, error_code=error.code)
 
+    def _hold(
+        self, trace: CommandTrace, media_session_id: int, deadline: float | None
+    ) -> float | None:
+        """Acceptance only: wait (bounded by the gate) for the observer's release before any
+        confirmation read. The command is never resent; a hold gives the confirmation a fresh
+        budget, so the time spent held is not counted against it."""
+        gate = self._gate
+        if gate is None or self._confirm_timeout is None:
+            return deadline
+        trace.record("confirmation_held", media_session_id=media_session_id)
+        try:
+            outcome = gate.hold(HoldRequest(trace.request_id, trace.command, media_session_id))
+        except Exception:
+            trace.record("confirmation_hold_failed", media_session_id=media_session_id)
+        else:
+            trace.record(
+                "confirmation_released" if outcome.released else "confirmation_hold_timeout",
+                media_session_id=media_session_id,
+                token=outcome.token,
+            )
+        return self._confirmation_deadline()
+
     @staticmethod
     def _send(
         trace: CommandTrace,
@@ -640,7 +671,12 @@ class ControlService:
         *,
         media_session_id: int | None = None,
     ) -> None:
-        """Record one application-side transport invocation without ever retrying it."""
+        """Record one application-side transport invocation without ever retrying it.
+
+        Its outcome: `transport_response`; `not_sent` when the error proves nothing left;
+        `command_rejected` when the receiver answered with a rejection; otherwise, including an
+        unexpected exception (recorded as `unexpected_error`, then re-raised unchanged),
+        `ambiguous_result`: the command may or may not have reached the TV."""
         trace.record("send_attempt", media_session_id=media_session_id)
         try:
             operation()
@@ -650,18 +686,17 @@ class ControlService:
                 media_session_id=media_session_id,
                 error_code=error.code,
             )
-            if error.delivery != "not_sent":
-                trace.record(
-                    "ambiguous_result",
-                    media_session_id=media_session_id,
-                    error_code=error.code,
-                )
+            if error.delivery == "not_sent":
+                outcome = "not_sent"
+            elif isinstance(error, CommandRejectedError):
+                outcome = "command_rejected"
             else:
-                trace.record(
-                    "not_sent",
-                    media_session_id=media_session_id,
-                    error_code=error.code,
-                )
+                outcome = "ambiguous_result"
+            trace.record(outcome, media_session_id=media_session_id, error_code=error.code)
+            raise
+        except Exception:
+            trace.record("unexpected_error", media_session_id=media_session_id)
+            trace.record("ambiguous_result", media_session_id=media_session_id)
             raise
         trace.record("transport_response", media_session_id=media_session_id)
 
@@ -709,6 +744,7 @@ class ControlService:
                 status = self._transport.get_status(device_id, timeout=remaining)
             except ControlError as error:
                 last_error = error
+                trace.record("confirmation_read_failed", error_code=error.code)
             else:
                 last_status, last_error = status, None
                 media = status.media
@@ -719,7 +755,10 @@ class ControlService:
                     and observed_session_id != target_session_id
                     and not session_change_recorded
                 ):
-                    trace.record("session_changed", media_session_id=observed_session_id)
+                    # What the product itself saw: never the independent C6 evidence.
+                    trace.record(
+                        "confirmation_session_changed", media_session_id=observed_session_id
+                    )
                     session_change_recorded = True
                 trace.record(
                     "confirmation_status",

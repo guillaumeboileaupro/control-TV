@@ -220,8 +220,10 @@
 - [ ] Vérifier la convergence des états après les deux commandes.
 - [ ] Vérifier qu'une livraison ambiguë ne déclenche aucun rejeu automatique.
 - [ ] Vérifier les cas zéro ou une réception, selon les preuves réseau/récepteur disponibles.
-- [x] Pour C6, instrumenter le changement de session entre prélecture et confirmation (trace
-  locale corrélée à la requête et au `mediaSessionId`; validation matérielle encore ouverte).
+- [x] Pour C6, instrumenter le changement de session entre prélecture et confirmation : retenue
+  de confirmation réservée à la recette, observateur indépendant (rôle `observer`) et preuve
+  causale par jeton ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md)) ; validation matérielle
+  encore ouverte.
 - [x] Pour C7, instrumenter les tentatives côté émetteur et les résultats de livraison ambigus.
 - [ ] Pour C7, instrumenter les réceptions côté TV si elles sont observables.
 - [ ] Séparer résultat du transport, état logique du receiver et effet visible/audible.

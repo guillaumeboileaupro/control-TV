@@ -1,18 +1,64 @@
-"""Opt-in, privacy-preserving command lifecycle traces for acceptance evidence."""
+"""Opt-in, privacy-preserving command lifecycle traces for acceptance evidence (C6/C7).
+
+What a trace can prove, and what it cannot. It records **application-side invocations**: that
+the product entered the transport once for a request, against which media session, and what it
+then read back. It does not prove a network transmission, a reception by the TV or a physical
+effect; those need packet or receiver-side capture and the owner's observation.
+
+Integrity. Within one request every event carries a contiguous `index` from 0, and a command
+ends with exactly one terminal event (`TERMINAL_EVENTS`). A lost write leaves a gap or no
+terminal event, so a validator rejects that request's evidence (fail-closed). After a failed
+write the recorder also writes `trace_incomplete` before the request's next event, and the file
+sink leaves a `.incomplete` marker beside the file; both are best effort (a full disk can lose
+them too): the gap is what makes a loss detectable.
+
+Ordering. `sequence` orders the events of **one** recorder (one process, one client) and is
+never compared across clients or devices: their clocks are unrelated. Order across clients is
+established only causally, by the confirmation hold's token handshake (`ConfirmationGate`).
+
+Privacy. Events carry an opaque request id, a client role, a media session number, a command
+name, an error code and a hold token: never a device id or address, a media URL or title, a
+command argument, a credential or exception text.
+
+Tracing never changes a command: a trace failure is swallowed, nothing is resent, and with no
+sink configured nothing is recorded at all.
+"""
 
 from __future__ import annotations
 
-import json
-import os
 import threading
-import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from control_tv.domain import Command, ErrorCode
+
+# The events that end a command's trace; exactly one per command.
+TERMINAL_EVENTS = frozenset(
+    {
+        "command_confirmed",
+        "command_unconfirmed",
+        "confirmation_skipped",
+        "ambiguous_result",
+        "not_sent",
+        "command_rejected",
+    }
+)
+TRACE_INCOMPLETE = "trace_incomplete"
+
+
+class TraceConfigurationError(Exception):
+    """Acceptance tracing was requested with an invalid configuration (it is never guessed)."""
+
+
+class TraceRole(StrEnum):
+    """Who wrote a trace: one of the two remotes, or the independent read-only observer."""
+
+    UBUNTU = "ubuntu"
+    ANDROID = "android"
+    OBSERVER = "observer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,18 +69,15 @@ class TraceEvent:
     client: str
     event: str
     request_id: str
+    index: int
     media_session_id: int | None = None
     command: str | None = None
     error_code: str | None = None
+    token: str | None = None
 
 
 class TraceSink(Protocol):
     def write(self, event: TraceEvent) -> None: ...
-
-
-class NullTraceSink:
-    def write(self, event: TraceEvent) -> None:
-        del event
 
 
 class MemoryTraceSink:
@@ -53,25 +96,28 @@ class MemoryTraceSink:
             return tuple(self._events)
 
 
-class JsonLinesTraceSink:
-    """Append local acceptance evidence without opening a network service."""
+@dataclass(frozen=True, slots=True)
+class HoldRequest:
+    """A sent playback command whose confirmation waits for the independent observer."""
 
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._lock = threading.Lock()
+    request_id: str
+    command: Command
+    media_session_id: int
 
-    def write(self, event: TraceEvent) -> None:
-        line = json.dumps(asdict(event), separators=(",", ":"), sort_keys=True)
-        with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(self._path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-            try:
-                os.fchmod(descriptor, 0o600)
-            except Exception:
-                os.close(descriptor)
-                raise
-            with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
-                stream.write(line + "\n")
+
+@dataclass(frozen=True, slots=True)
+class HoldOutcome:
+    """`released` with the observer's token, or not (bounded timeout)."""
+
+    released: bool
+    token: str | None = None
+
+
+class ConfirmationGate(Protocol):
+    """Acceptance-only port: hold a sent command's confirmation until an independent observer
+    has recorded the session change, for at most a bounded time. Absent in normal use."""
+
+    def hold(self, request: HoldRequest) -> HoldOutcome: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +132,7 @@ class CommandTrace:
         *,
         media_session_id: int | None = None,
         error_code: ErrorCode | None = None,
+        token: str | None = None,
     ) -> None:
         self.recorder.record(
             event,
@@ -93,6 +140,7 @@ class CommandTrace:
             command=self.command,
             media_session_id=media_session_id,
             error_code=error_code,
+            token=token,
         )
 
 
@@ -103,73 +151,83 @@ class TraceRecorder:
         self,
         sink: TraceSink | None = None,
         *,
-        client: str = "control-tv",
+        role: TraceRole | None = None,
         request_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
-        sequence_factory: Callable[[], int] = time.time_ns,
     ) -> None:
-        self._sink = sink or NullTraceSink()
-        self._client = client
+        if sink is not None and role is None:
+            raise TraceConfigurationError("an active trace needs an explicit client role")
+        self._sink = sink
+        self._role = role
         self._request_id_factory = request_id_factory
-        self._sequence_factory = sequence_factory
         self._sequence = 0
+        self._indexes: dict[str, int] = {}
+        self._incomplete: set[str] = set()
         self._lock = threading.Lock()
+
+    @property
+    def active(self) -> bool:
+        return self._sink is not None
+
+    @property
+    def role(self) -> TraceRole | None:
+        return self._role
 
     def command(self, command: Command) -> CommandTrace:
         trace = CommandTrace(self, self._request_id_factory(), command)
         trace.record("command_prepared")
         return trace
 
+    def observation(
+        self,
+        event: str,
+        *,
+        request_id: str,
+        media_session_id: int | None = None,
+        token: str | None = None,
+    ) -> None:
+        """Record what the independent observer saw for one command (observer role only)."""
+        if self._role is not TraceRole.OBSERVER:
+            raise TraceConfigurationError("only the observer role records observations")
+        self.record(event, request_id=request_id, media_session_id=media_session_id, token=token)
+
     def record(
         self,
         event: str,
         *,
         request_id: str,
-        command: Command,
+        command: Command | None = None,
         media_session_id: int | None = None,
         error_code: ErrorCode | None = None,
+        token: str | None = None,
     ) -> None:
-        try:
-            with self._lock:
-                self._sequence = max(self._sequence + 1, self._sequence_factory())
-                sequence = self._sequence
-            self._sink.write(
-                TraceEvent(
-                    sequence=sequence,
-                    client=self._client,
-                    event=event,
-                    request_id=request_id,
-                    media_session_id=media_session_id,
-                    command=command.value,
-                    error_code=None if error_code is None else error_code.value,
-                )
-            )
-        except Exception:
-            # Acceptance evidence is optional and must never resend, suppress or alter a command.
+        sink, role = self._sink, self._role
+        if sink is None or role is None:
             return
-
-    def observation(self, event: str, *, request_id: str, media_session_id: int | None) -> None:
-        """Correlate an independently observed receiver status with one command."""
-        try:
-            with self._lock:
-                self._sequence = max(self._sequence + 1, self._sequence_factory())
-                sequence = self._sequence
-            self._sink.write(
-                TraceEvent(
-                    sequence=sequence,
-                    client=self._client,
-                    event=event,
-                    request_id=request_id,
-                    media_session_id=media_session_id,
-                )
+        if request_id in self._incomplete and event != TRACE_INCOMPLETE:
+            self.record(TRACE_INCOMPLETE, request_id=request_id, command=command)
+        with self._lock:
+            self._sequence += 1
+            index = self._indexes.get(request_id, 0)
+            self._indexes[request_id] = index + 1
+            stamped = TraceEvent(
+                sequence=self._sequence,
+                client=role.value,
+                event=event,
+                request_id=request_id,
+                index=index,
+                media_session_id=media_session_id,
+                command=None if command is None else command.value,
+                error_code=None if error_code is None else error_code.value,
+                token=token,
             )
+        try:
+            sink.write(stamped)
         except Exception:
+            # Evidence is optional and must never resend, suppress or alter a command; the gap in
+            # `index` (and `trace_incomplete`, when it can still be written) exposes the loss.
+            with self._lock:
+                self._incomplete.add(request_id)
             return
-
-
-def recorder_from_environment() -> TraceRecorder:
-    """Build the opt-in local recorder used by packaged bridge processes."""
-    destination = os.environ.get("CONTROL_TV_COMMAND_TRACE")
-    if not destination:
-        return TraceRecorder()
-    client = os.environ.get("CONTROL_TV_TRACE_CLIENT", "control-tv")
-    return TraceRecorder(JsonLinesTraceSink(Path(destination)), client=client)
+        if event == TRACE_INCOMPLETE:
+            with self._lock:
+                self._incomplete.discard(request_id)
