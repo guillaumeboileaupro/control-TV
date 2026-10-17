@@ -61,6 +61,9 @@ La TV est une Freebox sous Android TV : 28 applications listées. Seules **12** 
 
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
+Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md) (séances A à D, 6–10 h avec le propriétaire). Constat réel déjà acquis : la liste des 28 applications s'affiche sur Ubuntu (débogage activé sur la Freebox, captures du 2026-10-17).
+
+
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.
 - [ ] Android : autorisation explicite avant installation de l'APK ; lancement, affichage, widget, CSP et journaux ; préserver les données existantes.
 - [ ] Google TV : obtenir l'accord explicite du propriétaire **avant toute exécution**, y compris R1–R4 bien qu'ils soient en lecture seule ; obtenir également cet accord avant chaque étape C1–C7 et avant toute autre commande TV. Toute activation ADB exige elle aussi un accord explicite préalable. Exécuter ensuite, selon `docs/DUAL_CONTROLLER_VALIDATION.md`, R1–R4, C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et la concurrence des deux télécommandes.
@@ -70,12 +73,16 @@ La TV est une Freebox sous Android TV : 28 applications listées. Seules **12** 
 
 ### D. Nouvelle fonctionnalité après recette : affichage Ubuntu X11 vers Google TV
 
-- [ ] **Étude de faisabilité (Claude + Codex) :** distinguer Google Cast natif, streaming vidéo local, WebRTC, Sunshine/Moonlight et nécessité éventuelle d'un récepteur TV ; documenter protocoles, sécurité, latence, audio et limites DRM. Ne pas supposer que Chromecast fournit un moniteur virtuel.
+- [x] **Étude de faisabilité (2026-10-17, documentation seulement) :** [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md) — récepteurs (HLS vers le récepteur Cast par défaut, protocole de recopie Cast Streaming, récepteur web dédié, Sunshine/Moonlight, VNC), capture et encodage, écrans virtuels X11 (evdi, têtes virtuelles du pilote, `xrandr --setmonitor`), architecture et interfaces, sécurité, critères RD1–RD8, risques et estimations.
+- [ ] **Phase D0 — inventaire et essais :** inventaire en lecture seule (GPU, encodeurs matériels, sorties, Secure Boot), puis essais sur un flux de test : HLS vers le récepteur par défaut et émetteur Cast Streaming. 6–10 h.
 - [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
 - [ ] Ne pas lancer les travaux D1–D4 avant clôture de la recette de la télécommande, sauf nouvelle priorité explicite du propriétaire.
+- **Dépendances et priorités :** 1) logos (#77) ; 2) recette matérielle C (séances A–D) ; 3) D0 ; 4) D1 duplication ; 5) D2 extension ; 6) D3 interface ; 7) D4 sécurité et validation. D0 peut commencer pendant la recette s'il reste en lecture seule et sans diffusion réelle.
+- **Estimations :** D1 12–20 h ; D2 12–24 h (selon GPU et pilote) ; D3 8–12 h ; D4 8–12 h ; total D0–D4 ≈ 46–78 h.
+- **Autorisations nécessaires :** toute diffusion réelle vers la TV ; installation d'une application sur la TV (Moonlight, si cette voie est retenue) ; module noyau evdi ou modification de la configuration Xorg ; démon hôte (Sunshine) pendant la diffusion.
 
 **Organisation :** Codex implémente sur branche dédiée ; Claude révise indépendamment ; PR, CI et preuve de rendu avant fusion ; aucune modification directe de `main`. Estimations indicatives : diagnostic/correction UI 2–5 h ; recette matérielle 6–10 h ; duplication/extension X11 26–52 h après recette.
 
