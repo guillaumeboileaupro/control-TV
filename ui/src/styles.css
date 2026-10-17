@@ -1039,7 +1039,7 @@ h2 {
 
 .app-avatar.has-logo {
   background: #ffffff;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
 }
 
 .app-avatar.has-logo svg {

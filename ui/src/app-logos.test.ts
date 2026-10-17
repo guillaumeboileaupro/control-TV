@@ -7,11 +7,8 @@ describe("TV app logos", () => {
   test("maps exact Android packages to valid bundled SVG paths", () => {
     const packages = {
       "com.apple.atve.androidtv.appletv": "Apple TV",
-      "com.android.tv.settings": "Android",
       "com.android.vending": "Google Play",
       "com.google.android.apps.tv.launcherx": "Google TV",
-      "com.google.android.play.games": "Google Play",
-      "com.google.android.tvrecommendations": "Google TV",
       "com.google.android.youtube.tv": "YouTube",
       "com.google.android.youtube.tvkids": "YouTube Kids",
       "com.google.android.youtube.tvmusic": "YouTube Music",
@@ -34,6 +31,9 @@ describe("TV app logos", () => {
     assert.equal(appLogo("com.example.netflix"), null);
     assert.equal(appLogo("com.netflix.ninja.fake"), null);
     assert.equal(appLogo("Netflix"), null);
+    assert.equal(appLogo("com.google.android.play.games"), null);
+    assert.equal(appLogo("com.android.tv.settings"), null);
+    assert.equal(appLogo("com.google.android.tvrecommendations"), null);
   });
 
   test("rejects catalogue entries whose SVG path or colour is missing", () => {

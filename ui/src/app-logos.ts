@@ -2,7 +2,6 @@
 // Unknown or invalid entries deliberately resolve to null: callers retain their initial fallback.
 
 import {
-  siAndroid,
   siAppletv,
   siGoogleplay,
   siGoogletv,
@@ -31,11 +30,8 @@ function bundled(icon: SimpleIcon): AppLogo {
 
 const LOGOS: AppLogoCatalogue = {
   "com.apple.atve.androidtv.appletv": bundled(siAppletv),
-  "com.android.tv.settings": bundled(siAndroid),
   "com.android.vending": bundled(siGoogleplay),
   "com.google.android.apps.tv.launcherx": bundled(siGoogletv),
-  "com.google.android.play.games": bundled(siGoogleplay),
-  "com.google.android.tvrecommendations": bundled(siGoogletv),
   "com.google.android.youtube.tv": bundled(siYoutube),
   "com.google.android.youtube.tvkids": bundled(siYoutubekids),
   "com.google.android.youtube.tvmusic": bundled(siYoutubemusic),
