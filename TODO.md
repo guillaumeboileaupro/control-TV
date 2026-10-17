@@ -85,6 +85,7 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 - [ ] **Propriétaire** : créer la clé, la sauvegarder, définir les deux secrets et publier l'empreinte du certificat ; puis une dernière désinstallation sur chaque téléphone (les APK installés ont des signataires éphémères).
 - [x] Runner : les scénarios TV, téléphone, double télécommande et latence indiquent qu'aucun adaptateur automatique n'existe et renvoient au protocole manuel.
 - [x] Artefacts CI de `main` `de31c94` (run `39034444658`) téléchargés et identifiés dans `dist/acceptance-de31c94/` (ignoré par git) ; le binaire installé sur Ubuntu est ce build. APK : signataire éphémère, expire sur GitHub le 2026-10-24.
+- [x] Suites de revue Codex : `check-apk` (APK exactement celui de sa provenance et du run attendu) et `check-deb` (poste vierge = non installé, fichiers installés vérifiés contre dpkg, aussi dans le runner).
 - [ ] Instrumentation C6/C7 (absente : C6/C7 restent NOT RUN sans elle).
 
 

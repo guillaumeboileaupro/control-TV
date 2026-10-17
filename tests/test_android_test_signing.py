@@ -13,6 +13,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -379,3 +380,178 @@ def test_ci_never_prints_the_signing_secrets() -> None:
     assert "set -o pipefail" in record[: record.index("- name: Upload the debug APK")]
     # Only the build step sees the secrets: no job- or workflow-level exposure.
     assert workflow.count("secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_PASSWORD") == 1
+
+
+# Acceptance: the APK is exactly the expected CI build (check-apk) -------------------------
+
+
+def provenance_for(
+    apk: Path, *, signer: str = PINNED, identity: str = "pinned-test-key"
+) -> dict[str, object]:
+    return {
+        "schema": "control-tv-apk-provenance/1",
+        "commit": COMMIT,
+        "runId": 39034444658,
+        "apkSha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
+        "signerCertificateSha256": signer,
+        "signingIdentity": identity,
+    }
+
+
+def checked(
+    tmp_path: Path,
+    *,
+    document: dict[str, object] | None = None,
+    signer: str = PINNED,
+    commit: str = COMMIT,
+    run_id: int | None = 39034444658,
+    published: str | None = None,
+    apk_bytes: bytes = b"the APK of de31c94",
+) -> tuple[int, list[str]]:
+    apk = tmp_path / "app-universal-debug.apk"
+    apk.write_bytes(b"the APK of de31c94")
+    pin = tmp_path / "pin"
+    pin.write_text(PINNED + "\n", encoding="ascii")
+    (tmp_path / "apk-provenance.json").write_text(
+        json.dumps(document if document is not None else provenance_for(apk)), encoding="utf-8"
+    )
+    apk.write_bytes(apk_bytes)  # what is actually on disk at the recipe
+    status, lines = signing.check_apk(
+        apk,
+        fake_apksigner(tmp_path, signer),
+        tmp_path / "apk-provenance.json",
+        pin,
+        expect_commit=commit,
+        expect_run_id=run_id,
+        expect_apk_sha256=published,
+        environ={},
+    )
+    return int(status), [str(line) for line in lines]
+
+
+def test_check_apk_passes_only_for_the_expected_ci_build(tmp_path: Path) -> None:
+    published = hashlib.sha256(b"the APK of de31c94").hexdigest()
+    status, lines = checked(tmp_path, published=published)
+    assert status == 0 and lines[-1].startswith("OK:")
+
+
+def test_an_apk_that_its_provenance_does_not_name_is_refused(tmp_path: Path) -> None:
+    """Regression: verify-apk checked only the signer, so a stale or swapped APK signed with the
+    same key passed and the results would be recorded against the wrong commit and run."""
+    status, lines = checked(tmp_path, apk_bytes=b"another build, same signing key")
+    assert (
+        status == 1 and "FAIL: the APK SHA-256 differs from its provenance (another APK)" in lines
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"commit": "f" * 40}, "commit is not the expected one"),
+        ({"run_id": 1}, "CI run is not the expected one"),
+        ({"published": "0" * 64}, "differs from the one the CI run published"),
+        ({"signer": OTHER}, "signature: the APK is signed by another key"),
+    ],
+    ids=["commit", "run", "published-digest", "signer"],
+)
+def test_check_apk_fails_on_every_contradiction(
+    tmp_path: Path, options: dict[str, object], message: str
+) -> None:
+    status, lines = checked(tmp_path, **options)  # type: ignore[arg-type]
+    assert status == 1 and any(message in line for line in lines)
+
+
+def test_an_ephemeral_build_must_match_its_recorded_signer(tmp_path: Path) -> None:
+    apk = tmp_path / "x.apk"
+    apk.write_bytes(b"the APK of de31c94")
+    document = provenance_for(apk, signer=PINNED, identity="ephemeral-debug-key")
+    assert checked(tmp_path, document=document, signer=PINNED)[0] == 0
+    status, lines = checked(tmp_path, document=document, signer=OTHER)
+    assert status == 1 and "FAIL: the APK signer differs from its provenance" in lines
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"schema": "other/1"}, "is not control-tv-apk-provenance/1"),
+        ({"commit": "de31c94"}, "full 40-character"),
+        ({"runId": "1"}, "integer or null"),
+        ({"apkSha256": "short"}, "apkSha256 must be a SHA-256"),
+        ({"signerCertificateSha256": None}, "signerCertificateSha256 must be a SHA-256"),
+        ({"signingIdentity": "release-key"}, "unrecognized"),
+    ],
+)
+def test_an_unusable_provenance_blocks_rather_than_fails(
+    tmp_path: Path, change: dict[str, object], message: str
+) -> None:
+    apk = tmp_path / "x.apk"
+    apk.write_bytes(b"the APK of de31c94")
+    status, lines = checked(tmp_path, document={**provenance_for(apk), **change})
+    assert status == 2 and message in lines[0]
+
+
+def test_a_missing_provenance_apk_or_apksigner_blocks(tmp_path: Path) -> None:
+    apk = tmp_path / "x.apk"
+    apk.write_bytes(b"apk")
+    pin = tmp_path / "absent-pin"
+    common: dict[str, Any] = {
+        "expect_commit": COMMIT,
+        "expect_run_id": None,
+        "expect_apk_sha256": None,
+        "environ": {},
+    }
+
+    status, lines = signing.check_apk(apk, Path("apksigner"), tmp_path / "none.json", pin, **common)
+    assert status == 2 and "no APK provenance" in lines[0]
+
+    (tmp_path / "broken.json").write_text("{", encoding="utf-8")
+    assert signing.check_apk(apk, Path("x"), tmp_path / "broken.json", pin, **common)[0] == 2
+
+    (tmp_path / "p.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    status, lines = signing.check_apk(
+        tmp_path / "gone.apk", Path("x"), tmp_path / "p.json", pin, **common
+    )
+    assert status == 2 and "cannot be read" in lines[0]
+    missing_tool = tmp_path / "no" / "apksigner-not-installed"
+    status, lines = signing.check_apk(apk, missing_tool, tmp_path / "p.json", pin, **common)
+    assert status == 2 and "apksigner cannot be run" in lines[0]
+
+
+def test_the_check_apk_and_write_apk_provenance_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    tool = fake_apksigner(tmp_path, OTHER)
+    record = tmp_path / "apk-provenance.json"
+    write = ["write-apk-provenance", "--apk", str(apk), "--apksigner", str(tool)]
+    write += ["--pin", str(tmp_path / "no-pin"), "--commit", COMMIT, "--run-id", "5"]
+
+    assert signing.main([*write, "--output", str(record)], {}) == 0
+    assert json.loads(record.read_text())["signingIdentity"] == "ephemeral-debug-key"
+    assert signing.main([*write, "--output", str(record)], {}) == 1  # never overwritten
+    assert "never overwritten" in capsys.readouterr().err
+
+    monkeypatch.chdir(tmp_path)  # a relative apksigner path stays local, not a PATH lookup
+    check = ["check-apk", "--apk", str(apk), "--apksigner", "./apksigner"]
+    check += ["--pin", str(tmp_path / "no-pin"), "--expect-commit", COMMIT, "--expect-run-id", "5"]
+    assert signing.main(check, {}) == 0
+    assert "OK: the APK is the one" in capsys.readouterr().out
+
+
+def test_check_apk_fails_when_apksigner_rejects_the_signature(tmp_path: Path) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    (tmp_path / "p.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+
+    status, lines = signing.check_apk(
+        apk,
+        fake_apksigner(tmp_path, PINNED, code=1),
+        tmp_path / "p.json",
+        tmp_path / "no-pin",
+        expect_commit=COMMIT,
+        expect_run_id=None,
+        expect_apk_sha256=None,
+        environ={},
+    )
+    assert status == 1 and lines == ["FAIL: signature: apksigner rejected the APK signature"]

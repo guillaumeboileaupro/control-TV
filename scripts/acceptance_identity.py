@@ -20,6 +20,12 @@ or do not match.
 Usage:
     python3 scripts/acceptance_identity.py deb-provenance --deb PATH --commit SHA \
         [--run-id ID] --output PATH
+    python3 scripts/acceptance_identity.py check-deb --deb PATH [--provenance PATH] \
+        [--expect-commit SHA] [--expect-run-id ID] [--require-installed] [--root /]
+
+`check-deb` exits 0 (identified; the installed state is printed), 1 FAIL (a contradiction:
+another build), or 2 BLOCKED (the identity cannot be established). An absent installation is
+"not installed", not an error, unless `--require-installed` is given.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import sys
 import tarfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 DEB_SCHEMA = "control-tv-deb-provenance/2"
@@ -227,6 +234,109 @@ def verify_deb(deb: Path, provenance: DebProvenance) -> list[str]:
     return problems
 
 
+INSTALLED_BINARY = Path("usr/bin/control-tv")
+# dpkg's copy of the installed package's md5sums: every installed file and its MD5.
+INSTALLED_PAYLOAD = Path("var/lib/dpkg/info/control-tv.md5sums")
+_MD5SUMS_LINE = re.compile(r"([0-9a-f]{32})  (\S.*)")
+
+
+def installed_file_problems(root: Path, md5sums: str) -> list[str]:
+    """Every installed file that is missing or differs from dpkg's record of it."""
+    problems: list[str] = []
+    lines = [line for line in md5sums.splitlines() if line.strip()]
+    if not lines:
+        return ["dpkg's file list is empty"]
+    for line in lines:
+        match = _MD5SUMS_LINE.fullmatch(line)
+        if match is None or match.group(2).startswith("/") or ".." in Path(match.group(2)).parts:
+            problems.append("dpkg's file list is malformed")
+            continue
+        path = root / match.group(2)
+        try:
+            digest = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+        except FileNotFoundError:
+            problems.append(f"missing: {match.group(2)}")
+            continue
+        except OSError as error:
+            problems.append(f"unreadable ({type(error).__name__}): {match.group(2)}")
+            continue
+        if digest != match.group(1):
+            problems.append(f"modified: {match.group(2)}")
+    return problems
+
+
+class Installed(StrEnum):
+    ABSENT = "not installed"
+    THIS_BUILD = "installed: this build"
+    OTHER_BUILD = "installed: another build"
+    UNKNOWN = "installed state cannot be established"
+
+
+@dataclass(frozen=True)
+class InstalledState:
+    kind: Installed
+    detail: str
+
+
+def installed_state(root: Path, provenance: DebProvenance) -> InstalledState:
+    """Whether the system under `root` has no control-tv, this build (binary, dpkg record and
+    every installed file), another build, or a state that cannot be read (partial install)."""
+    binary, record = root / INSTALLED_BINARY, root / INSTALLED_PAYLOAD
+    if not binary.exists() and not record.exists():
+        return InstalledState(Installed.ABSENT, "no installed binary and no dpkg record")
+    try:
+        binary_sha256 = sha256_file(binary)
+        record_text = record.read_text(encoding="utf-8")
+    except (IdentityError, OSError, UnicodeDecodeError) as error:
+        return InstalledState(Installed.UNKNOWN, f"partial or unreadable installation: {error}")
+    payload_sha256 = hashlib.sha256(record_text.encode("utf-8")).hexdigest()
+    if binary_sha256 != provenance.binary_sha256 or payload_sha256 != provenance.payload_sha256:
+        return InstalledState(
+            Installed.OTHER_BUILD,
+            f"installed binary {binary_sha256}, payload {payload_sha256}",
+        )
+    problems = installed_file_problems(root, record_text)
+    if problems:
+        return InstalledState(Installed.OTHER_BUILD, "; ".join(problems[:5]))
+    return InstalledState(Installed.THIS_BUILD, "binary, dpkg record and every file match")
+
+
+def check_deb(
+    deb: Path,
+    provenance_path: Path,
+    *,
+    root: Path,
+    expect_commit: str | None,
+    expect_run_id: int | None,
+    require_installed: bool,
+) -> tuple[int, list[str]]:
+    """The `check-deb` verdict: (exit status, report lines)."""
+    try:
+        provenance = read_deb_provenance(provenance_path)
+        problems = verify_deb(deb, provenance)
+    except IdentityError as error:
+        return 2, [f"BLOCKED: the build identity cannot be established: {error}"]
+    if expect_commit is not None and provenance.commit != expect_commit:
+        problems.append("the provenance commit is not the expected one")
+    if expect_run_id is not None and provenance.run_id != expect_run_id:
+        problems.append("the provenance CI run is not the expected one")
+    if problems:
+        return 1, [f"FAIL: {problem}" for problem in problems]
+    lines = [
+        f"package: commit {provenance.commit}, run {provenance.run_id}, "
+        f"{provenance.version} {provenance.architecture}",
+        f"deb {provenance.deb_sha256}, binary {provenance.binary_sha256}, "
+        f"payload {provenance.payload_sha256}",
+    ]
+    state = installed_state(root, provenance)
+    lines.append(f"{state.kind.value} ({state.detail})")
+    if state.kind is Installed.UNKNOWN:
+        return 2, [*lines, "BLOCKED: the installed state cannot be established"]
+    if require_installed and state.kind is not Installed.THIS_BUILD:
+        return 1, [*lines, "FAIL: the installed package is not this build"]
+    return 0, [*lines, "OK: the package matches its provenance"]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -235,7 +345,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     deb.add_argument("--commit", required=True)
     deb.add_argument("--run-id", type=int)
     deb.add_argument("--output", type=Path, required=True)
+    check = commands.add_parser("check-deb", help="identify a .deb and the installed package")
+    check.add_argument("--deb", type=Path, required=True)
+    check.add_argument("--provenance", type=Path)
+    check.add_argument("--expect-commit")
+    check.add_argument("--expect-run-id", type=int)
+    check.add_argument("--require-installed", action="store_true")
+    check.add_argument("--root", type=Path, default=Path("/"))
     arguments = parser.parse_args(argv)
+    if arguments.command == "check-deb":
+        status, lines = check_deb(
+            arguments.deb,
+            arguments.provenance or arguments.deb.parent / "provenance.json",
+            root=arguments.root,
+            expect_commit=arguments.expect_commit,
+            expect_run_id=arguments.expect_run_id,
+            require_installed=arguments.require_installed,
+        )
+        print("\n".join(lines))
+        return status
     try:
         if arguments.output.exists():
             raise IdentityError(f"{arguments.output} exists; it is never overwritten")

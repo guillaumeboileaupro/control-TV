@@ -74,7 +74,13 @@ class FakeHost:
         binary_after_install: str | None = sha256(BINARY),
         installed_payload: str | None = payload_sha256(BINARY),
         payload_after_install: str | None = payload_sha256(BINARY),
+        file_problems: list[str] | None = None,
+        file_problems_after_install: list[str] | None = None,
     ) -> None:
+        self.file_problems = [] if file_problems is None else file_problems
+        self.file_problems_after_install = (
+            [] if file_problems_after_install is None else file_problems_after_install
+        )
         self.installed_binary = installed_binary
         self.binary_after_install = binary_after_install
         self.installed_payload = installed_payload
@@ -108,6 +114,12 @@ class FakeHost:
 
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
+
+    def installed_file_problems(self) -> list[str] | None:
+        installed = any(
+            command[:4] == ("sudo", "-n", "apt-get", "install") for command, _ in self.calls
+        )
+        return self.file_problems_after_install if installed else self.file_problems
 
     def file_sha256(self, path: Path) -> str | None:
         self.hashed.append(path)
@@ -614,3 +626,60 @@ def test_an_install_that_leaves_other_files_fails(tmp_path: Path) -> None:
     result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
 
     assert result.outcome is acceptance.Outcome.FAIL and host.launched == []
+
+
+class UncheckableFiles(FakeHost):
+    def installed_file_problems(self) -> list[str] | None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("host", "reason"),
+    [
+        (
+            FakeHost(
+                [metadata(), completed(stdout="ii  0.1.0")],
+                file_problems=["modified: usr/lib/control-tv/python-bridge/x.so"],
+            ),
+            "differ from the package (modified or partial)",
+        ),
+        (
+            UncheckableFiles([metadata(), completed(stdout="ii  0.1.0")]),
+            "cannot be checked",
+        ),
+    ],
+    ids=["modified-file", "uncheckable"],
+)
+def test_an_installed_package_whose_files_differ_is_never_validated(
+    tmp_path: Path, host: FakeHost, reason: str
+) -> None:
+    # Same binary, same dpkg record, but a file on disk changed: not the artifact.
+    result = ubuntu.run_ubuntu_acceptance(
+        context(tmp_path, allow_existing=True), scenario(), host=host
+    )
+
+    assert result.outcome is acceptance.Outcome.BLOCKED and reason in result.reason
+    assert host.launched == []
+
+
+def test_an_install_that_leaves_modified_files_fails(tmp_path: Path) -> None:
+    host = FakeHost(successful_replies()[:7], file_problems_after_install=["missing: usr/x"])
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.FAIL and "do not match the package" in result.reason
+    assert host.launched == []
+
+
+def test_the_real_host_checks_the_installed_files_or_says_it_cannot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = tmp_path / "control-tv.md5sums"
+    monkeypatch.setattr(ubuntu, "INSTALLED_PAYLOAD", tmp_path / "absent.md5sums")
+    assert ubuntu.SubprocessUbuntuHost().installed_file_problems() is None
+
+    record.write_text("00000000000000000000000000000000  nonexistent/control-tv-file\n")
+    monkeypatch.setattr(ubuntu, "INSTALLED_PAYLOAD", record)
+    assert ubuntu.SubprocessUbuntuHost().installed_file_problems() == [
+        "missing: nonexistent/control-tv-file"
+    ]

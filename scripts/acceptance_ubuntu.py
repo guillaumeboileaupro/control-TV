@@ -22,6 +22,7 @@ from acceptance import Context, Outcome, Result, Scenario, make_result
 from acceptance_identity import (
     DebProvenance,
     IdentityError,
+    installed_file_problems,
     read_deb_provenance,
     sha256_file,
     verify_deb,
@@ -76,6 +77,11 @@ class UbuntuHost(Protocol):
         """The SHA-256 of an installed file, or None when it cannot be read."""
         ...
 
+    def installed_file_problems(self) -> list[str] | None:
+        """Installed files that are missing or differ from dpkg's record of the package, or
+        None when they cannot be checked."""
+        ...
+
 
 class SubprocessUbuntuHost:
     """Concrete local Ubuntu process adapter. It never uses a shell."""
@@ -112,6 +118,13 @@ class SubprocessUbuntuHost:
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
+
+    def installed_file_problems(self) -> list[str] | None:
+        try:
+            record = INSTALLED_PAYLOAD.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        return installed_file_problems(Path("/"), record)
 
     def file_sha256(self, path: Path) -> str | None:
         try:
@@ -471,6 +484,19 @@ def run_ubuntu_acceptance(
                 ),
                 proof="installed binary and md5sums SHA-256 against the provenance",
             )
+        file_problems = active_host.installed_file_problems()
+        if file_problems is None or file_problems:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "the installed files cannot be checked"
+                if file_problems is None
+                else "the installed files differ from the package (modified or partial)",
+                started,
+                logs,
+                observed=f"{installation_origin}: {'; '.join((file_problems or [])[:5])}",
+                proof="every installed file against dpkg's md5sums record",
+            )
         if not context.policy.validate_existing_deb:
             return _result(
                 scenario,
@@ -597,6 +623,17 @@ def run_ubuntu_acceptance(
                 logs,
                 observed=identity,
                 proof=f"installed binary SHA-256; {receipt_path}",
+            )
+        file_problems = active_host.installed_file_problems()
+        if file_problems is None or file_problems:
+            return _result(
+                scenario,
+                Outcome.FAIL,
+                "the installed files do not match the package; recovery receipt retained",
+                started,
+                logs,
+                observed="; ".join((file_problems or ["the files cannot be checked"])[:5]),
+                proof=f"every installed file against dpkg's md5sums record; {receipt_path}",
             )
         _write_receipt(receipt_path, provenance=provenance, state="installed")
 

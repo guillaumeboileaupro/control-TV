@@ -35,30 +35,34 @@ how those scenarios are run by hand, reproducibly.
 Use one pair of artifacts, from one CI run of `main`, for the whole campaign.
 
 ```bash
-# Ubuntu package: the provenance binds commit, version, .deb and binary SHA-256.
-.venv/bin/python - <<'EOF'
-import sys; sys.path.insert(0, "scripts")
-from pathlib import Path
-from acceptance_identity import read_deb_provenance, verify_deb, sha256_file
-deb = Path("dist/acceptance-<sha>/linux/control-tv_0.1.0_amd64.deb")
-p = read_deb_provenance(deb.parent / "provenance.json")
-print(p, verify_deb(deb, p) or "package matches its provenance")
-print("installed binary matches:", sha256_file(Path("/usr/bin/control-tv")) == p.binary_sha256)
-print("installed files match:",
-      sha256_file(Path("/var/lib/dpkg/info/control-tv.md5sums")) == p.payload_sha256)
-EOF
-# Android APK: signer certificate and identity.
-.venv/bin/python scripts/android_test_signing.py verify-apk \
+# Ubuntu package: the provenance binds commit, run, version, .deb, binary and payload SHA-256;
+# the installed package is reported as not installed, this build (binary, dpkg record and every
+# installed file), another build, or unreadable (partial).
+.venv/bin/python scripts/acceptance_identity.py check-deb \
+  --deb dist/acceptance-<sha>/linux/control-tv_0.1.0_amd64.deb \
+  --expect-commit <run head SHA> --expect-run-id <run id>
+# Android APK: exactly the APK its provenance names, from the expected commit and run, with the
+# digest the CI run published in its log, signed by the recorded (or pinned) certificate.
+.venv/bin/python scripts/android_test_signing.py check-apk \
   --apk dist/acceptance-<sha>/android/app-universal-debug.apk \
-  --apksigner "$ANDROID_HOME/build-tools/<version>/apksigner"
+  --apksigner "$ANDROID_HOME/build-tools/<version>/apksigner" \
+  --expect-commit <run head SHA> --expect-run-id <run id> --expect-apk-sha256 <digest from the CI log>
 ```
 
-Record in the private record: CI run id, commit, `.deb` SHA-256, binary and payload SHA-256, APK SHA-256,
-APK signer certificate and identity (`pinned-test-key` or `ephemeral-debug-key`). A CI artifact
-from before this protocol has no `provenance.json`: write one with
-`scripts/acceptance_identity.py deb-provenance --commit <the run's head SHA> --run-id <id>`
-(the commit comes from the CI run, `gh api repos/<owner>/<repo>/actions/runs/<id>`), after
-checking the downloaded archive's digest against the run's artifact digest.
+Both commands exit 0 (identified), 1 **FAIL** (a contradiction: another package or APK, commit,
+run, key or installed build) or 2 **BLOCKED** (the identity cannot be established: no or
+unreadable provenance, partial installation, apksigner unavailable). Only 0 lets the campaign
+start; after session 1, `check-deb ... --require-installed` must also report "installed: this
+build". Record in the private record: CI run id, commit, `.deb` SHA-256, binary and payload
+SHA-256, APK SHA-256, APK signer certificate and identity (`pinned-test-key` or
+`ephemeral-debug-key`).
+
+A CI artifact from before this protocol has no `provenance.json` / `apk-provenance.json`: after
+checking the downloaded archive's digest against the run's artifact digest, write them with
+`scripts/acceptance_identity.py deb-provenance --commit <the run's head SHA> --run-id <id>` and
+`scripts/android_test_signing.py write-apk-provenance --commit <the run's head SHA> --run-id <id>`
+(the commit comes from the CI run, `gh api repos/<owner>/<repo>/actions/runs/<id>`); neither
+command overwrites an existing manifest.
 
 ## Session order (fewest manipulations)
 

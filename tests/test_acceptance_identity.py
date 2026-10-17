@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-from deb_fixtures import COMMIT, make_deb, payload_sha256, sha256
+from deb_fixtures import BRIDGE, COMMIT, make_deb, md5sums, payload_sha256, sha256
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -203,3 +203,123 @@ def test_the_command_refuses_a_short_commit(tmp_path: Path) -> None:
         == 1
     )
     assert not output.exists()
+
+
+# The installed package (check-deb) ---------------------------------------------------------
+
+
+def built(tmp_path: Path, *, binary: bytes = b"build A", bridge: bytes = b"bridge") -> Path:
+    deb = make_deb(tmp_path / "p.deb", binary=binary, bridge=bridge)
+    (tmp_path / "provenance.json").write_text(
+        identity.deb_provenance_for(deb, commit=COMMIT, run_id=7).to_json(), encoding="utf-8"
+    )
+    return deb
+
+
+def install(root: Path, *, binary: bytes = b"build A", bridge: bytes = b"bridge") -> Path:
+    for relative, content in (
+        ("usr/bin/control-tv", binary),
+        (BRIDGE, bridge),
+        ("var/lib/dpkg/info/control-tv.md5sums", md5sums(binary, bridge)),
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    return root
+
+
+def check(deb: Path, root: Path, **options: object) -> tuple[int, list[str]]:
+    status, lines = identity.check_deb(
+        deb,
+        deb.parent / "provenance.json",
+        root=root,
+        expect_commit=options.get("commit"),
+        expect_run_id=options.get("run"),
+        require_installed=bool(options.get("require")),
+    )
+    return int(status), [str(line) for line in lines]
+
+
+def test_a_clean_host_is_not_installed_rather_than_an_error(tmp_path: Path) -> None:
+    """Regression: the protocol's snippet raised IdentityError when control-tv was absent."""
+    deb = built(tmp_path)
+    clean = tmp_path / "clean-root"
+    clean.mkdir()
+
+    status, lines = check(deb, clean)
+
+    assert status == 0 and "not installed (no installed binary and no dpkg record)" in lines
+    assert check(deb, clean, require=True)[0] == 1
+
+
+def test_the_installed_package_is_this_build_only_when_every_file_matches(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+
+    status, lines = check(deb, root, commit=COMMIT, run=7, require=True)
+    assert status == 0 and any(line.startswith("installed: this build") for line in lines)
+
+    (root / BRIDGE).write_bytes(b"tampered bridge")  # same binary, same dpkg record
+    status, lines = check(deb, root, require=True)
+    assert status == 1 and any(f"modified: {BRIDGE}" in line for line in lines)
+
+
+def test_another_installed_build_and_a_partial_installation_are_told_apart(
+    tmp_path: Path,
+) -> None:
+    deb = built(tmp_path)
+    other = install(tmp_path / "other", bridge=b"another bridge")
+    status, lines = check(deb, other, require=True)
+    assert status == 1 and any(line.startswith("installed: another build") for line in lines)
+    assert check(deb, other)[0] == 0  # before installing, another build is only reported
+
+    partial = tmp_path / "partial"
+    (partial / "usr/bin").mkdir(parents=True)
+    (partial / "usr/bin/control-tv").write_bytes(b"build A")
+    status, lines = check(deb, partial)
+    assert status == 2 and lines[-1] == "BLOCKED: the installed state cannot be established"
+
+
+def test_check_deb_keeps_blocked_and_fail_apart(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    assert check(deb, root, commit="f" * 40)[0] == 1  # contradiction: FAIL
+    assert check(deb, root, run=8)[0] == 1
+    (tmp_path / "provenance.json").unlink()
+    status, lines = check(deb, root)
+    assert status == 2 and lines[0].startswith("BLOCKED: the build identity cannot be established")
+
+
+def test_installed_files_are_checked_against_the_dpkg_record(tmp_path: Path) -> None:
+    root = install(tmp_path / "root")
+    record = (root / "var/lib/dpkg/info/control-tv.md5sums").read_text()
+
+    assert identity.installed_file_problems(root, record) == []
+    assert identity.installed_file_problems(root, "") == ["dpkg's file list is empty"]
+    assert identity.installed_file_problems(root, "zz  usr/x\n") == [
+        "dpkg's file list is malformed"
+    ]
+    assert identity.installed_file_problems(root, f"{'0' * 32}  ../etc/passwd\n") == [
+        "dpkg's file list is malformed"
+    ]
+    (root / BRIDGE).unlink()
+    assert identity.installed_file_problems(root, record) == [f"missing: {BRIDGE}"]
+    (root / BRIDGE).mkdir()
+    assert identity.installed_file_problems(root, record) == [
+        f"unreadable (IsADirectoryError): {BRIDGE}"
+    ]
+
+
+def test_the_check_deb_command_prints_and_exits_with_the_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+
+    assert (
+        identity.main(["check-deb", "--deb", str(deb), "--root", str(root), "--require-installed"])
+        == 0
+    )
+    assert "OK: the package matches its provenance" in capsys.readouterr().out

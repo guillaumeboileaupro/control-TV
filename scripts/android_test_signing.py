@@ -154,6 +154,108 @@ def apk_provenance(
     }
 
 
+@dataclass(frozen=True)
+class ApkProvenance:
+    """What CI recorded for one APK (`apk-provenance.json`)."""
+
+    commit: str
+    run_id: int | None
+    apk_sha256: str
+    signer_sha256: str
+    identity: Identity
+
+
+def read_apk_provenance(path: Path) -> ApkProvenance:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SigningError(f"no APK provenance at {path}") from None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SigningError(f"unreadable APK provenance: {type(error).__name__}") from None
+    if not isinstance(document, dict) or document.get("schema") != APK_SCHEMA:
+        raise SigningError(f"the APK provenance is not {APK_SCHEMA}")
+    commit, run_id = document.get("commit"), document.get("runId")
+    apk, signer = document.get("apkSha256"), document.get("signerCertificateSha256")
+    identity = document.get("signingIdentity")
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        raise SigningError("the APK provenance commit must be a full 40-character Git SHA")
+    if run_id is not None and (not isinstance(run_id, int) or isinstance(run_id, bool)):
+        raise SigningError("the APK provenance run id must be an integer or null")
+    if not isinstance(identity, str) or identity not in {member.value for member in Identity}:
+        raise SigningError("the APK provenance signing identity is unrecognized")
+    return ApkProvenance(
+        commit,
+        run_id,
+        _sha256_field(apk, "apkSha256"),
+        _sha256_field(signer, "signerCertificateSha256"),
+        Identity(identity),
+    )
+
+
+def _sha256_field(value: object, name: str) -> str:
+    if not isinstance(value, str) or not _DIGEST.fullmatch(value):
+        raise SigningError(f"the APK provenance {name} must be a SHA-256")
+    return value
+
+
+def check_apk(
+    apk: Path,
+    apksigner: Path,
+    provenance_path: Path,
+    pin_path: Path,
+    *,
+    expect_commit: str,
+    expect_run_id: int | None,
+    expect_apk_sha256: str | None,
+    environ: Mapping[str, str],
+    run: Runner | None = None,
+) -> tuple[int, list[str]]:
+    """The `check-apk` verdict: 0 PASS, 1 FAIL (another APK, key, commit or run), 2 BLOCKED
+    (the identity cannot be established), with report lines."""
+    try:
+        provenance = read_apk_provenance(provenance_path)
+        digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+    except SigningError as error:
+        return 2, [f"BLOCKED: the APK identity cannot be established: {error}"]
+    except OSError as error:
+        return 2, [f"BLOCKED: the APK cannot be read: {type(error).__name__}"]
+    problems: list[str] = []
+    if digest != provenance.apk_sha256:
+        problems.append("the APK SHA-256 differs from its provenance (another APK)")
+    if expect_apk_sha256 is not None and digest != expect_apk_sha256:
+        problems.append("the APK SHA-256 differs from the one the CI run published")
+    if provenance.commit != expect_commit:
+        problems.append("the APK provenance commit is not the expected one")
+    if expect_run_id is not None and provenance.run_id != expect_run_id:
+        problems.append("the APK provenance CI run is not the expected one")
+    try:
+        certificates = verify_apk(apk, apksigner, environ, run or _run)
+    except OSError as error:
+        return 2, [f"BLOCKED: apksigner cannot be run: {type(error).__name__}"]
+    except SigningError as error:
+        problems.append(f"signature: {error}")
+    else:
+        try:
+            verdict = judge(
+                certificates,
+                read_pin(pin_path),
+                stable_key_used=provenance.identity is Identity.PINNED,
+                require_stable=False,
+            )
+        except SigningError as error:
+            problems.append(f"signature: {error}")
+        else:
+            if verdict.certificate != provenance.signer_sha256:
+                problems.append("the APK signer differs from its provenance")
+    if problems:
+        return 1, [f"FAIL: {problem}" for problem in problems]
+    return 0, [
+        f"APK {digest}: commit {provenance.commit}, run {provenance.run_id}",
+        f"signer {provenance.signer_sha256} ({provenance.identity.value})",
+        "OK: the APK is the one its provenance and the expected CI run name",
+    ]
+
+
 def _run(args: Sequence[str], environ: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(args), capture_output=True, text=True, check=False, shell=False, env=dict(environ)
@@ -206,7 +308,9 @@ def generate(keystore: Path, environ: Mapping[str, str], run: Runner = _run) -> 
 def verify_apk(
     apk: Path, apksigner: Path, environ: Mapping[str, str], run: Runner = _run
 ) -> tuple[str, ...]:
-    checked = run((str(apksigner), "verify", "--print-certs", str(apk)), environ)
+    # A path to a file is run as such ("./apksigner" stays local); a bare name is looked up.
+    program = str(apksigner.resolve()) if apksigner.exists() else str(apksigner)
+    checked = run((program, "verify", "--print-certs", str(apk)), environ)
     if checked.returncode != 0:
         raise SigningError("apksigner rejected the APK signature")
     certificates = apksigner_certificates(checked.stdout)
@@ -234,8 +338,55 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     check.add_argument("--commit")
     check.add_argument("--run-id", type=int)
     check.add_argument("--provenance-output", type=Path)
+    acceptance = commands.add_parser(
+        "check-apk", help="acceptance: the APK is exactly the expected CI build"
+    )
+    acceptance.add_argument("--apk", type=Path, required=True)
+    acceptance.add_argument("--apksigner", type=Path, required=True)
+    acceptance.add_argument("--provenance", type=Path)
+    acceptance.add_argument("--pin", type=Path, default=PIN)
+    acceptance.add_argument("--expect-commit", required=True)
+    acceptance.add_argument("--expect-run-id", type=int)
+    acceptance.add_argument("--expect-apk-sha256")
+    record = commands.add_parser(
+        "write-apk-provenance", help="record the provenance of an older CI APK (never overwrites)"
+    )
+    record.add_argument("--apk", type=Path, required=True)
+    record.add_argument("--apksigner", type=Path, required=True)
+    record.add_argument("--pin", type=Path, default=PIN)
+    record.add_argument("--commit", required=True)
+    record.add_argument("--run-id", type=int)
+    record.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
+    if arguments.command == "check-apk":
+        status, lines = check_apk(
+            arguments.apk,
+            arguments.apksigner,
+            arguments.provenance or arguments.apk.parent / "apk-provenance.json",
+            arguments.pin,
+            expect_commit=arguments.expect_commit,
+            expect_run_id=arguments.expect_run_id,
+            expect_apk_sha256=arguments.expect_apk_sha256,
+            environ=environ,
+        )
+        print("\n".join(lines))
+        return status
     try:
+        if arguments.command == "write-apk-provenance":
+            if arguments.output.exists():
+                raise SigningError(f"{arguments.output} exists; it is never overwritten")
+            verdict = judge(
+                verify_apk(arguments.apk, arguments.apksigner, environ),
+                read_pin(arguments.pin),
+                stable_key_used=False,
+                require_stable=False,
+            )
+            document = apk_provenance(
+                arguments.apk, verdict, commit=arguments.commit, run_id=arguments.run_id
+            )
+            arguments.output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(document, indent=2))
+            return 0
         if arguments.command == "generate":
             digest = generate(arguments.keystore.expanduser(), environ)
             print(f"certificate SHA-256: {digest}")

@@ -100,8 +100,9 @@ the package's `md5sums`, which lists every packaged file, the frozen Python brid
 binary alone is reproducible and stays identical when only the bridge changes). The adapter
 recomputes the digests: a missing or invalid manifest is `BLOCKED` (identity cannot be
 established), a contradiction is `FAIL`, an installed package whose binary or dpkg file list
-(`/var/lib/dpkg/info/control-tv.md5sums`) is another build's is `BLOCKED`, and an installation
-that leaves either is `FAIL`. Its receipt (schema 2) records the commit and the digests; a
+(`/var/lib/dpkg/info/control-tv.md5sums`) is another build's, or whose installed files differ
+from that record (modified or partial), is `BLOCKED`, and an installation that leaves any of these
+is `FAIL`. Its receipt (schema 2) records the commit and the digests; a
 receipt of the earlier version-only schema is stale. For a pull-request build, CI's commit is
 GitHub's merge commit (what was built); acceptance uses push builds of `main`. It never replaces or removes an existing `control-tv`
 installation. After preflights it installs the package, checks the exact installed version,

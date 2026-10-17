@@ -670,6 +670,10 @@ nothing run on a device.
   per-step authorization, record template);
 - [x] CI artifacts of `main` `de31c94` (run `39034444658`) downloaded and identified (provenance,
   SHA-256, version, architecture, APK signer); the installed Ubuntu binary is that build;
+- [x] review follow-ups (Codex, `8f29903`): `check-apk` accepts an APK only when its provenance
+  and the expected CI run name it (digest, published digest, commit, run, signer); `check-deb`
+  reports a clean host as not installed and verifies every installed file against dpkg's record,
+  which the runner now also checks (BLOCKED before installing, FAIL after);
 - [ ] C6/C7 send/trace instrumentation (absent: C6/C7 stay NOT RUN without it).
 
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV
