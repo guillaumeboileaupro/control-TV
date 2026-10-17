@@ -221,6 +221,7 @@ def install(root: Path, *, binary: bytes = b"build A", bridge: bytes = b"bridge"
         ("usr/bin/control-tv", binary),
         (BRIDGE, bridge),
         ("var/lib/dpkg/info/control-tv.md5sums", md5sums(binary, bridge)),
+        ("var/lib/dpkg/status", b"Package: control-tv\nStatus: install ok installed\n"),
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,8 +234,8 @@ def check(deb: Path, root: Path, **options: object) -> tuple[int, list[str]]:
         deb,
         deb.parent / "provenance.json",
         root=root,
-        expect_commit=options.get("commit"),
-        expect_run_id=options.get("run"),
+        expect_commit=str(options.get("commit", COMMIT)),
+        expect_run_id=int(str(options.get("run", 7))),
         require_installed=bool(options.get("require")),
     )
     return int(status), [str(line) for line in lines]
@@ -319,7 +320,103 @@ def test_the_check_deb_command_prints_and_exits_with_the_verdict(
     root = install(tmp_path / "root")
 
     assert (
-        identity.main(["check-deb", "--deb", str(deb), "--root", str(root), "--require-installed"])
+        identity.main(
+            [
+                "check-deb",
+                "--deb",
+                str(deb),
+                "--root",
+                str(root),
+                "--require-installed",
+                "--expect-commit",
+                COMMIT,
+                "--expect-run-id",
+                "7",
+            ]
+        )
         == 0
     )
     assert "OK: the package matches its provenance" in capsys.readouterr().out
+
+
+# Self-review follow-ups (d47cf5e) ----------------------------------------------------------
+
+
+def dpkg_status(root: Path, status: str) -> None:
+    path = root / "var/lib/dpkg/status"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "Package: other\nStatus: install ok installed\n\n"
+        f"Package: control-tv\nStatus: {status}\nVersion: 0.1.0\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    "status", ["install ok half-configured", "install ok unpacked", "deinstall ok installed"]
+)
+def test_a_package_dpkg_has_not_finished_installing_is_never_this_build(
+    tmp_path: Path, status: str
+) -> None:
+    """Regression: the files matched, so a half-configured package passed --require-installed."""
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+    dpkg_status(root, status)
+
+    code, lines = check(deb, root, commit=COMMIT, run=7, require=True)
+
+    assert code == 2 and any(f"dpkg reports {status!r}" in line for line in lines)
+
+
+def test_a_package_unknown_to_dpkg_while_its_files_exist_is_blocked(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+    (root / "var/lib/dpkg").mkdir(parents=True, exist_ok=True)
+    (root / "var/lib/dpkg/status").write_text("Package: other\nStatus: install ok installed\n")
+
+    code, lines = check(deb, root, commit=COMMIT, run=7)
+    assert code == 2 and any("dpkg reports None" in line for line in lines)
+
+
+def test_the_payload_digest_is_taken_from_the_record_bytes(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+    record = root / "var/lib/dpkg/info/control-tv.md5sums"
+    record.write_bytes(record.read_bytes().replace(b"\n", b"\r\n"))  # same text, other bytes
+
+    code, lines = check(deb, root, commit=COMMIT, run=7, require=True)
+    assert code == 1 and any(line.startswith("installed: another build") for line in lines)
+
+
+def test_the_check_deb_command_requires_the_expected_commit_and_run(tmp_path: Path) -> None:
+    """Regression: without them, check-deb accepted a build of any commit and run."""
+    deb = built(tmp_path)
+    with pytest.raises(SystemExit):
+        identity.main(["check-deb", "--deb", str(deb)])
+    with pytest.raises(SystemExit):
+        identity.main(["check-deb", "--deb", str(deb), "--expect-commit", COMMIT])
+    assert (
+        identity.main(
+            [
+                "check-deb",
+                "--deb",
+                str(deb),
+                "--root",
+                str(tmp_path),
+                "--expect-commit",
+                "f" * 40,
+                "--expect-run-id",
+                "7",
+            ]
+        )
+        == 1
+    )
+
+
+def test_files_without_any_dpkg_status_are_blocked(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = install(tmp_path / "root")
+    (root / "var/lib/dpkg/status").unlink()
+
+    code, lines = check(deb, root, require=True)
+    assert code == 2 and any("dpkg reports None" in line for line in lines)

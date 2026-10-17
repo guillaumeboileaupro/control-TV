@@ -36,8 +36,9 @@ Use one pair of artifacts, from one CI run of `main`, for the whole campaign.
 
 ```bash
 # Ubuntu package: the provenance binds commit, run, version, .deb, binary and payload SHA-256;
-# the installed package is reported as not installed, this build (binary, dpkg record and every
-# installed file), another build, or unreadable (partial).
+# the installed package is reported as not installed, this build (dpkg status "install ok
+# installed", binary, dpkg record and every installed file), another build, or unreadable
+# (partial, or dpkg not finished). --expect-commit and --expect-run-id are required.
 .venv/bin/python scripts/acceptance_identity.py check-deb \
   --deb dist/acceptance-<sha>/linux/control-tv_0.1.0_amd64.deb \
   --expect-commit <run head SHA> --expect-run-id <run id>

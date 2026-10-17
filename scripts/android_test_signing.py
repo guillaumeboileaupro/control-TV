@@ -192,6 +192,13 @@ def read_apk_provenance(path: Path) -> ApkProvenance:
     )
 
 
+def _sha256_argument(value: str) -> str:
+    """`--expect-apk-sha256`: a SHA-256 as the CI log prints it (lower-case hex)."""
+    if not _DIGEST.fullmatch(value):
+        raise argparse.ArgumentTypeError("expected 64 lower-case hexadecimal characters")
+    return value
+
+
 def _sha256_field(value: object, name: str) -> str:
     if not isinstance(value, str) or not _DIGEST.fullmatch(value):
         raise SigningError(f"the APK provenance {name} must be a SHA-256")
@@ -205,7 +212,7 @@ def check_apk(
     pin_path: Path,
     *,
     expect_commit: str,
-    expect_run_id: int | None,
+    expect_run_id: int,
     expect_apk_sha256: str | None,
     environ: Mapping[str, str],
     run: Runner | None = None,
@@ -226,8 +233,14 @@ def check_apk(
         problems.append("the APK SHA-256 differs from the one the CI run published")
     if provenance.commit != expect_commit:
         problems.append("the APK provenance commit is not the expected one")
-    if expect_run_id is not None and provenance.run_id != expect_run_id:
+    if provenance.run_id != expect_run_id:
         problems.append("the APK provenance CI run is not the expected one")
+    pin = read_pin(pin_path)
+    if provenance.identity is Identity.PINNED and pin is None:
+        return 2, [
+            "BLOCKED: the provenance names the pinned test key but no certificate is pinned "
+            "in the repository"
+        ]
     try:
         certificates = verify_apk(apk, apksigner, environ, run or _run)
     except OSError as error:
@@ -238,7 +251,7 @@ def check_apk(
         try:
             verdict = judge(
                 certificates,
-                read_pin(pin_path),
+                pin,
                 stable_key_used=provenance.identity is Identity.PINNED,
                 require_stable=False,
             )
@@ -346,8 +359,8 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     acceptance.add_argument("--provenance", type=Path)
     acceptance.add_argument("--pin", type=Path, default=PIN)
     acceptance.add_argument("--expect-commit", required=True)
-    acceptance.add_argument("--expect-run-id", type=int)
-    acceptance.add_argument("--expect-apk-sha256")
+    acceptance.add_argument("--expect-run-id", type=int, required=True)
+    acceptance.add_argument("--expect-apk-sha256", type=_sha256_argument)
     record = commands.add_parser(
         "write-apk-provenance", help="record the provenance of an older CI APK (never overwrites)"
     )
@@ -375,10 +388,12 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
         if arguments.command == "write-apk-provenance":
             if arguments.output.exists():
                 raise SigningError(f"{arguments.output} exists; it is never overwritten")
+            certificates = verify_apk(arguments.apk, arguments.apksigner, environ)
+            pin = read_pin(arguments.pin)
             verdict = judge(
-                verify_apk(arguments.apk, arguments.apksigner, environ),
-                read_pin(arguments.pin),
-                stable_key_used=False,
+                certificates,
+                pin,
+                stable_key_used=pin is not None and certificates == (pin,),
                 require_stable=False,
             )
             document = apk_provenance(

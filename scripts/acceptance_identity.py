@@ -237,6 +237,8 @@ def verify_deb(deb: Path, provenance: DebProvenance) -> list[str]:
 INSTALLED_BINARY = Path("usr/bin/control-tv")
 # dpkg's copy of the installed package's md5sums: every installed file and its MD5.
 INSTALLED_PAYLOAD = Path("var/lib/dpkg/info/control-tv.md5sums")
+DPKG_STATUS = Path("var/lib/dpkg/status")
+INSTALLED_OK = "install ok installed"
 _MD5SUMS_LINE = re.compile(r"([0-9a-f]{32})  (\S.*)")
 
 
@@ -265,6 +267,21 @@ def installed_file_problems(root: Path, md5sums: str) -> list[str]:
     return problems
 
 
+def dpkg_status(root: Path, package: str = "control-tv") -> str | None:
+    """The `Status:` dpkg records for `package` under `root`, or None when it has no entry."""
+    try:
+        text = (root / DPKG_STATUS).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for stanza in text.split("\n\n"):
+        fields = dict(
+            line.split(":", 1) for line in stanza.splitlines() if ":" in line and line[0] != " "
+        )
+        if fields.get("Package", "").strip() == package:
+            return fields.get("Status", "").strip() or None
+    return None
+
+
 class Installed(StrEnum):
     ABSENT = "not installed"
     THIS_BUILD = "installed: this build"
@@ -284,12 +301,19 @@ def installed_state(root: Path, provenance: DebProvenance) -> InstalledState:
     binary, record = root / INSTALLED_BINARY, root / INSTALLED_PAYLOAD
     if not binary.exists() and not record.exists():
         return InstalledState(Installed.ABSENT, "no installed binary and no dpkg record")
+    status = dpkg_status(root)
+    if status != INSTALLED_OK:
+        return InstalledState(
+            Installed.UNKNOWN, f"files are present but dpkg reports {status!r}, not installed"
+        )
     try:
         binary_sha256 = sha256_file(binary)
-        record_text = record.read_text(encoding="utf-8")
-    except (IdentityError, OSError, UnicodeDecodeError) as error:
+        record_bytes = record.read_bytes()
+    except (IdentityError, OSError) as error:
         return InstalledState(Installed.UNKNOWN, f"partial or unreadable installation: {error}")
-    payload_sha256 = hashlib.sha256(record_text.encode("utf-8")).hexdigest()
+    # The digest of the record's exact bytes, as `deb_payload_sha256` takes it from the package.
+    payload_sha256 = hashlib.sha256(record_bytes).hexdigest()
+    record_text = record_bytes.decode("utf-8", errors="surrogateescape")
     if binary_sha256 != provenance.binary_sha256 or payload_sha256 != provenance.payload_sha256:
         return InstalledState(
             Installed.OTHER_BUILD,
@@ -306,8 +330,8 @@ def check_deb(
     provenance_path: Path,
     *,
     root: Path,
-    expect_commit: str | None,
-    expect_run_id: int | None,
+    expect_commit: str,
+    expect_run_id: int,
     require_installed: bool,
 ) -> tuple[int, list[str]]:
     """The `check-deb` verdict: (exit status, report lines)."""
@@ -316,9 +340,9 @@ def check_deb(
         problems = verify_deb(deb, provenance)
     except IdentityError as error:
         return 2, [f"BLOCKED: the build identity cannot be established: {error}"]
-    if expect_commit is not None and provenance.commit != expect_commit:
+    if provenance.commit != expect_commit:
         problems.append("the provenance commit is not the expected one")
-    if expect_run_id is not None and provenance.run_id != expect_run_id:
+    if provenance.run_id != expect_run_id:
         problems.append("the provenance CI run is not the expected one")
     if problems:
         return 1, [f"FAIL: {problem}" for problem in problems]
@@ -348,8 +372,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     check = commands.add_parser("check-deb", help="identify a .deb and the installed package")
     check.add_argument("--deb", type=Path, required=True)
     check.add_argument("--provenance", type=Path)
-    check.add_argument("--expect-commit")
-    check.add_argument("--expect-run-id", type=int)
+    check.add_argument("--expect-commit", required=True)
+    check.add_argument("--expect-run-id", type=int, required=True)
     check.add_argument("--require-installed", action="store_true")
     check.add_argument("--root", type=Path, default=Path("/"))
     arguments = parser.parse_args(argv)

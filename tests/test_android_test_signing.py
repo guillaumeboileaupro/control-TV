@@ -496,7 +496,7 @@ def test_a_missing_provenance_apk_or_apksigner_blocks(tmp_path: Path) -> None:
     pin = tmp_path / "absent-pin"
     common: dict[str, Any] = {
         "expect_commit": COMMIT,
-        "expect_run_id": None,
+        "expect_run_id": 39034444658,
         "expect_apk_sha256": None,
         "environ": {},
     }
@@ -507,7 +507,8 @@ def test_a_missing_provenance_apk_or_apksigner_blocks(tmp_path: Path) -> None:
     (tmp_path / "broken.json").write_text("{", encoding="utf-8")
     assert signing.check_apk(apk, Path("x"), tmp_path / "broken.json", pin, **common)[0] == 2
 
-    (tmp_path / "p.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    ephemeral = provenance_for(apk, identity="ephemeral-debug-key")
+    (tmp_path / "p.json").write_text(json.dumps(ephemeral), encoding="utf-8")
     status, lines = signing.check_apk(
         tmp_path / "gone.apk", Path("x"), tmp_path / "p.json", pin, **common
     )
@@ -543,15 +544,82 @@ def test_check_apk_fails_when_apksigner_rejects_the_signature(tmp_path: Path) ->
     apk = tmp_path / "app.apk"
     apk.write_bytes(b"apk")
     (tmp_path / "p.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    (tmp_path / "pin").write_text(PINNED + "\n", encoding="ascii")
 
     status, lines = signing.check_apk(
         apk,
         fake_apksigner(tmp_path, PINNED, code=1),
         tmp_path / "p.json",
-        tmp_path / "no-pin",
+        tmp_path / "pin",
         expect_commit=COMMIT,
-        expect_run_id=None,
+        expect_run_id=39034444658,
         expect_apk_sha256=None,
         environ={},
     )
     assert status == 1 and lines == ["FAIL: signature: apksigner rejected the APK signature"]
+
+
+# Self-review follow-ups (d47cf5e) ----------------------------------------------------------
+
+
+def test_write_apk_provenance_records_a_pinned_signer_as_pinned(tmp_path: Path) -> None:
+    """Regression: the pinned-key APK was recorded as ephemeral-debug-key."""
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    pin = tmp_path / "pin"
+    pin.write_text(PINNED + "\n", encoding="ascii")
+    output = tmp_path / "apk-provenance.json"
+
+    assert (
+        signing.main(
+            [
+                "write-apk-provenance",
+                "--apk",
+                str(apk),
+                "--apksigner",
+                str(fake_apksigner(tmp_path, PINNED)),
+                "--pin",
+                str(pin),
+                "--commit",
+                COMMIT,
+                "--run-id",
+                "5",
+                "--output",
+                str(output),
+            ],
+            {},
+        )
+        == 0
+    )
+    assert json.loads(output.read_text())["signingIdentity"] == "pinned-test-key"
+
+
+def test_a_pinned_claim_without_a_repository_pin_is_blocked_not_failed(tmp_path: Path) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    (tmp_path / "p.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+
+    status, lines = signing.check_apk(
+        apk,
+        fake_apksigner(tmp_path, PINNED),
+        tmp_path / "p.json",
+        tmp_path / "no-pin",
+        expect_commit=COMMIT,
+        expect_run_id=39034444658,
+        expect_apk_sha256=None,
+        environ={},
+    )
+    assert status == 2 and "no certificate is pinned in the repository" in lines[0]
+
+
+def test_the_check_apk_command_requires_the_run_and_a_well_formed_published_digest(
+    tmp_path: Path,
+) -> None:
+    """Regression: without --expect-run-id an APK of any run of the commit was accepted."""
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    base = ["check-apk", "--apk", str(apk), "--apksigner", "x", "--expect-commit", COMMIT]
+    with pytest.raises(SystemExit):
+        signing.main(base, {})
+    with pytest.raises(SystemExit):
+        signing.main([*base, "--expect-run-id", "5", "--expect-apk-sha256", "ABC"], {})
