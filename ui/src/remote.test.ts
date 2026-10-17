@@ -21,6 +21,7 @@ import {
   appHue,
   appInitial,
   appLabel,
+  appPresentation,
   describeRemote,
   describeReport,
   finishRemote,
@@ -524,6 +525,31 @@ describe("the TV's apps", () => {
       "YouTube",
     ]);
     assert.equal(describeRemote(state).outcome, null);
+  });
+
+  test("a tile keeps the exact package accessible without guessing a display name", () => {
+    const known = appPresentation({
+      package: "com.apple.atve.androidtv.appletv",
+      name: "Apple TV",
+    });
+    assert.deepEqual(known, {
+      label: "Apple TV",
+      title: "Apple TV\nAndroid package: com.apple.atve.androidtv.appletv",
+      accessibleLabel: "Open Apple TV on the TV. Android package: com.apple.atve.androidtv.appletv",
+      technicalLabel: false,
+    });
+
+    const unknown = appPresentation({
+      package: "com.vendor.long.technical.identifier",
+      name: null,
+    });
+    assert.deepEqual(unknown, {
+      label: "com.vendor.long.technical.identifier",
+      title: "Android package: com.vendor.long.technical.identifier",
+      accessibleLabel:
+        "Open com.vendor.long.technical.identifier on the TV. Android package: com.vendor.long.technical.identifier",
+      technicalLabel: true,
+    });
   });
 
   test("nothing listed yet is not an empty list", () => {

@@ -114,6 +114,26 @@ export function appLabel(app: TvApp): string {
   return app.name ?? app.package;
 }
 
+export interface AppPresentation {
+  readonly label: string;
+  readonly title: string;
+  readonly accessibleLabel: string;
+  readonly technicalLabel: boolean;
+}
+
+// Keep the package identity available even when a friendly name is shown. The package is the
+// authoritative key for logos and launch requests; the display name is never used to guess either.
+export function appPresentation(app: TvApp): AppPresentation {
+  const label = appLabel(app);
+  const identity = `Android package: ${app.package}`;
+  return {
+    label,
+    title: app.name === null ? identity : `${app.name}\n${identity}`,
+    accessibleLabel: `Open ${label} on the TV. ${identity}`,
+    technicalLabel: app.name === null,
+  };
+}
+
 export interface RemoteRequest {
   requestId: number;
   deviceId: string;

@@ -11,6 +11,7 @@ import {
   appHue,
   appInitial,
   appLabel,
+  appPresentation,
   describeRemote,
   type RemoteAction,
   type RemoteDescription,
@@ -166,12 +167,13 @@ export function createRemotePanel(
     const focused = document.activeElement?.getAttribute("data-package") ?? null;
     el.remoteApps.replaceChildren();
     for (const app of remote.apps ?? []) {
+      const presentation = appPresentation(app);
       const item = document.createElement("li");
       const button = text("button", "app-tile", "") as HTMLButtonElement;
       button.type = "button";
       button.dataset["package"] = app.package;
-      button.title = app.package;
-      button.setAttribute("aria-label", `Open ${appLabel(app)} on the TV`);
+      button.title = presentation.title;
+      button.setAttribute("aria-label", presentation.accessibleLabel);
       const avatar = text("span", "app-avatar", "");
       avatar.setAttribute("aria-hidden", "true");
       const logo = appLogo(app.package);
@@ -189,7 +191,9 @@ export function createRemotePanel(
         svg.append(path);
         avatar.append(svg);
       }
-      button.append(avatar, text("span", "app-name", appLabel(app)));
+      const name = text("span", "app-name", presentation.label);
+      name.classList.toggle("is-technical", presentation.technicalLabel);
+      button.append(avatar, name);
       const opening = remote.pendingApp === app.package;
       setBusy(button, !remote.launchEnabled);
       button.classList.toggle("is-loading", opening);

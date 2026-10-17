@@ -1012,7 +1012,7 @@ h2 {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 104px;
+  min-height: 122px;
   padding: 12px 6px;
   border: 0;
   border-radius: var(--radius-small);
@@ -1055,7 +1055,17 @@ h2 {
   line-height: 1.25;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
+}
+
+/* Unknown applications keep their exact package as the visible fallback. Three controlled lines
+   and a slightly smaller face make it readable without letting a long identifier overflow; the
+   complete value remains in the tile's native tooltip and accessible name. */
+.app-name.is-technical {
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.2;
 }
 
 /* The outcome of the last remote action, kept in view at the bottom while the remote scrolls. */
