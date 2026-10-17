@@ -232,9 +232,17 @@ class ScreenCastService:
             self.last_error = "close() was refused: another screen-cast call is in progress"
             return
         try:
-            self._forget_on_exit(self.close)
+            hook_error: str | None = None
+            try:
+                self._forget_on_exit(self.close)
+            except Exception as error:  # the encoder is stopped all the same
+                hook_error = f"close() could not remove its exit hook: {type(error).__name__}"
             with contextlib.suppress(ScreenCastError):
                 self._stop()  # a failure is recorded in `last_error` and `unstoppable_pids`
+            if hook_error is not None:
+                self.last_error = (
+                    f"{self.last_error}; {hook_error}" if self.last_error else hook_error
+                )
         except Exception as error:
             self.last_error = f"close() met an internal error: {type(error).__name__}"
             self._state = ScreenCastState.FAILED
@@ -373,8 +381,9 @@ class ScreenCastService:
             try:
                 if process.group_alive():
                     process.signal_group(signal.SIGKILL)  # still unreaped: the id is ours
-                process.release()
-                if process.group_alive():
+                # One observation only: None means not released, so the handle is kept even if
+                # the group ends right after (a second look could drop it unreaped).
+                if process.release() is None:
                     kept.append(process)
             except Exception:
                 kept.append(process)

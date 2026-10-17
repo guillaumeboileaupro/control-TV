@@ -498,6 +498,33 @@ def test_close_and_start_poll_kept_groups_again(tmp_path: Path) -> None:
     assert pids(cast) == ()
 
 
+@dataclass
+class EndsRightAfterRelease(FakeProcess):
+    """A kept group that ends just after `release()` found it alive (the reclaim race)."""
+
+    race: bool = False
+
+    def release(self) -> int | None:
+        result = super().release()
+        if self.race and result is None:
+            self.race, self.survives_sigkill, self.ended = False, False, True
+        return result
+
+
+def test_reclaim_keeps_a_handle_whose_group_ends_right_after_release(tmp_path: Path) -> None:
+    process = EndsRightAfterRelease(survives_sigkill=True)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    cast.close()
+    process.race = True
+
+    assert cast.reclaim() == (4242,)  # not released: the handle must not be dropped
+    assert not process.released
+
+    assert cast.reclaim() == ()  # the next poll reaps it
+    assert process.released
+
+
 def test_a_kept_group_whose_state_cannot_be_read_stays_kept(tmp_path: Path) -> None:
     process = FakeProcess(survives_sigkill=True)
     cast = service(tmp_path, FakeRunner(process=process))
@@ -741,15 +768,49 @@ def test_waiting_that_fails_with_an_os_error_becomes_an_encode_failure(tmp_path:
     assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
 
 
-def test_close_survives_an_internal_error(tmp_path: Path) -> None:
-    hooks = ExitHooks()
-    cast = service(tmp_path, FakeRunner(process=FakeProcess(timeouts=10)), hooks=hooks)
+def broken_hook(callback: Callable[[], None]) -> None:
+    raise RuntimeError("atexit broken")
+
+
+def test_close_stops_the_encoder_even_if_its_exit_hook_cannot_be_removed(tmp_path: Path) -> None:
+    process = FakeProcess(timeouts=10)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    cast._forget_on_exit = broken_hook
+
+    cast.close()
+
+    assert process.signals == [TERM] and process.released  # stopped, not leaked
+    assert state(cast) is ScreenCastState.STOPPED and nothing_left(tmp_path)
+    assert cast.last_error == "close() could not remove its exit hook: RuntimeError"
+
+
+def test_close_keeps_an_unkillable_encoder_even_if_its_exit_hook_cannot_be_removed(
+    tmp_path: Path,
+) -> None:
+    process = FakeProcess(survives_sigkill=True)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    cast._forget_on_exit = broken_hook
+
+    cast.close()
+
+    assert process.signals[:2] == [TERM, KILL] and not process.released
+    assert pids(cast) == (4242,) and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error is not None
+    assert "could not be confirmed stopped" in cast.last_error
+    assert "could not remove its exit hook" in cast.last_error
+
+
+def test_close_survives_an_internal_error_while_stopping(tmp_path: Path) -> None:
+    process = FakeProcess(timeouts=10)
+    cast = service(tmp_path, FakeRunner(process=process))
     cast.start(REQUEST)
 
-    def broken(callback: Callable[[], None]) -> None:
-        raise RuntimeError("atexit broken")
+    def broken_stop() -> None:
+        raise RuntimeError("bug")
 
-    cast._forget_on_exit = broken
+    cast._stop = broken_stop  # type: ignore[method-assign]
     cast.close()
 
     assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
