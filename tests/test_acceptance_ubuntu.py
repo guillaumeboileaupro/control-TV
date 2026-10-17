@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from deb_fixtures import COMMIT, make_deb, sha256
+from deb_fixtures import COMMIT, make_deb, payload_sha256, sha256
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -72,9 +72,13 @@ class FakeHost:
         environ: dict[str, str] | None = None,
         installed_binary: str | None = sha256(BINARY),
         binary_after_install: str | None = sha256(BINARY),
+        installed_payload: str | None = payload_sha256(BINARY),
+        payload_after_install: str | None = payload_sha256(BINARY),
     ) -> None:
         self.installed_binary = installed_binary
         self.binary_after_install = binary_after_install
+        self.installed_payload = installed_payload
+        self.payload_after_install = payload_after_install
         self.hashed: list[Path] = []
         self.replies = replies
         self.process = process or FakeProcess()
@@ -110,6 +114,8 @@ class FakeHost:
         installed = any(
             command[:4] == ("sudo", "-n", "apt-get", "install") for command, _ in self.calls
         )
+        if path == ubuntu.INSTALLED_PAYLOAD:
+            return self.payload_after_install if installed else self.installed_payload
         return self.binary_after_install if installed else self.installed_binary
 
 
@@ -384,6 +390,7 @@ def test_stale_or_inconsistent_receipt_blocks_existing_package_validation(
                 "package": ubuntu.PACKAGE,
                 "commit": COMMIT,
                 "binarySha256": sha256(BINARY),
+                "payloadSha256": payload_sha256(BINARY),
                 **receipt_fields,
             }
         ),
@@ -494,7 +501,8 @@ def test_another_build_of_the_same_version_is_never_validated(tmp_path: Path) ->
     assert result.outcome is acceptance.Outcome.BLOCKED
     assert result.reason == "the installed control-tv 0.1.0 is another build than the artifact"
     assert f"artifact binary={sha256(BINARY)}" in result.observed
-    assert host.launched == [] and host.hashed == [ubuntu.APPLICATION]
+    assert host.launched == []
+    assert host.hashed == [ubuntu.APPLICATION, ubuntu.INSTALLED_PAYLOAD]
     assert not any("apt-get" in command for command, _ in host.calls)
 
 
@@ -519,7 +527,7 @@ def test_an_install_that_leaves_another_binary_fails_and_keeps_the_receipt(
     result = ubuntu.run_ubuntu_acceptance(current, scenario(), host=host)
 
     assert result.outcome is acceptance.Outcome.FAIL
-    assert "installed binary is not the artifact's" in result.reason
+    assert "installed binary or files are not the artifact's" in result.reason
     assert host.launched == []
     assert (current.state_dir / ubuntu.RECEIPT).is_file()
 
@@ -535,6 +543,7 @@ def test_a_pass_names_the_commit_and_both_digests(tmp_path: Path) -> None:
     assert f"commit={COMMIT}" in result.observed
     assert f"deb={sha256(package.read_bytes())}" in result.observed
     assert f"binary={sha256(BINARY)}" in result.observed
+    assert f"payload={payload_sha256(BINARY)}" in result.observed
 
 
 def test_a_receipt_from_the_version_only_schema_is_stale(tmp_path: Path) -> None:
@@ -569,3 +578,39 @@ def test_the_real_host_hashes_a_file_or_reports_it_unreadable(tmp_path: Path) ->
 
     assert host.file_sha256(present) == sha256(BINARY)
     assert host.file_sha256(tmp_path / "absent") is None
+
+
+def test_an_installed_package_with_the_same_binary_but_another_bridge_is_not_this_build(
+    tmp_path: Path,
+) -> None:
+    # The Rust binary is reproducible; a Python-only change shows in dpkg's md5sums only.
+    host = FakeHost(
+        [metadata(), completed(stdout="ii  0.1.0")],
+        installed_payload=payload_sha256(BINARY, b"another bridge"),
+    )
+
+    result = ubuntu.run_ubuntu_acceptance(
+        context(tmp_path, allow_existing=True), scenario(), host=host
+    )
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "another build" in result.reason and host.launched == []
+
+
+def test_an_unreadable_dpkg_file_list_is_never_validated(tmp_path: Path) -> None:
+    host = FakeHost([metadata(), completed(stdout="ii  0.1.0")], installed_payload=None)
+
+    result = ubuntu.run_ubuntu_acceptance(
+        context(tmp_path, allow_existing=True), scenario(), host=host
+    )
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "file list of the installed package cannot be read" in result.reason
+
+
+def test_an_install_that_leaves_other_files_fails(tmp_path: Path) -> None:
+    host = FakeHost(successful_replies()[:7], payload_after_install="e" * 64)
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.FAIL and host.launched == []

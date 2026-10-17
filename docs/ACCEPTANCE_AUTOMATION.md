@@ -95,11 +95,15 @@ non-interactive `sudo`, and both `--execute` and `--allow-deb-install`.
 **Build identity.** Every package is version 0.1.0, so the version never identifies a build. The
 adapter reads `provenance.json` next to the `.deb` (or `CONTROL_TV_DEB_PROVENANCE`), written by CI
 or by `scripts/acceptance_identity.py deb-provenance`; it binds commit, CI run, version,
-architecture, `.deb` SHA-256 and the SHA-256 of `usr/bin/control-tv` inside the package. The
-adapter recomputes both digests: a missing or invalid manifest is `BLOCKED` (identity cannot be
-established), a contradiction is `FAIL`, an installed package whose binary is another build is
-`BLOCKED`, and an installation that leaves another binary is `FAIL`. Its receipt (schema 2)
-records the commit and both digests; a receipt of the earlier version-only schema is stale. It never replaces or removes an existing `control-tv`
+architecture, `.deb` SHA-256, the SHA-256 of `usr/bin/control-tv` and the **payload** SHA-256 (of
+the package's `md5sums`, which lists every packaged file, the frozen Python bridge included: the
+binary alone is reproducible and stays identical when only the bridge changes). The adapter
+recomputes the digests: a missing or invalid manifest is `BLOCKED` (identity cannot be
+established), a contradiction is `FAIL`, an installed package whose binary or dpkg file list
+(`/var/lib/dpkg/info/control-tv.md5sums`) is another build's is `BLOCKED`, and an installation
+that leaves either is `FAIL`. Its receipt (schema 2) records the commit and the digests; a
+receipt of the earlier version-only schema is stale. For a pull-request build, CI's commit is
+GitHub's merge commit (what was built); acceptance uses push builds of `main`. It never replaces or removes an existing `control-tv`
 installation. After preflights it installs the package, checks the exact installed version,
 launches `/usr/bin/control-tv`, pings the installed frozen Python bridge, compares GNOME
 StatusNotifier registrations before/after launch, captures stdout/stderr, and terminates only the

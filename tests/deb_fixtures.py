@@ -32,10 +32,26 @@ def _ar(members: list[tuple[str, bytes]]) -> bytes:
     return bytes(out)
 
 
+BRIDGE = "usr/lib/control-tv/python-bridge/control-tv-bridge"
+
+
+def md5sums(binary: bytes, bridge: bytes) -> bytes:
+    """The package's `md5sums` control file, as dpkg also keeps it once installed."""
+    return (
+        f"{hashlib.md5(binary).hexdigest()}  usr/bin/control-tv\n"
+        f"{hashlib.md5(bridge).hexdigest()}  {BRIDGE}\n"
+    ).encode()
+
+
+def payload_sha256(binary: bytes, bridge: bytes = b"bridge") -> str:
+    return hashlib.sha256(md5sums(binary, bridge)).hexdigest()
+
+
 def make_deb(
     path: Path,
     *,
     binary: bytes = b"control-tv binary",
+    bridge: bytes = b"bridge",
     version: str = "0.1.0",
     architecture: str = "amd64",
     compression: str = "gz",
@@ -44,12 +60,15 @@ def make_deb(
         f"Package: control-tv\nVersion: {version}\nArchitecture: {architecture}\n"
         "Depends: libwebkit2gtk-4.1-0\nDescription: test\n multi-line\n"
     ).encode()
-    data = _tar({"./usr/bin/control-tv": binary, "./usr/share/doc/x": b"doc"}, f"w:{compression}")
+    data = _tar({"./usr/bin/control-tv": binary, f"./{BRIDGE}": bridge}, f"w:{compression}")
     path.write_bytes(
         _ar(
             [
                 ("debian-binary", b"2.0\n"),
-                ("control.tar.gz", _tar({"./control": control}, "w:gz")),
+                (
+                    "control.tar.gz",
+                    _tar({"./control": control, "./md5sums": md5sums(binary, bridge)}, "w:gz"),
+                ),
                 (f"data.tar.{compression}", data),
             ]
         )

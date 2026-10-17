@@ -6,8 +6,11 @@ build is identified by a provenance manifest that binds, for one package:
 - the Git commit it was built from (and the CI run, when it comes from CI);
 - the version and architecture read from the package;
 - the SHA-256 of the `.deb` file;
-- the SHA-256 of the application binary inside it (`usr/bin/control-tv`), which is what an
-  installed system can be compared with.
+- the SHA-256 of the application binary inside it (`usr/bin/control-tv`);
+- the SHA-256 of its `md5sums` control file, which lists every packaged file with its digest
+  (the application, the frozen Python bridge, icons...): the **payload** digest. dpkg keeps that
+  file for an installed package, so an installed system can be compared with it. The binary alone
+  is not enough: it is reproducible and stays identical when only the bridge changes.
 
 The manifest is written by CI next to the package (`provenance.json`) or, for an older CI
 artifact, by `deb-provenance` below from the run's recorded commit. The acceptance runner
@@ -32,8 +35,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-DEB_SCHEMA = "control-tv-deb-provenance/1"
+DEB_SCHEMA = "control-tv-deb-provenance/2"
 APPLICATION_MEMBER = "usr/bin/control-tv"
+PAYLOAD_MEMBER = "md5sums"
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -102,6 +106,13 @@ def deb_member_sha256(deb: Path, member: str = APPLICATION_MEMBER) -> str:
     return hashlib.sha256(_tar_member(_ar_members(deb), "data.tar", member, deb)).hexdigest()
 
 
+def deb_payload_sha256(deb: Path) -> str:
+    """The SHA-256 of the package's `md5sums` control file (every packaged file's digest)."""
+    return hashlib.sha256(
+        _tar_member(_ar_members(deb), "control.tar", PAYLOAD_MEMBER, deb)
+    ).hexdigest()
+
+
 def deb_control_fields(deb: Path) -> Mapping[str, str]:
     """The fields of the package's `control` file (`Package`, `Version`, `Architecture`...)."""
     text = _tar_member(_ar_members(deb), "control.tar", "control", deb).decode(
@@ -122,12 +133,18 @@ class DebProvenance:
     architecture: str
     deb_sha256: str
     binary_sha256: str
+    payload_sha256: str
     run_id: int | None = None
 
     def __post_init__(self) -> None:
         if not _COMMIT.fullmatch(self.commit):
             raise IdentityError("the provenance commit must be a full 40-character Git SHA")
-        for name, digest in (("deb", self.deb_sha256), ("binary", self.binary_sha256)):
+        digests = (
+            ("deb", self.deb_sha256),
+            ("binary", self.binary_sha256),
+            ("payload", self.payload_sha256),
+        )
+        for name, digest in digests:
             if not _DIGEST.fullmatch(digest):
                 raise IdentityError(f"the provenance {name} SHA-256 must be 64 hex characters")
         if not self.version or not self.architecture:
@@ -144,6 +161,7 @@ class DebProvenance:
             "architecture": self.architecture,
             "debSha256": self.deb_sha256,
             "binarySha256": self.binary_sha256,
+            "payloadSha256": self.payload_sha256,
         }
         return json.dumps(document, indent=2) + "\n"
 
@@ -173,6 +191,7 @@ def read_deb_provenance(path: Path) -> DebProvenance:
         architecture=_text(document, "architecture"),
         deb_sha256=_text(document, "debSha256"),
         binary_sha256=_text(document, "binarySha256"),
+        payload_sha256=_text(document, "payloadSha256"),
         run_id=run_id,
     )
 
@@ -186,6 +205,7 @@ def deb_provenance_for(deb: Path, *, commit: str, run_id: int | None) -> DebProv
         architecture=fields.get("Architecture", ""),
         deb_sha256=sha256_file(deb),
         binary_sha256=deb_member_sha256(deb),
+        payload_sha256=deb_payload_sha256(deb),
         run_id=run_id,
     )
 
@@ -198,6 +218,8 @@ def verify_deb(deb: Path, provenance: DebProvenance) -> list[str]:
         problems.append("the package SHA-256 differs from its provenance")
     if deb_member_sha256(deb) != provenance.binary_sha256:
         problems.append("the application binary SHA-256 differs from its provenance")
+    if deb_payload_sha256(deb) != provenance.payload_sha256:
+        problems.append("the package payload (md5sums) SHA-256 differs from its provenance")
     if fields.get("Version") != provenance.version:
         problems.append("the package version differs from its provenance")
     if fields.get("Architecture") != provenance.architecture:

@@ -1,9 +1,10 @@
 """Real Ubuntu acceptance adapter, isolated behind an injectable host boundary.
 
-The build under test is identified by its provenance manifest (commit, version, package and
-binary SHA-256, see `acceptance_identity`), never by its version alone: every package is 0.1.0.
-A real validation is refused when that identity cannot be established, and an installed package
-is validated only when its application binary is the artifact's.
+The build under test is identified by its provenance manifest (commit, version, package, binary
+and payload SHA-256, see `acceptance_identity`), never by its version alone: every package is
+0.1.0. A real validation is refused when that identity cannot be established, and an installed
+package is validated only when both its application binary and dpkg's record of its files
+(`md5sums`, which covers the frozen Python bridge too) are the artifact's.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ from acceptance_platforms import configured_artifact
 PACKAGE = "control-tv"
 APPLICATION = Path("/usr/bin/control-tv")
 BRIDGE = Path("/usr/lib/control-tv/python-bridge/control-tv-bridge")
+# dpkg's copy of the installed package's md5sums: every installed file and its digest.
+INSTALLED_PAYLOAD = Path("/var/lib/dpkg/info/control-tv.md5sums")
 WATCHER_DESTINATION = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
 TRAY_PATH = "/org/ayatana/NotificationItem/tray_icon_tray_app_control_tv"
@@ -217,6 +220,7 @@ def _write_receipt(path: Path, *, provenance: DebProvenance, state: str) -> None
                 "commit": provenance.commit,
                 "artifactSha256": provenance.deb_sha256,
                 "binarySha256": provenance.binary_sha256,
+                "payloadSha256": provenance.payload_sha256,
                 "version": provenance.version,
                 "state": state,
             },
@@ -375,7 +379,7 @@ def run_ubuntu_acceptance(
         )
     identity = (
         f"commit={provenance.commit}; deb={provenance.deb_sha256}; "
-        f"binary={provenance.binary_sha256}"
+        f"binary={provenance.binary_sha256}; payload={provenance.payload_sha256}"
     )
 
     receipt_path = _receipt_path(context)
@@ -388,6 +392,7 @@ def run_ubuntu_acceptance(
             receipt.get("commit") == provenance.commit,
             receipt.get("artifactSha256") == provenance.deb_sha256,
             receipt.get("binarySha256") == provenance.binary_sha256,
+            receipt.get("payloadSha256") == provenance.payload_sha256,
             receipt.get("version") == version,
             receipt.get("state") in {"installing", "installed"},
         )
@@ -438,7 +443,21 @@ def run_ubuntu_acceptance(
                 observed=f"{installation_origin}: {APPLICATION} unreadable",
                 proof="installed binary SHA-256",
             )
-        if installed_binary != provenance.binary_sha256:
+        installed_payload = active_host.file_sha256(INSTALLED_PAYLOAD)
+        if installed_payload is None:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "dpkg's file list of the installed package cannot be read: its build is unknown",
+                started,
+                logs,
+                observed=f"{installation_origin}: {INSTALLED_PAYLOAD} unreadable",
+                proof="installed md5sums SHA-256",
+            )
+        if (
+            installed_binary != provenance.binary_sha256
+            or installed_payload != provenance.payload_sha256
+        ):
             return _result(
                 scenario,
                 Outcome.BLOCKED,
@@ -446,10 +465,11 @@ def run_ubuntu_acceptance(
                 started,
                 logs,
                 observed=(
-                    f"{installation_origin}: installed binary={installed_binary}; "
-                    f"artifact binary={provenance.binary_sha256}"
+                    f"{installation_origin}: installed binary={installed_binary}, "
+                    f"payload={installed_payload}; artifact binary={provenance.binary_sha256}, "
+                    f"payload={provenance.payload_sha256}"
                 ),
-                proof="installed binary SHA-256 against the provenance",
+                proof="installed binary and md5sums SHA-256 against the provenance",
             )
         if not context.policy.validate_existing_deb:
             return _result(
@@ -565,11 +585,14 @@ def run_ubuntu_acceptance(
                 observed=installed_version.stdout.strip(),
                 proof=str(receipt_path),
             )
-        if active_host.file_sha256(APPLICATION) != provenance.binary_sha256:
+        if (
+            active_host.file_sha256(APPLICATION) != provenance.binary_sha256
+            or active_host.file_sha256(INSTALLED_PAYLOAD) != provenance.payload_sha256
+        ):
             return _result(
                 scenario,
                 Outcome.FAIL,
-                "the installed binary is not the artifact's; recovery receipt retained",
+                "the installed binary or files are not the artifact's; recovery receipt retained",
                 started,
                 logs,
                 observed=identity,

@@ -44,6 +44,8 @@ deb = Path("dist/acceptance-<sha>/linux/control-tv_0.1.0_amd64.deb")
 p = read_deb_provenance(deb.parent / "provenance.json")
 print(p, verify_deb(deb, p) or "package matches its provenance")
 print("installed binary matches:", sha256_file(Path("/usr/bin/control-tv")) == p.binary_sha256)
+print("installed files match:",
+      sha256_file(Path("/var/lib/dpkg/info/control-tv.md5sums")) == p.payload_sha256)
 EOF
 # Android APK: signer certificate and identity.
 .venv/bin/python scripts/android_test_signing.py verify-apk \
@@ -51,7 +53,7 @@ EOF
   --apksigner "$ANDROID_HOME/build-tools/<version>/apksigner"
 ```
 
-Record in the private record: CI run id, commit, `.deb` SHA-256, binary SHA-256, APK SHA-256,
+Record in the private record: CI run id, commit, `.deb` SHA-256, binary and payload SHA-256, APK SHA-256,
 APK signer certificate and identity (`pinned-test-key` or `ephemeral-debug-key`). A CI artifact
 from before this protocol has no `provenance.json`: write one with
 `scripts/acceptance_identity.py deb-provenance --commit <the run's head SHA> --run-id <id>`

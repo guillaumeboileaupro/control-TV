@@ -653,8 +653,9 @@ Blockers found while preparing the remote-control acceptance
 nothing run on a device.
 
 - [x] Ubuntu build identity: every package is 0.1.0, so the runner now requires a provenance
-  manifest (commit, CI run, version, architecture, `.deb` SHA-256, `usr/bin/control-tv` SHA-256),
-  recomputes both digests, refuses an unidentified build, an installed package of another build
+  manifest (commit, CI run, version, architecture, `.deb` SHA-256, `usr/bin/control-tv` SHA-256,
+  payload SHA-256 of the package's `md5sums`, which covers the Python bridge: the binary is
+  reproducible), recomputes them, refuses an unidentified build, an installed package of another build
   and an installation that leaves another binary; CI writes `provenance.json` with the package
   (`scripts/acceptance_identity.py`, `scripts/acceptance_ubuntu.py`);
 - [x] Android stable test signing support: Gradle signs debug builds with the `control-tv-test`

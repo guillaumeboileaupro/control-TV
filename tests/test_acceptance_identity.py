@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-from deb_fixtures import COMMIT, make_deb, sha256
+from deb_fixtures import COMMIT, make_deb, payload_sha256, sha256
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -36,6 +36,16 @@ def test_the_binary_digest_is_read_from_the_package_data(tmp_path: Path, compres
     assert identity.deb_member_sha256(deb) == sha256(b"build A")
     fields = identity.deb_control_fields(deb)
     assert fields["Version"] == "0.1.0" and fields["Architecture"] == "amd64"
+
+
+def test_the_payload_digest_covers_files_the_binary_does_not(tmp_path: Path) -> None:
+    # The application binary is reproducible: a bridge-only change keeps it identical.
+    first = make_deb(tmp_path / "a.deb", binary=b"same", bridge=b"bridge 1")
+    second = make_deb(tmp_path / "b.deb", binary=b"same", bridge=b"bridge 2")
+
+    assert identity.deb_member_sha256(first) == identity.deb_member_sha256(second)
+    assert identity.deb_payload_sha256(first) == payload_sha256(b"same", b"bridge 1")
+    assert identity.deb_payload_sha256(first) != identity.deb_payload_sha256(second)
 
 
 def test_two_builds_of_the_same_version_are_told_apart(tmp_path: Path) -> None:
@@ -109,26 +119,30 @@ def test_every_contradiction_with_the_provenance_is_reported(tmp_path: Path) -> 
     assert problems == [
         "the package SHA-256 differs from its provenance",
         "the application binary SHA-256 differs from its provenance",
+        "the package payload (md5sums) SHA-256 differs from its provenance",
         "the package version differs from its provenance",
         "the package architecture differs from its provenance",
     ]
 
 
 GOOD = {
-    "schema": "control-tv-deb-provenance/1",
+    "schema": "control-tv-deb-provenance/2",
     "commit": COMMIT,
     "runId": 1,
     "version": "0.1.0",
     "architecture": "amd64",
     "debSha256": "a" * 64,
     "binarySha256": "b" * 64,
+    "payloadSha256": "c" * 64,
 }
 
 
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        ({"schema": "other/1"}, "is not control-tv-deb-provenance/1"),
+        ({"schema": "other/1"}, "is not control-tv-deb-provenance/2"),
+        ({"schema": "control-tv-deb-provenance/1"}, "is not control-tv-deb-provenance/2"),
+        ({"payloadSha256": "c" * 10}, "payload SHA-256"),
         ({"commit": "de31c94"}, "full 40-character"),
         ({"commit": "G" * 40}, "full 40-character"),
         ({"debSha256": "a" * 63}, "deb SHA-256"),

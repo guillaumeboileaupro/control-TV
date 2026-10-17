@@ -56,9 +56,10 @@ One pair of artifacts from one CI run of `main` for the whole campaign, identifi
 its version (every build is 0.1.0):
 
 - **Ubuntu:** `provenance.json` next to the `.deb` binds commit, CI run, version, architecture,
-  `.deb` SHA-256 and the SHA-256 of `usr/bin/control-tv` inside it. The runner recomputes both
-  digests and refuses a real validation when the manifest is missing, contradicts the package,
-  or the installed binary is another build (`scripts/acceptance_identity.py`). CI writes the
+  `.deb` SHA-256, the SHA-256 of `usr/bin/control-tv` and the payload SHA-256 (the package's
+  `md5sums`, covering the Python bridge too). The runner recomputes them and refuses a real
+  validation when the manifest is missing, contradicts the package, or the installed binary or
+  dpkg file list is another build's (`scripts/acceptance_identity.py`). CI writes the
   manifest from now on; for an older artifact it is written from the run's recorded commit.
 - **Android:** `apk-provenance.json` (from now on) binds commit, run, APK SHA-256 and signer
   certificate. A build signed with the stable test identity updates an installed one in place;
@@ -69,8 +70,8 @@ Current candidate (downloaded 2026-10-17, kept under `dist/acceptance-de31c94/`,
 |                     | Value                                                                                                                                                                              |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CI run / commit     | `39034444658` (push, `main`, success) / `de31c94dceb290f98bc8b0784ac17d3fd3d78727`                                                                                                 |
-| `.deb`              | `control-tv` 0.1.0 amd64, SHA-256 `d7d2278a…0c381a`; binary `11d98c55…6d95475`; `SHA256SUMS` verified                                                                              |
-| Installed on Ubuntu | binary `11d98c55…6d95475`: **this build**                                                                                                                                          |
+| `.deb`              | `control-tv` 0.1.0 amd64, SHA-256 `d7d2278a…0c381a`; binary `11d98c55…6d95475`; payload `120108f4…4901bb9`; `SHA256SUMS` verified                                                  |
+| Installed on Ubuntu | binary and dpkg file list equal to this build's: **this build**                                                                                                                    |
 | APK                 | `io.github.guillaumeboileaupro.controltv` 0.1.0 (code 1000), arm64-v8a, SHA-256 `a2e9dac5…4aa22c` (= the CI log); signer `9193947f…921a78`, **ephemeral** CI debug key (scheme v2) |
 | Expiry on GitHub    | APK 2026-10-24, `.deb` 2026-10-31                                                                                                                                                  |
 
