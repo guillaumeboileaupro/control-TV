@@ -13,15 +13,15 @@
 - [x] Environnement Ubuntu X11 identifié (`XDG_SESSION_TYPE=x11`).
 - [x] Script de recette lancé avec `.venv/bin/python` (Python 3.12.13) ; `python3` global est Python 3.7.3 et ne dispose pas de `tomllib`.
 - [x] Ancien paquet : cinq contrôles Ubuntu statiques/simulés PASS, réel BLOCKED sans autorisation d'installation.
-- [ ] Refaire les contrôles statiques avec les **artefacts finaux**, relever les rapports et l'état de l'installation Ubuntu existante, sans l'écraser.
-- [ ] Conserver les SHA-256 des artefacts et le SHA Git source dans les rapports.
+- [x] Contrôles statiques refaits sans installation avec les **artefacts finaux** : cinq PASS Ubuntu (métadonnées/contenu `.deb`, CSP/IPC, tray, simulation IPC), quatre PASS Android (archive/arm64/pont, bridge/widget, CSP, simulation), métadonnées Android SKIP faute de `aapt`, scénarios réels BLOCKED faute d'autorisations. L'installation Ubuntu existante n'a pas été modifiée.
+- [x] SHA-256 conservés : `.deb` `52248c8fef03fb1588bf5bce7ab57596814b517212d283de32fb1c293502d039`, APK `8db2e69ce0be597f2bba10ef6c43393ec1c69605fa9d011215105dbff1e31d79` ; les rapports de recette enregistrent le SHA Git exécuté.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
 
-- [ ] **Codex — diagnostic sans supposition :** relever version et provenance du binaire Ubuntu effectivement lancé ; vérifier si le bundle chargé est celui du commit `7569c1c`, ou un ancien paquet ; vérifier la présence des SVG et du code `appLogo` dans le bundle ; examiner erreurs console/CSP.
-- [ ] **Codex — correspondances :** journaliser de manière non sensible les identifiants Android réels de la liste ; comparer exactement à `ui/src/app-logos.ts` (notamment Apple TV `com.apple.atve.androidtv.appletv`). Ne pas substituer des logos d'une autre application.
-- [ ] **Codex — UI :** corriger uniquement les causes prouvées ; noms lisibles avec identifiant technique accessible en détail/infobulle ; troncature contrôlée sans débordement ; grilles et contraste adaptés à Ubuntu et Android ; fallback par initiale pour les applications inconnues.
-- [ ] **Codex — tests :** mapping exact, SVG valides, fallback, non-régression des logos, rendu visuel et captures ; tests TS stricts, bundle, packaging, CI ; pas de requête réseau à l'exécution.
+- [x] **Codex — diagnostic sans supposition :** le paquet installé est `control-tv` 0.1.0 amd64, mais son binaire du 15 octobre (`84186c3ea194052587595fa59accf96c012256fc5fc508d3b0661d4ec7140a53`) diffère du binaire extrait sans installation du `.deb` final du 17 octobre (`f4678ae03c13999a180b48442056359ab087b7c989fe34a1b22ed5ddb6e5149f`). La capture utilisait donc un ancien bundle, antérieur à #71. Le bundle frontend reconstruit contient l'identifiant Apple TV, son SVG et l'appel `appLogo`; la CSP reste validée par la recette statique.
+- [x] **Codex — correspondances :** le backend n'émet le libellé « Apple TV » que pour l'identifiant exact `com.apple.atve.androidtv.appletv`, ce qui établit l'identifiant reçu dans la capture sans nouvelle connexion TV. Il correspond exactement à `ui/src/app-logos.ts`; aucun alias ou logo approximatif n'a été ajouté. L'identifiant exact de chaque tuile est désormais conservé dans son infobulle et son nom accessible.
+- [x] **Codex — UI :** noms connus lisibles, identifiant technique accessible dans l'infobulle et aux technologies d'assistance ; fallback technique inconnu limité à trois lignes, police compacte et césure sans débordement ; logos officiels et fallback par initiale inchangés. Validation matérielle avant/après toujours ouverte.
+- [x] **Codex — tests automatisés :** mapping exact, SVG valides, fallback, absence de correspondance approximative et de requête réseau ; présentation du libellé/identifiant testée ; TypeScript strict, UI, bundle (`56 996 / 65 536` octets), Rust, `.deb` Ubuntu et APK Android validés par la CI PR #74 (`39024170712`). Les captures réelles restent exclusivement dans la validation propriétaire ci-dessous.
 - [ ] **Claude — revue indépendante :** vérifier cause racine, licences, conformité des logos, qualité visuelle, tests et risques de régression ; rapport READY/BLOCKED ; aucune fusion sans autorisation.
 - [ ] **Propriétaire — validation réelle :** après build et installation explicitement autorisée, contrôler visuellement Apple TV et les autres logos réellement pris en charge sur Ubuntu puis Android. Conserver la capture avant/après.
 
@@ -29,7 +29,7 @@
 
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.
 - [ ] Android : autorisation explicite avant installation de l'APK ; lancement, affichage, widget, CSP et journaux ; préserver les données existantes.
-- [ ] Google TV : R1–R4 (lecture seule), puis C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et concurrence des deux télécommandes ; commandes et activation ADB seulement avec accord explicite.
+- [ ] Google TV : obtenir l'accord explicite du propriétaire **avant toute exécution**, y compris R1–R4 bien qu'ils soient en lecture seule ; obtenir également cet accord avant chaque étape C1–C7 et avant toute autre commande TV. Toute activation ADB exige elle aussi un accord explicite préalable. Exécuter ensuite, selon `docs/DUAL_CONTROLLER_VALIDATION.md`, R1–R4, C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et la concurrence des deux télécommandes.
 - [ ] Latence : K1–K3 et `latency.remote-keys`, mesures vidéo et seuils à adopter par le propriétaire.
 - [ ] Distinguer systématiquement PASS simulé, PASS CI et PASS matériel ; rapport de preuves par scénario.
 - [ ] Mettre à jour `DEVELOPMENT_PLAN.md`, `DEVELOPMENT_CHECKLIST.md`, README et rapports à l'issue des essais.
