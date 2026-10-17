@@ -165,6 +165,7 @@ def detect_environment(
     }
     artifacts = {
         "deb": values.get("CONTROL_TV_DEB"),
+        "deb-provenance": values.get("CONTROL_TV_DEB_PROVENANCE"),
         "apk": values.get("CONTROL_TV_APK"),
     }
     commit: str | None = None
@@ -221,6 +222,24 @@ def detect_environment(
         application_versions=application_versions,
         device_versions=device_versions,
         execution_origin="ci" if values.get("GITHUB_ACTIONS") == "true" else "local",
+    )
+
+
+MANUAL_PROTOCOL = "docs/MANUAL_ACCEPTANCE_PROTOCOL.md"
+
+
+def manual_only(scenario: Scenario, what: str) -> Result:
+    """A real scenario that has no automated adapter: BLOCKED whatever the flags, pointing to
+    the manual protocol. It never discovers, pairs, installs, uses ADB or sends a command."""
+    return make_result(
+        scenario,
+        Outcome.BLOCKED,
+        f"no automated adapter exists for {what}: run it by hand per {MANUAL_PROTOCOL}, "
+        "after the owner's explicit authorization of this step",
+        started=time.monotonic(),
+        log="No discovery, pairing, installation, ADB operation or TV command was attempted.",
+        observed="scenario not executed",
+        proof="no automated adapter; empty command log",
     )
 
 

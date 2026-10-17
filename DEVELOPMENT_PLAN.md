@@ -646,6 +646,36 @@ Verify:
 - [ ] build disk usage remains understood and controlled.
 
 
+## Hardware acceptance readiness (2026-10-17, branch `fix/hardware-acceptance-readiness`)
+
+Blockers found while preparing the remote-control acceptance
+([`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md)); automation-validated only,
+nothing run on a device.
+
+- [x] Ubuntu build identity: every package is 0.1.0, so the runner now requires a provenance
+  manifest (commit, CI run, version, architecture, `.deb` SHA-256, `usr/bin/control-tv` SHA-256,
+  payload SHA-256 of the package's `md5sums`, which covers the Python bridge: the binary is
+  reproducible), recomputes them, refuses an unidentified build, an installed package of another build
+  and an installation that leaves another binary; CI writes `provenance.json` with the package
+  (`scripts/acceptance_identity.py`, `scripts/acceptance_ubuntu.py`);
+- [x] Android stable test signing support: Gradle signs debug builds with the `control-tv-test`
+  key from the environment, CI from two repository secrets (build step only, keystore 0600,
+  removed), `verify-apk` refuses a key other than the pinned certificate and writes
+  `apk-provenance.json` ([`docs/ANDROID_TEST_SIGNING.md`](docs/ANDROID_TEST_SIGNING.md));
+- [ ] owner: create the test key, back it up, set the two secrets and commit the certificate pin;
+  then one last uninstall per phone (the installed APKs have ephemeral signers);
+- [x] runner honesty: every TV, phone, two-remote and latency scenario reports "no automated
+  adapter exists … run it by hand", whatever flags; manual protocol
+  [`docs/MANUAL_ACCEPTANCE_PROTOCOL.md`](docs/MANUAL_ACCEPTANCE_PROTOCOL.md) (session order,
+  per-step authorization, record template);
+- [x] CI artifacts of `main` `de31c94` (run `39034444658`) downloaded and identified (provenance,
+  SHA-256, version, architecture, APK signer); the installed Ubuntu binary is that build;
+- [x] review follow-ups (Codex, `8f29903`): `check-apk` accepts an APK only when its provenance
+  and the expected CI run name it (digest, published digest, commit, run, signer); `check-deb`
+  reports a clean host as not installed and verifies every installed file against dpkg's record,
+  which the runner now also checks (BLOCKED before installing, FAIL after);
+- [ ] C6/C7 send/trace instrumentation (absent: C6/C7 stay NOT RUN without it).
+
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV
 
 Owner request (2026-10-17): show the Ubuntu desktop on the Freebox (Google TV), first as a
