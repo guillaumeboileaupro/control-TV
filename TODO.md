@@ -91,6 +91,11 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 - [x] **Étude de faisabilité (2026-10-17, documentation seulement) :** [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md) — récepteurs (HLS vers le récepteur Cast par défaut, protocole de recopie Cast Streaming, récepteur web dédié, Sunshine/Moonlight, VNC), capture et encodage, écrans virtuels X11 (evdi, têtes virtuelles du pilote, `xrandr --setmonitor`), architecture et interfaces, sécurité, critères RD1–RD8, risques et estimations.
 - [ ] **Phase D0 — inventaire et essais :** inventaire en lecture seule (GPU, encodeurs matériels, sorties, Secure Boot), puis essais sur un flux de test : HLS vers le récepteur par défaut et émetteur Cast Streaming. 6–10 h.
 - [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
+  - [x] Préparation indépendante sans matériel : contrats typés capture/encodage/publication/réception,
+    orchestration synthétique et nettoyage testés sans capture, réseau ni TV ; comparaison HLS,
+    Cast Streaming et Sunshine/Moonlight documentée sans revendiquer de compatibilité Freebox.
+  - [ ] Après fusion et revue de #81, adapter D0 au port d'encodage puis choisir un récepteur sur
+    preuve matérielle autorisée ; la duplication réelle reste non validée.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
