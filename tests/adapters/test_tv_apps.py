@@ -372,3 +372,29 @@ def test_a_tv_without_the_classic_debugging_port_names_what_is_not_supported(
         inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
 
     assert "port 5555" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("package", "name"),
+    [
+        ("com.cbs.ca", "Paramount+"),
+        ("com.google.android.videos", "Google TV"),
+        ("com.wbd.stream", "HBO Max"),
+        ("fr.francetv.zouzous", "Okoo"),
+    ],
+)
+def test_names_checked_against_google_play_are_known(package: str, name: str) -> None:
+    assert tv_apps.KNOWN_NAMES[package] == name
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        "fr.freebox.disneypluslauncher",
+        "fr.freebox.fbx8lc.fbxdiags",
+        "fr.free.aktu",
+        "com.nextinteractive.rmcbfmplay.tv.free",
+    ],
+)
+def test_freebox_packages_without_a_verifiable_name_keep_their_package(package: str) -> None:
+    assert package not in tv_apps.KNOWN_NAMES

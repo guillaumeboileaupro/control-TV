@@ -102,6 +102,11 @@ KNOWN_NAMES = {
     "com.molotov.app": "Molotov",
     "com.apple.atve.androidtv.appletv": "Apple TV",
     "com.mubi": "MUBI",
+    # Names checked against each package's own Google Play listing (2026-10-17).
+    "com.cbs.ca": "Paramount+",
+    "com.google.android.videos": "Google TV",
+    "com.wbd.stream": "HBO Max",
+    "fr.francetv.zouzous": "Okoo",
 }
 
 

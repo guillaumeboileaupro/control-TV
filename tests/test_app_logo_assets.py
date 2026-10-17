@@ -30,7 +30,7 @@ def test_every_shipped_logo_is_used_and_every_used_logo_is_shipped() -> None:
     referenced = set(re.findall(r'shipped\(\s*"[^"]+",\s*"([a-z0-9-]+)"', CATALOGUE.read_text()))
 
     assert referenced == {path.stem for path in _files()}
-    assert len(referenced) == 8
+    assert len(referenced) == 9
 
 
 @pytest.mark.parametrize("path", _files(), ids=lambda p: p.name)
