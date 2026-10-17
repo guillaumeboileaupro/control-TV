@@ -7,7 +7,11 @@ Status: **hardware inventory and synthetic H.264 VA-API CQP encode validated; li
 - Dell Ubuntu X11, Intel Comet Lake-H GT2 UHD Graphics, kernel driver `i915`.
 - `xrandr`: `eDP-1` connected, primary, 1920×1080 at 60 Hz; HDMI/DP outputs disconnected; framebuffer limit 16384×16384. This **does not** prove virtual-monitor support.
 - DRM render node: `/dev/dri/renderD128`.
-- VA-API 1.14, Intel `iHD` driver 22.3.1; H.264 Main/High encode advertised as `VAEntrypointEncSliceLP` (low-power slice entrypoint). H.265 encode **not** shown in `vainfo`; only decode was listed.
+- VA-API 1.14, Intel `iHD` driver 22.3.1. The inspected `vainfo` output was reported to
+  advertise H.264 Main/High encoding through `VAEntrypointEncSliceLP` (the low-power slice
+  entrypoint); H.265 encoding was not reported, only decoding. The repository does not retain the
+  complete `vainfo` output, the exact FFmpeg version or a verbose FFmpeg log, so these advertised
+  capabilities do not establish which entrypoint FFmpeg selected for the successful command below.
 - FFmpeg lists `h264_vaapi`, `h264_qsv`, `libx264`. Listing an encoder is not evidence that an encode succeeds.
 - GStreamer executable resolves to Anaconda, not necessarily the Ubuntu system installation.
 
@@ -44,24 +48,43 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate \
   -of default=noprint_wrappers=1 /tmp/control-tv-vaapi-test.mp4
 ```
 
-Observed output: 300 frames, 1920×1080 at 30 fps, H.264 High, approximately 12 MB in 10 seconds, 9.9 Mbit/s, encoder speed 4.1× real time; `ffprobe` confirmed `codec_name=h264`, `width=1920`, `height=1080`, `r_frame_rate=30/1`. This validates the **synthetic-source hardware encode** only, not live X11 capture, sustained latency, network transmission, or playback on the TV. A separate full decode and resource-use measurement remain to do.
+Observed output: 300 frames, 1920×1080 at 30 fps, H.264 High, approximately 12 MB in 10 seconds, 9.9 Mbit/s, encoder speed 4.1× real time; `ffprobe` confirmed `codec_name=h264`, `width=1920`, `height=1080`, `r_frame_rate=30/1`. This validates the **synthetic-source hardware encode** only, not live X11 capture, sustained latency, network transmission, playback on the TV or use of the low-power entrypoint. `-rc_mode CQP` selects constant-quantizer rate control and `-qp 24` supplies its quantizer; neither option selects `VAEntrypointEncSliceLP`. The recorded command did not request `-low_power 1`, and no retained verbose log proves that FFmpeg used that entrypoint.
 
-If another FFmpeg build rejects `-rc_mode CQP`, inspect `ffmpeg -hide_banner -h encoder=h264_vaapi` and adapt to its documented options; do not silently fall back to a bitrate mode. Confirm success using exit code, `ffprobe`, decoded frame count and elapsed time; capture stderr and GPU/CPU usage for repeatability. Only after this local synthetic test passes, design a **separately authorized** desktop-capture experiment.
+Do not add `-low_power 1` from the capability listing alone: first verify that the installed FFmpeg
+exposes the option and record the entrypoint it actually selects. A future, separately authorized
+local measurement must retain `ffmpeg -version`, the complete relevant `vainfo` entries, verbose
+FFmpeg output, exit code, a full decode/frame count, elapsed time and CPU/GPU use. If another FFmpeg
+build rejects `-rc_mode CQP`, inspect `ffmpeg -hide_banner -h encoder=h264_vaapi` and adapt to its
+documented options; do not silently fall back to a bitrate mode. Only after the local synthetic test
+passes, design a **separately authorized** desktop-capture experiment.
 
 ## Proposed pipeline and boundaries
 
 ```text
 control-TV UI (explicit Start / Stop; visible active state)
-    -> existing bridge -> ScreenCastService (typed state machine)
-        -> DisplaySource: X11 output/rectangle (D1) | true virtual monitor (D2)
-        -> Capture: x11grab / ximagesrc, pointer policy
-        -> Encoder: H.264 VA-API CQP where tested; libx264 fallback
-        -> Publisher: LAN-only, session-scoped authenticated transport
-        -> Receiver adapter: verify Freebox/Google TV protocol and status
-        -> Cleanup: encoder, publisher, temporary data, virtual output
+    -> existing bridge -> ScreenCastService (future product service)
+        -> DisplaySelection (configuration value: existing output in D1, virtual output in D2)
+        -> ScreenCapture (selected X11 pixels and pointer policy)
+        -> StreamingSessionService (D1 lifecycle orchestration)
+            -> ScreenEncoder (adapter over the D0 engine)
+            -> StreamPublisher (session-scoped publication)
+            -> StreamReceiver (receiver start/stop)
+        -> product outcome: started / receiver-confirmed / physically observed remain distinct
 ```
 
-The initial PR should implement **only local, synthetic-source encoding command construction and process lifecycle with mocked adapters and CI tests**; no stream, desktop capture, device commands or installs. Keep receiver choices (Cast HLS, Cast Streaming, Sunshine/Moonlight) open until real compatibility and latency are measured with separate owner authorization. Never equate a Cast media receiver with support for arbitrary screen-mirroring protocols.
+PR #81 implements only local, synthetic-source encoding command construction and process lifecycle
+with mocked adapters and CI tests. Its VA-API-to-libx264 fallback is used only when the caller
+explicitly authorizes that preference; it is never implicit. PR #83 defines `DisplaySelection`,
+`ScreenCapture`, `ScreenEncoder`, `StreamPublisher`, `StreamReceiver` and the
+`StreamingSessionService` orchestration shown above. It deliberately provides no concrete capture,
+D0 encoder adapter, publisher or receiver. `StreamReceiver.start()` means that receiver startup
+returned successfully; it does not prove receiver confirmation or a picture physically displayed on
+the TV.
+
+Keep receiver choices (Cast HLS, Cast Streaming, Sunshine/Moonlight) open until real compatibility
+and latency are measured with separate owner authorization. The Freebox compatibility of every path
+remains unproven. Never equate a Cast media receiver with support for arbitrary screen-mirroring
+protocols.
 
 ### D1 duplication
 
@@ -74,7 +97,9 @@ Require a display output that GNOME/X11 recognizes as an independent monitor. `x
 ## Next verification gates
 
 1. CQP synthetic encode and `ffprobe` **PASS**; full decode, sustained throughput and CPU/GPU usage still to measure.
-2. Check FFmpeg VA-API options and handling of CQP vs requested bitrate; implement explicit capability-based selection with informative failure.
-3. Design the local-only capture/encoder interface and fake-based tests; do not invoke TV or network.
+2. Record the missing FFmpeg/VA-API evidence before deciding whether low-power mode is required;
+   keep CQP selection separate from entrypoint selection.
+3. Adapt the D0 engine to #83's `ScreenEncoder` port without copying its process management; add a
+   concrete `ScreenCapture` only in an owner-authorized D1 iteration.
 4. Obtain separate owner approval for each actual desktop capture, stream, receiver test, R1–R4/C1–C7, ADB, software installation, and system graphics changes.
 5. Preserve RD1–RD8 as **proposed** criteria pending owner adoption; keep D1 duplication and D2 extension separate.
