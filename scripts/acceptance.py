@@ -13,6 +13,7 @@ import platform
 import shutil
 import subprocess
 import time
+import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -29,6 +30,21 @@ class Outcome(StrEnum):
     BLOCKED = "BLOCKED"
 
 
+class Evidence(StrEnum):
+    STATIC = "static"
+    SIMULATED = "simulated"
+    REAL = "real"
+
+
+@dataclass(frozen=True)
+class Contract:
+    preconditions: tuple[str, ...]
+    device: str
+    planned_commands: tuple[str, ...]
+    initial_state: str
+    expected: str
+
+
 class Capability(StrEnum):
     EXECUTE = "execute"
     TV_COMMAND = "tv-command"
@@ -42,6 +58,7 @@ class Policy:
     execute: bool = False
     tv_commands: bool = False
     install_deb: bool = False
+    validate_existing_deb: bool = False
     install_apk: bool = False
     adb: bool = False
 
@@ -68,6 +85,9 @@ class Environment:
     tools: Mapping[str, str | None]
     artifacts: Mapping[str, str | None]
     devices: Mapping[str, str]
+    application_versions: Mapping[str, str] = field(default_factory=dict)
+    device_versions: Mapping[str, str] = field(default_factory=dict)
+    execution_origin: str = "local"
 
 
 @dataclass(frozen=True)
@@ -79,6 +99,10 @@ class Result:
     duration_seconds: float
     started_at: str
     log: str = ""
+    evidence: Evidence = Evidence.STATIC
+    observed: str = "not executed"
+    proof: str = "none"
+    metrics: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -89,6 +113,8 @@ class Scenario:
     run: Callable[[Context], Result]
     capabilities: frozenset[Capability] = frozenset({Capability.EXECUTE})
     dependencies: tuple[str, ...] = ()
+    evidence: Evidence = Evidence.STATIC
+    contract: Contract | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +123,7 @@ class Context:
     environment: Environment
     timeout_seconds: float
     command: CommandRunner
+    state_dir: Path = Path("reports/acceptance")
 
 
 class CommandRunner(Protocol):
@@ -120,7 +147,22 @@ def detect_environment(
 ) -> Environment:
     """Inspect local prerequisites only; never contacts a device."""
     values = os.environ if environ is None else environ
-    tools = {name: which(name) for name in ("adb", "dpkg-deb", "git", "python3")}
+    tools = {
+        name: which(name)
+        for name in (
+            "aapt",
+            "adb",
+            "apt-get",
+            "cargo",
+            "dpkg-deb",
+            "dpkg-query",
+            "gdbus",
+            "git",
+            "npm",
+            "python3",
+            "sudo",
+        )
+    }
     artifacts = {
         "deb": values.get("CONTROL_TV_DEB"),
         "apk": values.get("CONTROL_TV_APK"),
@@ -148,6 +190,26 @@ def detect_environment(
         }.items()
         if value
     }
+    project_path = root / "pyproject.toml"
+    project = (
+        tomllib.loads(project_path.read_text(encoding="utf-8")) if project_path.is_file() else {}
+    )
+    application_versions = {"control-tv": str(project.get("project", {}).get("version", "unknown"))}
+    application_versions.update(
+        {
+            key.removeprefix("CONTROL_TV_").removesuffix("_VERSION").lower(): value
+            for key, value in values.items()
+            if key.startswith("CONTROL_TV_")
+            and not key.startswith("CONTROL_TV_DEVICE_")
+            and key.endswith("_VERSION")
+            and value
+        }
+    )
+    device_versions = {
+        key.removeprefix("CONTROL_TV_DEVICE_").removesuffix("_VERSION").lower(): value
+        for key, value in values.items()
+        if key.startswith("CONTROL_TV_DEVICE_") and key.endswith("_VERSION") and value
+    }
     return Environment(
         system=platform.system(),
         machine=platform.machine(),
@@ -156,6 +218,9 @@ def detect_environment(
         tools=tools,
         artifacts=artifacts,
         devices=devices,
+        application_versions=application_versions,
+        device_versions=device_versions,
+        execution_origin="ci" if values.get("GITHUB_ACTIONS") == "true" else "local",
     )
 
 
@@ -166,6 +231,9 @@ def make_result(
     *,
     started: float,
     log: str = "",
+    observed: str = "not executed",
+    proof: str = "none",
+    metrics: Mapping[str, object] | None = None,
 ) -> Result:
     return Result(
         scenario_id=scenario.id,
@@ -175,6 +243,10 @@ def make_result(
         duration_seconds=round(time.monotonic() - started, 6),
         started_at=datetime.now(UTC).isoformat(),
         log=log,
+        evidence=scenario.evidence,
+        observed=observed,
+        proof=proof,
+        metrics={} if metrics is None else metrics,
     )
 
 
@@ -196,7 +268,13 @@ class AcceptanceRunner:
             return {}
         raw = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
         return {
-            item["scenario_id"]: Result(**{**item, "outcome": Outcome(item["outcome"])})
+            item["scenario_id"]: Result(
+                **{
+                    **item,
+                    "outcome": Outcome(item["outcome"]),
+                    "evidence": Evidence(item.get("evidence", Evidence.STATIC.value)),
+                }
+            )
             for item in raw.get("results", [])
             if item.get("outcome") == Outcome.PASS.value
         }
@@ -205,7 +283,9 @@ class AcceptanceRunner:
         self.report_dir.mkdir(parents=True, exist_ok=True)
         prior = self._prior_results(resume)
         results: list[Result] = []
-        context = Context(self.policy, self.environment, self.timeout_seconds, self.command)
+        context = Context(
+            self.policy, self.environment, self.timeout_seconds, self.command, self.report_dir
+        )
         for scenario in scenarios:
             if scenario.id in prior:
                 result = prior[scenario.id]
@@ -216,13 +296,22 @@ class AcceptanceRunner:
                     name for name in scenario.dependencies if not self.environment.tools.get(name)
                 ]
                 if not permitted:
-                    result = make_result(scenario, Outcome.BLOCKED, reason, started=started)
+                    result = make_result(
+                        scenario,
+                        Outcome.BLOCKED,
+                        reason,
+                        started=started,
+                        observed="not executed",
+                        proof="authorization policy",
+                    )
                 elif missing:
                     result = make_result(
                         scenario,
                         Outcome.SKIP,
                         "dependencies unavailable: " + ", ".join(missing),
                         started=started,
+                        observed="not executed",
+                        proof="dependency detection",
                     )
                 else:
                     try:
@@ -242,17 +331,46 @@ class AcceptanceRunner:
                             started=started,
                         )
             results.append(result)
-            self.write_reports(results)
+            self.write_reports(results, scenarios=scenarios)
         return results
 
-    def write_reports(self, results: Sequence[Result]) -> None:
+    def write_reports(
+        self, results: Sequence[Result], *, scenarios: Sequence[Scenario] = ()
+    ) -> None:
         self.report_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": 1,
             "generated_at": datetime.now(UTC).isoformat(),
             "dry_run": not self.policy.execute,
             "environment": asdict(self.environment),
-            "results": [{**asdict(result), "outcome": result.outcome.value} for result in results],
+            "scenario_contracts": {
+                scenario.id: asdict(scenario.contract)
+                for scenario in scenarios
+                if scenario.contract is not None
+            },
+            "results": [
+                {
+                    **asdict(result),
+                    "outcome": result.outcome.value,
+                    "evidence": result.evidence.value,
+                }
+                for result in results
+            ],
+            "summary": {
+                "failures": [
+                    result.scenario_id for result in results if result.outcome is Outcome.FAIL
+                ],
+                "not_executed": [
+                    result.scenario_id
+                    for result in results
+                    if result.outcome in {Outcome.SKIP, Outcome.BLOCKED}
+                ],
+                "by_evidence": {
+                    evidence.value: sum(result.evidence is evidence for result in results)
+                    for evidence in Evidence
+                },
+                "duration_seconds": round(sum(result.duration_seconds for result in results), 6),
+            },
         }
         self.checkpoint_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -261,12 +379,35 @@ class AcceptanceRunner:
         self._write_junit(results)
 
     def _write_html(self, results: Sequence[Result]) -> None:
+        def items(selected: Sequence[Result]) -> str:
+            return (
+                "<ul>"
+                + "".join(
+                    f"<li>{html.escape(result.scenario_id)}: {html.escape(result.reason)}</li>"
+                    for result in selected
+                )
+                + "</ul>"
+            )
+
+        failures = [result for result in results if result.outcome is Outcome.FAIL]
+        not_executed = [
+            result for result in results if result.outcome in {Outcome.SKIP, Outcome.BLOCKED}
+        ]
+        application_versions = html.escape(
+            json.dumps(dict(self.environment.application_versions), sort_keys=True)
+        )
+        device_versions = html.escape(
+            json.dumps(dict(self.environment.device_versions), sort_keys=True)
+        )
         rows = "".join(
             "<tr>"
             f"<td>{html.escape(result.scenario_id)}</td>"
             f"<td>{html.escape(result.category)}</td>"
+            f"<td>{result.evidence.value}</td>"
             f"<td>{result.outcome.value}</td>"
             f"<td>{html.escape(result.reason)}</td>"
+            f"<td>{html.escape(result.observed)}</td>"
+            f"<td>{html.escape(result.proof)}</td>"
             f"<td>{result.duration_seconds:.3f}</td>"
             "</tr>"
             for result in results
@@ -274,8 +415,16 @@ class AcceptanceRunner:
         document = (
             '<!doctype html><html lang="en"><meta charset="utf-8">'
             "<title>control-TV acceptance</title><h1>Acceptance results</h1>"
-            "<table><thead><tr><th>Scenario</th><th>Category</th><th>Outcome</th>"
-            f"<th>Reason</th><th>Seconds</th></tr></thead><tbody>{rows}</tbody></table></html>\n"
+            f"<p>Origin: {html.escape(self.environment.execution_origin)} · "
+            f"Git SHA: {html.escape(self.environment.commit or 'unknown')}</p>"
+            f"<h2>Application versions</h2><pre>{application_versions}</pre>"
+            f"<h2>Device versions</h2><pre>{device_versions}</pre>"
+            f"<h2>Failures</h2>{items(failures)}"
+            f"<h2>Not executed</h2>{items(not_executed)}"
+            f"<h2>Scenario table</h2>"
+            "<table><thead><tr><th>Scenario</th><th>Category</th><th>Evidence</th><th>Outcome</th>"
+            f"<th>Reason</th><th>Observed</th><th>Proof</th><th>Seconds</th></tr>"
+            f"</thead><tbody>{rows}</tbody></table></html>\n"
         )
         (self.report_dir / "acceptance.html").write_text(document, encoding="utf-8")
 
@@ -289,11 +438,25 @@ class AcceptanceRunner:
                 sum(result.outcome in {Outcome.SKIP, Outcome.BLOCKED} for result in results)
             ),
         )
+        properties = ET.SubElement(suite, "properties")
+        for name, value in (
+            ("execution_origin", self.environment.execution_origin),
+            ("git_sha", self.environment.commit or "unknown"),
+            (
+                "application_versions",
+                json.dumps(dict(self.environment.application_versions), sort_keys=True),
+            ),
+            (
+                "device_versions",
+                json.dumps(dict(self.environment.device_versions), sort_keys=True),
+            ),
+        ):
+            ET.SubElement(properties, "property", name=name, value=value)
         for result in results:
             case = ET.SubElement(
                 suite,
                 "testcase",
-                classname=f"acceptance.{result.category}",
+                classname=f"acceptance.{result.evidence.value}.{result.category}",
                 name=result.scenario_id,
                 time=f"{result.duration_seconds:.6f}",
             )

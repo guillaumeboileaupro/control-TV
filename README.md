@@ -52,14 +52,29 @@ Acceptance infrastructure is dry-run by default and does not contact a TV, start
 an artifact. It writes JSON, HTML and JUnit reports and supports checkpoints:
 
 ```bash
-python3 scripts/run_acceptance.py
+python3 scripts/run_acceptance.py --mode dry-run
 python3 scripts/run_acceptance.py --category ubuntu
 python3 scripts/run_acceptance.py --resume
 ```
 
-The hardware adapters are intentionally still blocked in this first infrastructure iteration.
-See [docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
-separate explicit authorizations required by future executable scenarios.
+Hardware execution is blocked by default. See
+[docs/ACCEPTANCE_AUTOMATION.md](docs/ACCEPTANCE_AUTOMATION.md) for the outcome model and the
+separate explicit authorizations required by executable scenarios.
+
+Ubuntu and Android acceptance results explicitly identify static, simulated or real evidence.
+Set `CONTROL_TV_DEB` or `CONTROL_TV_APK` to inspect an existing artifact without installing it;
+add `--mode execute` (or the compatible shorthand `--execute`) only to run the deterministic
+simulated contract suites. Real Ubuntu installation, launch, bridge and tray validation additionally
+requires `--allow-deb-install`, a configured `.deb`, an interactive GNOME session and
+non-interactive installation privilege. It refuses to alter a pre-existing installation; validating
+one requires the separate `--allow-existing-deb-validation` consent. Android device scenarios
+remain blocked without their separate adapter and authorizations.
+
+Google TV preparation reuses the existing R1-R4 and C1-C7 hardware protocol. C6 and C7 can pass
+only with ordered media-session and low-level send-attempt evidence; see
+[docs/GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](docs/GOOGLE_TV_ACCEPTANCE_AUTOMATION.md).
+K1-K3 performance reports calculate distribution statistics without imposing an unapproved
+threshold; see [docs/ACCEPTANCE_PERFORMANCE.md](docs/ACCEPTANCE_PERFORMANCE.md).
 
 `setup` fails loudly if `uv.lock` does not match `pyproject.toml`, instead of silently resolving new versions; run `lock` deliberately whenever a dependency changes, review the resulting `uv.lock` diff, then commit both files together. Every other command only needs the `.venv` that `setup` created, so run `setup` first.
 

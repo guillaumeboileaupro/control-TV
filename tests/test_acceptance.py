@@ -33,6 +33,31 @@ def environment(*, tools: dict[str, str | None] | None = None) -> Any:
     return acceptance.Environment("Linux", "x86_64", "3.12", "abc", tools or {}, {}, {})
 
 
+def test_explicit_dry_run_mode_is_supported_and_is_the_default() -> None:
+    assert run_acceptance.parser().parse_args([]).mode == "dry-run"
+    explicit = run_acceptance.parser().parse_args(["--mode", "dry-run"])
+    assert explicit.mode == "dry-run"
+    assert explicit.execute is False
+
+
+def test_execute_alias_and_explicit_mode_are_mutually_exclusive() -> None:
+    execute = run_acceptance.parser().parse_args(["--mode", "execute"])
+    alias = run_acceptance.parser().parse_args(["--execute"])
+    assert execute.mode == "execute"
+    assert alias.execute is True
+    with pytest.raises(SystemExit):
+        run_acceptance.parser().parse_args(["--mode", "dry-run", "--execute"])
+
+
+def test_existing_deb_validation_requires_its_own_explicit_flag() -> None:
+    default = run_acceptance.parser().parse_args(["--execute", "--allow-deb-install"])
+    resumed = run_acceptance.parser().parse_args(
+        ["--execute", "--allow-deb-install", "--allow-existing-deb-validation"]
+    )
+    assert default.allow_existing_deb_validation is False
+    assert resumed.allow_existing_deb_validation is True
+
+
 def passing(scenario: Any) -> Any:
     def run(context: Any) -> Any:
         del context
@@ -56,9 +81,18 @@ def test_default_policy_blocks_execution_and_writes_all_formats(tmp_path: Path) 
     payload = json.loads((tmp_path / "reports" / "acceptance.json").read_text())
     assert payload["dry_run"] is True
     assert payload["results"][0]["outcome"] == "BLOCKED"
+    assert payload["results"][0]["evidence"] == "static"
+    assert payload["results"][0]["observed"] == "not executed"
+    assert payload["results"][0]["proof"] == "authorization policy"
     assert (tmp_path / "reports" / "acceptance.html").is_file()
     skipped = ET.parse(tmp_path / "reports" / "acceptance.junit.xml").find(".//skipped")
     assert skipped is not None
+    properties = {
+        item.attrib["name"]: item.attrib["value"]
+        for item in ET.parse(tmp_path / "reports" / "acceptance.junit.xml").findall(".//property")
+    }
+    assert properties["execution_origin"] == "local"
+    assert properties["git_sha"] == "abc"
 
 
 @pytest.mark.parametrize(
@@ -176,11 +210,31 @@ def test_environment_detection_never_invokes_adb(
     assert all(command[0] != "/adb" for command in calls)
 
 
-def test_catalog_is_unique_and_dry_run_blocks_every_scenario(tmp_path: Path) -> None:
+def test_environment_detection_includes_ubuntu_adapter_tools(tmp_path: Path) -> None:
+    detected = acceptance.detect_environment(tmp_path, environ={}, which=lambda name: f"/{name}")
+    assert {
+        "apt-get": "/apt-get",
+        "dpkg-deb": "/dpkg-deb",
+        "dpkg-query": "/dpkg-query",
+        "gdbus": "/gdbus",
+        "sudo": "/sudo",
+    }.items() <= detected.tools.items()
+
+
+def test_catalog_is_unique_and_dry_run_runs_only_static_scenarios(tmp_path: Path) -> None:
     scenarios = run_acceptance.load_scenarios()
     assert len({scenario.id for scenario in scenarios}) == len(scenarios)
     results = acceptance.AcceptanceRunner(
         tmp_path, tmp_path / "reports", acceptance.Policy(), environment()
     ).run(scenarios)
     assert results
-    assert all(result.outcome is acceptance.Outcome.BLOCKED for result in results)
+    assert all(
+        result.evidence is acceptance.Evidence.STATIC
+        or result.outcome is acceptance.Outcome.BLOCKED
+        for result in results
+    )
+    assert not any(
+        result.evidence is not acceptance.Evidence.STATIC
+        and result.outcome is acceptance.Outcome.PASS
+        for result in results
+    )
