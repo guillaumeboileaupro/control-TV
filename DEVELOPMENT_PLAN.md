@@ -652,16 +652,22 @@ Owner request (2026-10-17): show the Ubuntu desktop on the Freebox (Google TV), 
 **duplication** of an existing monitor, then as a real **extension** (an additional monitor).
 Study: [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md). Starts after the
 remote-control hardware acceptance ([`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md))
-unless the owner reprioritizes. Nothing below is implemented or validated.
+unless the owner reprioritizes. No material validation has been performed.
+
+The owner subsequently reprioritized D0 and D1 preparation. The authoritative remaining-time
+table is now at the top of [`TODO.md`](TODO.md); older estimates later in this historical plan must
+not be added to it. As of 2026-10-17, none of PR #79, #81 or #83 is in `main`.
 
 - [x] feasibility study: receivers (HLS to the Default Media Receiver, Cast Streaming mirroring,
   custom web receiver, Sunshine/Moonlight, VNC), capture and encoding, virtual monitors (evdi,
   driver virtual heads, `xrandr --setmonitor`), architecture, security, tests, risks (documentation
   only, 2026-10-17);
-- [ ] D0: read-only inventory (GPU, hardware encoders, outputs, Secure Boot) and spikes on a test
-  stream (HLS to the Default Media Receiver; Cast Streaming sender);
-- [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
-  `ScreenCastService`, automated tests;
+- [x] D0 automated implementation in PR #81 (`3ba057e`): bounded synthetic H.264 encoder,
+  VA-API CQP / libx264 selection, process ownership and cleanup; independent review completed and
+  CI 4/4 green. Local invocation through the service and every Freebox claim remain unvalidated;
+- [ ] D1 preparation in PR #83 (`fedda7f`): typed ports and simulated lifecycle exist, but two P2
+  review findings remain; no concrete capture, D0 adapter, publisher, listener, receiver, network
+  operation or Freebox evidence exists;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
@@ -707,6 +713,11 @@ A deliverable or exit criterion whose wording refers to real hardware, a real de
 
 ## control-TV — Plan complet et suivi du temps (décision du propriétaire, 2026-10-08)
 
+> **Historique :** les tableaux chiffrés de cette section conservent les décisions et preuves de
+> l'issue #37 à leur date. Ils ne constituent plus le planning courant. L'unique budget restant
+> consolidé, qui inclut les PR #79 à #85 et D0–D4 sans double comptage, est en tête de
+> [`TODO.md`](TODO.md).
+
 **Objectif final : disposer de deux applications autonomes, Ubuntu et Android, capables de contrôler simultanément la même Google TV / Chromecast.**
 
 Les deux applications doivent fonctionner indépendamment, sans serveur permanent, avec une interface utilisable et des commandes fiables.
@@ -719,14 +730,17 @@ Les deux applications doivent fonctionner indépendamment, sans serveur permanen
 |---|---|
 | Dépôt | [control-TV](https://github.com/guillaumeboileaupro/control-TV) |
 | Issue de référence | [#37](https://github.com/guillaumeboileaupro/control-TV/issues/37) |
-| PR ouvertes | aucune ; #33 (widget Android), #49 à #53 fusionnées le 2026-10-13 ; #38 fusionnée le 2026-10-12 ; #39 à #43 fusionnées le 2026-10-12 ; #36 fermée (abandon MCP/Voice) |
+| PR ouvertes | Instantané historique du 2026-10-13 ; voir `TODO.md` pour l'état actuel |
 | Tests automatisés | `main` après fusion de #38 (2026-10-12) : 1 346 réussis, 8 ignorés, 1 `xfail` strict (lacune connue P3-3) en local |
 | Couverture | 98,77% |
 | CI | 4/4 jobs réussis sur `main` `c2d7484` (run `38251554583`) ; branche #38 à jour : voir sa CI |
 | Validation sur matériel réel | Ubuntu seul, une Google TV (2026-10-12) : appairage, Volume +, Mute aller-retour observés par le propriétaire. Android : rien. R1–R4 : partiel non classé |
-| **Temps restant estimé** | **40–80 heures** |
+| **Temps restant estimé** | **40–80 heures dans cet instantané historique ; estimation remplacée par `TODO.md`** |
 
-L'estimation de 40–80 heures correspond au travail restant sur l'issue #37. Elle doit évoluer à partir des validations matérielles. Les chiffres CI constituent un instantané du commit de la PR #38 `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`, pas une promesse sur les exécutions futures.
+L'estimation historique de 40–80 heures correspondait au travail restant sur l'issue #37. Elle est
+remplacée par le budget consolidé de `TODO.md`. Les chiffres CI ci-dessous restent un instantané du
+commit de la PR #38 `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`, pas une promesse sur les
+exécutions futures.
 
 ### 2. Phase 1 — Deux applications autonomes
 
@@ -1149,7 +1163,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 | Phase 1 : autonomie/convergence | Tests simulés + revue Claude terminés ; R1–R4 matériel **0 %** | 14–28 h, à réviser | Autorisation + R1–R4 |
 | Phase 2 : commandes/applications/clavier | Son audible validé depuis Ubuntu (Volume +, Mute) ; navigation, Power et clavier implémentés, **0 % confirmé sur TV** ; Android **0 %** ; applications installées **0 %** (décision ADB attendue) | 16–32 h **provisoires, potentiellement sous-estimées** ; 2C réestimé 8–13 h | Essais autorisés Ubuntu (Power, navigation, texte), APK sur téléphone, décision ADB |
 | Phase 3 : livraison | CI/builds existants ; validation finale non démontrée | 10–20 h, à réviser | Installations et tests finaux |
-| **Total restant de référence** | **Pas de pourcentage global inventé** | **40–80 h, sous réserve de réestimation** | Décisions après tests matériels |
+| **Total restant de cet instantané historique** | **Pas de pourcentage global inventé** | **40–80 h, remplacé par le tableau de `TODO.md`** | Décisions après tests matériels |
 
 Pour toute sous-tâche travaillée : **avancement fonctionnel %, estimation, temps réellement consacré si disponible, temps restant réévalué, budget consommé %, preuve, blocage**. Dans le résumé utilisateur, privilégier avancement, reste à faire et risques ; ne pas afficher le cumul historique d'heures déjà passées sans demande.
 
