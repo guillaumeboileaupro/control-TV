@@ -14,22 +14,23 @@ from control_tv.screencast.capabilities import (
     FfmpegCapabilityProbe,
     select_encoder,
 )
+from control_tv.screencast.ffmpeg import parse_encoder_names
 from control_tv.screencast.model import (
+    EncodeRequest,
     EncoderPreference,
     EncoderUnavailableError,
     SoftwareX264,
-    SyntheticEncodeRequest,
-    SyntheticSource,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
 )
+from control_tv.screencast.source import SyntheticSource
 
 BOTH = frozenset({"h264_vaapi", "libx264"})
 
 
-def request(preference: EncoderPreference) -> SyntheticEncodeRequest:
-    return SyntheticEncodeRequest(SyntheticSource(), VideoProfile(), preference, qp=26, crf=21)
+def request(preference: EncoderPreference) -> EncodeRequest:
+    return EncodeRequest(SyntheticSource(), VideoProfile(), preference, qp=26, crf=21)
 
 
 def test_vaapi_is_chosen_with_cqp_when_available() -> None:
@@ -120,3 +121,13 @@ def test_the_default_device_check_needs_an_existing_readable_writable_node(tmp_p
 
     assert capabilities._device_usable(str(node)) is True
     assert capabilities._device_usable(str(tmp_path / "missing")) is False
+
+
+def test_output_that_is_not_utf8_is_replaced_not_fatal() -> None:
+    script = (
+        "import sys; sys.stdout.buffer.write(b' V....D h264_vaapi H.264 ' + bytes([0xFF]) + b'\\n')"
+    )
+    text = capabilities._command_output((sys.executable, "-c", script), 10.0)
+
+    assert "\ufffd" in text
+    assert "h264_vaapi" in parse_encoder_names(text)

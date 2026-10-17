@@ -10,10 +10,14 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
-# FFmpeg's built-in test patterns this foundation may encode: a synthetic picture only.
-SYNTHETIC_PATTERNS = frozenset({"testsrc2", "testsrc", "smptebars", "smptehdbars"})
 _RENDER_NODE = re.compile(r"/dev/dri/renderD[0-9]{3}")
+
+# D0 bounds: an encode stops by itself after this long, and its file cannot grow past this size,
+# even if nothing stops it (a parent killed with SIGKILL cannot stop its child).
+MAX_DURATION_SECONDS = 120
+MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
 
 class ScreenCastError(Exception):
@@ -38,6 +42,12 @@ class EncodeFailedError(ScreenCastError):
 
 class ScreenCastStateError(ScreenCastError):
     """The operation is not allowed in the service's current state."""
+
+
+class SourceKind(StrEnum):
+    """What a source shows. D0 allows only the synthetic test picture."""
+
+    SYNTHETIC = "synthetic"
 
 
 class ScreenCastState(StrEnum):
@@ -70,20 +80,6 @@ class VaapiDevice:
             )
 
 
-@dataclass(frozen=True)
-class SyntheticSource:
-    """FFmpeg's generated test picture (`lavfi`): no desktop, no camera, no file."""
-
-    pattern: str = "testsrc2"
-
-    def __post_init__(self) -> None:
-        if self.pattern not in SYNTHETIC_PATTERNS:
-            allowed = ", ".join(sorted(SYNTHETIC_PATTERNS))
-            raise InvalidScreenCastOption(
-                f"the synthetic pattern must be one of {allowed}: {self.pattern!r}"
-            )
-
-
 def _require_int(name: str, value: int, low: int, high: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         raise InvalidScreenCastOption(f"{name} must be an integer from {low} to {high}: {value!r}")
@@ -91,7 +87,7 @@ def _require_int(name: str, value: int, low: int, high: int) -> None:
 
 @dataclass(frozen=True)
 class VideoProfile:
-    """Picture size, frame rate and length of one synthetic encode."""
+    """Picture size, frame rate and length of one encode."""
 
     width: int = 1920
     height: int = 1080
@@ -102,7 +98,7 @@ class VideoProfile:
         _require_int("width", self.width, 16, 4096)
         _require_int("height", self.height, 16, 4096)
         _require_int("fps", self.fps, 1, 60)
-        _require_int("duration_seconds", self.duration_seconds, 1, 600)
+        _require_int("duration_seconds", self.duration_seconds, 1, MAX_DURATION_SECONDS)
         if self.width % 2 or self.height % 2:
             raise InvalidScreenCastOption(
                 f"H.264 needs an even width and height: {self.width}x{self.height}"
@@ -145,16 +141,34 @@ class EncoderChoice:
     fallback_reason: str | None = None
 
 
-@dataclass(frozen=True)
-class SyntheticEncodeRequest:
-    """One local, bounded encode of a synthetic picture into a private file."""
+class VideoSource(Protocol):
+    """Where the picture comes from, as FFmpeg input arguments (no shell, validated values).
 
-    source: SyntheticSource
+    The encoder command does not know which source it encodes; the service decides which kinds it
+    accepts (D0: synthetic only).
+    """
+
+    @property
+    def kind(self) -> SourceKind: ...
+
+    def input_arguments(self, profile: VideoProfile) -> tuple[str, ...]: ...
+
+
+@dataclass(frozen=True)
+class EncodeRequest:
+    """One local, bounded encode into a private file. Quality values are checked here, before
+    any probe or process."""
+
+    source: VideoSource
     profile: VideoProfile
     preference: EncoderPreference
     device: VaapiDevice = VaapiDevice("/dev/dri/renderD128")
     qp: int = 24
     crf: int = 23
+
+    def __post_init__(self) -> None:
+        _require_int("qp", self.qp, 1, 51)
+        _require_int("crf", self.crf, 0, 51)
 
 
 @dataclass(frozen=True)

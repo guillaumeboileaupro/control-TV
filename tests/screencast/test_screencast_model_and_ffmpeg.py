@@ -7,24 +7,28 @@ from pathlib import Path
 import pytest
 
 from control_tv.screencast.ffmpeg import (
+    encode_command,
     encoders_listing_command,
     parse_encoder_names,
-    synthetic_encode_command,
 )
 from control_tv.screencast.model import (
+    MAX_OUTPUT_BYTES,
+    EncodeRequest,
+    EncoderPreference,
     InvalidScreenCastOption,
     SoftwareX264,
-    SyntheticSource,
+    SourceKind,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
 )
+from control_tv.screencast.source import SyntheticSource
 
 OUT = Path("/private/session/synthetic.mp4")
 
 
 def test_the_vaapi_command_is_the_measured_cqp_encode_and_never_a_bitrate() -> None:
-    argv = synthetic_encode_command(
+    argv = encode_command(
         "ffmpeg",
         SyntheticSource(),
         VideoProfile(),
@@ -54,6 +58,8 @@ def test_the_vaapi_command_is_the_measured_cqp_encode_and_never_a_bitrate() -> N
         "CQP",
         "-qp",
         "24",
+        "-fs",
+        str(MAX_OUTPUT_BYTES),
         "-y",
         str(OUT),
     )
@@ -61,7 +67,7 @@ def test_the_vaapi_command_is_the_measured_cqp_encode_and_never_a_bitrate() -> N
 
 
 def test_the_software_fallback_command_is_explicit_libx264() -> None:
-    argv = synthetic_encode_command(
+    argv = encode_command(
         "/usr/bin/ffmpeg",
         SyntheticSource("smptebars"),
         VideoProfile(width=1280, height=720, fps=25, duration_seconds=3),
@@ -78,9 +84,7 @@ def test_the_software_fallback_command_is_explicit_libx264() -> None:
 
 
 def test_only_synthetic_input_is_ever_built() -> None:
-    argv = synthetic_encode_command(
-        "ffmpeg", SyntheticSource(), VideoProfile(), SoftwareX264(), OUT
-    )
+    argv = encode_command("ffmpeg", SyntheticSource(), VideoProfile(), SoftwareX264(), OUT)
 
     assert argv[argv.index("-f") + 1] == "lavfi"
     assert not {"x11grab", "kmsgrab", "pulse", "alsa", "v4l2"} & set(argv)
@@ -101,7 +105,16 @@ def test_only_synthetic_input_is_ever_built() -> None:
         lambda: VideoProfile(fps=0),
         lambda: VideoProfile(fps=120),
         lambda: VideoProfile(duration_seconds=0),
-        lambda: VideoProfile(duration_seconds=601),
+        lambda: VideoProfile(duration_seconds=121),
+        lambda: EncodeRequest(
+            SyntheticSource(), VideoProfile(), EncoderPreference.VAAPI_ONLY, qp=0
+        ),
+        lambda: EncodeRequest(
+            SyntheticSource(), VideoProfile(), EncoderPreference.VAAPI_ONLY, qp=52
+        ),
+        lambda: EncodeRequest(
+            SyntheticSource(), VideoProfile(), EncoderPreference.SOFTWARE_ONLY, crf=52
+        ),
         lambda: VideoProfile(width=True),
         lambda: VaapiCqp(VaapiDevice("/dev/dri/renderD128"), qp=0),
         lambda: VaapiCqp(VaapiDevice("/dev/dri/renderD128"), qp=52),
@@ -130,3 +143,33 @@ def test_the_encoder_listing_is_parsed_without_its_legend() -> None:
 
     assert parse_encoder_names(listing) == frozenset({"libx264", "h264_vaapi", "h264_qsv", "aac"})
     assert encoders_listing_command("ffmpeg")[-1] == "-encoders"
+
+
+class FakeSource:
+    """Any `VideoSource`: the command only uses its input arguments."""
+
+    @property
+    def kind(self) -> SourceKind:
+        return SourceKind.SYNTHETIC
+
+    def input_arguments(self, profile: VideoProfile) -> tuple[str, ...]:
+        return ("-f", "fake", "-i", f"fake:{profile.width}")
+
+
+def test_the_command_takes_its_input_from_the_source_port_only() -> None:
+    argv = encode_command(
+        "ffmpeg", FakeSource(), VideoProfile(width=640, height=480), SoftwareX264(), OUT
+    )
+
+    assert argv[5:9] == ("-f", "fake", "-i", "fake:640")
+    assert "lavfi" not in argv
+
+
+def test_every_command_is_bounded_in_time_and_size() -> None:
+    argv = encode_command(
+        "ffmpeg", SyntheticSource(), VideoProfile(duration_seconds=120), SoftwareX264(), OUT
+    )
+
+    assert argv[argv.index("-t") + 1] == "120"
+    assert argv[argv.index("-fs") + 1] == str(MAX_OUTPUT_BYTES)
+    assert SyntheticSource().kind is SourceKind.SYNTHETIC

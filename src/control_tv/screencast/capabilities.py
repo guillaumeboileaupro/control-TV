@@ -16,10 +16,10 @@ from typing import Protocol
 from control_tv.screencast.ffmpeg import encoders_listing_command, parse_encoder_names
 from control_tv.screencast.model import (
     EncoderChoice,
+    EncodeRequest,
     EncoderPreference,
     EncoderUnavailableError,
     SoftwareX264,
-    SyntheticEncodeRequest,
     VaapiCqp,
     VaapiDevice,
 )
@@ -43,8 +43,16 @@ CommandOutput = Callable[[tuple[str, ...], float], str]
 
 
 def _command_output(argv: tuple[str, ...], timeout: float) -> str:
+    # Bytes that are not UTF-8 (an unusual locale or build) are replaced, never fatal.
     completed = subprocess.run(
-        argv, capture_output=True, text=True, timeout=timeout, check=True, stdin=subprocess.DEVNULL
+        argv,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=True,
+        stdin=subprocess.DEVNULL,
     )
     return completed.stdout
 
@@ -82,9 +90,7 @@ class FfmpegCapabilityProbe:
         )
 
 
-def select_encoder(
-    request: SyntheticEncodeRequest, capabilities: EncoderCapabilities
-) -> EncoderChoice:
+def select_encoder(request: EncodeRequest, capabilities: EncoderCapabilities) -> EncoderChoice:
     """The encoder for `request` on this host, or `EncoderUnavailableError` saying why not."""
     software = SoftwareX264(crf=request.crf)
     if request.preference is EncoderPreference.SOFTWARE_ONLY:

@@ -1,7 +1,9 @@
-"""FFmpeg argument vectors for the synthetic local encode (pure: no process is started here).
+"""FFmpeg argument vectors (pure: no process is started here).
 
 Commands are argument tuples for `subprocess`, never shell strings; every value comes from a
-validated model object. The VA-API command always uses constant QP and never a bitrate.
+validated model object, and the input arguments come from the `VideoSource` port, so the command
+does not depend on the kind of source. The VA-API command always uses constant QP and never a
+bitrate. Every command is bounded in time (`-t`) and output size (`-fs`).
 """
 
 from __future__ import annotations
@@ -9,23 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from control_tv.screencast.model import (
+    MAX_OUTPUT_BYTES,
     EncoderPlan,
     SoftwareX264,
-    SyntheticSource,
     VaapiCqp,
     VideoProfile,
+    VideoSource,
 )
-
-
-def synthetic_input(source: SyntheticSource, profile: VideoProfile) -> tuple[str, ...]:
-    return (
-        "-f",
-        "lavfi",
-        "-i",
-        f"{source.pattern}=size={profile.width}x{profile.height}:rate={profile.fps}",
-        "-t",
-        str(profile.duration_seconds),
-    )
 
 
 def encoder_arguments(plan: EncoderPlan) -> tuple[str, ...]:
@@ -58,14 +50,14 @@ def _x264_arguments(plan: SoftwareX264) -> tuple[str, ...]:
     )
 
 
-def synthetic_encode_command(
+def encode_command(
     ffmpeg: str,
-    source: SyntheticSource,
+    source: VideoSource,
     profile: VideoProfile,
     plan: EncoderPlan,
     output: Path,
 ) -> tuple[str, ...]:
-    """The full argument vector: quiet, no stdin, one bounded synthetic encode to `output`."""
+    """The full argument vector: quiet, no stdin, one bounded encode of `source` to `output`."""
     device = ("-vaapi_device", plan.device.path) if isinstance(plan, VaapiCqp) else ()
     return (
         ffmpeg,
@@ -74,8 +66,12 @@ def synthetic_encode_command(
         "-loglevel",
         "error",
         *device,
-        *synthetic_input(source, profile),
+        *source.input_arguments(profile),
+        "-t",
+        str(profile.duration_seconds),
         *encoder_arguments(plan),
+        "-fs",
+        str(MAX_OUTPUT_BYTES),
         "-y",
         str(output),
     )

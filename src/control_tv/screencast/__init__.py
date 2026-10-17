@@ -10,8 +10,11 @@ from control_tv.screencast.capabilities import (
     select_encoder,
 )
 from control_tv.screencast.model import (
+    MAX_DURATION_SECONDS,
+    MAX_OUTPUT_BYTES,
     EncodeFailedError,
     EncoderChoice,
+    EncodeRequest,
     EncodeResult,
     EncoderPlan,
     EncoderPreference,
@@ -21,18 +24,22 @@ from control_tv.screencast.model import (
     ScreenCastState,
     ScreenCastStateError,
     SoftwareX264,
-    SyntheticEncodeRequest,
-    SyntheticSource,
+    SourceKind,
     VaapiCqp,
     VaapiDevice,
     VideoProfile,
+    VideoSource,
 )
 from control_tv.screencast.process import ManagedProcess, ProcessRunner, SubprocessRunner
 from control_tv.screencast.service import ScreenCastService
+from control_tv.screencast.source import SyntheticSource
 
 __all__ = [
+    "MAX_DURATION_SECONDS",
+    "MAX_OUTPUT_BYTES",
     "CapabilityProbe",
     "EncodeFailedError",
+    "EncodeRequest",
     "EncodeResult",
     "EncoderCapabilities",
     "EncoderChoice",
@@ -48,11 +55,12 @@ __all__ = [
     "ScreenCastState",
     "ScreenCastStateError",
     "SoftwareX264",
+    "SourceKind",
     "SubprocessRunner",
-    "SyntheticEncodeRequest",
     "SyntheticSource",
     "VaapiCqp",
     "VaapiDevice",
     "VideoProfile",
+    "VideoSource",
     "select_encoder",
 ]

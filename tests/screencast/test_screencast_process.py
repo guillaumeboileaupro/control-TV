@@ -61,3 +61,33 @@ def test_a_process_ignoring_sigterm_is_killed(tmp_path: Path) -> None:
     assert status == -9
     process.terminate()  # signalling an ended process is a no-op
     process.kill()
+
+
+class _Unkillable:
+    """A process that ignores SIGTERM and survives SIGKILL (as if blocked in a driver)."""
+
+    def __init__(self) -> None:
+        self.signals: list[str] = []
+
+    @property
+    def pid(self) -> int:
+        return 77
+
+    def poll(self) -> int | None:
+        return None
+
+    def wait(self, timeout: float) -> int:
+        raise ProcessTimeout("still there")
+
+    def terminate(self) -> None:
+        self.signals.append("TERM")
+
+    def kill(self) -> None:
+        self.signals.append("KILL")
+
+
+def test_a_process_surviving_sigkill_is_reported_not_raised() -> None:
+    process = _Unkillable()
+
+    assert stop_process(process, 0.01) is None
+    assert process.signals == ["TERM", "KILL"]

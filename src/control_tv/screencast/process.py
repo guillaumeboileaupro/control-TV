@@ -83,9 +83,11 @@ class SubprocessRunner:
         return _PopenProcess(process)
 
 
-def stop_process(process: ManagedProcess, grace_seconds: float) -> int:
+def stop_process(process: ManagedProcess, grace_seconds: float) -> int | None:
     """Ends `process`: SIGTERM to its group, then SIGKILL if it is still there after
-    `grace_seconds`. Returns its exit status. Safe to call on a process that already ended."""
+    `grace_seconds`. Returns its exit status, or `None` when it is still alive after SIGKILL and
+    another `grace_seconds` (for example blocked in a driver): it was **not** removed, and the
+    caller must say so. Never raises for a slow process; safe on a process that already ended."""
     status = process.poll()
     if status is not None:
         return status
@@ -94,4 +96,7 @@ def stop_process(process: ManagedProcess, grace_seconds: float) -> int:
         return process.wait(grace_seconds)
     except ProcessTimeout:
         process.kill()
+    try:
         return process.wait(grace_seconds)
+    except ProcessTimeout:
+        return None
