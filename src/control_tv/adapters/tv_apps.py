@@ -107,6 +107,10 @@ KNOWN_NAMES = {
     "com.google.android.videos": "Google TV",
     "com.wbd.stream": "HBO Max",
     "fr.francetv.zouzous": "Okoo",
+    "fr.m6.m6replay": "M6+",
+    "fr.tf1.mytf1.free": "TF1+",
+    "fr.tfou.max": "TFOU MAX",
+    "tv.twitch.android.app": "Twitch",
 }
 
 

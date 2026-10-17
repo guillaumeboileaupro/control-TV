@@ -381,6 +381,10 @@ def test_a_tv_without_the_classic_debugging_port_names_what_is_not_supported(
         ("com.google.android.videos", "Google TV"),
         ("com.wbd.stream", "HBO Max"),
         ("fr.francetv.zouzous", "Okoo"),
+        ("fr.m6.m6replay", "M6+"),
+        ("fr.tf1.mytf1.free", "TF1+"),
+        ("fr.tfou.max", "TFOU MAX"),
+        ("tv.twitch.android.app", "Twitch"),
     ],
 )
 def test_names_checked_against_google_play_are_known(package: str, name: str) -> None:
@@ -394,6 +398,9 @@ def test_names_checked_against_google_play_are_known(package: str, name: str) ->
         "fr.freebox.fbx8lc.fbxdiags",
         "fr.free.aktu",
         "com.nextinteractive.rmcbfmplay.tv.free",
+        "net.oqee.androidtv",
+        "net.oqee.launcher",
+        "fr.m6.m6replay.free",
     ],
 )
 def test_freebox_packages_without_a_verifiable_name_keep_their_package(package: str) -> None:

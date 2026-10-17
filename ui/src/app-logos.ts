@@ -14,6 +14,7 @@ import {
   siParamountplus,
   siPlex,
   siSpotify,
+  siTwitch,
   siVlcmediaplayer,
   siYoutube,
   siYoutubekids,
@@ -76,8 +77,11 @@ const LOGOS: AppLogoCatalogue = {
   "fr.francetv.pluzz": shipped("france.tv", "france-tv"),
   "fr.francetv.zouzous": shipped("Okoo", "okoo"),
   "fr.tf1.mytf1": shipped("TF1+", "tf1-plus"),
+  // TF1+'s own Freebox edition ("TF1+ : Streaming pour Freebox" on Google Play): the same app.
+  "fr.tf1.mytf1.free": shipped("TF1+", "tf1-plus"),
   "org.videolan.vlc": bundled(siVlcmediaplayer),
   "tv.arte.plus7": shipped("ARTE", "arte"),
+  "tv.twitch.android.app": bundled(siTwitch),
 };
 
 const HEX = /^[0-9A-F]{6}$/;
