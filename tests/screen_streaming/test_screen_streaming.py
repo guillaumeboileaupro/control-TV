@@ -36,7 +36,7 @@ from control_tv.screen_streaming.model import VideoSource
 class FakeEncoder:
     events: list[str]
     start_error: BaseException | None = None
-    stop_error: Exception | None = None
+    stop_error: BaseException | None = None
     gate: threading.Event | None = None
     entered: threading.Event = field(default_factory=threading.Event)
     active: set[str] = field(default_factory=set)
@@ -63,7 +63,7 @@ class FakeEncoder:
 class FakePublisher:
     events: list[str]
     start_error: BaseException | None = None
-    stop_error: Exception | None = None
+    stop_error: BaseException | None = None
     active: set[str] = field(default_factory=set)
 
     def start(self, stream: EncodedStream, config: PublicationConfig) -> PublishedStream:
@@ -85,7 +85,7 @@ class FakePublisher:
 class FakeReceiver:
     events: list[str]
     start_error: BaseException | None = None
-    stop_error: Exception | None = None
+    stop_error: BaseException | None = None
     active: set[str] = field(default_factory=set)
     timeout: float | None = None
 
@@ -444,3 +444,238 @@ def test_capture_values_are_opaque_and_have_no_side_effect() -> None:
 
     assert capture.handle.value == "capture-1"
     assert DisplaySelection("HDMI-1").output_id == "HDMI-1"
+
+
+def state(service: StreamingSessionService) -> SessionState:
+    """Reads the state through a call, so each check sees the current value."""
+    return service.state
+
+
+def unreleased(service: StreamingSessionService) -> tuple[str, ...]:
+    return service.unreleased
+
+
+# P2-1: a concurrent close() is never lost ----------------------------------------------------
+
+
+def run_start_in_thread(rig: Rig) -> tuple[threading.Thread, list[BaseException], threading.Event]:
+    gate = threading.Event()
+    rig.encoder.gate = gate
+    failures: list[BaseException] = []
+
+    def start() -> None:
+        try:
+            rig.service.start(REQUEST)
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=start)
+    worker.start()
+    assert rig.encoder.entered.wait(5.0)
+    return worker, failures, gate
+
+
+def test_a_close_during_start_is_never_lost() -> None:
+    """Regression: close() returned at once while start() held the lock, and the start then
+    finished RUNNING with every resource active after shutdown was reported complete."""
+    rig = Rig()
+    worker, _, gate = run_start_in_thread(rig)
+    closer = threading.Thread(target=rig.service.close)
+    closer.start()
+    threading.Timer(0.05, gate.set).start()
+
+    closer.join(5.0)
+    worker.join(5.0)
+
+    assert not closer.is_alive() and not worker.is_alive()
+    assert state(rig.service) is SessionState.STOPPED
+    rig.assert_no_resources()
+
+
+def test_a_close_that_cannot_wait_is_completed_by_the_interrupted_start() -> None:
+    events: list[str] = []
+    encoder, publisher, receiver = FakeEncoder(events), FakePublisher(events), FakeReceiver(events)
+    gate = threading.Event()
+    encoder.gate = gate
+    service = StreamingSessionService(encoder, publisher, receiver, close_timeout=0.01)
+    failures: list[BaseException] = []
+
+    def start() -> None:
+        try:
+            service.start(REQUEST)
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=start)
+    worker.start()
+    assert encoder.entered.wait(5.0)
+
+    service.close()  # cannot wait: the request is recorded, never dropped
+    assert service.last_error is not None and "close() is pending" in service.last_error
+    gate.set()
+    worker.join(5.0)
+
+    assert len(failures) == 1 and isinstance(failures[0], StreamStartError)
+    assert "cancelled by close()" in failures[0].message
+    assert events == ["encoder.start", "encoder.stop"]  # nothing further was started
+    assert state(service) is SessionState.STOPPED and encoder.active == set()
+
+
+def test_no_start_is_accepted_after_close() -> None:
+    rig = Rig()
+    rig.service.close()
+
+    with pytest.raises(StreamStartError, match="closed"):
+        rig.service.start(REQUEST)
+    assert rig.events == []
+
+
+def test_close_is_idempotent_and_never_releases_twice() -> None:
+    rig = Rig()
+    rig.service.start(REQUEST)
+
+    rig.service.close()
+    rig.service.close()
+    rig.service.stop()
+
+    assert rig.events.count("receiver.stop") == 1
+    assert rig.events.count("publisher.stop") == 1
+    assert rig.events.count("encoder.stop") == 1
+    rig.assert_no_resources()
+
+
+def test_a_stop_during_start_is_still_refused_not_queued() -> None:
+    rig = Rig()
+    worker, failures, gate = run_start_in_thread(rig)
+    try:
+        with pytest.raises(StreamStartError, match="another stream lifecycle call"):
+            rig.service.stop()
+    finally:
+        gate.set()
+        worker.join(5.0)
+    assert failures == [] and state(rig.service) is SessionState.RUNNING
+    rig.service.close()
+    rig.assert_no_resources()
+
+
+# P2-2: an interruption during cleanup never abandons a resource ------------------------------
+
+
+def test_an_interruption_during_stop_finishes_cleanup_then_is_re_raised() -> None:
+    """Regression: an interruption in the receiver's stop skipped the publisher and the encoder
+    and left the service STOPPING."""
+    rig = Rig()
+    rig.service.start(REQUEST)
+    rig.receiver.stop_error = KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        rig.service.stop()
+
+    assert rig.events[-3:] == ["receiver.stop", "publisher.stop", "encoder.stop"]
+    assert state(rig.service) is SessionState.FAILED
+    assert unreleased(rig.service) == ("receiver",)
+    assert (
+        rig.service.last_error is not None
+        and "receiver cleanup interrupted" in rig.service.last_error
+    )
+    assert not rig.publisher.active and not rig.encoder.active and rig.receiver.active
+
+    rig.receiver.stop_error = None  # retry: only what is still owned is stopped again
+    rig.service.stop()
+    assert state(rig.service) is SessionState.STOPPED and unreleased(rig.service) == ()
+    assert rig.events.count("publisher.stop") == 1 and rig.events.count("encoder.stop") == 1
+    rig.assert_no_resources()
+
+
+def test_an_interruption_during_start_cleanup_keeps_what_it_could_not_stop() -> None:
+    rig = Rig()
+    rig.receiver.start_error = RuntimeError("receiver unavailable")
+    rig.publisher.stop_error = KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        rig.service.start(REQUEST)
+
+    assert rig.events[-2:] == ["publisher.stop", "encoder.stop"]
+    assert state(rig.service) is SessionState.FAILED
+    assert unreleased(rig.service) == ("publisher",)
+    rig.publisher.stop_error = None
+    rig.service.close()
+    rig.assert_no_resources()
+    assert unreleased(rig.service) == ()
+
+
+def test_a_failure_and_an_interruption_are_both_kept() -> None:
+    rig = Rig()
+    rig.service.start(REQUEST)
+    rig.receiver.stop_error = OSError("receiver")
+    rig.encoder.stop_error = SystemExit(3)
+
+    with pytest.raises(SystemExit):
+        rig.service.close()
+
+    message = rig.service.last_error or ""
+    assert "receiver cleanup failed: OSError" in message
+    assert "encoder cleanup interrupted: SystemExit" in message
+    assert unreleased(rig.service) == ("receiver", "encoder")
+    assert state(rig.service) is SessionState.FAILED
+
+
+def cancelled_start(
+    stop_error: BaseException,
+) -> tuple[StreamingSessionService, FakeEncoder, list[BaseException]]:
+    """A start cancelled by a close that could not wait, whose encoder stop then fails."""
+    events: list[str] = []
+    encoder, publisher, receiver = FakeEncoder(events), FakePublisher(events), FakeReceiver(events)
+    gate = threading.Event()
+    encoder.gate = gate
+    encoder.stop_error = stop_error
+    service = StreamingSessionService(encoder, publisher, receiver, close_timeout=0.01)
+    failures: list[BaseException] = []
+
+    def start() -> None:
+        try:
+            service.start(REQUEST)
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=start)
+    worker.start()
+    assert encoder.entered.wait(5.0)
+    service.close()
+    gate.set()
+    worker.join(5.0)
+    return service, encoder, failures
+
+
+def test_a_cancelled_start_whose_cleanup_fails_is_failed_not_starting() -> None:
+    service, encoder, failures = cancelled_start(OSError("encoder stuck"))
+
+    assert len(failures) == 1 and isinstance(failures[0], StreamStartError)
+    assert state(service) is SessionState.FAILED and unreleased(service) == ("encoder",)
+    assert "start cancelled by close(); encoder cleanup failed: OSError" in (
+        service.last_error or ""
+    )
+    encoder.stop_error = None
+    service.close()  # the retry releases it once
+    assert unreleased(service) == () and encoder.active == set()
+
+
+def test_an_interruption_while_cancelling_a_start_is_re_raised_after_recording() -> None:
+    service, _, failures = cancelled_start(KeyboardInterrupt())
+
+    assert len(failures) == 1 and isinstance(failures[0], KeyboardInterrupt)
+    assert state(service) is SessionState.FAILED and unreleased(service) == ("encoder",)
+
+
+@pytest.mark.parametrize("value", [0, -1, math.inf, math.nan, True])
+def test_an_invalid_close_timeout_is_refused(value: float) -> None:
+    rig = Rig()
+    with pytest.raises(InvalidStreamConfiguration, match="close_timeout"):
+        StreamingSessionService(rig.encoder, rig.publisher, rig.receiver, close_timeout=value)
+
+
+def test_closed_reports_the_definitive_shutdown() -> None:
+    rig = Rig()
+    assert rig.service.closed is False
+    rig.service.close()
+    assert rig.service.closed is True
