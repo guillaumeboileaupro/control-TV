@@ -1,6 +1,6 @@
 # D0 — Intel VA-API findings and screen-sharing pipeline
 
-Status: **hardware inventory verified; encoding pipeline not yet validated** (2026-10-17). This complements [REMOTE_DISPLAY_STUDY.md](REMOTE_DISPLAY_STUDY.md); it does not replace the proposed receiver evaluation or authorize TV access.
+Status: **hardware inventory and synthetic H.264 VA-API CQP encode validated; live X11 capture and TV reception untested** (2026-10-17). This complements [REMOTE_DISPLAY_STUDY.md](REMOTE_DISPLAY_STUDY.md); it does not replace the proposed receiver evaluation or authorize TV access.
 
 ## Measured host environment
 
@@ -32,7 +32,7 @@ Conversion failed!
 
 The output MP4 is invalid/incomplete (`ffprobe`: `moov atom not found`). **Do not mark H.264 hardware encoding as passing.** The driver advertises only CQP for this configuration; the bitrate-based invocation requested an incompatible rate-control mode.
 
-## Next local-only experiment (not yet executed)
+## Second local-only experiment: PASSED
 
 ```bash
 ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 \
@@ -44,7 +44,9 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate \
   -of default=noprint_wrappers=1 /tmp/control-tv-vaapi-test.mp4
 ```
 
-If this FFmpeg build rejects `-rc_mode CQP`, inspect `ffmpeg -hide_banner -h encoder=h264_vaapi` and adapt to its documented options; do not silently fall back to a bitrate mode. Confirm success using exit code, `ffprobe`, decoded frame count and elapsed time; capture stderr and GPU/CPU usage for repeatability. Only after this local synthetic test passes, design a **separately authorized** desktop-capture experiment.
+Observed output: 300 frames, 1920×1080 at 30 fps, H.264 High, approximately 12 MB in 10 seconds, 9.9 Mbit/s, encoder speed 4.1× real time; `ffprobe` confirmed `codec_name=h264`, `width=1920`, `height=1080`, `r_frame_rate=30/1`. This validates the **synthetic-source hardware encode** only, not live X11 capture, sustained latency, network transmission, or playback on the TV. A separate full decode and resource-use measurement remain to do.
+
+If another FFmpeg build rejects `-rc_mode CQP`, inspect `ffmpeg -hide_banner -h encoder=h264_vaapi` and adapt to its documented options; do not silently fall back to a bitrate mode. Confirm success using exit code, `ffprobe`, decoded frame count and elapsed time; capture stderr and GPU/CPU usage for repeatability. Only after this local synthetic test passes, design a **separately authorized** desktop-capture experiment.
 
 ## Proposed pipeline and boundaries
 
@@ -71,7 +73,7 @@ Require a display output that GNOME/X11 recognizes as an independent monitor. `x
 
 ## Next verification gates
 
-1. Re-run the CQP synthetic encode and validate with `ffprobe` and decode; record measured fps/CPU.
+1. CQP synthetic encode and `ffprobe` **PASS**; full decode, sustained throughput and CPU/GPU usage still to measure.
 2. Check FFmpeg VA-API options and handling of CQP vs requested bitrate; implement explicit capability-based selection with informative failure.
 3. Design the local-only capture/encoder interface and fake-based tests; do not invoke TV or network.
 4. Obtain separate owner approval for each actual desktop capture, stream, receiver test, R1–R4/C1–C7, ADB, software installation, and system graphics changes.
