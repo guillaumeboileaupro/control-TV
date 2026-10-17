@@ -23,13 +23,38 @@ keyboard also require TV-command authorization. Application launch additionally 
 already have been enabled and authorized by the owner. The runner never pairs the remote channel,
 enables Android developer options, starts ADB, changes Wi-Fi or sends a command by itself.
 
-Even when flags are supplied, this iteration's real adapter remains blocked. Execution is enabled
-only after a separately reviewed adapter can identify both builds, the selected TV and the private
-evidence destination, and after the owner authorizes the individual step.
+The runner never initiates a C6 or C7 command. After an individually authorized hardware step, it
+can validate the product trace when `CONTROL_TV_COMMAND_TRACE` and the matching
+`CONTROL_TV_C6_REQUEST_ID` or `CONTROL_TV_C7_REQUEST_ID` are configured. Missing evidence remains
+`BLOCKED`; malformed or contradictory evidence is `FAIL`, never `PASS`.
+
+## Enabling the product trace
+
+Tracing is off by default. Before launching the Ubuntu or Android bridge for an authorized C6/C7
+step, set `CONTROL_TV_COMMAND_TRACE` to a local JSONL file and set `CONTROL_TV_TRACE_CLIENT` to the
+client role (`ubuntu` or `android`). The bridge appends a mode-0600 record for each phase. It never
+records a device id or address, media URL/title, command argument, credential or exception text.
+Each command gets an opaque request id; use that exact id for acceptance validation.
+
+The command path records `command_prepared`, the playback `pre_status`, exactly one
+`send_attempt`, the transport response or failure, each fresh `confirmation_status`, and the final
+confirmation outcome. A changed session observed during confirmation adds `session_changed` before
+that status. A failure after transport entry adds `ambiguous_result`; it does not trigger a retry.
+Tracing is evidence only: a trace-write failure is ignored and cannot change, suppress or repeat a
+command.
+
+Example validation, only after the owner separately authorized and performed the relevant step:
+
+```bash
+export CONTROL_TV_COMMAND_TRACE="$PWD/.ai-private/hardware/c6-command-trace.jsonl"
+export CONTROL_TV_C6_REQUEST_ID="<opaque request_id from that trace>"
+python3 scripts/run_acceptance.py --category google-tv --execute --allow-tv-commands
+```
 
 ## C6 instrumentation
 
-The trace schema is `TraceEvent(sequence, client, event, request_id, media_session_id)`. C6 requires,
+The trace schema adds optional `command` and stable `error_code` fields to
+`TraceEvent(sequence, client, event, request_id, media_session_id)`. C6 requires,
 for one request id and in strict order:
 
 1. `pre_status` with the captured old `mediaSessionId`;
@@ -48,6 +73,6 @@ by an `ambiguous_result`. Any second send attempt, `automatic_retry` or `replay`
 does not prove delivery count; without the instrumented trace, C7 remains blocked. Packet or
 receiver-side capture is still required to claim how many deliveries the TV itself received.
 
-The validators are deterministic and covered with positive and mutation-style negative tests. They
-record application-side emission evidence only and do not add logging to the authoritative product
-control path.
+The validators are deterministic and covered with positive, mutation-style negative and
+product-to-validator integration tests. They establish application-side invocation count and
+session binding. They do not prove packet delivery, physical TV behavior or hardware compatibility.

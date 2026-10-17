@@ -166,6 +166,9 @@ def detect_environment(
     artifacts = {
         "deb": values.get("CONTROL_TV_DEB"),
         "apk": values.get("CONTROL_TV_APK"),
+        "command_trace": values.get("CONTROL_TV_COMMAND_TRACE"),
+        "c6_request_id": values.get("CONTROL_TV_C6_REQUEST_ID"),
+        "c7_request_id": values.get("CONTROL_TV_C7_REQUEST_ID"),
     }
     commit: str | None = None
     git_head = root / ".git"

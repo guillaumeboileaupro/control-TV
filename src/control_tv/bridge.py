@@ -454,12 +454,14 @@ def default_service() -> ControlService:
     from control_tv.adapters import PyChromecastTransport
     from control_tv.adapters.tv_apps import AdbAppInventory
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
+    from control_tv.command_trace import recorder_from_environment
 
     credentials = default_credentials_dir()
     return ControlService(
         PyChromecastTransport(),
         remote=TvRemoteChannel(credentials),
         apps=AdbAppInventory(credentials),
+        trace=recorder_from_environment(),
     )
 
 

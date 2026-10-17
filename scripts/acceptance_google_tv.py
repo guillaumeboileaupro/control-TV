@@ -6,24 +6,95 @@ sends a command; product behavior remains exclusively in the shared Python contr
 
 from __future__ import annotations
 
+import json
 import time
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from pathlib import Path
 
 from acceptance import Context, Contract, Outcome, Result, Scenario, make_result
+from control_tv.command_trace import TraceEvent
 
 
-@dataclass(frozen=True)
-class TraceEvent:
-    sequence: int
-    client: str
-    event: str
-    request_id: str
-    media_session_id: int | None = None
+def load_trace(path: Path) -> tuple[TraceEvent, ...]:
+    """Load fail-closed JSONL evidence emitted by the product tracer."""
+    events: list[TraceEvent] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            raw = json.loads(line)
+            if not isinstance(raw, dict):
+                raise ValueError("event is not an object")
+            sequence = raw.get("sequence")
+            session = raw.get("media_session_id")
+            client = raw.get("client")
+            event = raw.get("event")
+            request_id = raw.get("request_id")
+            if (
+                not isinstance(sequence, int)
+                or isinstance(sequence, bool)
+                or not isinstance(client, str)
+                or not client
+                or not isinstance(event, str)
+                or not event
+                or not isinstance(request_id, str)
+                or not request_id
+                or (
+                    session is not None
+                    and (not isinstance(session, int) or isinstance(session, bool) or session < 0)
+                )
+            ):
+                raise ValueError("invalid required trace fields")
+            command = raw.get("command")
+            error_code = raw.get("error_code")
+            if command is not None and not isinstance(command, str):
+                raise ValueError("invalid command")
+            if error_code is not None and not isinstance(error_code, str):
+                raise ValueError("invalid error code")
+            events.append(
+                TraceEvent(
+                    sequence,
+                    client,
+                    event,
+                    request_id,
+                    session,
+                    command,
+                    error_code,
+                )
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as error:
+            raise ValueError(f"invalid trace event at line {line_number}: {error}") from error
+    return tuple(events)
 
 
 def blocked_real(context: Context, scenario: Scenario) -> Result:
+    if scenario.id in {"C6", "C7"}:
+        trace_path = context.environment.artifacts.get("command_trace")
+        request_id = context.environment.artifacts.get(f"{scenario.id.lower()}_request_id")
+        if trace_path and request_id:
+            started = time.monotonic()
+            path = Path(trace_path)
+            if not path.is_file():
+                return make_result(
+                    scenario,
+                    Outcome.FAIL,
+                    "configured command trace does not exist",
+                    started=started,
+                    proof="trace path validation",
+                )
+            events = load_trace(path)
+            valid, reason = (
+                validate_c6(events, request_id)
+                if scenario.id == "C6"
+                else validate_c7(events, request_id)
+            )
+            return make_result(
+                scenario,
+                Outcome.PASS if valid else Outcome.FAIL,
+                reason,
+                started=started,
+                observed=f"{sum(event.request_id == request_id for event in events)} trace events",
+                proof=f"structured command trace for request {request_id}",
+            )
     device = context.environment.devices.get("google_tv")
     reason = (
         "owner authorization is required"
@@ -46,6 +117,11 @@ def validate_c6(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, st
         (event for event in events if event.request_id == request_id), key=lambda e: e.sequence
     )
     names = [event.event for event in relevant]
+    commands = {event.command for event in relevant if event.command is not None}
+    if len({event.sequence for event in relevant}) != len(relevant):
+        return False, "C6 trace sequence is ambiguous"
+    if len(commands) != 1:
+        return False, "C6 events are not correlated to one identifiable command"
     required = ["pre_status", "send_attempt", "session_changed", "confirmation_status"]
     if any(name not in names for name in required):
         return (
@@ -82,6 +158,11 @@ def validate_c7(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, st
         key=lambda event: event.sequence,
     )
     counts = Counter(event.event for event in relevant)
+    commands = {event.command for event in relevant if event.command is not None}
+    if len({event.sequence for event in relevant}) != len(relevant):
+        return False, "C7 trace sequence is ambiguous"
+    if len(commands) != 1:
+        return False, "C7 events are not correlated to one identifiable command"
     if counts["send_attempt"] != 1:
         return (
             False,
