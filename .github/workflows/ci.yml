@@ -198,6 +198,7 @@ jobs:
       # against by the acceptance runner; every package is version 0.1.0).
       - name: Record the package provenance
         run: |
+          set -o pipefail
           .venv/bin/python scripts/acceptance_identity.py deb-provenance \
             --deb dist/control-tv_*_amd64.deb --commit "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" --output dist/provenance.json \
@@ -339,6 +340,7 @@ jobs:
         env:
           STABLE_KEY_USED: ${{ secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_B64 != '' }}
         run: |
+          set -o pipefail  # a failed check must not hide behind tee
           apk=src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
           sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
           stat -c '%s bytes' "$apk" | tee -a "$GITHUB_STEP_SUMMARY"

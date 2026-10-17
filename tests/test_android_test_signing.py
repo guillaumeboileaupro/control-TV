@@ -51,6 +51,11 @@ def test_signer_digests_are_read_from_apksigner() -> None:
     assert signing.apksigner_certificates(apksigner_output(PINNED.upper())) == (PINNED,)
     assert signing.apksigner_certificates(apksigner_output(PINNED, OTHER)) == (PINNED, OTHER)
     assert signing.apksigner_certificates("Verified using v2 scheme: true\n") == ()
+    ranged = (
+        "Signer (minSdkVersion=24, maxSdkVersion=32) certificate DN: CN=Android Debug\n"
+        f"Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: {PINNED}\n"
+    )
+    assert signing.apksigner_certificates(ranged) == (PINNED,)
 
 
 def test_the_certificate_digest_is_read_from_keytool() -> None:
@@ -286,6 +291,16 @@ def test_verify_apk_refuses_a_replaced_key_and_a_rejected_signature(
     )
     assert "another key than the pinned" in capsys.readouterr().err
 
+    silent = tmp_path / "silent-apksigner"
+    silent.write_text(
+        f"#!{sys.executable}\nprint('Signer #1 certificate DN: CN=x')\n", encoding="utf-8"
+    )
+    silent.chmod(0o755)
+    assert signing.main(["verify-apk", "--apk", str(apk), "--apksigner", str(silent)], {}) == 1
+    assert "no signer certificate SHA-256 line; its certificate lines: Signer #1" in (
+        capsys.readouterr().err
+    )
+
     rejected = fake_apksigner(tmp_path, PINNED, code=1)
     assert signing.main(["verify-apk", "--apk", str(apk), "--apksigner", str(rejected)], {}) == 1
     assert "rejected the APK signature" in capsys.readouterr().err
@@ -347,5 +362,7 @@ def test_ci_never_prints_the_signing_secrets() -> None:
         "GITHUB_ENV",
     ):
         assert leak not in build
+    record = workflow[workflow.index("- name: Record the APK checksum and signing identity") :]
+    assert "set -o pipefail" in record[: record.index("- name: Upload the debug APK")]
     # Only the build step sees the secrets: no job- or workflow-level exposure.
     assert workflow.count("secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_PASSWORD") == 1

@@ -43,7 +43,11 @@ MIN_PASSWORD = 12
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
-_APKSIGNER = re.compile(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$", re.M)
+# "Signer #1 certificate SHA-256 digest: …" or, from newer build-tools and for SDK-ranged
+# signers, "Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: …".
+_APKSIGNER = re.compile(
+    r"^Signer (?:#\d+|\([^)\n]*\)) certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$", re.M
+)
 _KEYTOOL = re.compile(r"^\s*SHA256:\s*((?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})\s*$", re.M)
 
 # Runs a command with exactly the given environment (keytool reads the password from it).
@@ -200,7 +204,15 @@ def verify_apk(
     checked = run((str(apksigner), "verify", "--print-certs", str(apk)), environ)
     if checked.returncode != 0:
         raise SigningError("apksigner rejected the APK signature")
-    return apksigner_certificates(checked.stdout)
+    certificates = apksigner_certificates(checked.stdout)
+    if not certificates:
+        # Certificate lines are public data; show them so a new apksigner format is visible.
+        shown = [line for line in checked.stdout.splitlines() if "certificate" in line][:6]
+        raise SigningError(
+            "apksigner printed no signer certificate SHA-256 line; its certificate lines: "
+            + ("; ".join(shown) or "none")
+        )
+    return certificates
 
 
 def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.environ) -> int:
