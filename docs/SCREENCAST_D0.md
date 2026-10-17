@@ -62,6 +62,12 @@ reserved) in `unstoppable_pids`. `reclaim()`, `start()` and `close()` poll it ag
 again and release it once the kernel lets it go. While one is kept, `start()` refuses a new encode.
 If the kernel never lets it go, it stays listed until the application exits.
 
+**`close()` never loses a process:** if stopping meets an internal error (not a
+`ScreenCastError`), `close()` records it, then stops the session's group through the same group
+stop; if that cannot be confirmed or fails too, the handle is kept in `unstoppable_pids`. Every
+error met is kept in `last_error`, in order. After `close()`, each process the service started is
+either stopped and reaped, or kept; repeated `close()` calls only poll the kept groups again.
+
 **Concurrency:** one call at a time. A call made while another is running (another thread) is
 refused with `ScreenCastStateError`; a refused `close()` does nothing and keeps the exit hook.
 

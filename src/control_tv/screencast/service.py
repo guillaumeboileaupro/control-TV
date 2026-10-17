@@ -237,15 +237,15 @@ class ScreenCastService:
                 self._forget_on_exit(self.close)
             except Exception as error:  # the encoder is stopped all the same
                 hook_error = f"close() could not remove its exit hook: {type(error).__name__}"
-            with contextlib.suppress(ScreenCastError):
-                self._stop()  # a failure is recorded in `last_error` and `unstoppable_pids`
+            try:
+                with contextlib.suppress(ScreenCastError):
+                    self._stop()  # a failure is recorded in `last_error` and `unstoppable_pids`
+            except Exception as error:
+                self._state = ScreenCastState.FAILED
+                self._note(f"close() met an internal error: {type(error).__name__}")
+                self._rescue()
             if hook_error is not None:
-                self.last_error = (
-                    f"{self.last_error}; {hook_error}" if self.last_error else hook_error
-                )
-        except Exception as error:
-            self.last_error = f"close() met an internal error: {type(error).__name__}"
-            self._state = ScreenCastState.FAILED
+                self._note(hook_error)
         finally:
             self._end_session()
             self._reclaim()
@@ -363,6 +363,29 @@ class ScreenCastService:
             elapsed_seconds=self._clock() - session.started_at,
         )
 
+    def _rescue(self) -> None:
+        """After an internal error in `_stop()`: stops the session's group if its handle is still
+        attached (`_halt` keeps it when the stop cannot be confirmed). Should even that fail, the
+        handle stays attached and `_end_session` keeps it: it is never dropped."""
+        session = self._session
+        process = session.process if session is not None else None
+        if session is None or process is None:
+            return  # already stopped and released, or already kept
+        try:
+            if self._halt(session, process) is None:
+                self._note(self._unstoppable_error(process.pid).message)
+        except Exception as error:
+            self._note(f"the emergency stop failed: {type(error).__name__}")
+
+    def _keep(self, process: ManagedProcess) -> None:
+        """Keeps an unreleased group for `reclaim()`, once."""
+        if all(kept is not process for kept in self._unreclaimed):
+            self._unreclaimed.append(process)
+
+    def _note(self, message: str) -> None:
+        """Adds `message` to `last_error`, keeping what is already there."""
+        self.last_error = f"{self.last_error}; {message}" if self.last_error else message
+
     def _halt(self, session: _Session, process: ManagedProcess) -> int | None:
         """Stops the session's process group and returns the leader's status, or None (the group
         kept for `reclaim()`) if it could not be confirmed gone."""
@@ -372,7 +395,7 @@ class ScreenCastService:
             status = None  # signalling or reading failed: never claim it stopped
         session.process = None
         if status is None:
-            self._unreclaimed.append(process)
+            self._keep(process)
         return status
 
     def _reclaim(self) -> None:
@@ -408,14 +431,17 @@ class ScreenCastService:
         return error
 
     def _end_session(self) -> None:
-        """Removes the session's directory; its process group has ended or is kept."""
+        """Removes the session's directory; its process group has ended or is kept (a handle
+        still attached here is kept, never dropped)."""
         session = self._session
         if session is None:
             return
+        if session.process is not None:
+            self._keep(session.process)
+            session.process = None
         shutil.rmtree(session.workdir, ignore_errors=True)
         if session.workdir.exists():
-            note = f"the session directory {session.workdir} could not be removed"
-            self.last_error = f"{self.last_error}; {note}" if self.last_error else note
+            self._note(f"the session directory {session.workdir} could not be removed")
         self._session = None
 
     @staticmethod

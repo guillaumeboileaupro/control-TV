@@ -670,7 +670,7 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
     process-group ownership (SIGTERM then SIGKILL to the whole group, the leader reaped only once
     its group is empty so the group id is never recycled; a group surviving SIGKILL fails the
     session and is kept for `reclaim()`); `ScreenCastService` state machine with one result check
-    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 124 automated tests
+    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 138 automated tests
     (fakes, and real leader/descendant process groups), no GPU or network in CI. Not run on
     hardware in this PR; no capture, stream, bridge or UI
     ([`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md));

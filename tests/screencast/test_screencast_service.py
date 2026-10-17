@@ -59,11 +59,13 @@ class FakeProcess:
     wait_error: OSError | None = None
     signal_error: OSError | None = None
     alive_error: RuntimeError | None = None
+    status_errors: int = 0  # exit_status() raises this many times (as an internal error would)
     gate: threading.Event | None = None
     entered: threading.Event = field(default_factory=threading.Event)
     signals: list[signal.Signals] = field(default_factory=list)
     ended: bool = False
     released: bool = False
+    releases: int = 0  # effective reaps: more than 1 would be a double release
     signals_after_release: int = 0
 
     @property
@@ -71,6 +73,9 @@ class FakeProcess:
         return 4242
 
     def exit_status(self) -> int | None:
+        if self.status_errors > 0:
+            self.status_errors -= 1
+            raise RuntimeError("waitid failed")
         return self.status if self.ended else None
 
     def wait_exit(self, timeout: float) -> int:
@@ -90,7 +95,8 @@ class FakeProcess:
             raise self.alive_error
         if self.released:
             return False
-        return self.survives_sigkill or not self.ended or self.lingering_child
+        leader_running = self.exit_status() is None  # like the real group: reads the leader
+        return self.survives_sigkill or leader_running or self.lingering_child
 
     def signal_group(self, sig: signal.Signals) -> None:
         if self.signal_error is not None:
@@ -106,9 +112,12 @@ class FakeProcess:
             self.ended, self.status = True, -sig
 
     def release(self) -> int | None:
+        if self.released:
+            return self.status
         if self.group_alive():
             return None
         self.released = True
+        self.releases += 1
         return self.status
 
 
@@ -815,6 +824,201 @@ def test_close_survives_an_internal_error_while_stopping(tmp_path: Path) -> None
 
     assert state(cast) is ScreenCastState.FAILED and nothing_left(tmp_path)
     assert cast.last_error == "close() met an internal error: RuntimeError"
+
+
+# close() after an internal error of _stop(): no handle is ever lost ---------------------
+
+INTERNAL = "close() met an internal error: RuntimeError"
+
+
+def degraded(
+    tmp_path: Path, process: FakeProcess, hooks: ExitHooks | None = None
+) -> ScreenCastService:
+    """A running encode whose next exit_status() raises, so close()'s _stop() fails before
+    _halt()."""
+    cast = service(tmp_path, FakeRunner(process=process), hooks=hooks)
+    cast.start(REQUEST)
+    process.status_errors = max(process.status_errors, 1)
+    return cast
+
+
+def test_a_stop_failing_before_halt_is_rescued_by_a_group_stop(tmp_path: Path) -> None:
+    # A and C: _stop() raises before _halt(); the rescue _halt() then succeeds.
+    process = FakeProcess(timeouts=10)
+    cast = degraded(tmp_path, process)
+
+    cast.close()
+
+    assert process.signals == [TERM] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == INTERNAL
+    assert nothing_left(tmp_path)
+
+
+def test_an_internal_error_after_the_leader_exited_still_stops_its_group(
+    tmp_path: Path,
+) -> None:
+    # C: the leader exited, a member still runs, _finish() fails before its own _halt().
+    process = FakeProcess(lingering_child=True)
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    process.ended = True
+
+    def broken_finish(session: object, process: object) -> None:
+        raise RuntimeError("bug")
+
+    cast._finish = broken_finish  # type: ignore[method-assign,assignment]
+    cast.close()
+
+    assert process.signals == [TERM] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == INTERNAL and nothing_left(tmp_path)
+
+
+def test_an_internal_error_after_the_group_was_released_does_not_release_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No double release: _finish() already stopped and reaped the group when it fails.
+    process = FakeProcess()
+    cast = service(tmp_path, FakeRunner(process=process))
+    cast.start(REQUEST)
+    process.ended = True
+
+    def broken_tail(session: object) -> str:
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(ScreenCastService, "_stderr_tail", staticmethod(broken_tail))
+    cast.close()
+
+    assert process.signals == [] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == INTERNAL and nothing_left(tmp_path)
+
+
+def test_a_group_whose_status_cannot_be_read_is_kept_not_lost(tmp_path: Path) -> None:
+    # B: exit_status() keeps raising, so the rescue cannot confirm anything either.
+    process = FakeProcess(timeouts=10, status_errors=1_000)
+    cast = degraded(tmp_path, process)
+
+    cast.close()
+
+    assert process.signals == [] and not process.released
+    assert pids(cast) == (4242,) and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error is not None and cast.last_error.startswith(INTERNAL)
+    assert "pid 4242) could not be confirmed stopped" in cast.last_error
+    assert nothing_left(tmp_path)  # the handle, not the directory, is what tracks it
+
+
+def test_reclaim_releases_a_group_kept_by_a_degraded_close(tmp_path: Path) -> None:
+    # H: once its status can be read again, reclaim() kills and reaps it, once.
+    process = FakeProcess(timeouts=10, status_errors=1_000)
+    cast = degraded(tmp_path, process)
+    cast.close()
+    process.status_errors = 0
+
+    assert cast.reclaim() == ()
+    assert process.signals == [KILL] and process.released and process.releases == 1
+    assert cast.reclaim() == () and process.releases == 1
+
+
+def test_a_rescue_that_fails_too_keeps_the_handle(tmp_path: Path) -> None:
+    # D: the rescue _halt() itself raises; the last handle is kept, both errors are reported.
+    process = FakeProcess(timeouts=10)
+    cast = degraded(tmp_path, process)
+
+    def broken_halt(session: object, process: object) -> int | None:
+        raise RuntimeError("halt bug")
+
+    cast._halt = broken_halt  # type: ignore[method-assign]
+    cast.close()
+
+    # The kept handle reached close()'s final reclaim, which killed and reaped the group.
+    assert process.signals == [KILL] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == f"{INTERNAL}; the emergency stop failed: RuntimeError"
+    assert nothing_left(tmp_path)
+
+
+def test_a_rescue_that_fails_too_keeps_a_handle_that_survives_sigkill(tmp_path: Path) -> None:
+    # D, unkillable: the handle stays kept for later.
+    process = FakeProcess(survives_sigkill=True)
+    cast = degraded(tmp_path, process)
+
+    def broken_halt(session: object, process: object) -> int | None:
+        raise RuntimeError("halt bug")
+
+    cast._halt = broken_halt  # type: ignore[method-assign]
+    cast.close()
+
+    assert process.signals == [KILL] and not process.released
+    assert pids(cast) == (4242,) and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == f"{INTERNAL}; the emergency stop failed: RuntimeError"
+
+
+def test_a_rescue_escalates_to_sigkill_for_a_group_ignoring_sigterm(tmp_path: Path) -> None:
+    # E
+    process = FakeProcess(timeouts=10, ignores_sigterm=True)
+    cast = degraded(tmp_path, process)
+
+    cast.close()
+
+    assert process.signals == [TERM, KILL] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == INTERNAL and nothing_left(tmp_path)
+
+
+def test_a_rescue_keeps_a_group_surviving_sigkill(tmp_path: Path) -> None:
+    # F
+    process = FakeProcess(survives_sigkill=True)
+    cast = degraded(tmp_path, process)
+
+    cast.close()
+
+    # TERM and KILL from the rescue, KILL again from close()'s final reclaim.
+    assert process.signals == [TERM, KILL, KILL] and not process.released
+    assert pids(cast) == (4242,) and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == (
+        f"{INTERNAL}; the encoder (pid 4242) could not be confirmed stopped after SIGKILL and "
+        "may still be running; it is kept for reclaim()"
+    )
+    assert nothing_left(tmp_path)
+
+
+def test_repeated_closes_after_a_degraded_close_neither_lose_nor_double_release(
+    tmp_path: Path,
+) -> None:
+    # G: every later close() only polls the kept group; one entry, one release.
+    process = FakeProcess(survives_sigkill=True)
+    cast = degraded(tmp_path, process)
+    cast.close()
+
+    assert process.signals == [TERM, KILL, KILL]
+
+    cast.close()
+    assert pids(cast) == (4242,) and process.signals == [TERM, KILL, KILL, KILL]
+
+    process.survives_sigkill = False
+    cast.close()
+    cast.close()
+    assert pids(cast) == () and process.released and process.releases == 1
+    assert process.signals == [TERM, KILL, KILL, KILL, KILL]
+    assert process.signals_after_release == 0
+
+
+def test_a_hook_error_and_an_internal_stop_error_are_both_kept(tmp_path: Path) -> None:
+    # I
+    hooks = ExitHooks()
+    process = FakeProcess(timeouts=10)
+    cast = degraded(tmp_path, process, hooks)
+    cast._forget_on_exit = broken_hook
+
+    cast.close()
+
+    assert process.signals == [TERM] and process.released and process.releases == 1
+    assert pids(cast) == () and state(cast) is ScreenCastState.FAILED
+    assert cast.last_error == (f"{INTERNAL}; close() could not remove its exit hook: RuntimeError")
+    assert hooks.registered == [cast.close]  # still hooked: exit will call close() again
+    assert nothing_left(tmp_path)
 
 
 def test_a_directory_that_cannot_be_removed_is_reported(
