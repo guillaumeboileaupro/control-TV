@@ -660,6 +660,16 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
   only, 2026-10-17);
 - [ ] D0: read-only inventory (GPU, hardware encoders, outputs, Secure Boot) and spikes on a test
   stream (HLS to the Default Media Receiver; Cast Streaming sender);
+  - inventory and a manual synthetic VA-API CQP encode measured on the owner's Intel UHD (PR #79:
+    CQP only, bitrate mode fails; 1920×1080@30, QP 24, 4.1× real time);
+  - [x] local encoder foundation (issue #80, branch `feat/screencast-d0-foundation`):
+    `control_tv.screencast` — typed values, FFmpeg command construction (VA-API CQP, explicit
+    `libx264` fallback), capability probe and selection policy, process ownership (own group,
+    SIGTERM then SIGKILL), `ScreenCastService` state machine with guaranteed cleanup; 45 automated
+    tests with fakes, no GPU or network in CI. Synthetic source only; not run on hardware in this
+    PR; no capture, stream, bridge or UI ([`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md));
+  - [ ] receiver spikes (HLS to the Default Media Receiver, Cast Streaming) — need the owner's
+    go-ahead;
 - [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
   `ScreenCastService`, automated tests;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
