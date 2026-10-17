@@ -19,6 +19,7 @@ const MARKS = {
   "com.cbs.ca": "Paramount+",
   "com.google.android.videos": "Google TV",
   "com.wbd.stream": "HBO Max",
+  "tv.twitch.android.app": "Twitch",
 } as const;
 
 const FILES = {
@@ -34,6 +35,7 @@ const FILES = {
   "fr.francetv.pluzz": ["france.tv", "/app-logos/france-tv.svg", "light"],
   "fr.francetv.zouzous": ["Okoo", "/app-logos/okoo.svg", "light"],
   "fr.tf1.mytf1": ["TF1+", "/app-logos/tf1-plus.svg", "light"],
+  "fr.tf1.mytf1.free": ["TF1+", "/app-logos/tf1-plus.svg", "light"],
   "tv.arte.plus7": ["ARTE", "/app-logos/arte.svg", "light"],
 } as const;
 
@@ -79,6 +81,13 @@ describe("TV app logos", () => {
       "fr.freebox.fbx8lc.fbxdiags",
       "fr.free.aktu",
       "com.nextinteractive.rmcbfmplay.tv.free",
+      // OQEE and M6+'s Freebox edition are not on Google Play; no licensed logo exists for
+      // OQEE, M6+ or TFOU MAX, and the OQEE launcher is not the OQEE app.
+      "net.oqee.androidtv",
+      "net.oqee.launcher",
+      "fr.m6.m6replay.free",
+      "fr.m6.m6replay",
+      "fr.tfou.max",
       // Keys inherited from Object.prototype are never catalogue entries.
       "constructor",
       "__proto__",
