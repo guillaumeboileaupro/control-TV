@@ -29,7 +29,11 @@ object EmbeddedBridge {
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(context.applicationContext))
         }
-        return Python.getInstance().getModule("control_tv.embedded")
+        val module = Python.getInstance().getModule("control_tv.embedded")
+        // Debug builds only: the owner's acceptance mode, applied once before the first request.
+        // The release build's AcceptanceTrace does nothing (src/release).
+        AcceptanceTrace.configure(context.applicationContext, module)
+        return module
     }
 
     private fun handleOf(context: Context): () -> (String) -> String = {
