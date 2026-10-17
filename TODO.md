@@ -25,6 +25,17 @@
 - [ ] **Claude — revue indépendante :** vérifier cause racine, licences, conformité des logos, qualité visuelle, tests et risques de régression ; rapport READY/BLOCKED ; aucune fusion sans autorisation.
 - [ ] **Propriétaire — validation réelle :** après build et installation explicitement autorisée, contrôler visuellement Apple TV et les autres logos réellement pris en charge sur Ubuntu puis Android. Conserver la capture avant/après.
 
+#### B bis. Couverture des logos — 2026-10-17 (branche `feat/more-tv-app-logos`)
+
+Constat après installation du `.deb` de #74 : un seul logo (Apple TV) dans la grille réelle ; ARTE, CANAL+, Disney+ et d'autres en initiale. Cause : Simple Icons 16.33.0 ne contient aucune de ces marques.
+
+- [x] **Couvertes par un fichier officiel embarqué** (`assets/app-logos/`, domaine public ou CC0 sur Wikimedia Commons, servi localement, sans réseau) : ARTE `tv.arte.plus7`, CANAL+ `com.canal.android.canal`, Disney+ `com.disney.disneyplus`, france.tv `fr.francetv.pluzz`, Google Play Games `com.google.android.play.games`, Molotov `com.molotov.app` (tuile sombre, couleurs inchangées), Prime Video `com.amazon.amazonvideo.livingroom`, TF1+ `fr.tf1.mytf1`.
+- [x] **Couvertes par Simple Icons** (inchangé) : Apple TV, Google Play Store, Google TV home, MUBI, Netflix, Plex, Spotify, VLC, YouTube, YouTube Kids, YouTube Music.
+- [x] **Sans logo, avec raison** : M6+ `fr.m6.m6replay.by` (seul le logo de la chaîne M6 existe : approximation refusée) ; Paramètres `com.android.tv.settings` et Recommandations `com.google.android.tvrecommendations` (les marques Android et Google TV désignent d'autres produits) ; toute application inconnue garde son initiale.
+- [x] **Tests** : correspondance exacte identifiant -> logo pour les 19 applications ; catalogue limité exactement à ces 19 ; exclusions et identifiants proches ou hérités (`constructor`, `__proto__`) refusés ; sources limitées au dossier local ; fichiers SVG sans script, contenu étranger, référence externe ou DOCTYPE (`tests/test_app_logo_assets.py`) ; chaque fichier documenté avec sa source et sa licence ; aucune requête réseau. 342 tests UI, 1 573 tests Python ; bundle JavaScript 57 858 / 65 536 octets ; 8 fichiers (44 Ko) livrés avec le frontend ; grille rendue sous la CSP de production : 8 logos fichiers, 11 marques, 0 image cassée, 0 violation.
+- [ ] **Propriétaire — contrôle visuel** sur Ubuntu puis Android après installation autorisée, en particulier CANAL+ (dessin de 1995), Disney+ (version 2019) et TF1+ (reproduction CC0).
+- [ ] **Restant** : logo M6+ si une source sous licence redistribuable apparaît ; noms et logos des applications réellement installées encore inconnues du catalogue, à relever via ADB (après accord) ; Paramètres et Recommandations restent en initiale par choix.
+
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.
