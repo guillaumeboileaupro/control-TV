@@ -29,7 +29,7 @@
 
 - [ ] Ubuntu : autorisation explicite avant toute installation du `.deb` ; lancement réel, bridge IPC, icône système, logs, fermeture et CSP.
 - [ ] Android : autorisation explicite avant installation de l'APK ; lancement, affichage, widget, CSP et journaux ; préserver les données existantes.
-- [ ] Google TV : R1–R4 (lecture seule), puis C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et concurrence des deux télécommandes ; commandes et activation ADB seulement avec accord explicite.
+- [ ] Google TV : obtenir l'accord explicite du propriétaire **avant toute exécution**, y compris R1–R4 bien qu'ils soient en lecture seule ; obtenir également cet accord avant chaque étape C1–C7 et avant toute autre commande TV. Toute activation ADB exige elle aussi un accord explicite préalable. Exécuter ensuite, selon `docs/DUAL_CONTROLLER_VALIDATION.md`, R1–R4, C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et la concurrence des deux télécommandes.
 - [ ] Latence : K1–K3 et `latency.remote-keys`, mesures vidéo et seuils à adopter par le propriétaire.
 - [ ] Distinguer systématiquement PASS simulé, PASS CI et PASS matériel ; rapport de preuves par scénario.
 - [ ] Mettre à jour `DEVELOPMENT_PLAN.md`, `DEVELOPMENT_CHECKLIST.md`, README et rapports à l'issue des essais.
