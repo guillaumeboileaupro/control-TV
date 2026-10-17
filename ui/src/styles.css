@@ -1037,6 +1037,16 @@ h2 {
   font-weight: 700;
 }
 
+.app-avatar.has-logo {
+  background: #ffffff;
+  border: 1px solid var(--line);
+}
+
+.app-avatar.has-logo svg {
+  width: 30px;
+  height: 30px;
+}
+
 .app-name {
   display: -webkit-box;
   overflow: hidden;
