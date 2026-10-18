@@ -7,11 +7,8 @@ adds what is specific to Claude Code. Previous version: `.ai-private/agent-confi
 
 ## Mandatory progress updates
 
-Before completing any code or documentation change, follow [rule:progress-docs] in
-`AGENTS.md`: update both `TODO.md` and `DEVELOPMENT_PLAN.md` in the same branch/PR, with
-implementation, CI and hardware validation recorded separately. This is automatic for every
-mission; the owner must not have to request it again. Do not report personal work durations
-or estimate remaining hours.
+The mandatory documentation-update and time-reporting policies are inherited from
+`AGENTS.md`. Apply them on every mission without another owner reminder.
 
 ## Claude Code specifics
 
