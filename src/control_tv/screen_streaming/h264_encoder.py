@@ -60,6 +60,22 @@ _DEFAULT_DEVICE = VaapiDevice("/dev/dri/renderD128")
 _DEFAULT_SEGMENTING = HlsSegmenting()
 
 
+def _preference(value: object) -> EncoderPreference:
+    """The `EncoderPreference` member `value` names exactly: the member itself or its exact
+    lower-case value as a plain `str`. Anything else (another enum with the same value, other
+    case, surrounding spaces, an encoder name, a non-string) is refused, never guessed."""
+    if type(value) is EncoderPreference:
+        return value
+    if type(value) is str:
+        for member in EncoderPreference:
+            if value == member.value:
+                return member
+    allowed = ", ".join(member.value for member in EncoderPreference)
+    raise InvalidStreamConfiguration(
+        f"invalid live encoder settings: preference must be one of {allowed}: {value!r}"
+    )
+
+
 @dataclass(frozen=True)
 class LiveEncoderSettings:
     """Owner-chosen encoding policy for live streams; checked on construction."""
@@ -73,8 +89,10 @@ class LiveEncoderSettings:
     stop_grace_seconds: float = 5.0
 
     def __post_init__(self) -> None:
+        # Stored as the enum member: `select_plan` compares by identity, so a plain string that
+        # merely equals a value must never reach it (a software-only request selected VA-API).
+        object.__setattr__(self, "preference", _preference(self.preference))
         try:
-            EncoderPreference(self.preference)
             VaapiCqp(self.device, self.qp)  # D0's own bounds for QP and CRF
             SoftwareX264(self.crf)
             HlsSegmenting(self.segmenting.segment_seconds, self.segmenting.playlist_size)
@@ -170,6 +188,8 @@ class D0LiveEncoder:
             raise StreamStartError(f"no live encoder can run: {error.message}") from None
         handle = self._handle_factory()
         directory = self._new_directory()
+        output = self._output(directory, choice)
+        process: ManagedProcess | None = None
         try:
             argv = live_hls_command(
                 self._ffmpeg,
@@ -181,8 +201,11 @@ class D0LiveEncoder:
                 settings.max_session_seconds,
             )
             process = self._runner.start(argv, stderr_path=directory / STDERR_NAME)
+            # Registered inside the guard: an interruption before this completes is handled
+            # below, so a started process is never left untracked.
+            self._register(handle, _LiveSession(output, process))
         except BaseException as error:
-            shutil.rmtree(directory, ignore_errors=True)
+            self._abandon_start(handle, output, process)
             if isinstance(error, OSError):
                 raise StreamStartError(
                     f"the live encoder could not start: {type(error).__name__}"
@@ -190,10 +213,37 @@ class D0LiveEncoder:
             if isinstance(error, ScreenCastError):
                 raise StreamStartError(error.message) from None
             raise
-        with self._lock:
-            self._sessions[handle] = _LiveSession(self._output(directory, choice), process)
-            self._released.discard(handle)
         return EncodedStream(handle)
+
+    def _register(self, handle: str, session: _LiveSession) -> None:
+        with self._lock:
+            self._sessions[handle] = session
+            self._released.discard(handle)
+
+    def _abandon_start(
+        self, handle: str, output: LiveOutput, process: ManagedProcess | None
+    ) -> None:
+        """Undo a failed or interrupted start. A process that started is stopped; when it cannot
+        be (survives SIGKILL, signal error, another interruption) it is registered instead, so it
+        stays in `unreleased` for `stop()`/`close()` with its output: never untracked."""
+        with self._lock:
+            session = self._sessions.get(handle)
+            registered = session is not None and session.process is process
+        if process is not None:
+            try:
+                status = stop_process(process, float(self._settings.stop_grace_seconds))
+            except BaseException:
+                if not registered:
+                    self._register(handle, _LiveSession(output, process))
+                raise
+            if status is None:
+                if not registered:
+                    self._register(handle, _LiveSession(output, process))
+                return
+        with self._lock:
+            if registered:
+                del self._sessions[handle]
+        shutil.rmtree(output.directory, ignore_errors=True)
 
     def stop(self, stream: EncodedStream) -> None:
         """Release the stream's process group, then its output. Idempotent, as `ScreenEncoder`

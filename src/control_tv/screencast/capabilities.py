@@ -19,6 +19,7 @@ from control_tv.screencast.model import (
     EncodeRequest,
     EncoderPreference,
     EncoderUnavailableError,
+    InvalidScreenCastOption,
     SoftwareX264,
     VaapiCqp,
     VaapiDevice,
@@ -110,7 +111,14 @@ def select_plan(
     capabilities: EncoderCapabilities,
 ) -> EncoderChoice:
     """The one selection policy, shared by the bounded D0 encode and the D1 live encoder: VA-API
-    constant QP when usable, libx264 only when the preference allows it (with its reason)."""
+    constant QP when usable, libx264 only when the preference allows it (with its reason).
+
+    The preference is compared by identity, so anything but an `EncoderPreference` member is
+    refused: a string equal to a value would otherwise fall through to the VA-API path."""
+    if type(preference) is not EncoderPreference:
+        raise InvalidScreenCastOption(
+            f"the encoder preference must be an EncoderPreference: {preference!r}"
+        )
     software = SoftwareX264(crf=crf)
     if preference is EncoderPreference.SOFTWARE_ONLY:
         if SOFTWARE_ENCODER not in capabilities.encoders:

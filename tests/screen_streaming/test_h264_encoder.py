@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
@@ -33,14 +34,20 @@ from control_tv.screen_streaming import (
     StreamStartError,
     SyntheticPattern,
     SyntheticVideoSource,
+    h264_encoder,
 )
 from control_tv.screen_streaming.h264_encoder import D0LiveEncoder, LiveEncoderSettings
 from control_tv.screen_streaming.model import VideoSource
-from control_tv.screencast.capabilities import EncoderCapabilities, FfmpegCapabilityProbe
+from control_tv.screencast.capabilities import (
+    EncoderCapabilities,
+    FfmpegCapabilityProbe,
+    select_plan,
+)
 from control_tv.screencast.model import (
     EncoderPreference,
     EncoderUnavailableError,
     HlsSegmenting,
+    InvalidScreenCastOption,
     SoftwareX264,
     VaapiCqp,
     VaapiDevice,
@@ -711,3 +718,196 @@ def test_a_reissued_handle_is_stopped_again(tmp_path: Path) -> None:
     assert held(live) == ("live-1",)
     live.stop(stream)
     assert held(live) == () and runner.group.releases == 1
+
+
+# P2-1: a started encoder process is never left untracked ----------------------------------
+
+
+class FailingOnceLock:
+    """The encoder's lock, except its next acquisition raises `error` once: the window between
+    the process start and its registration (the first use of the lock in `start`)."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._lock = threading.Lock()
+        self._error: BaseException | None = error
+
+    def __enter__(self) -> bool:
+        if self._error is not None:
+            error, self._error = self._error, None
+            raise error
+        return self._lock.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+
+@pytest.mark.parametrize(
+    "error", [KeyboardInterrupt(), SystemExit(8), RuntimeError("bug")], ids=["kbi", "exit", "bug"]
+)
+def test_an_interruption_before_registration_stops_the_started_process(
+    tmp_path: Path, error: BaseException
+) -> None:
+    """Regression: an interruption after the runner returned but before the session was recorded
+    left FFmpeg running untracked until its one-hour bound, with its output directory leaked."""
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(error)  # type: ignore[assignment]
+
+    with pytest.raises(type(error)):
+        live.start(SOURCE, PROFILE)
+
+    assert runner.argv  # the process had started
+    assert runner.group.signals == [signal.SIGTERM] and runner.group.releases == 1
+    assert held(live) == () and nothing_left(tmp_path)
+
+
+def test_a_started_process_that_cannot_be_stopped_stays_tracked(tmp_path: Path) -> None:
+    runner = FakeRunner(group=FakeGroup(survives=True))
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(KeyboardInterrupt())  # type: ignore[assignment]
+
+    with pytest.raises(KeyboardInterrupt):
+        live.start(SOURCE, PROFILE)
+
+    assert held(live) == ("live-1",) and not nothing_left(tmp_path)  # owned, not lost
+    runner.group.survives = False
+    live.close()  # application exit releases it
+    assert held(live) == () and runner.group.releases == 1 and nothing_left(tmp_path)
+
+
+def test_an_interruption_while_abandoning_the_start_keeps_the_process_tracked(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(group=FakeGroup(interrupt=SystemExit(9)))
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(KeyboardInterrupt())  # type: ignore[assignment]
+
+    with pytest.raises(SystemExit):
+        live.start(SOURCE, PROFILE)  # the second interruption hits the stop of the first
+
+    assert held(live) == ("live-1",) and runner.group.releases == 0
+    live.stop(EncodedStream("live-1"))
+    assert held(live) == () and runner.group.releases == 1 and nothing_left(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [KeyboardInterrupt(), SystemExit(10), OSError("exec failed")],
+    ids=["kbi", "exit", "oserror"],
+)
+def test_a_start_failing_inside_the_runner_leaves_nothing(
+    tmp_path: Path, error: BaseException
+) -> None:
+    runner = FakeRunner(error=error)
+    live = encoder(tmp_path, runner)
+
+    with pytest.raises(StreamStartError if isinstance(error, OSError) else type(error)):
+        live.start(SOURCE, PROFILE)
+    assert held(live) == () and nothing_left(tmp_path)
+
+
+def test_a_command_that_cannot_be_built_starts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+
+    def interrupted(*args: object) -> tuple[str, ...]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(h264_encoder, "live_hls_command", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        live.start(SOURCE, PROFILE)
+    assert runner.argv == [] and held(live) == () and nothing_left(tmp_path)
+
+
+# P2-2: the encoder preference is normalized before any selection ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (EncoderPreference.SOFTWARE_ONLY, EncoderPreference.SOFTWARE_ONLY),
+        ("software_only", EncoderPreference.SOFTWARE_ONLY),
+        ("vaapi_only", EncoderPreference.VAAPI_ONLY),
+        ("vaapi_then_software", EncoderPreference.VAAPI_THEN_SOFTWARE),
+    ],
+)
+def test_a_valid_preference_is_stored_as_the_enum_member(
+    given: str, expected: EncoderPreference
+) -> None:
+    settings = LiveEncoderSettings(preference=given)  # type: ignore[arg-type]
+    assert type(settings.preference) is EncoderPreference and settings.preference is expected
+
+
+def test_a_software_only_string_never_selects_vaapi(tmp_path: Path) -> None:
+    """Regression: "software_only" passed validation but stayed a string; `select_plan` compares
+    by identity, so a VA-API-capable host selected VA-API for a software-only request."""
+    runner = FakeRunner()
+    settings = LiveEncoderSettings(preference="software_only", stop_grace_seconds=0.05)  # type: ignore[arg-type]
+    live = encoder(tmp_path, runner, FakeProbe(BOTH), settings)
+
+    stream = live.start(SOURCE, PROFILE)
+
+    assert isinstance(live.output(stream).encoder, SoftwareX264)
+    assert "libx264" in runner.argv[0] and "h264_vaapi" not in runner.argv[0]
+    live.stop(stream)
+
+
+class OtherPreference(StrEnum):
+    SOFTWARE_ONLY = "software_only"
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        "SOFTWARE_ONLY",
+        " software_only",
+        "software_only\n",
+        "libx264",
+        "",
+        None,
+        True,
+        1,
+        OtherPreference.SOFTWARE_ONLY,  # same value, another enum: ambiguous
+    ],
+    ids=["upper", "space", "newline", "encoder-name", "empty", "none", "bool", "int", "foreign"],
+)
+def test_an_invalid_or_ambiguous_preference_is_refused(given: object) -> None:
+    with pytest.raises(InvalidStreamConfiguration, match="preference"):
+        LiveEncoderSettings(preference=given)  # type: ignore[arg-type]
+
+
+def test_select_plan_refuses_a_preference_that_is_not_the_enum() -> None:
+    with pytest.raises(InvalidScreenCastOption, match="EncoderPreference"):
+        select_plan(
+            "software_only",  # type: ignore[arg-type]
+            LiveEncoderSettings().device,
+            qp=24,
+            crf=23,
+            capabilities=BOTH,
+        )
+
+
+@pytest.mark.parametrize("survives", [False, True], ids=["stopped", "kept"])
+def test_an_interruption_right_after_registration_is_undone_once(
+    tmp_path: Path, survives: bool
+) -> None:
+    runner = FakeRunner(group=FakeGroup(survives=survives))
+    live = encoder(tmp_path, runner)
+    register = live._register
+
+    def register_then_interrupted(handle: str, session: object) -> None:
+        register(handle, session)  # type: ignore[arg-type]
+        raise KeyboardInterrupt
+
+    live._register = register_then_interrupted  # type: ignore[method-assign]
+
+    with pytest.raises(KeyboardInterrupt):
+        live.start(SOURCE, PROFILE)
+
+    if survives:  # still registered once, with its output, for a later stop
+        assert held(live) == ("live-1",) and not nothing_left(tmp_path)
+        runner.group.survives = False
+        live.stop(EncodedStream("live-1"))
+    assert held(live) == () and runner.group.releases == 1 and nothing_left(tmp_path)

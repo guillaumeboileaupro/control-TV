@@ -132,7 +132,10 @@ Implemented on top of D0 without a second engine:
 
 - **selection:** D0's one policy, now `select_plan` (`select_encoder` delegates to it): VA-API
   constant QP when usable, libx264 only when `LiveEncoderSettings.preference` allows it, with its
-  reason (`LiveOutput.fallback_reason`);
+  reason (`LiveOutput.fallback_reason`); the preference is normalized to the `EncoderPreference`
+  member (its exact value as a plain string is accepted, anything else - other case, spaces,
+  another enum with the same value - is refused), and `select_plan` refuses anything but a
+  member, so a software-only request can never select VA-API;
 - **arguments:** `screencast.ffmpeg.live_hls_command`, beside `encode_command`, reuses
   `source_arguments` and `encoder_arguments` and adds: the synthetic input read in real time
   (`-re`), the session bound (`-t`, at most 3600 s), H.264 High, a key frame at the start of each
@@ -145,6 +148,10 @@ Implemented on top of D0 without a second engine:
   directory removed; a stop that cannot finish (group surviving SIGKILL, directory not
   removable, interruption) keeps it in `unreleased` and raises, so the D1 service keeps the
   encoder owned and a retry only redoes what is left; `close()` attempts every stream;
+- **start ownership:** the stream is registered inside the start's guard; a start that fails
+  or is interrupted after FFmpeg started stops it, or, when it cannot (survives SIGKILL,
+  another interruption), keeps it in `unreleased` with its output for `stop()`/`close()`: a
+  started process is never untracked;
 - **idempotent stop** (the `ScreenEncoder` contract): stopping a stream already released
   succeeds without touching anything, so a service interrupted after the release but before
   recording it confirms it on retry instead of failing forever; concurrent stops of one stream
