@@ -76,11 +76,13 @@ class FakeHost:
         payload_after_install: str | None = payload_sha256(BINARY),
         file_problems: list[str] | None = None,
         file_problems_after_install: list[str] | None = None,
+        leftovers: tuple[str, ...] | None = (),
     ) -> None:
         self.file_problems = [] if file_problems is None else file_problems
         self.file_problems_after_install = (
             [] if file_problems_after_install is None else file_problems_after_install
         )
+        self.leftovers = None if leftovers is None else list(leftovers)
         self.installed_binary = installed_binary
         self.binary_after_install = binary_after_install
         self.installed_payload = installed_payload
@@ -120,6 +122,10 @@ class FakeHost:
             command[:4] == ("sudo", "-n", "apt-get", "install") for command, _ in self.calls
         )
         return self.file_problems_after_install if installed else self.file_problems
+
+    def package_leftovers(self, packaged: Any) -> list[str] | None:
+        del packaged
+        return self.leftovers
 
     def file_sha256(self, path: Path) -> str | None:
         self.hashed.append(path)
@@ -289,6 +295,54 @@ def test_unresolvable_dependencies_block_before_install(tmp_path: Path) -> None:
     result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
     assert result.outcome is acceptance.Outcome.BLOCKED
     assert not any(command[:3] == ("sudo", "-n", "apt-get") for command, _ in host.calls)
+
+
+def test_an_uncharacterized_dpkg_error_blocks_before_apt(tmp_path: Path) -> None:
+    host = FakeHost([metadata(), completed(2, stderr="dpkg database unavailable")])
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "cannot be established" in result.reason
+    assert len(host.calls) == 2
+    assert not any("apt-get" in command for command, _ in host.calls)
+
+
+def test_package_files_without_a_dpkg_record_block_before_apt(tmp_path: Path) -> None:
+    host = FakeHost(
+        [metadata(), completed(1)],
+        leftovers=("usr/lib/control-tv/python-bridge/control-tv-bridge",),
+    )
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "package files remain" in result.reason
+    assert len(host.calls) == 2
+    assert not any("apt-get" in command for command, _ in host.calls)
+
+
+def test_uncheckable_leftovers_block_before_apt(tmp_path: Path) -> None:
+    host = FakeHost([metadata(), completed(1)], leftovers=None)
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "cannot be established" in result.reason
+    assert len(host.calls) == 2
+    assert not any("apt-get" in command for command, _ in host.calls)
+
+
+@pytest.mark.parametrize("status", ["iF", "iU", "rc"])
+def test_a_non_clean_dpkg_state_blocks_before_apt(tmp_path: Path, status: str) -> None:
+    host = FakeHost([metadata(), completed(stdout=f"{status}  0.1.0")])
+
+    result = ubuntu.run_ubuntu_acceptance(context(tmp_path), scenario(), host=host)
+
+    assert result.outcome is acceptance.Outcome.BLOCKED
+    assert "non-clean package state" in result.reason
+    assert len(host.calls) == 2
+    assert not any("apt-get" in command for command, _ in host.calls)
 
 
 def test_success_validates_install_launch_bridge_and_tray(tmp_path: Path) -> None:

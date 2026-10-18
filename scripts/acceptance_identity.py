@@ -293,7 +293,7 @@ def dpkg_status(root: Path, package: str = "control-tv") -> str | None:
     try:
         text = (root / DPKG_STATUS).read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
-        return None
+        raise IdentityError("dpkg's status database is absent") from None
     except OSError as error:
         raise IdentityError(
             f"dpkg's status database is unreadable: {type(error).__name__}"

@@ -139,15 +139,16 @@ def judge(
 
 
 def apk_provenance(
-    apk: Path, verdict: Verdict, *, commit: str, run_id: int | None
-) -> Mapping[str, str | int | None]:
+    apk: Path, verdict: Verdict, *, commit: str, run_id: int
+) -> Mapping[str, str | int]:
     if not _COMMIT.fullmatch(commit):
         raise SigningError("the commit must be a full 40-character Git SHA")
+    checked_run_id = _positive_run_id(run_id)
     digest = hashlib.sha256(apk.read_bytes()).hexdigest()
     return {
         "schema": APK_SCHEMA,
         "commit": commit,
-        "runId": run_id,
+        "runId": checked_run_id,
         "apkSha256": digest,
         "signerCertificateSha256": verdict.certificate,
         "signingIdentity": verdict.identity.value,
@@ -159,7 +160,7 @@ class ApkProvenance:
     """What CI recorded for one APK (`apk-provenance.json`)."""
 
     commit: str
-    run_id: int | None
+    run_id: int
     apk_sha256: str
     signer_sha256: str
     identity: Identity
@@ -179,13 +180,12 @@ def read_apk_provenance(path: Path) -> ApkProvenance:
     identity = document.get("signingIdentity")
     if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
         raise SigningError("the APK provenance commit must be a full 40-character Git SHA")
-    if run_id is not None and (not isinstance(run_id, int) or isinstance(run_id, bool)):
-        raise SigningError("the APK provenance run id must be an integer or null")
+    checked_run_id = _positive_run_id(run_id)
     if not isinstance(identity, str) or identity not in {member.value for member in Identity}:
         raise SigningError("the APK provenance signing identity is unrecognized")
     return ApkProvenance(
         commit,
-        run_id,
+        checked_run_id,
         _sha256_field(apk, "apkSha256"),
         _sha256_field(signer, "signerCertificateSha256"),
         Identity(identity),
@@ -197,6 +197,22 @@ def _sha256_argument(value: str) -> str:
     if not _DIGEST.fullmatch(value):
         raise argparse.ArgumentTypeError("expected 64 lower-case hexadecimal characters")
     return value
+
+
+def _positive_run_id(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise SigningError("the APK provenance CI run id must be a positive integer")
+    return value
+
+
+def _positive_run_id_argument(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected a positive integer") from None
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return parsed
 
 
 def _sha256_field(value: object, name: str) -> str:
@@ -222,6 +238,10 @@ def check_apk(
 
     `expect_apk_sha256` is the digest the CI run published in its log: the provenance travels
     with the APK, so only that independent value proves which APK the run built."""
+    try:
+        checked_run_id = _positive_run_id(expect_run_id)
+    except SigningError as error:
+        return 2, [f"BLOCKED: the expected CI run is invalid: {error}"]
     if not _DIGEST.fullmatch(expect_apk_sha256):
         return 2, [
             "BLOCKED: no validation without the independent SHA-256 published by the CI run "
@@ -245,7 +265,7 @@ def check_apk(
         problems.append("the APK SHA-256 differs from the one the CI run published")
     if provenance.commit != expect_commit:
         problems.append("the APK provenance commit is not the expected one")
-    if provenance.run_id != expect_run_id:
+    if provenance.run_id != checked_run_id:
         problems.append("the APK provenance CI run is not the expected one")
     if provenance.identity is Identity.PINNED and pin is None:
         return 2, [
@@ -360,7 +380,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     check.add_argument("--stable-key-used", action="store_true")
     check.add_argument("--require-stable", action="store_true")
     check.add_argument("--commit")
-    check.add_argument("--run-id", type=int)
+    check.add_argument("--run-id", type=_positive_run_id_argument)
     check.add_argument("--provenance-output", type=Path)
     acceptance = commands.add_parser(
         "check-apk", help="acceptance: the APK is exactly the expected CI build"
@@ -370,7 +390,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     acceptance.add_argument("--provenance", type=Path)
     acceptance.add_argument("--pin", type=Path, default=PIN)
     acceptance.add_argument("--expect-commit", required=True)
-    acceptance.add_argument("--expect-run-id", type=int, required=True)
+    acceptance.add_argument("--expect-run-id", type=_positive_run_id_argument, required=True)
     acceptance.add_argument("--expect-apk-sha256", type=_sha256_argument, required=True)
     record = commands.add_parser(
         "write-apk-provenance", help="record the provenance of an older CI APK (never overwrites)"
@@ -379,7 +399,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     record.add_argument("--apksigner", type=Path, required=True)
     record.add_argument("--pin", type=Path, default=PIN)
     record.add_argument("--commit", required=True)
-    record.add_argument("--run-id", type=int)
+    record.add_argument("--run-id", type=_positive_run_id_argument, required=True)
     record.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
     if arguments.command == "check-apk":

@@ -15,6 +15,7 @@ import re
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -22,7 +23,9 @@ from acceptance import Context, Outcome, Result, Scenario, make_result
 from acceptance_identity import (
     DebProvenance,
     IdentityError,
+    deb_packaged_files,
     installed_file_problems,
+    package_leftovers,
     read_deb_provenance,
     sha256_file,
     verify_deb,
@@ -82,6 +85,10 @@ class UbuntuHost(Protocol):
         None when they cannot be checked."""
         ...
 
+    def package_leftovers(self, packaged: Sequence[str]) -> list[str] | None:
+        """Package files present without a dpkg record, or None when they cannot be checked."""
+        ...
+
 
 class SubprocessUbuntuHost:
     """Concrete local Ubuntu process adapter. It never uses a shell."""
@@ -125,6 +132,12 @@ class SubprocessUbuntuHost:
         except (OSError, UnicodeDecodeError):
             return None
         return installed_file_problems(Path("/"), record)
+
+    def package_leftovers(self, packaged: Sequence[str]) -> list[str] | None:
+        try:
+            return package_leftovers(Path("/"), packaged)
+        except IdentityError:
+            return None
 
     def file_sha256(self, path: Path) -> str | None:
         try:
@@ -246,11 +259,29 @@ def _write_receipt(path: Path, *, provenance: DebProvenance, state: str) -> None
     temporary.replace(path)
 
 
-def _installed_version(completed: subprocess.CompletedProcess[str]) -> str | None:
+class DpkgState(StrEnum):
+    ABSENT = "absent"
+    INSTALLED = "installed"
+    NON_CLEAN = "non-clean"
+    UNKNOWN = "unknown"
+
+
+def _dpkg_state(completed: subprocess.CompletedProcess[str]) -> tuple[DpkgState, str | None]:
+    """Classify dpkg-query without treating an arbitrary command error as package absence.
+
+    dpkg-query documents exit 1 for an unmatched package. Other non-zero results are failures to
+    establish state. A successful query must contain a status abbreviation and version.
+    """
+    if completed.returncode == 1:
+        return DpkgState.ABSENT, None
+    if completed.returncode != 0:
+        return DpkgState.UNKNOWN, None
     fields = completed.stdout.strip().split(maxsplit=1)
-    if completed.returncode != 0 or len(fields) != 2 or fields[0] != "ii":
-        return None
-    return fields[1]
+    if len(fields) != 2:
+        return DpkgState.UNKNOWN, None
+    if fields[0] != "ii":
+        return DpkgState.NON_CLEAN, None
+    return DpkgState.INSTALLED, fields[1]
 
 
 def _stop(process: ManagedProcess, timeout: float, logs: list[str]) -> None:
@@ -369,6 +400,7 @@ def run_ubuntu_acceptance(
     try:
         provenance = read_deb_provenance(provenance_path)
         problems = verify_deb(artifact, provenance)
+        packaged = deb_packaged_files(artifact)
     except IdentityError as error:
         return _result(
             scenario,
@@ -424,12 +456,11 @@ def run_ubuntu_acceptance(
         ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
     )
     logs.append(_completed_log("dpkg-query installed control-tv", installed))
-    current_version = _installed_version(installed)
-    installed_cleanly = current_version is not None
-    known_to_dpkg = installed.returncode == 0
+    dpkg_state, current_version = _dpkg_state(installed)
     installation_origin = "new recipe installation"
     skip_install = False
-    if installed_cleanly:
+    if dpkg_state is DpkgState.INSTALLED:
+        assert current_version is not None
         installation_origin = (
             "interrupted acceptance installation"
             if matching_receipt
@@ -508,7 +539,7 @@ def run_ubuntu_acceptance(
                 proof="dpkg-query and acceptance receipt",
             )
         skip_install = True
-    elif known_to_dpkg:
+    elif dpkg_state is DpkgState.NON_CLEAN:
         return _result(
             scenario,
             Outcome.BLOCKED,
@@ -517,6 +548,16 @@ def run_ubuntu_acceptance(
             logs,
             observed=installed.stdout.strip() or installed.stderr.strip(),
             proof="dpkg-query; no package mutation attempted",
+        )
+    elif dpkg_state is DpkgState.UNKNOWN:
+        return _result(
+            scenario,
+            Outcome.BLOCKED,
+            "the installed package state cannot be established; manual review is required",
+            started,
+            logs,
+            observed=installed.stderr.strip() or installed.stdout.strip() or "dpkg-query failed",
+            proof="dpkg-query; no APT or package mutation attempted",
         )
     elif matching_receipt:
         return _result(
@@ -528,6 +569,22 @@ def run_ubuntu_acceptance(
             observed="manual receipt and package-state review required",
             proof=str(receipt_path),
         )
+    elif dpkg_state is DpkgState.ABSENT:
+        leftovers = active_host.package_leftovers(packaged)
+        if leftovers is None or leftovers:
+            return _result(
+                scenario,
+                Outcome.BLOCKED,
+                "the absence of a prior control-tv installation cannot be established"
+                if leftovers is None
+                else "dpkg has no control-tv record but package files remain",
+                started,
+                logs,
+                observed="leftover check unavailable"
+                if leftovers is None
+                else "; ".join(leftovers[:5]),
+                proof="dpkg-query and package file inventory; no APT or package mutation attempted",
+            )
 
     dependency_probe = active_host.run(
         ("apt-get", "-s", "install", "--no-install-recommends", str(artifact.resolve())),
@@ -601,7 +658,8 @@ def run_ubuntu_acceptance(
             ("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Version}", PACKAGE), timeout=timeout
         )
         logs.append(_completed_log("dpkg-query installed version", installed_version))
-        if installed_version.returncode != 0 or _installed_version(installed_version) != version:
+        installed_state, installed_version_value = _dpkg_state(installed_version)
+        if installed_state is not DpkgState.INSTALLED or installed_version_value != version:
             return _result(
                 scenario,
                 Outcome.FAIL,

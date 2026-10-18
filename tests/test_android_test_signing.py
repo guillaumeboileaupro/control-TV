@@ -151,6 +151,16 @@ def test_the_apk_provenance_binds_commit_digest_and_signer(tmp_path: Path) -> No
         signing.apk_provenance(apk, verdict, commit="de31c94", run_id=None)
 
 
+@pytest.mark.parametrize("run_id", [None, 0, -1, True])
+def test_apk_provenance_requires_a_positive_ci_run(tmp_path: Path, run_id: int | None) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    verdict = signing.Verdict(signing.Identity.PINNED, PINNED, "test")
+
+    with pytest.raises(signing.SigningError, match="positive integer"):
+        signing.apk_provenance(apk, verdict, commit=COMMIT, run_id=run_id)
+
+
 class FakeKeytool:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -474,7 +484,7 @@ def test_an_ephemeral_build_must_match_its_recorded_signer(tmp_path: Path) -> No
     [
         ({"schema": "other/1"}, "is not control-tv-apk-provenance/1"),
         ({"commit": "de31c94"}, "full 40-character"),
-        ({"runId": "1"}, "integer or null"),
+        ({"runId": "1"}, "positive integer"),
         ({"apkSha256": "short"}, "apkSha256 must be a SHA-256"),
         ({"signerCertificateSha256": None}, "signerCertificateSha256 must be a SHA-256"),
         ({"signingIdentity": "release-key"}, "unrecognized"),
@@ -655,6 +665,51 @@ def test_check_apk_refuses_to_validate_without_the_published_ci_digest(tmp_path:
             environ={},
         )
         assert status == 2 and "independent SHA-256 published by the CI run" in lines[0]
+
+
+@pytest.mark.parametrize("run_id", [0, -1, True])
+def test_check_apk_blocks_an_invalid_expected_ci_run(tmp_path: Path, run_id: int) -> None:
+    status, lines = checked(tmp_path, run_id=run_id)
+
+    assert status == 2
+    assert "positive integer" in lines[0]
+
+
+@pytest.mark.parametrize("run_id", [0, -1, True])
+def test_apk_manifest_with_an_invalid_ci_run_is_blocked(tmp_path: Path, run_id: int) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"the APK of de31c94")
+    document = {**provenance_for(apk), "runId": run_id}
+
+    status, lines = checked(tmp_path, document=document)
+
+    assert status == 2
+    assert "positive integer" in lines[0]
+
+
+@pytest.mark.parametrize("run_id", ["0", "-1"])
+def test_check_apk_cli_rejects_a_non_positive_ci_run(tmp_path: Path, run_id: str) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+
+    with pytest.raises(SystemExit) as rejected:
+        signing.main(
+            [
+                "check-apk",
+                "--apk",
+                str(apk),
+                "--apksigner",
+                "x",
+                "--expect-commit",
+                COMMIT,
+                "--expect-run-id",
+                run_id,
+                "--expect-apk-sha256",
+                hashlib.sha256(b"apk").hexdigest(),
+            ],
+            {},
+        )
+    assert rejected.value.code == 2
 
 
 def test_check_apk_fails_on_a_wrong_published_digest_even_if_the_provenance_agrees(

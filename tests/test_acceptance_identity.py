@@ -245,12 +245,27 @@ def test_a_clean_host_is_not_installed_rather_than_an_error(tmp_path: Path) -> N
     """Regression: the protocol's snippet raised IdentityError when control-tv was absent."""
     deb = built(tmp_path)
     clean = tmp_path / "clean-root"
-    clean.mkdir()
+    (clean / "var/lib/dpkg").mkdir(parents=True)
+    (clean / "var/lib/dpkg/status").write_text(
+        "Package: another-package\nStatus: install ok installed\n", encoding="utf-8"
+    )
 
     status, lines = check(deb, clean)
 
     assert status == 0 and "not installed (no dpkg record and no file of the package)" in lines
     assert check(deb, clean, require=True)[0] == 1
+
+
+def test_a_missing_dpkg_database_blocks_instead_of_claiming_absence(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = tmp_path / "missing-dpkg-database"
+    root.mkdir()
+
+    code, lines = check(deb, root)
+
+    assert code == 2
+    assert any("status database is absent" in line for line in lines)
+    assert not any(line.startswith("not installed") for line in lines)
 
 
 def test_the_installed_package_is_this_build_only_when_every_file_matches(tmp_path: Path) -> None:
@@ -421,9 +436,7 @@ def test_files_without_any_dpkg_status_are_blocked(tmp_path: Path) -> None:
     (root / "var/lib/dpkg/status").unlink()
 
     code, lines = check(deb, root, require=True)
-    assert code == 2 and any(
-        "no dpkg record but package files are present" in line for line in lines
-    )
+    assert code == 2 and any("status database is absent" in line for line in lines)
 
 
 # Codex review follow-ups (db3ef0c) ---------------------------------------------------------
@@ -506,6 +519,9 @@ def test_an_unreadable_dpkg_database_or_an_entry_without_status_is_never_absent(
 
     info_is_a_file = tmp_path / "info-is-a-file"
     (info_is_a_file / "var/lib/dpkg").mkdir(parents=True)
+    (info_is_a_file / "var/lib/dpkg/status").write_text(
+        "Package: other\nStatus: install ok installed\n"
+    )
     (info_is_a_file / "var/lib/dpkg/info").write_text("not a directory")
     code, lines = check(deb, info_is_a_file)
     assert code == 2 and any(
@@ -517,6 +533,8 @@ def test_an_unreadable_dpkg_database_or_an_entry_without_status_is_never_absent(
 def test_leftovers_dpkg_forgot_are_found(tmp_path: Path, kind: str) -> None:
     deb = built(tmp_path)
     root = tmp_path / "root"
+    (root / "var/lib/dpkg").mkdir(parents=True)
+    (root / "var/lib/dpkg/status").write_text("Package: other\nStatus: install ok installed\n")
     if kind == "dangling-binary-link":
         (root / "usr/bin").mkdir(parents=True)
         (root / "usr/bin/control-tv").symlink_to(root / "gone")
