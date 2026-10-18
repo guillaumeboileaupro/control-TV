@@ -6,9 +6,11 @@ evidence stay in git-ignored files (`LOCAL_ONLY`). This tool:
 - `check`: verifies the configuration is present and coherent - every mandatory rule marked once
   in AGENTS.md, CLAUDE.md importing AGENTS.md without restating the rules, every required skill
   present for Codex (`.agents/skills/`) and Claude (`.claude/skills/`) with valid frontmatter,
-  the referenced skills existing, skill links relative and inside the repository, no private
-  data (home paths, addresses, identifiers, e-mail addresses, keys) in the shared files, and no
-  local-only path tracked or left unignored. Copies that drifted apart, oversized skills and a
+  the referenced skills existing, both agents discovering the same active skills with identical
+  content, inactive skills (`.agents/inactive-skills/`, discovered by neither) valid and not
+  also active, skill links relative and inside the repository, no private data (home paths,
+  addresses, identifiers, e-mail addresses, keys) in the shared files, and no local-only path
+  tracked or left unignored. A Claude copy instead of a link, oversized skills and a
   configuration this checkout does not version are warnings.
 - `link`: lets a worktree of a branch older than the versioned configuration borrow the main
   checkout's, without overwriting anything: file links for AGENTS.md and CLAUDE.md, real
@@ -25,6 +27,7 @@ CI: nothing to check).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -70,6 +73,7 @@ LOCAL_ONLY = (  # a trailing "/" marks a directory
 )
 CODEX_SKILLS = Path(".agents/skills")
 CLAUDE_SKILLS = Path(".claude/skills")
+INACTIVE_SKILLS = Path(".agents/inactive-skills")  # versioned, discovered by neither agent
 MAX_SKILL_LINES = 200
 MAX_DESCRIPTION = 1024
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
@@ -161,7 +165,7 @@ def _skill_files(directory: Path) -> dict[str, bytes]:
 
 
 def _drift(root: Path) -> list[str]:
-    """Every skill both agents have whose Claude and Codex copies differ (never reconciled here)."""
+    """Every active skill whose Claude and Codex copies differ: both must read the same text."""
     codex, claude = root / CODEX_SKILLS, root / CLAUDE_SKILLS
     if not codex.is_dir() or not claude.is_dir():
         return []
@@ -169,16 +173,33 @@ def _drift(root: Path) -> list[str]:
         entry.name for entry in codex.iterdir() if entry.is_dir() and (claude / entry.name).is_dir()
     )
     return [
-        f"skill {name}: the Claude and Codex copies differ"
+        f"skill {name}: the Claude and Codex copies differ (link {CLAUDE_SKILLS}/{name} to "
+        f"../../{CODEX_SKILLS}/{name})"
         for name in common
         if _skill_files(codex / name) != _skill_files(claude / name)
     ]
 
 
+def _inactive_problems(root: Path, report: Report) -> list[str]:
+    """Inactive skills stay valid, so they can be reactivated, and are not also active."""
+    inactive = root / INACTIVE_SKILLS
+    if not inactive.is_dir():
+        return []
+    problems: list[str] = []
+    for entry in sorted(inactive.iterdir()):
+        if not entry.is_dir():
+            continue
+        _check_skill(entry, entry.name, "Inactive", report)
+        for directory in (CODEX_SKILLS, CLAUDE_SKILLS):
+            if os.path.lexists(root / directory / entry.name):
+                problems.append(f"skill {entry.name} is both inactive and in {directory}")
+    return problems
+
+
 def _shared_files(root: Path) -> list[Path]:
     """AGENTS.md, CLAUDE.md and every file of both skill directories, each real file once."""
     files = [root / "AGENTS.md", root / "CLAUDE.md"]
-    for directory in (CODEX_SKILLS, CLAUDE_SKILLS):
+    for directory in (CODEX_SKILLS, CLAUDE_SKILLS, INACTIVE_SKILLS):
         if (root / directory).is_dir():
             files += sorted(path for path in (root / directory).rglob("*") if path.is_file())
     unique: dict[Path, Path] = {}
@@ -263,12 +284,27 @@ def check(root: Path) -> Report | None:
             continue
         _check_skill(claude_skill, name, "Claude", report)
 
-    report.warnings += _drift(root)
+    report.errors += _drift(root)
     for directory, other in ((CODEX_SKILLS, CLAUDE_SKILLS), (CLAUDE_SKILLS, CODEX_SKILLS)):
         if (root / directory).is_dir():
             for entry in sorted((root / directory).iterdir()):
                 if entry.is_dir() and not (root / other / entry.name).exists():
-                    report.warnings.append(f"skill {entry.name} exists only in {directory}")
+                    report.errors.append(
+                        f"skill {entry.name} exists only in {directory}: both agents must "
+                        "discover the same skills"
+                    )
+    if (root / CLAUDE_SKILLS).is_dir():
+        for entry in sorted((root / CLAUDE_SKILLS).iterdir()):
+            if (
+                entry.is_dir()
+                and not entry.is_symlink()
+                and (root / CODEX_SKILLS / entry.name).is_dir()
+            ):
+                report.warnings.append(
+                    f"Claude skill {entry.name} is a copy: link it to "
+                    f"../../{CODEX_SKILLS}/{entry.name}"
+                )
+    report.errors += _inactive_problems(root, report)
 
     for referenced in sorted(set(_SKILL_REFERENCE.findall(agents_text + claude_text))):
         if not (root / CODEX_SKILLS / referenced).exists():

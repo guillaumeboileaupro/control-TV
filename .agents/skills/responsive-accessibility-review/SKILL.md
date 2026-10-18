@@ -1,16 +1,18 @@
 ---
 name: responsive-accessibility-review
-description: Review responsive behavior and accessibility of web or application interfaces.
+description: Review responsive behavior and accessibility of web or application interfaces. Use for keyboard navigation, semantic HTML, contrast, focus, touch targets, forms, dialogs, status messages and narrow-screen layouts.
 ---
 
-# Responsive Accessibility Review
+# Responsive accessibility review
 
 Combine automated checks with keyboard and visual inspection.
 
-- Test narrow, medium and wide viewports with real content.
-- Verify landmarks, headings, control names, labels, errors, dialogs and status messages.
-- Complete flows by keyboard with visible, ordered focus.
-- Check WCAG AA contrast and avoid color-only state indicators.
-- Target practical 44 by 44 pixel touch controls.
-- Respect reduced motion, zoom, text resizing and high-content states.
-- Record issue, severity, location, reproduction and expected behavior.
+- Test narrow, medium and wide viewports with real content and long labels.
+- Verify landmarks, heading order, control names, form labels, error association, tables, dialogs
+  and live status messages.
+- Complete every flow by keyboard: focus visible and ordered, trapped only in an active modal and
+  restored when it closes.
+- Check WCAG AA contrast; never use color as the only state indicator.
+- Touch controls of at least 44 by 44 pixels when practical.
+- Respect reduced motion, zoom, text resizing, dark mode and high-content states.
+- Record each issue with severity, location, reproduction and expected behavior.

@@ -80,13 +80,13 @@ clean` and `dist-clean` stay limited to reproducible project-owned output (skill
 
 ## Skills
 
-Project skills: `.agents/skills/<name>/SKILL.md` (Codex) with the same skill available to Claude in
-`.claude/skills/<name>` (a link to the Codex copy, or a Claude variant). Mission skills:
-`git-worktree-pr-workflow`, `independent-code-review`, `hardware-safety`, `development-reporting`,
-`agent-token-efficiency`; quality: `python-project-quality`, `solid-code-design`,
-`typescript-no-any`, `conventional-commits-pr`; domain: disk hygiene, MCP/device bridge,
-multiplatform release, bootstrap/context, CI diagnosis, dependency review, release audit,
-accessibility. Usage: `docs/AGENT_INSTRUCTIONS.md`; consistency check:
+Project skills: one source, `.agents/skills/<name>/SKILL.md` (Codex), linked as
+`.claude/skills/<name>` for Claude. Mission skills: `git-worktree-pr-workflow`,
+`independent-code-review`, `hardware-safety`, `development-reporting`, `agent-token-efficiency`;
+quality: `python-project-quality`, `solid-code-design`, `typescript-no-any`,
+`conventional-commits-pr`; domain: disk hygiene, multiplatform release (`.deb`, `.apk`), CI
+diagnosis, dependency review, release audit, accessibility. Inactive (discovered by neither
+agent): `.agents/inactive-skills/`. Usage: `docs/AGENT_INSTRUCTIONS.md`; consistency check:
 `python3 scripts/agent_config.py check`.
 
 ## Handoff and definition of done

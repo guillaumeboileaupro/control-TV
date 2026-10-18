@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -104,8 +105,6 @@ def test_missing_files_and_skills_are_errors(tmp_path: Path) -> None:
     (root / "CLAUDE.md").unlink()
     (root / ".claude/skills/hardware-safety").unlink()
     (root / ".claude/skills/development-reporting").unlink()
-    import shutil
-
     shutil.rmtree(root / ".agents/skills/development-reporting")
 
     found = errors(root)
@@ -128,22 +127,74 @@ def test_invalid_skill_frontmatter_is_an_error(tmp_path: Path) -> None:
     assert "Codex skill agent-token-efficiency: no readable SKILL.md" in found
 
 
-def test_drift_one_sided_skills_and_size_are_warnings(tmp_path: Path) -> None:
+def test_drift_and_one_sided_skills_are_errors(tmp_path: Path) -> None:
+    """Both agents must discover the same active skills and read the same text."""
     root = repository(tmp_path)
     (root / ".claude/skills/conventional-commits-pr").unlink()
     skill(root / ".claude/skills", "conventional-commits-pr", "An older copy.\n")
     skill(root / ".agents/skills", "codex-extra")
     skill(root / ".claude/skills", "claude-extra")
+
+    found = errors(root)
+    assert (
+        "skill conventional-commits-pr: the Claude and Codex copies differ (link "
+        ".claude/skills/conventional-commits-pr to ../../.agents/skills/conventional-commits-pr)"
+    ) in found
+    assert (
+        "skill codex-extra exists only in .agents/skills: both agents must discover the same skills"
+    ) in found
+    assert (
+        "skill claude-extra exists only in .claude/skills: both agents must discover the same "
+        "skills"
+    ) in found
+
+
+def test_an_identical_copy_and_an_oversized_skill_are_warnings(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    (root / ".claude/skills/conventional-commits-pr").unlink()
+    shutil.copytree(
+        root / ".agents/skills/conventional-commits-pr",
+        root / ".claude/skills/conventional-commits-pr",
+    )
     skill(root / ".agents/skills", "python-project-quality", "line\n" * 250)
 
     report = config.check(root)
     assert report is not None and report.errors == []
     assert set(report.warnings) >= {
-        "skill conventional-commits-pr: the Claude and Codex copies differ",
-        "skill codex-extra exists only in .agents/skills",
-        "skill claude-extra exists only in .claude/skills",
+        "Claude skill conventional-commits-pr is a copy: link it to "
+        "../../.agents/skills/conventional-commits-pr",
         "Codex skill python-project-quality: over 200 lines",
     }
+
+
+def test_inactive_skills_are_valid_versioned_and_never_also_active(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    inactive = root / ".agents/inactive-skills"
+    skill(inactive, "archived-bridge")
+    assert errors(root) == []
+
+    skill(inactive, "hardware-safety")  # also active for both agents
+    (inactive / "broken").mkdir()
+    (inactive / "notes.md").write_text("an index, not a skill\n")
+    (inactive / "archived-bridge/SKILL.md").write_text(
+        "---\nname: archived-bridge\ndescription: x\n---\n\nsee /home/someone\n"
+    )
+
+    found = errors(root)
+    assert "skill hardware-safety is both inactive and in .agents/skills" in found
+    assert "skill hardware-safety is both inactive and in .claude/skills" in found
+    assert "Inactive skill broken: no readable SKILL.md" in found
+    assert any(
+        error.startswith(".agents/inactive-skills/archived-bridge/SKILL.md:6 contains a home")
+        for error in found
+    )
+    status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "?? .agents/inactive-skills/archived-bridge/SKILL.md" in status  # versioned, not ignored
 
 
 def test_a_referenced_skill_must_exist(tmp_path: Path) -> None:
@@ -240,7 +291,7 @@ def test_loopback_addresses_and_unreadable_shared_files(tmp_path: Path) -> None:
     report = config.check(root)
     assert report is not None
     # The Claude link reaches the same directory: one copy, no drift.
-    assert "skill hardware-safety: the Claude and Codex copies differ" not in report.warnings
+    assert not [error for error in report.errors if "copies differ" in error]
 
 
 def test_skill_links_must_stay_inside_the_repository(tmp_path: Path) -> None:
@@ -261,8 +312,6 @@ def test_skill_links_must_stay_inside_the_repository(tmp_path: Path) -> None:
 
 def test_outside_a_git_repository_only_the_content_is_checked(tmp_path: Path) -> None:
     root = repository(tmp_path)
-    import shutil
-
     shutil.rmtree(root / ".git")
     assert errors(root) == []
     assert config._git_ignored(tmp_path / "nowhere", "x") is None
@@ -355,7 +404,7 @@ def test_an_empty_agents_md_a_warning_line_and_git_absence(
     assert config.main(["check", "--root", str(root)]) == 1
     out = capsys.readouterr().out
     assert "error: AGENTS.md is missing or empty" in out
-    assert "warning: skill codex-extra exists only in .agents/skills" in out
+    assert "warning: AGENTS.md is not versioned in this checkout" in out
 
     def no_git(*args: object, **kwargs: object) -> object:
         raise FileNotFoundError("git")
@@ -367,8 +416,6 @@ def test_an_empty_agents_md_a_warning_line_and_git_absence(
 
 def test_link_skips_a_tool_the_source_does_not_configure(tmp_path: Path) -> None:
     source, target = repository(tmp_path), worktree(tmp_path)
-    import shutil
-
     shutil.rmtree(source / ".claude")
 
     assert "linked .claude/skills" not in config.link(source, target)
@@ -393,9 +440,20 @@ def test_a_fresh_clone_has_the_whole_agent_configuration(tmp_path: Path) -> None
 
     report = config.check(clone)
 
-    assert report is not None and report.errors == []
-    assert not [warning for warning in report.warnings if "not versioned" in warning]
+    assert report is not None and report.errors == [] and report.warnings == []
     codex = {path.parent.name for path in (clone / ".agents/skills").glob("*/SKILL.md")}
     claude = {path.parent.name for path in (clone / ".claude/skills").glob("*/SKILL.md")}
     assert set(config.REQUIRED_SKILLS) <= codex and codex == claude
+    # Every Claude skill is a relative link to the one common copy.
+    entries = [entry for entry in (clone / ".claude/skills").iterdir() if entry.name != "README.md"]
+    assert entries and all(entry.is_symlink() for entry in entries)
+    assert all(
+        (entry / "SKILL.md").read_bytes()
+        == (clone / ".agents/skills" / entry.name / "SKILL.md").read_bytes()
+        for entry in entries
+    )
+    # The inactive skills are versioned but discovered by neither agent.
+    inactive = {path.parent.name for path in (clone / ".agents/inactive-skills").glob("*/SKILL.md")}
+    assert inactive == {"local-device-mcp-bridge", "project-bootstrap-context"}
+    assert not inactive & (codex | claude)
     assert not [path for path in config.LOCAL_ONLY if (clone / path.rstrip("/")).exists()]

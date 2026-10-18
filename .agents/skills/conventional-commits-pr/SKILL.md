@@ -1,17 +1,41 @@
 ---
 name: conventional-commits-pr
-description: Apply Conventional Commits 1.0.0 and prepare clear pull requests for Git repositories.
+description: Apply Conventional Commits 1.0.0 and prepare focused pull requests. Use when creating commits, choosing commit messages, splitting changes into commits, opening a PR, or drafting a PR title and description.
 ---
 
-# Conventional Commits and Pull Requests
+# Conventional Commits and pull requests
 
-Produce an explicit, reviewable Git history and a focused pull request.
+Produce a reviewable history and a focused PR. Identity, attribution, authorizations and
+worktrees follow `AGENTS.md` and the `git-worktree-pr-workflow` skill, which win when stricter.
 
-## Before Git changes
-Inspect status, branch, recent commits and repository instructions. Preserve unrelated user changes and use a feature branch when PR workflow requires it.
+## Before committing
 
-## Commits
-Keep commits logically coherent, stage only relevant changes, run relevant checks, review staged diff, and use `<type>[optional scope][optional !]: <description>` with appropriate `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, or `revert` type.
+- Inspect `git status`, the branch and recent commits; never include unrelated changes.
+- Keep each commit logically coherent; split unrelated changes; stage only the relevant files or
+  hunks.
+- Run the relevant checks and review the staged diff; report checks that could not run.
 
-## Pull requests
-Confirm intended commits/base, rerun checks, use a concise Conventional Commit title, document what changed and why, verification actually performed, visible UI evidence where relevant, migration notes and remaining limitations. Use the owner's configured Git identity and project attribution rules.
+## Message
+
+```text
+<type>[optional scope][!]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+- Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, `revert`.
+- A short noun as scope when it helps; an imperative description without a trailing period; the
+  body explains motivation and non-obvious behavior, not the diff.
+- Breaking change: `!` and/or a `BREAKING CHANGE:` footer. Reference real issues only; never
+  invent an issue number.
+
+## Pull request
+
+- Confirm the branch holds only the intended commits against the actual base; re-run the checks
+  on the final state.
+- Title in Conventional Commit form. Body: what changed and why, decisions, verification actually
+  performed, UI evidence when relevant, migration or breaking notes, remaining limitations.
+- Never claim a check passed unless it ran and passed. Return the PR link.
+- Edge cases: the Conventional Commits 1.0.0 specification.

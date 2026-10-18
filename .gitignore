@@ -53,11 +53,13 @@ Thumbs.db
 *.pem
 
 # Machine-local agent preferences and private evidence. The shared agent configuration
-# (AGENTS.md, CLAUDE.md, .agents/skills/, .claude/skills/) is versioned.
+# (AGENTS.md, CLAUDE.md, .agents/skills/, .agents/inactive-skills/, .claude/skills/) is
+# versioned.
 /.ai-private/
 /.[c]odex/
 /.agents/*
 !/.agents/skills/
+!/.agents/inactive-skills/
 /.claude/*
 !/.claude/skills/
 /CLAUDE.local.md
