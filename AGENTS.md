@@ -58,7 +58,8 @@ work. `DEVELOPMENT_PLAN.md` is the source of truth for scope and progress; read 
     re-pasted rules (skill `agent-token-efficiency`).
 13. [rule:final-report] End every mission with the standard report (skill
     `development-reporting`), local and CI results kept apart.
-14. [rule:time-reporting] Do not ask agents to measure elapsed time or estimate remaining hours.
+14. [rule:remaining-estimate] Project estimates belong to the coordinator. Agents must not
+    measure elapsed time or estimate remaining hours.
     Project-wide time estimates are managed by the coordinator, not by coding agents.
 15. [rule:progress-docs] For every project change, update `TODO.md` and
     `DEVELOPMENT_PLAN.md` as part of the same branch/PR, before handoff. Keep changes
@@ -100,8 +101,8 @@ agent): `.agents/inactive-skills/`. Usage: `docs/AGENT_INSTRUCTIONS.md`; consist
 ## Handoff and definition of done
 
 Scope complete; relevant checks run; hardware claims classified (simulated, CI, hardware);
-cleanup done and footprint recorded; `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized under
-[rule:progress-docs]; PR workflow respected; the report of skill `development-reporting`
+cleanup done and footprint recorded; `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized as required;
+PR workflow respected; the report of skill `development-reporting`
 gives the other agent
 everything needed to continue (objective, branch/PR, files, interfaces, decisions, dependencies,
 checks, validation, artifacts kept and cleaned, risks, assumptions, next task, files to read).
