@@ -5,6 +5,7 @@ A PASS here is simulated, application-side evidence: never a hardware result.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import itertools
 import sys
@@ -15,7 +16,14 @@ from types import ModuleType
 import pytest
 
 from control_tv.acceptance_observer import IndependentObserver, ObserverOutcome
-from control_tv.command_trace import MemoryTraceSink, TraceEvent, TraceRecorder, TraceRole
+from control_tv.command_trace import (
+    MemoryTraceSink,
+    TraceConfigurationError,
+    TraceEvent,
+    TraceRecorder,
+    TraceRole,
+    application_request,
+)
 from control_tv.domain import Command, OperationTimeoutError
 from control_tv.service import ControlService
 from control_tv.trace_files import FileConfirmationGate, JsonLinesTraceSink
@@ -376,7 +384,7 @@ def test_product_trace_proves_one_ambiguous_attempt_for_c7() -> None:
         fail_commands_with=OperationTimeoutError("answer lost", device_id=DEVICE_ID)
     )
 
-    with pytest.raises(OperationTimeoutError):
+    with application_request("app-request-1"), pytest.raises(OperationTimeoutError):
         ControlService(transport, trace=c7_trace(sink)).pause(DEVICE_ID)
 
     valid, reason = evidence.validate_c7(sink.events(), "r1")
@@ -452,6 +460,112 @@ def test_c7_never_claims_no_replay_without_complete_evidence(
     assert valid is False and message in reason
 
 
+# C7 across bridge invocations: one application request, every attempt it caused ----------
+
+
+def bridge_pause(service: ControlService, message_id: int, request_id: str | None) -> object:
+    from control_tv import bridge
+
+    request: dict[str, object] = {
+        "id": message_id,
+        "method": "pause",
+        "params": {"deviceId": str(DEVICE_ID)},
+    }
+    if request_id is not None:
+        request["requestId"] = request_id
+    return bridge.dispatch(service, request)  # type: ignore[arg-type]
+
+
+def ambiguous_service(sink: MemoryTraceSink) -> tuple[ControlService, FakeTransport]:
+    transport = FakeTransport(
+        fail_commands_with=OperationTimeoutError("answer lost", device_id=DEVICE_ID)
+    )
+    recorder = TraceRecorder(sink, role=TraceRole.UBUNTU)  # a fresh trace id per invocation
+    return ControlService(transport, trace=recorder), transport
+
+
+def trace_ids(sink: MemoryTraceSink) -> list[str]:
+    return list(dict.fromkeys(event.request_id for event in sink.events()))
+
+
+def test_c7_fails_when_a_new_bridge_invocation_reissues_the_same_request() -> None:
+    """Regression (Codex P1 on 7bf2e77): each invocation got its own trace id, so validating the
+    first one saw one send and an ambiguous result and passed C7 although the same application
+    request had been sent again by a second invocation."""
+    sink = MemoryTraceSink()
+    service, transport = ambiguous_service(sink)
+
+    bridge_pause(service, 1, "app-request-1")
+    bridge_pause(service, 2, "app-request-1")  # the same request, re-issued
+
+    assert transport.attempted() == ["pause", "pause"]
+    first, second = trace_ids(sink)
+    for request_id in (first, second):
+        valid, reason = evidence.validate_c7(sink.events(), request_id)
+        assert valid is False and "sent 2 times" in reason
+
+
+def test_c7_passes_for_one_correlated_invocation_and_keeps_distinct_requests_apart() -> None:
+    sink = MemoryTraceSink()
+    service, _ = ambiguous_service(sink)
+
+    bridge_pause(service, 1, "app-request-1")
+    bridge_pause(service, 2, "app-request-2")  # a distinct, deliberate request
+
+    for request_id in trace_ids(sink):
+        valid, reason = evidence.validate_c7(sink.events(), request_id)
+        assert valid is True and "no application replay" in reason
+    assert {event.application_request_id for event in sink.events()} == {
+        "app-request-1",
+        "app-request-2",
+    }
+
+
+def test_without_a_host_request_id_each_bridge_message_is_its_own_request() -> None:
+    sink = MemoryTraceSink()
+    service, _ = ambiguous_service(sink)
+
+    bridge_pause(service, 1, None)
+    (request_id,) = trace_ids(sink)
+    events = sink.events()
+    assert len({event.application_request_id for event in events}) == 1
+    assert events[0].application_request_id is not None
+    assert evidence.validate_c7(events, request_id)[0] is True
+
+
+@pytest.mark.parametrize("request_id", ["", "a b", "../x", "x" * 65, 7])
+def test_a_malformed_host_request_id_is_refused_before_any_command(request_id: object) -> None:
+    sink = MemoryTraceSink()
+    service, transport = ambiguous_service(sink)
+
+    response = bridge_pause(service, 1, request_id)  # type: ignore[arg-type]
+
+    assert response["ok"] is False and "requestId" in response["error"]["message"]  # type: ignore[index]
+    assert transport.attempted() == [] and sink.events() == ()
+
+
+def test_c7_never_passes_for_a_trace_with_no_application_request() -> None:
+    """A trace recorded outside any application request cannot prove the absence of replay."""
+    sink = MemoryTraceSink()
+    transport = FakeTransport(
+        fail_commands_with=OperationTimeoutError("answer lost", device_id=DEVICE_ID)
+    )
+    with pytest.raises(OperationTimeoutError):
+        ControlService(transport, trace=c7_trace(sink)).pause(DEVICE_ID)
+
+    valid, reason = evidence.validate_c7(sink.events(), "r1")
+    assert valid is False and "not correlated to an application request" in reason
+
+
+def test_c6_is_unchanged_by_the_application_request_id() -> None:
+    events = [
+        dataclasses.replace(event, application_request_id="app-request-1")
+        for event in stream("ubuntu", REMOTE) + stream("observer", OBSERVER)
+    ]
+    assert evidence.validate_c6(events, "r1")[0] is True
+    assert c6()[0] is True
+
+
 # Files and the offline command ------------------------------------------------------------
 
 
@@ -521,3 +635,27 @@ def test_the_offline_command_needs_no_flag_and_reports_pass_or_fail(
     ]
     assert cli.main(["list", str(tmp_path / "missing.jsonl")]) == 1
     assert "unusable trace" in capsys.readouterr().out
+
+
+def test_the_application_request_id_survives_the_jsonl_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "trace.jsonl"
+    recorder = TraceRecorder(JsonLinesTraceSink(path), role=TraceRole.ANDROID)
+    with application_request("app-request-9"):
+        trace = recorder.command(Command.PAUSE)
+    trace.record("send_attempt")
+
+    events = evidence.load_trace(path)
+    assert {event.application_request_id for event in events} == {"app-request-9"}
+
+    path.write_text(path.read_text().replace("app-request-9", "app request"))
+    with pytest.raises(ValueError, match="invalid application request id"):
+        evidence.load_trace(path)
+
+
+@pytest.mark.parametrize("request_id", ["", "a/b", "x" * 65])
+def test_an_invalid_application_request_id_is_refused(request_id: str) -> None:
+    with (
+        pytest.raises(TraceConfigurationError, match="application request id"),
+        application_request(request_id),
+    ):
+        pass  # pragma: no cover - never entered

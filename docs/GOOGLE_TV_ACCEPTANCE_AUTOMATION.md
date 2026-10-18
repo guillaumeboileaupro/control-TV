@@ -56,8 +56,9 @@ that timed out, failed or was released without the observer's token fails C6.
 
 For one request id, C7 requires a complete remote stream with exactly one `send_attempt` and
 `ambiguous_result` as its final outcome; a `transport_response`, a second send attempt,
-`automatic_retry` or `replay` fails. This proves one **application-side** invocation and no
-application replay; it does not prove how many packets left the device or reached the TV, which
+`automatic_retry` or `replay` fails, and so does any other `send_attempt` of the same
+`application_request_id` (the bridge request, shared by every invocation of it) or a stream
+without one. This proves one **application-side** invocation and no application replay; it does not prove how many packets left the device or reached the TV, which
 needs packet or receiver-side capture.
 
 The validators are deterministic and covered with positive, mutation-style negative and

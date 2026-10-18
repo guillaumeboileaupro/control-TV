@@ -15,7 +15,13 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from control_tv.command_trace import TERMINAL_EVENTS, TRACE_INCOMPLETE, TraceEvent, TraceRole
+from control_tv.command_trace import (
+    TERMINAL_EVENTS,
+    TRACE_INCOMPLETE,
+    TraceEvent,
+    TraceRole,
+    is_application_request_id,
+)
 from control_tv.trace_files import INCOMPLETE_SUFFIX
 
 REMOTES = frozenset({TraceRole.UBUNTU.value, TraceRole.ANDROID.value})
@@ -61,6 +67,11 @@ def load_trace(path: Path) -> tuple[TraceEvent, ...]:
             token = _optional_text(raw, "token")
             if token is not None and not _TOKEN.fullmatch(token):
                 raise ValueError("invalid token")
+            application_request_id = _optional_text(raw, "application_request_id")
+            if application_request_id is not None and not is_application_request_id(
+                application_request_id
+            ):
+                raise ValueError("invalid application request id")
             events.append(
                 TraceEvent(
                     sequence=_integer(raw.get("sequence"), "sequence"),
@@ -72,6 +83,7 @@ def load_trace(path: Path) -> tuple[TraceEvent, ...]:
                     command=_optional_text(raw, "command"),
                     error_code=_optional_text(raw, "error_code"),
                     token=token,
+                    application_request_id=application_request_id,
                 )
             )
         except (json.JSONDecodeError, TypeError, ValueError) as error:
@@ -211,9 +223,33 @@ def validate_c7(events: Sequence[TraceEvent], request_id: str) -> Verdict:
             raise _Rejected("C7 needs an ambiguous delivery result as the command's outcome")
         if counts["transport_response"]:
             raise _Rejected("C7 transport answered, so the delivery was not ambiguous")
+        _reject_application_replay(events, acting)
     except _Rejected as rejected:
         return False, str(rejected)
     return True, "C7: one local send attempt, an ambiguous outcome and no application replay"
+
+
+def _reject_application_replay(events: Sequence[TraceEvent], acting: Sequence[TraceEvent]) -> None:
+    """C7's 'no application replay': every send of the command's application request counts,
+    whichever invocation (trace request id) made it. A trace that names no application request
+    cannot prove the absence of a replay by another invocation."""
+    application = {event.application_request_id for event in acting}
+    if len(application) != 1 or None in application:
+        raise _Rejected("C7 trace is not correlated to an application request (bridge requestId)")
+    (application_request_id,) = application
+    sends = [
+        event
+        for event in events
+        if event.application_request_id == application_request_id
+        and event.client in REMOTES
+        and event.event == "send_attempt"
+    ]
+    if len(sends) != 1:
+        invocations = len({event.request_id for event in sends})
+        raise _Rejected(
+            f"C7 application request {application_request_id} was sent {len(sends)} times "
+            f"({invocations} invocations): a replay"
+        )
 
 
 def summarize(events: Sequence[TraceEvent]) -> list[str]:

@@ -20,9 +20,12 @@ effect. A simulated PASS (the tests) is never a hardware result.
 ## Events
 
 Every event has `sequence` (local to one process), `client` (`ubuntu`, `android` or `observer`),
-`event`, `request_id` (opaque, one per command), `index` (contiguous per request, from 0) and,
-when relevant, `media_session_id`, `command`, `error_code` and the hold `token`. Never a device id
-or address, a media URL or title, a command argument, a credential or exception text.
+`event`, `request_id` (opaque, one per command invocation), `index` (contiguous per request,
+from 0), `application_request_id` (the bridge request the command belongs to: the host's
+`requestId`, reused when the host issues the same request again, or one per bridge message
+without it) and, when relevant, `media_session_id`, `command`, `error_code` and the hold `token`.
+Never a device id or address, a media URL or title, a command argument, a credential or
+exception text.
 
 | Phase                                    | Events (remote)                                                                                                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -123,8 +126,11 @@ the switch may have preceded the send (the known gap of PR #38 review P3-3).
 ## C7
 
 Record a trace on the remote (no hold needed), press one command and cut Wi-Fi immediately (owner
-agreement), then `python3 scripts/validate_command_trace.py c7 --request-id <id> TRACE`. A PASS
-proves one application-side invocation, an ambiguous outcome and no application replay.
+agreement), then `python3 scripts/validate_command_trace.py c7 --request-id <id> TRACE`. Every
+`send_attempt` of the same `application_request_id` counts, whichever invocation made it: a
+request sent again by another invocation fails C7, and a trace without an application request
+id never passes. A PASS proves one application-side invocation, an ambiguous outcome and no
+application replay.
 
 ## Keeping and deleting the evidence
 

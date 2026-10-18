@@ -9,12 +9,15 @@ Protocol (intentionally minimal - a starting point, expected to grow as more of
 `TvControl` is exposed): the parent process writes one JSON object per line to this
 process's stdin and reads one JSON object per line from its stdout, matched by "id".
 
-Request:  {"id": <a JSON value>, "method": <str>, "params": {...}}
+Request:  {"id": <a JSON value>, "method": <str>, "params": {...}, "requestId": <str>?}
 Response: {"id": <same as request, or null if the request itself could not be read>,
            "ok": true, "result": {...}}
        or {"id": ..., "ok": false, "error": {"code": <str>, "message": <str>}}
 
-`id` is opaque to this module: it is only ever echoed back, never interpreted.
+`id` is opaque to this module: it is only ever echoed back, never interpreted. `requestId`
+(optional; letters, digits and dashes, 1-64) names the application request: a host that issues
+the same request again (a retry, a new invocation) reuses it, so the acceptance trace counts
+every invocation of that request (C7). Without it, each message is its own request.
 
 Read-only methods:
 - `ping`             -> {"status", "controlTvVersion", "tvRemote", "tvApps"}: whether this
@@ -97,10 +100,12 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from collections.abc import Callable
 from typing import TextIO
 
 import control_tv
+from control_tv.command_trace import application_request, is_application_request_id
 from control_tv.domain import (
     AppLaunchResult,
     CommandResult,
@@ -417,7 +422,13 @@ def dispatch(control: TvControl, request: JsonObject) -> JsonObject:
         params = request.get("params", {})
         if not isinstance(params, dict):
             raise InvalidArgumentError("params must be an object")
-        result = _HANDLERS[method](control, params)
+        given = request.get("requestId", uuid.uuid4().hex)
+        if not isinstance(given, str) or not is_application_request_id(given):
+            raise InvalidArgumentError(
+                f"requestId must be 1 to 64 letters, digits or dashes: {given!r}"
+            )
+        with application_request(given):
+            result = _HANDLERS[method](control, params)
     except ControlError as error:
         return _error_response(request_id, error.code.value, error.message, delivery=error.delivery)
     except Exception as error:
