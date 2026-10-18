@@ -5,6 +5,14 @@
 All shared rules, scope and definition of done are in `AGENTS.md` (imported above); this file only
 adds what is specific to Claude Code. Previous version: `.ai-private/agent-config-backups/`.
 
+## Mandatory progress updates
+
+Before completing any code or documentation change, follow [rule:progress-docs] in
+`AGENTS.md`: update both `TODO.md` and `DEVELOPMENT_PLAN.md` in the same branch/PR, with
+implementation, CI and hardware validation recorded separately. This is automatic for every
+mission; the owner must not have to request it again. Do not report personal work durations
+or estimate remaining hours.
+
 ## Claude Code specifics
 
 - Skills: `.claude/skills/<name>` - relative links to the common copies in `.agents/skills/`
