@@ -11,6 +11,10 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+# The ignore rules of a branch older than the versioned configuration (what `link` is for).
+LEGACY_GITIGNORE = (
+    "/[A]GENTS.md\n/[C]LAUDE.md\n/.[a]gents/\n/.[c]laude/\n/.[c]odex/\n/.ai-private/\n"
+)
 
 
 def load() -> ModuleType:
@@ -47,7 +51,7 @@ def repository(tmp_path: Path) -> Path:
     for name in config.REQUIRED_SKILLS:
         skill(root / ".agents/skills", name)
         (root / ".claude/skills").mkdir(parents=True, exist_ok=True)
-        (root / ".claude/skills" / name).symlink_to(root / ".agents/skills" / name)
+        (root / ".claude/skills" / name).symlink_to(Path("../../.agents/skills") / name)
     return root
 
 
@@ -150,16 +154,109 @@ def test_a_referenced_skill_must_exist(tmp_path: Path) -> None:
     assert "a referenced skill does not exist: does-not-exist" in errors(root)
 
 
-def test_configuration_that_git_would_commit_is_an_error(tmp_path: Path) -> None:
+def test_local_preferences_that_git_would_commit_are_errors(tmp_path: Path) -> None:
     root = repository(tmp_path)
     (root / ".gitignore").write_text("# no machine-local entries\n")
+    (root / "CLAUDE.local.md").write_text("my preferences\n")
 
     found = errors(root)
-    assert "local-only configuration is not git-ignored: AGENTS.md" in found
-    assert "local-only configuration is not git-ignored: .agents" in found
+    assert "local-only path is not git-ignored: .ai-private/" in found
+    assert "local-only path is not git-ignored: .claude/settings.local.json" in found
+    assert "local-only path is not git-ignored: CLAUDE.local.md" in found
 
-    subprocess.run(["git", "-C", str(root), "add", "-f", "AGENTS.md"], check=True)
-    assert "local-only configuration is tracked by git: AGENTS.md" in errors(root)
+    subprocess.run(["git", "-C", str(root), "add", "-f", "CLAUDE.local.md"], check=True)
+    assert "local-only file is tracked by git: CLAUDE.local.md" in errors(root)
+
+
+def test_the_project_ignores_local_preferences_but_versions_the_shared_configuration(
+    tmp_path: Path,
+) -> None:
+    root = repository(tmp_path)
+    for local in (".agents/handoffs/h.md", ".claude/settings.local.json", ".codex/config.toml"):
+        (root / local).parent.mkdir(parents=True, exist_ok=True)
+        (root / local).write_text("local\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    staged = subprocess.run(
+        ["git", "-C", str(root), "diff", "--cached", "--name-only"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+
+    assert {"AGENTS.md", "CLAUDE.md", ".agents/skills/hardware-safety/SKILL.md"} <= set(staged)
+    assert ".claude/skills/hardware-safety" in staged  # the link itself, resolved in any clone
+    assert not [
+        name for name in staged if "handoffs" in name or "local" in name or ".codex" in name
+    ]
+    report = config.check(root)
+    assert report is not None and report.errors == []
+    assert not [warning for warning in report.warnings if "not versioned" in warning]
+
+
+def test_a_checkout_that_does_not_version_the_configuration_is_warned(tmp_path: Path) -> None:
+    report = config.check(repository(tmp_path))
+    assert report is not None and report.errors == []
+    assert "AGENTS.md is not versioned in this checkout: a fresh clone would lack it" in (
+        report.warnings
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("see /home/someone/project", "a home directory path"),
+        ("run it from ~/Documents/x", "a home directory path"),
+        ("the TV at 192.168.1.20", "an IPv4 address"),
+        ("adapter 00:1A:2b:3C:4d:5E", "a MAC address"),
+        ("device 123e4567-e89b-12d3-a456-426614174000", "a UUID"),
+        ("write to someone@example.org", "an e-mail address"),
+        ("-----BEGIN OPENSSH PRIVATE KEY-----", "a private key"),
+        ("token ghp_" + "a" * 36, "an access token"),
+    ],
+)
+def test_private_data_in_the_shared_configuration_is_an_error(
+    tmp_path: Path, text: str, kind: str
+) -> None:
+    root = repository(tmp_path)
+    target = root / ".agents/skills/hardware-safety/SKILL.md"
+    target.write_text(target.read_text() + text + "\n")
+
+    found = [error for error in errors(root) if "contains" in error]
+    assert found == [
+        f".agents/skills/hardware-safety/SKILL.md:9 contains {kind}: keep it out of the shared "
+        "configuration"
+    ]  # reported once although Claude reaches the same file through its link
+    assert text not in " ".join(found)
+
+
+def test_loopback_addresses_and_unreadable_shared_files(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    (root / "AGENTS.md").write_text((root / "AGENTS.md").read_text() + "bind 127.0.0.1, 0.0.0.0\n")
+    (root / ".agents/skills/hardware-safety/notes.md").write_bytes(b"\xff\xfe")
+
+    found = errors(root)
+    assert not [error for error in found if "IPv4" in error]
+    assert "unreadable shared file: .agents/skills/hardware-safety/notes.md" in found
+    report = config.check(root)
+    assert report is not None
+    # The Claude link reaches the same directory: one copy, no drift.
+    assert "skill hardware-safety: the Claude and Codex copies differ" not in report.warnings
+
+
+def test_skill_links_must_stay_inside_the_repository(tmp_path: Path) -> None:
+    root = repository(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    skill(elsewhere, "hardware-safety")
+    (root / ".claude/skills/hardware-safety").unlink()
+    (root / ".claude/skills/hardware-safety").symlink_to(elsewhere / "hardware-safety")
+    (root / ".claude/skills/solid-code-design").unlink()
+    (root / ".claude/skills/solid-code-design").symlink_to(Path("../../.agents/skills/gone"))
+
+    found = errors(root)
+    assert ".claude/skills/hardware-safety links outside the repository" in found
+    assert ".claude/skills/solid-code-design is a broken link" in found
+    assert config._drift(tmp_path) == []  # no skill directories: nothing to compare
+    assert config._link_problems(tmp_path) == []
 
 
 def test_outside_a_git_repository_only_the_content_is_checked(tmp_path: Path) -> None:
@@ -175,10 +272,11 @@ def test_outside_a_git_repository_only_the_content_is_checked(tmp_path: Path) ->
 
 
 def worktree(tmp_path: Path) -> Path:
+    """A worktree of a branch older than the versioned configuration."""
     other = tmp_path / "worktree"
     other.mkdir()
     subprocess.run(["git", "init", "-q", str(other)], check=True)
-    (other / ".gitignore").write_text((ROOT / ".gitignore").read_text(), encoding="utf-8")
+    (other / ".gitignore").write_text(LEGACY_GITIGNORE, encoding="utf-8")
     return other
 
 
@@ -202,7 +300,11 @@ def test_link_shares_the_configuration_and_git_still_ignores_it(tmp_path: Path) 
         check=True,
     ).stdout
     assert status.strip() == "?? .gitignore"  # nothing of the configuration shows up
-    assert errors(target) == []
+    # The old branch's rules predate the new local files; nothing else is wrong.
+    assert errors(target) == [
+        "local-only path is not git-ignored: CLAUDE.local.md",
+        "local-only path is not git-ignored: AGENTS.override.md",
+    ]
 
 
 def test_link_never_overwrites_and_is_idempotent(tmp_path: Path) -> None:
@@ -271,3 +373,29 @@ def test_link_skips_a_tool_the_source_does_not_configure(tmp_path: Path) -> None
 
     assert "linked .claude/skills" not in config.link(source, target)
     assert not (target / ".claude").exists()
+
+
+# A fresh clone -----------------------------------------------------------------------------
+
+
+def test_a_fresh_clone_has_the_whole_agent_configuration(tmp_path: Path) -> None:
+    """Clone this repository's HEAD: both agents must discover the same, complete skill set."""
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    )
+    if head.returncode != 0:
+        pytest.skip("not a git checkout")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", "--no-checkout", str(ROOT), str(clone)], check=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "checkout", "-q", "--detach", head.stdout.strip()], check=True
+    )
+
+    report = config.check(clone)
+
+    assert report is not None and report.errors == []
+    assert not [warning for warning in report.warnings if "not versioned" in warning]
+    codex = {path.parent.name for path in (clone / ".agents/skills").glob("*/SKILL.md")}
+    claude = {path.parent.name for path in (clone / ".claude/skills").glob("*/SKILL.md")}
+    assert set(config.REQUIRED_SKILLS) <= codex and codex == claude
+    assert not [path for path in config.LOCAL_ONLY if (clone / path.rstrip("/")).exists()]

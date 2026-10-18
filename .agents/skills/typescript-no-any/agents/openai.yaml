@@ -1,0 +1,4 @@
+interface:
+  display_name: "TypeScript sans any"
+  short_description: "Élimine et prévient les types any en TypeScript"
+  default_prompt: "Analyse et modifie ce code TypeScript sans introduire de type any, puis valide-le avec les contrôles du dépôt."

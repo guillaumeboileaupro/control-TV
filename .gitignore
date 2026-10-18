@@ -52,10 +52,13 @@ Thumbs.db
 *.key
 *.pem
 
-# Machine-local development metadata
-/[A]GENTS.md
-/[C]LAUDE.md
-/.[a]gents/
-/.[c]laude/
-/.[c]odex/
+# Machine-local agent preferences and private evidence. The shared agent configuration
+# (AGENTS.md, CLAUDE.md, .agents/skills/, .claude/skills/) is versioned.
 /.ai-private/
+/.[c]odex/
+/.agents/*
+!/.agents/skills/
+/.claude/*
+!/.claude/skills/
+/CLAUDE.local.md
+/AGENTS.override.md
