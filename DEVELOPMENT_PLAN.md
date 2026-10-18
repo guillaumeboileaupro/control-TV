@@ -692,7 +692,8 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
   - [x] D0 encoder adapted to the D1 `ScreenEncoder` port (`D0LiveEncoder`, branch
     `feat/screencast-d1-encoder-adapter`): D0 selection, argument builders and process groups
     reused, live HLS arguments (`live_hls_command`, real-time synthetic input, bounded session,
-    rolling segments), unreleased streams kept and retried; synthetic only, no capture, listener
+    rolling segments), unreleased streams kept and retried, idempotent and serialized `stop()`
+    (a released stream is confirmed, never released twice); synthetic only, no capture, listener
     or receiver; three port gaps documented in the D1 spike doc;
   - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
     Ubuntu-to-Freebox duplication;

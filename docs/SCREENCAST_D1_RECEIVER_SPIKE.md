@@ -145,6 +145,10 @@ Implemented on top of D0 without a second engine:
   directory removed; a stop that cannot finish (group surviving SIGKILL, directory not
   removable, interruption) keeps it in `unreleased` and raises, so the D1 service keeps the
   encoder owned and a retry only redoes what is left; `close()` attempts every stream;
+- **idempotent stop** (the `ScreenEncoder` contract): stopping a stream already released
+  succeeds without touching anything, so a service interrupted after the release but before
+  recording it confirms it on retry instead of failing forever; concurrent stops of one stream
+  are serialized and release it once; a handle the encoder never issued is still refused;
 - **no capture:** D1's `CapturedVideo` is refused until a capture adapter exists.
 
 Measured on the owner's machine with the synthetic picture only (no capture, no network): a 3 s

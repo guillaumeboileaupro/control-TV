@@ -35,6 +35,7 @@ from control_tv.screen_streaming import (
     SyntheticVideoSource,
 )
 from control_tv.screen_streaming.h264_encoder import D0LiveEncoder, LiveEncoderSettings
+from control_tv.screen_streaming.model import VideoSource
 from control_tv.screencast.capabilities import EncoderCapabilities, FfmpegCapabilityProbe
 from control_tv.screencast.model import (
     EncoderPreference,
@@ -276,9 +277,6 @@ def test_stop_releases_the_group_then_the_output_exactly_once(tmp_path: Path) ->
 
     assert runner.group.signals == [signal.SIGTERM] and runner.group.releases == 1
     assert nothing_left(tmp_path) and held(live) == ()
-    with pytest.raises(StreamCleanupError, match="owns no stream"):
-        live.stop(stream)  # never released twice
-    assert runner.group.releases == 1
 
 
 @pytest.mark.parametrize(
@@ -580,3 +578,136 @@ def test_a_real_synthetic_live_encode_writes_a_playlist_and_segments() -> None:
     finally:
         live.stop(stream)
     assert not output.directory.exists() and held(live) == ()
+
+
+# ScreenEncoder.stop is idempotent ---------------------------------------------------------
+
+
+def test_a_second_stop_confirms_the_release_without_releasing_twice(tmp_path: Path) -> None:
+    """Regression: a repeated stop raised "owns no stream", against the port's idempotency."""
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    stream = live.start(SOURCE, PROFILE)
+    live.stop(stream)
+
+    live.stop(stream)
+    live.stop(stream)
+
+    assert runner.group.signals == [signal.SIGTERM] and runner.group.releases == 1
+    assert held(live) == () and nothing_left(tmp_path)
+
+
+def test_a_transient_failure_is_retried_then_further_stops_are_no_ops(tmp_path: Path) -> None:
+    runner = FakeRunner(group=FakeGroup(interrupt=PermissionError("not allowed")))
+    live = encoder(tmp_path, runner)
+    stream = live.start(SOURCE, PROFILE)
+
+    with pytest.raises(StreamCleanupError, match="could not be stopped: PermissionError"):
+        live.stop(stream)
+    assert held(live) == ("live-1",) and runner.group.releases == 0
+
+    live.stop(stream)
+    live.stop(stream)
+    assert held(live) == () and runner.group.releases == 1
+    assert runner.group.signals == [signal.SIGTERM]
+
+
+def test_an_unreleased_stream_is_never_reported_released(tmp_path: Path) -> None:
+    runner = FakeRunner(group=FakeGroup(survives=True))
+    live = encoder(tmp_path, runner)
+    stream = live.start(SOURCE, PROFILE)
+
+    for _ in range(2):  # every stop says the truth while the group survives
+        with pytest.raises(StreamCleanupError, match="survived SIGKILL"):
+            live.stop(stream)
+        assert held(live) == ("live-1",) and runner.group.releases == 0
+
+    runner.group.survives = False
+    live.stop(stream)
+    live.stop(stream)
+    assert held(live) == () and runner.group.releases == 1
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt(), SystemExit(7)])
+def test_an_interruption_after_the_release_lets_the_d1_retry_confirm_it(
+    tmp_path: Path, interruption: BaseException
+) -> None:
+    """Codex's scenario: the adapter released everything, then an interruption reached the
+    service before it recorded the release; the service's retry must confirm, not fail."""
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    calls: list[str] = []
+
+    class InterruptedAfterStop:
+        def start(self, source: VideoSource, profile: EncodingProfile) -> EncodedStream:
+            return live.start(source, profile)
+
+        def stop(self, stream: EncodedStream) -> None:
+            live.stop(stream)
+            calls.append("stopped")
+            if len(calls) == 1:
+                raise interruption
+
+    service = StreamingSessionService(InterruptedAfterStop(), Publisher(), Receiver())
+    service.start(REQUEST)
+
+    with pytest.raises(type(interruption)):
+        service.stop()
+    assert held(service) == ("encoder",) and held(live) == ()  # the service still owns it
+
+    service.stop()  # the retry confirms the release
+    assert held(service) == () and service.state is SessionState.STOPPED
+    assert calls == ["stopped", "stopped"] and runner.group.releases == 1
+    assert nothing_left(tmp_path)
+
+
+def test_concurrent_stops_release_the_stream_once(tmp_path: Path) -> None:
+    gate, entered = threading.Event(), threading.Event()
+
+    class SlowGroup(FakeGroup):
+        def signal_group(self, sig: signal.Signals) -> None:
+            entered.set()
+            assert gate.wait(5.0)
+            super().signal_group(sig)
+
+    runner = FakeRunner(group=SlowGroup())
+    live = encoder(tmp_path, runner)
+    stream = live.start(SOURCE, PROFILE)
+    failures: list[BaseException] = []
+
+    def stop() -> None:
+        try:
+            live.stop(stream)
+        except BaseException as error:
+            failures.append(error)
+
+    first = threading.Thread(target=stop)
+    first.start()
+    assert entered.wait(5.0)
+    second = threading.Thread(target=stop)
+    second.start()  # waits for the first stop of the same stream, then confirms
+    gate.set()
+    first.join(5.0)
+    second.join(5.0)
+
+    assert not first.is_alive() and not second.is_alive() and failures == []
+    assert runner.group.signals == [signal.SIGTERM] and runner.group.releases == 1
+    assert held(live) == () and nothing_left(tmp_path)
+
+
+def test_a_stream_this_encoder_never_issued_is_still_refused(tmp_path: Path) -> None:
+    live = encoder(tmp_path)
+    with pytest.raises(StreamCleanupError, match="owns no stream live-unknown"):
+        live.stop(EncodedStream("live-unknown"))
+
+
+def test_a_reissued_handle_is_stopped_again(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)  # the test factory always answers "live-1"
+    live.stop(live.start(SOURCE, PROFILE))
+    runner.group = FakeGroup()
+
+    stream = live.start(SOURCE, PROFILE)
+    assert held(live) == ("live-1",)
+    live.stop(stream)
+    assert held(live) == () and runner.group.releases == 1

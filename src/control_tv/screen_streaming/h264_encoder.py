@@ -24,7 +24,7 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from control_tv.screen_streaming.model import (
@@ -117,6 +117,8 @@ class LiveOutput:
 class _LiveSession:
     output: LiveOutput
     process: ManagedProcess | None
+    # Serializes the stops of this stream, so concurrent stops never release anything twice.
+    stopping: threading.Lock = field(default_factory=threading.Lock)
 
 
 def _private_workdir() -> Path:
@@ -143,6 +145,7 @@ class D0LiveEncoder:
         self._make_workdir = make_workdir
         self._handle_factory = handle_factory
         self._sessions: dict[str, _LiveSession] = {}
+        self._released: set[str] = set()  # handles issued here and fully released since
         self._lock = threading.Lock()
 
     @property
@@ -189,15 +192,29 @@ class D0LiveEncoder:
             raise
         with self._lock:
             self._sessions[handle] = _LiveSession(self._output(directory, choice), process)
+            self._released.discard(handle)
         return EncodedStream(handle)
 
     def stop(self, stream: EncodedStream) -> None:
-        """Release the stream's process group, then its output. Raises (keeping the stream) when
-        either cannot be released; an interruption keeps it too. Never releases anything twice."""
+        """Release the stream's process group, then its output. Idempotent, as `ScreenEncoder`
+        requires: stopping a stream already released succeeds without touching anything, so a
+        caller interrupted before recording a release can retry. Raises (keeping the stream) when
+        either part cannot be released; an interruption keeps it too. Concurrent stops of one
+        stream are serialized; nothing is ever released twice. A handle this encoder never issued
+        is refused."""
         with self._lock:
             session = self._sessions.get(stream.handle)
-        if session is None:
-            raise StreamCleanupError(f"this encoder owns no stream {stream.handle}")
+            if session is None:
+                if stream.handle in self._released:
+                    return
+                raise StreamCleanupError(f"this encoder owns no stream {stream.handle}")
+        with session.stopping:
+            with self._lock:
+                if self._sessions.get(stream.handle) is not session:
+                    return  # a concurrent stop released it meanwhile
+            self._release(stream.handle, session)
+
+    def _release(self, handle: str, session: _LiveSession) -> None:
         process = session.process
         if process is not None:
             try:
@@ -220,7 +237,8 @@ class D0LiveEncoder:
                 f"the live output could not be removed: {type(error).__name__}"
             ) from None
         with self._lock:
-            del self._sessions[stream.handle]
+            del self._sessions[handle]
+            self._released.add(handle)
 
     def close(self) -> None:
         """Stop every stream still owned (application exit). Every stream is attempted; the ones
