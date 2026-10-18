@@ -101,6 +101,7 @@ agent): `.agents/inactive-skills/`. Usage: `docs/AGENT_INSTRUCTIONS.md`; consist
 
 Scope complete; relevant checks run; hardware claims classified (simulated, CI, hardware);
 cleanup done and footprint recorded; `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized under
-[rule:progress-docs]; PR workflow respected; the report of skill `development-reporting` gives the other agent
+[rule:progress-docs]; PR workflow respected; the report of skill `development-reporting`
+gives the other agent
 everything needed to continue (objective, branch/PR, files, interfaces, decisions, dependencies,
 checks, validation, artifacts kept and cleaned, risks, assumptions, next task, files to read).
