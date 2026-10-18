@@ -334,7 +334,7 @@ Deliverables (after feasibility):
 - [ ] one non-Cast endpoint adapter behind the shared service (pairing and secret storage where needed), capability-detected per device; Cast-only devices report the operations as unsupported;
 - [ ] power on and off in the service, bridge and GUI;
 - [ ] the TV's audible volume and mute in the service, bridge and GUI, distinct from the Cast logical volume and mute;
-- [ ] navigation keys and input sources where available; key latency measured on hardware (steps K1-K3 of `docs/DUAL_CONTROLLER_VALIDATION.md`, added 2026-10-13 after the `main` audit, P3-6);
+- [ ] navigation keys and input sources where available; key latency measured on hardware (steps K1-K3 of `docs/DUAL_CONTROLLER_VALIDATION.md`, added 2026-10-13 after the `main` audit, P3-6); K1/K2 records are classified offline by `scripts/acceptance_latency.py key-step` (protocol rules, delays from frame numbers, criterion checked only once adopted; automation-validated, no video measured yet);
 - [ ] the TV's applications listed (installed where an endpoint allows it, otherwise launchable) and launched on the TV from the GUI (Ubuntu and Android);
 - [ ] Linux GUI first, then Android parity.
 
