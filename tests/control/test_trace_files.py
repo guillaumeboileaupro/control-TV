@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -83,13 +84,106 @@ def test_a_directory_owned_by_another_effective_user_is_refused(
         private_directory(directory)
 
 
-def test_a_symbolic_parent_component_is_refused(tmp_path: Path) -> None:
+def android_layout(tmp_path: Path) -> Path:
+    """The shape of Android's `filesDir`: `/data/user/0` is a link to `/data/data`, and `/data`
+    lets an app search through it but not list it."""
+    data = tmp_path / "data"
+    (data / "data" / "pkg" / "files").mkdir(parents=True, mode=0o700)
+    (data / "user").mkdir()
+    (data / "user" / "0").symlink_to(data / "data", target_is_directory=True)
+    data.chmod(0o311)  # search only
+    return data / "user" / "0" / "pkg" / "files"
+
+
+@pytest.fixture
+def files_dir(tmp_path: Path) -> Iterator[Path]:
+    files = android_layout(tmp_path)
+    yield files
+    (tmp_path / "data").chmod(0o700)  # let pytest remove it
+
+
+def test_the_android_files_directory_is_accepted_for_trace_and_hold(files_dir: Path) -> None:
+    """Regression: walking from `/` without following links refused `/data/user/0` (a link) and
+    could not open the search-only `/data`, so the Android acceptance mode could not start."""
+    tracing = android_tracing(files_dir / "acceptance")
+    assert isinstance(tracing.gate, FileConfirmationGate) and tracing.trace_file is not None
+
+    tracing.recorder.record("send_attempt", request_id="request-1", command=Command.PAUSE)
+    assert tracing.trace_file.read_text().count("send_attempt") == 1
+    assert mode(files_dir / "acceptance") == 0o700 and mode(tracing.trace_file) == 0o600
+
+    gate_dir = files_dir / "acceptance" / "gate"
+
+    def release() -> None:
+        for _ in range(200):
+            if held_commands(gate_dir):
+                release_command(gate_dir, "request-1", TOKEN)
+                return
+            threading.Event().wait(0.01)
+
+    releaser = threading.Thread(target=release)
+    releaser.start()
+    outcome = tracing.gate.hold(HoldRequest("request-1", Command.PAUSE, 7))
+    releaser.join(5.0)
+    assert outcome.released and outcome.token == TOKEN
+    assert list(gate_dir.iterdir()) == []
+
+
+def test_an_existing_linked_parent_is_followed_but_never_the_evidence_directory(
+    tmp_path: Path,
+) -> None:
     real = private_directory(tmp_path / "real")
     linked_parent = tmp_path / "linked-parent"
     linked_parent.symlink_to(real, target_is_directory=True)
 
-    with pytest.raises(TraceConfigurationError, match="no symbolic path component"):
-        private_directory(linked_parent / "nested")
+    assert private_directory(linked_parent / "nested") == linked_parent / "nested"
+    assert (real / "nested").is_dir() and mode(real / "nested") == 0o700
+
+    (real / "evidence-link").symlink_to(real / "nested", target_is_directory=True)
+    with pytest.raises(TraceConfigurationError, match="real directory"):
+        private_directory(linked_parent / "evidence-link")
+
+
+def test_a_link_among_the_components_to_create_is_never_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A component missing when the path is checked but turned into a link before it is opened
+    (a race) is refused: it is opened relative to its parent without following links."""
+    victim = tmp_path / "victim"
+    victim.mkdir(mode=0o700)
+    target = tmp_path / "base" / "made" / "evidence"
+    real_mkdir = os.mkdir
+
+    def racing_mkdir(name: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+        if name == "made":
+            (tmp_path / "base" / "made").symlink_to(victim, target_is_directory=True)
+            raise FileExistsError(name)
+        real_mkdir(name, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", racing_mkdir)
+    with pytest.raises(TraceConfigurationError, match="real directory"):
+        private_directory(target)
+    assert list(victim.iterdir()) == []
+
+
+def test_an_evidence_directory_swapped_for_a_link_between_writes_is_refused(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "evidence"
+    sink = JsonLinesTraceSink(directory / "trace.jsonl")
+    sink.write(EVENT)
+    elsewhere = private_directory(tmp_path / "elsewhere")
+    directory.rename(tmp_path / "moved")
+    directory.symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(TraceConfigurationError):
+        sink.write(EVENT)
+    assert list(elsewhere.iterdir()) == []  # nothing written through the link
+
+
+def test_the_root_cannot_be_an_evidence_directory() -> None:
+    with pytest.raises(TraceConfigurationError):
+        private_directory(Path("/"))
 
 
 def test_a_linked_trace_file_is_never_followed(tmp_path: Path) -> None:
@@ -419,3 +513,24 @@ def test_two_simultaneous_holds_keep_their_sessions_and_tokens_separate(tmp_path
     assert outcomes["request-a"].token == tokens["request-a"]
     assert outcomes["request-b"].token == tokens["request-b"]
     assert list(gate_dir.iterdir()) == []
+
+
+def test_a_hold_marker_owned_by_another_user_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate_dir = private_directory(tmp_path / "gate")
+    (gate_dir / "request-1.held").write_text(
+        json.dumps({"request_id": "request-1", "media_session_id": 7})
+    )
+    real_fstat = os.fstat
+
+    def foreign_regular_file(descriptor: int) -> os.stat_result:
+        info = real_fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            return info
+        fields = list(info)
+        fields[4] = info.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "fstat", foreign_regular_file)
+    assert held_commands(gate_dir) == ()

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -167,3 +169,84 @@ def test_two_observers_target_distinct_simultaneous_holds(tmp_path: Path) -> Non
         assert {event.request_id for event in events} == {request_id}
         assert [event.media_session_id for event in events[:2]] == [session_id, session_id + 1]
         assert (gate / f"{request_id}.release").read_text().strip() == tokens[request_id]
+
+
+# P2: the real C6 script reaches the request filter; an ambiguous gate is refused --------------
+
+
+def two_holds(directory: Path) -> Path:
+    gate = private_directory(directory)
+    for request_id, session in (("request-a", 17), ("request-b", 29)):
+        (gate / f"{request_id}.held").write_text(
+            json.dumps({"request_id": request_id, "media_session_id": session})
+        )
+    return gate
+
+
+def test_without_a_request_id_several_held_commands_are_refused_not_guessed(
+    tmp_path: Path,
+) -> None:
+    """Regression: the observer took the first held command alphabetically, so beside another
+    remote's hold it could observe and release the wrong request."""
+    gate = two_holds(tmp_path / "gate")
+    sink = MemoryTraceSink()
+
+    with pytest.raises(TraceConfigurationError, match="2 commands are held: name one"):
+        observer(gate, reader(17, 18), sink, Ticks()).observe()
+    assert sink.events() == () and not list(gate.glob("*.release"))
+
+
+def test_a_request_id_selects_its_hold_among_several(tmp_path: Path) -> None:
+    gate = two_holds(tmp_path / "gate")
+    sink = MemoryTraceSink()
+
+    outcome = observer(gate, reader(29, 30), sink, Ticks(), request_id="request-b").observe()
+
+    assert outcome is ObserverOutcome.RELEASED
+    assert {event.request_id for event in sink.events()} == {"request-b"}
+    assert [path.name for path in gate.glob("*.release")] == ["request-b.release"]
+
+
+@pytest.mark.parametrize("request_id", ["", "../x", "a b", "x" * 65])
+def test_a_request_id_that_cannot_name_a_hold_is_refused(tmp_path: Path, request_id: str) -> None:
+    with pytest.raises(TraceConfigurationError, match="request id"):
+        observer(tmp_path, reader(), MemoryTraceSink(), Ticks(), request_id=request_id)
+
+
+def load_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "acceptance_observer_script", Path(__file__).parents[2] / "scripts/acceptance_observer.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_c6_script_passes_the_request_id_to_the_observer(tmp_path: Path) -> None:
+    script = load_script()
+    gate = two_holds(tmp_path / "gate")
+    arguments = script.parse_arguments(
+        ["--gate", str(gate), "--trace", str(tmp_path / "o.jsonl"), "--request-id", "request-a"]
+    )
+    assert arguments.request_id == "request-a" and arguments.timeout == 60.0
+
+    sink = MemoryTraceSink()
+    built = script.build_observer(
+        arguments, reader(17, 18), TraceRecorder(sink, role=TraceRole.OBSERVER), lambda: None
+    )
+    built._clock, built._sleep, built._poll = Ticks().clock, (lambda seconds: None), 0.1
+
+    assert built.observe() is ObserverOutcome.RELEASED
+    assert {event.request_id for event in sink.events()} == {"request-a"}
+
+    unfiltered = script.parse_arguments(["--gate", str(gate), "--trace", "t.jsonl"])
+    assert unfiltered.request_id is None
+
+
+@pytest.mark.parametrize("request_id", ["", "../x", "a b"])
+def test_the_c6_script_refuses_a_malformed_request_id(request_id: str) -> None:
+    with pytest.raises(SystemExit):
+        load_script().parse_arguments(
+            ["--gate", "g", "--trace", "t.jsonl", "--request-id", request_id]
+        )

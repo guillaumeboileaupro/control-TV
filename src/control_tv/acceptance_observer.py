@@ -26,7 +26,7 @@ from pathlib import Path
 
 from control_tv.command_trace import TraceConfigurationError, TraceRecorder, TraceRole
 from control_tv.domain import ControlError
-from control_tv.trace_files import HeldCommand, held_commands, release_command
+from control_tv.trace_files import HeldCommand, held_commands, is_request_id, release_command
 
 # Reads the receiver's current media session number (None when no media reports one).
 SessionReader = Callable[[], int | None]
@@ -62,6 +62,8 @@ class IndependentObserver:
     ) -> None:
         if recorder.role is not TraceRole.OBSERVER or not recorder.active:
             raise TraceConfigurationError("the observer needs an active trace with its own role")
+        if request_id is not None and not is_request_id(request_id):
+            raise TraceConfigurationError(f"the request id cannot name a hold: {request_id!r}")
         self._directory = gate_directory
         self._read_session = read_session
         self._recorder = recorder
@@ -110,15 +112,19 @@ class IndependentObserver:
         return ObserverOutcome.RELEASED
 
     def _wait_for_hold(self, deadline: float) -> HeldCommand | None:
+        """The held command to observe: the one named by `request_id`, or else the only one
+        held. Several holds without a request id are refused, never guessed: observing another
+        remote's command would release the wrong request."""
         while self._clock() < deadline:
             held = held_commands(self._directory)
-            matching = (
-                held
-                if self._request_id is None
-                else tuple(command for command in held if command.request_id == self._request_id)
-            )
-            if matching:
-                return matching[0]
+            if self._request_id is not None:
+                held = tuple(command for command in held if command.request_id == self._request_id)
+            elif len(held) > 1:
+                raise TraceConfigurationError(
+                    f"{len(held)} commands are held: name one with its request id"
+                )
+            if held:
+                return held[0]
             self._sleep(self._poll)
         return None
 

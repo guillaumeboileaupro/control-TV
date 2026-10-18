@@ -2,7 +2,10 @@
 step: it **reads** the receiver status (no command) until the held command's session changes.
 
     CONTROL_TV_OBSERVED_DEVICE=<stable device id> python3 scripts/acceptance_observer.py \
-        --gate DIR --trace OBSERVER_TRACE.jsonl [--timeout 60]
+        --gate DIR --trace OBSERVER_TRACE.jsonl [--timeout 60] [--request-id ID]
+
+`--request-id` observes that held request only; without it, the observer refuses to choose when
+several commands are held.
 
 The device id is read from the environment so it never appears in a shell history or a trace.
 """
@@ -12,7 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -20,15 +23,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from control_tv.acceptance_observer import IndependentObserver
 from control_tv.command_trace import TraceRecorder, TraceRole
 from control_tv.domain import DeviceId
-from control_tv.trace_files import JsonLinesTraceSink
+from control_tv.trace_files import JsonLinesTraceSink, is_request_id
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - reads a real TV
+def _request_id(value: str) -> str:
+    if not is_request_id(value):
+        raise argparse.ArgumentTypeError("letters, digits and dashes, 1 to 64 characters")
+    return value
+
+
+def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--gate", type=Path, required=True)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=60.0)
-    arguments = parser.parse_args(argv)
+    parser.add_argument(
+        "--request-id",
+        type=_request_id,
+        help="observe this held request only (required when several commands are held)",
+    )
+    return parser.parse_args(argv)
+
+
+def build_observer(
+    arguments: argparse.Namespace,
+    read_session: Callable[[], int | None],
+    recorder: TraceRecorder,
+    on_hold_seen: Callable[[], None],
+) -> IndependentObserver:
+    return IndependentObserver(
+        arguments.gate,
+        read_session,
+        recorder,
+        timeout_seconds=arguments.timeout,
+        on_hold_seen=on_hold_seen,
+        request_id=arguments.request_id,
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - reads a real TV
+    arguments = parse_arguments(argv)
     device = os.environ.get("CONTROL_TV_OBSERVED_DEVICE", "")
     if not device:
         print("set CONTROL_TV_OBSERVED_DEVICE to the TV's stable device id", file=sys.stderr)
@@ -45,12 +79,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - reads 
         return None if media is None else media.media_session_id
 
     recorder = TraceRecorder(JsonLinesTraceSink(arguments.trace), role=TraceRole.OBSERVER)
-    outcome = IndependentObserver(
-        arguments.gate,
+    outcome = build_observer(
+        arguments,
         read_session,
         recorder,
-        timeout_seconds=arguments.timeout,
-        on_hold_seen=lambda: print("hold seen on the captured session: start the other video now"),
+        lambda: print("hold seen on the captured session: start the other video now"),
     ).observe()
     print(f"observer outcome: {outcome.value}")
     return 0 if outcome.value == "released" else 1

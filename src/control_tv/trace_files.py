@@ -45,17 +45,31 @@ _FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC"
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
-def _private_directory_fd(path: Path) -> int:
-    """Open ``path`` without following any symbolic component.
+# The existing directories above an evidence directory are the caller's: they may be links (on
+# Android `/data/user/0` is a link to `/data/data`) or search-only (`/data`), so the deepest one is
+# opened once, following links, with search permission only.
+_ANCHOR_FLAGS = getattr(os, "O_PATH", os.O_RDONLY) | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
 
-    Missing components are created mode 0700 relative to an already-open parent. The returned
-    descriptor is the final directory after checking its owner and permissions, which prevents a
-    path component from being exchanged between validation and the open used by callers.
-    """
+
+def _private_directory_fd(path: Path) -> int:
+    """A descriptor on ``path``, a private directory of this user, created 0700 when missing.
+
+    The deepest directory that already exists above ``path`` is opened once (following links,
+    search permission only). From that descriptor, every missing component is created 0700 and
+    every component - ``path`` itself included - is opened relative to its parent's descriptor
+    without following links, then ``path`` is checked: owned by this user, no access for group
+    or others. A component turned into a link, or exchanged after the check, is refused: callers
+    only use the returned descriptor."""
     absolute = Path(os.path.abspath(path))
-    descriptor = os.open(absolute.anchor, _DIRECTORY_FLAGS)
+    parts = absolute.parts
+    if len(parts) < 2:
+        raise TraceConfigurationError(f"{path} cannot be an evidence directory")
+    split = len(parts) - 1  # `path` itself is never the anchor: it is opened without links
+    while split > 1 and not os.path.isdir(Path(*parts[:split])):
+        split -= 1
+    descriptor = os.open(Path(*parts[:split]), _ANCHOR_FLAGS)
     try:
-        for component in absolute.parts[1:]:
+        for component in parts[split:]:
             try:
                 child = os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptor)
             except FileNotFoundError:
@@ -77,14 +91,19 @@ def _private_directory_fd(path: Path) -> int:
         raise
 
 
+def is_request_id(value: str) -> bool:
+    """Whether `value` can name a hold: what remotes generate (letters, digits, dashes, 1-64)."""
+    return _REQUEST_ID.fullmatch(value) is not None
+
+
 def private_directory(path: Path) -> Path:
-    """`path` as a private directory: created 0700 when missing; refused when it is a symbolic
-    link, not a directory, or accessible by group or others."""
+    """`path` as a private directory: created 0700 when missing; refused when it (or a component
+    created for it) is a symbolic link, not a directory, or accessible by group or others."""
     try:
         descriptor = _private_directory_fd(path)
     except OSError as error:
         raise TraceConfigurationError(
-            f"{path} must be a real directory with no symbolic path component"
+            f"{path} must be a real directory, not a link, under existing directories"
         ) from error
     os.close(descriptor)
     return path
@@ -94,18 +113,22 @@ def _open_private(path: Path, flags: int) -> int:
     """A file descriptor on a regular file owned by this user, mode 0600, never through a link."""
     directory = _private_directory_fd(path.parent)
     try:
-        descriptor = os.open(path.name, _FILE_FLAGS | flags, 0o600, dir_fd=directory)
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
-                raise OSError(f"{path.name} is not a regular file of this user")
-            os.fchmod(descriptor, 0o600)
-        except BaseException:
-            os.close(descriptor)
-            raise
-        return descriptor
+        return _open_private_at(directory, path.name, flags)
     finally:
         os.close(directory)
+
+
+def _open_private_at(directory: int, name: str, flags: int) -> int:
+    descriptor = os.open(name, _FILE_FLAGS | flags, 0o600, dir_fd=directory)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            raise OSError(f"{name} is not a regular file of this user")
+        os.fchmod(descriptor, 0o600)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
 def _open_private_read(path: Path) -> int:
@@ -140,13 +163,15 @@ def _unlink_private(directory: Path, *names: str) -> None:
 
 
 def _write_atomically(path: Path, text: str) -> None:
-    temporary = path.with_name(f".{path.name}.tmp")
-    descriptor = _open_private(temporary, os.O_TRUNC)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        stream.write(text)
+    """Write `text` to a private temporary file, then rename it over `path`, both through one
+    directory descriptor (the directory cannot be exchanged between the write and the rename)."""
+    temporary = f".{path.name}.tmp"
     directory = _private_directory_fd(path.parent)
     try:
-        os.replace(temporary.name, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+        descriptor = _open_private_at(directory, temporary, os.O_TRUNC)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
     finally:
         os.close(directory)
 

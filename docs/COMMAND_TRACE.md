@@ -68,7 +68,10 @@ npx --prefix ui tauri dev
 ```
 
 The directories are created 0700 (an existing directory that others can read is refused) and the
-files 0600, never through a symbolic link. A trace without a valid role is refused at startup.
+files 0600, never through a symbolic link: the existing directories above the evidence directory
+are the caller's and may be links (Android's `filesDir` is under the `/data/user/0` link), but the
+evidence directory, every directory created for it and every file are opened relative to an open
+descriptor without following links. A trace without a valid role is refused at startup.
 **The hold is refused in the packaged release bridge**: run C6 from the development mode; the
 installed `.deb` can still record a trace (for C7) without a hold.
 
@@ -95,8 +98,12 @@ Ubuntu, and Android is used for C7.
 
    ```bash
    CONTROL_TV_OBSERVED_DEVICE=<stable device id> python3 scripts/acceptance_observer.py \
-     --gate .ai-private/hardware/c6/gate --trace .ai-private/hardware/c6/observer.jsonl
+     --gate .ai-private/hardware/c6/gate --trace .ai-private/hardware/c6/observer.jsonl \
+     [--request-id <id>]
    ```
+
+   With `--request-id` it observes that held request only. Without it, it observes the single
+   held command and refuses to choose when several are held (another remote's hold).
 
 3. Press Pause on Ubuntu: the command is sent once, then its confirmation is held.
 4. When the observer prints "hold seen on the captured session: start the other video now", start
