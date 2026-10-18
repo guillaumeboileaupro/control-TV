@@ -193,6 +193,17 @@ jobs:
       - name: Build, smoke and package the Linux release
         run: python3 scripts/dev.py release-deb
 
+      # Binds this package to its commit and run: version, architecture, package SHA-256 and
+      # the SHA-256 of the application binary inside it (what an installed system is checked
+      # against by the acceptance runner; every package is version 0.1.0).
+      - name: Record the package provenance
+        run: |
+          set -o pipefail
+          .venv/bin/python scripts/acceptance_identity.py deb-provenance \
+            --deb dist/control-tv_*_amd64.deb --commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" --output dist/provenance.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       # The archive-scanner regressions need PyInstaller, which only this job installs: here
       # they must run, not skip.
       - name: Run the packaging tests with PyInstaller required
@@ -221,6 +232,7 @@ jobs:
             dist/control-tv_*_amd64.deb
             dist/python-bridge.inventory.tsv
             dist/SHA256SUMS
+            dist/provenance.json
           retention-days: 14
           if-no-files-found: error
 
@@ -298,24 +310,57 @@ jobs:
 
       # android-python (pure wheels hash-checked against uv.lock, built offline with the
       # locked backends), then the debug arm64 APK with the embedded Python.
+      # With the two repository secrets set, the debug APK is signed with the stable test key
+      # (docs/ANDROID_TEST_SIGNING.md), so a newer build updates an installed one in place.
+      # Without them (for example a pull request from a fork) the runner's own debug key signs,
+      # which changes on every run. The keystore is written with mode 0600 to the runner's
+      # temporary directory and removed when the step ends; no secret is ever printed.
       - name: Build the arm64 debug APK
-        run: python3 scripts/dev.py android-apk
+        env:
+          KEYSTORE_B64: ${{ secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_B64 }}
+          CONTROL_TV_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_PASSWORD }}
+        run: |
+          key="$RUNNER_TEMP/control-tv-test.p12"
+          trap 'rm -f "$key"' EXIT
+          if [ -n "$KEYSTORE_B64" ]; then
+            (umask 077 && printf '%s' "$KEYSTORE_B64" | base64 -d > "$key")
+            export CONTROL_TV_ANDROID_KEYSTORE="$key"
+          fi
+          unset KEYSTORE_B64
+          python3 scripts/dev.py android-apk
 
       - name: Run the Android JVM unit tests (Kotlin bridge relay, multicast lock)
         working-directory: src-tauri/gen/android
         run: ./gradlew --console=plain :app:testArm64DebugUnitTest
 
-      - name: Record the APK checksum
+      # Fails when the stable key was used but the APK is not signed by the pinned certificate
+      # (a replaced key never passes), or when a push to main is not signed by it once a
+      # certificate is pinned. Writes the APK provenance (commit, run, SHA-256, signer) next to it.
+      - name: Record the APK checksum and signing identity
+        env:
+          STABLE_KEY_USED: ${{ secrets.CONTROL_TV_ANDROID_TEST_KEYSTORE_B64 != '' }}
         run: |
+          set -o pipefail  # a failed check must not hide behind tee
           apk=src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
           sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
           stat -c '%s bytes' "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          flags=()
+          if [ "$STABLE_KEY_USED" = "true" ]; then flags+=(--stable-key-used); fi
+          if [ "${{ github.event_name }}" = "push" ]; then flags+=(--require-stable); fi
+          .venv/bin/python scripts/android_test_signing.py verify-apk --apk "$apk" \
+            --apksigner "$apksigner" "${flags[@]}" \
+            --commit "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --provenance-output "$(dirname "$apk")/apk-provenance.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the debug APK (build artifact, not a release)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: control-tv-android-arm64-debug
-          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/apk-provenance.json
           retention-days: 7
           if-no-files-found: error
 
