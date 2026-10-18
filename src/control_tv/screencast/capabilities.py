@@ -92,8 +92,27 @@ class FfmpegCapabilityProbe:
 
 def select_encoder(request: EncodeRequest, capabilities: EncoderCapabilities) -> EncoderChoice:
     """The encoder for `request` on this host, or `EncoderUnavailableError` saying why not."""
-    software = SoftwareX264(crf=request.crf)
-    if request.preference is EncoderPreference.SOFTWARE_ONLY:
+    return select_plan(
+        request.preference,
+        request.device,
+        qp=request.qp,
+        crf=request.crf,
+        capabilities=capabilities,
+    )
+
+
+def select_plan(
+    preference: EncoderPreference,
+    device: VaapiDevice,
+    *,
+    qp: int,
+    crf: int,
+    capabilities: EncoderCapabilities,
+) -> EncoderChoice:
+    """The one selection policy, shared by the bounded D0 encode and the D1 live encoder: VA-API
+    constant QP when usable, libx264 only when the preference allows it (with its reason)."""
+    software = SoftwareX264(crf=crf)
+    if preference is EncoderPreference.SOFTWARE_ONLY:
         if SOFTWARE_ENCODER not in capabilities.encoders:
             raise EncoderUnavailableError("FFmpeg has no libx264 encoder")
         return EncoderChoice(software)
@@ -102,11 +121,11 @@ def select_encoder(request: EncodeRequest, capabilities: EncoderCapabilities) ->
     if VAAPI_ENCODER not in capabilities.encoders:
         missing = "FFmpeg has no h264_vaapi encoder"
     elif not capabilities.vaapi_device_usable:
-        missing = f"the VA-API render node {request.device.path} is missing or not accessible"
+        missing = f"the VA-API render node {device.path} is missing or not accessible"
     if missing is None:
-        return EncoderChoice(VaapiCqp(device=request.device, qp=request.qp))
+        return EncoderChoice(VaapiCqp(device=device, qp=qp))
 
-    if request.preference is EncoderPreference.VAAPI_ONLY:
+    if preference is EncoderPreference.VAAPI_ONLY:
         raise EncoderUnavailableError(f"{missing}; the software fallback was not allowed")
     if SOFTWARE_ENCODER not in capabilities.encoders:
         raise EncoderUnavailableError(f"{missing}, and FFmpeg has no libx264 fallback either")

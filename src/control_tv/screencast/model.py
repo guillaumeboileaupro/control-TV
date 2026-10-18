@@ -17,6 +17,10 @@ _RENDER_NODE = re.compile(r"/dev/dri/renderD[0-9]{3}")
 # even if nothing stops it (a parent killed with SIGKILL cannot stop its child).
 MAX_DURATION_SECONDS = 120
 MAX_OUTPUT_BYTES = 256 * 1024 * 1024
+# A live (HLS) encode ends by itself after at most this long (the D1 session bound).
+MAX_LIVE_SESSION_SECONDS = 3600
+HLS_PLAYLIST = "index.m3u8"
+HLS_SEGMENT_PATTERN = "segment-%05d.ts"
 
 
 class ScreenCastError(Exception):
@@ -231,3 +235,20 @@ class EncodeResult:
     output: Path
     output_bytes: int
     elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class HlsSegmenting:
+    """How a live encode is cut for HLS: segment length and how many segments the playlist keeps
+    (older segments are deleted, so the output stays bounded however long the session runs)."""
+
+    segment_seconds: int = 2
+    playlist_size: int = 6
+
+    def __post_init__(self) -> None:
+        _require_int("segment_seconds", self.segment_seconds, 1, 10)
+        _require_int("playlist_size", self.playlist_size, 3, 20)
+
+    def keyframe_interval(self, fps: int) -> int:
+        """Frames between key frames: one per segment, so every segment starts with one."""
+        return fps * self.segment_seconds
