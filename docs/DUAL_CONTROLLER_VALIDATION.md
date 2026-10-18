@@ -1,6 +1,6 @@
 # Ubuntu and Android remotes on one TV: hardware validation protocol
 
-Issue #37, phase 1, item R of `DEVELOPMENT_PLAN.md`. The contract below is pinned by automated tests on a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`, `tests/test_dual_controller.py`). Those tests are simulator evidence only. This protocol is how the owner checks the same contract on a real TV with the real Ubuntu application and the real Android app. It has **not been run**. Nothing in it may be marked validated before it has been, step by step, with the evidence recorded.
+Issue #37, phase 1, item R of `DEVELOPMENT_PLAN.md`. The contract below is pinned by automated tests on a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`, `tests/test_dual_controller.py`). Those tests are simulator evidence only. This protocol is how the owner checks the same contract on a real TV with the real Ubuntu application and the real Android app, **by hand**: the acceptance runner has no adapter for these steps and reports them `BLOCKED` (session order and record template: [MANUAL_ACCEPTANCE_PROTOCOL.md](MANUAL_ACCEPTANCE_PROTOCOL.md)). It has **not been run**. Nothing in it may be marked validated before it has been, step by step, with the evidence recorded.
 
 ## Contract under test
 
@@ -12,7 +12,7 @@ Not expected: synchronization between the two remotes, a periodic refresh (neith
 
 ## Equipment and builds
 
-- The Ubuntu application from `main` (development mode `npx --prefix ui tauri dev`, or the installed release `.deb`), and the Android app (APK) built from `main` (`python3 scripts/dev.py android-apk`): **not** the home-screen widget of PR #33, which is not merged and is not part of this protocol.
+- The Ubuntu application from `main` (development mode `npx --prefix ui tauri dev`, or the installed release `.deb`), and the Android app (APK) built from `main` (`python3 scripts/dev.py android-apk`, or the CI artifact), each identified by its commit and SHA-256 (see [MANUAL_ACCEPTANCE_PROTOCOL.md](MANUAL_ACCEPTANCE_PROTOCOL.md), "identify the builds"). The Android home-screen widget (PR #33, merged into `main` on 2026-10-13) is part of the APK; R1-R4 and C1-C7 are run from the two **apps**, and the widget's own commands are checked separately (MANUAL_ACCEPTANCE_PROTOCOL.md, sessions 3, 4d and 6).
 - One TV (Chromecast or Google TV), the computer and the phone on the same Wi-Fi network. For playback steps, media playing on the TV, started from any usual sender app (for example YouTube on the phone), and its name noted only in the private record.
 - Optional, for the evidence: `adb logcat -s control-tv` on the Android side, and the Ubuntu application's terminal output in development mode.
 

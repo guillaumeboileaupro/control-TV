@@ -18,6 +18,22 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// The stable test signing identity (docs/ANDROID_TEST_SIGNING.md): with both variables set,
+// debug builds are signed with the `control-tv-test` key, so a newer build updates an installed
+// one in place (its data, preferences and widget are kept). With neither, the builder's own debug
+// key is used, which differs from machine to machine and on every CI run. The values come from
+// the environment only; nothing here prints them.
+val testKeystore = System.getenv("CONTROL_TV_ANDROID_KEYSTORE").orEmpty()
+val testKeystorePassword = System.getenv("CONTROL_TV_ANDROID_KEYSTORE_PASSWORD").orEmpty()
+if (testKeystore.isEmpty() != testKeystorePassword.isEmpty()) {
+    throw GradleException(
+        "set both CONTROL_TV_ANDROID_KEYSTORE and CONTROL_TV_ANDROID_KEYSTORE_PASSWORD, or neither"
+    )
+}
+if (testKeystore.isNotEmpty() && !file(testKeystore).isFile) {
+    throw GradleException("CONTROL_TV_ANDROID_KEYSTORE does not name a keystore file")
+}
+
 android {
     compileSdk = 36
     namespace = "io.github.guillaumeboileaupro.controltv"
@@ -33,8 +49,19 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    signingConfigs {
+        if (testKeystore.isNotEmpty()) {
+            create("controlTvTest") {
+                storeFile = file(testKeystore)
+                storePassword = testKeystorePassword
+                keyAlias = "control-tv-test"
+                keyPassword = testKeystorePassword
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
+            signingConfigs.findByName("controlTvTest")?.let { signingConfig = it }
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
