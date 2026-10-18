@@ -679,3 +679,168 @@ def test_closed_reports_the_definitive_shutdown() -> None:
     assert rig.service.closed is False
     rig.service.close()
     assert rig.service.closed is True
+
+
+# A close() that timed out behind a stop() is carried out when the stop ends -------------------
+
+
+@dataclass
+class ScriptedReceiver(FakeReceiver):
+    """A receiver whose successive stops raise the scripted errors (None: success); the first
+    stop waits for `stop_gate`, so a test can hold the lifecycle lock inside it."""
+
+    stop_errors: list[BaseException | None] = field(default_factory=list)
+    stop_gate: threading.Event = field(default_factory=threading.Event)
+    stop_entered: threading.Event = field(default_factory=threading.Event)
+    stops: int = 0
+
+    def stop(self, session: ReceiverSession) -> None:
+        self.events.append("receiver.stop")
+        self.stops += 1
+        if self.stops == 1:
+            self.stop_entered.set()
+            assert self.stop_gate.wait(5.0)
+        error = self.stop_errors.pop(0) if self.stop_errors else None
+        if error is not None:
+            raise error
+        self.active.discard(session.handle)
+
+
+def stop_behind_close(
+    *stop_errors: BaseException | None, closes: int = 1, holder: str = "stop"
+) -> tuple[StreamingSessionService, ScriptedReceiver, Rig, list[BaseException]]:
+    """`holder` (stop() or a first close()) holds the lock inside the receiver's stop; close()
+    times out meanwhile (`closes` times); then the holder goes on with the scripted results.
+    Returns what the holder raised."""
+    rig = Rig()
+    receiver = ScriptedReceiver(rig.events, stop_errors=list(stop_errors))
+    service = StreamingSessionService(rig.encoder, rig.publisher, receiver, close_timeout=0.01)
+    service.start(REQUEST)
+    raised: list[BaseException] = []
+
+    def stop() -> None:
+        try:
+            if holder == "stop":
+                service.stop()
+            else:
+                service.close()  # finds the lock free: it is the holder
+        except BaseException as error:
+            raised.append(error)
+
+    worker = threading.Thread(target=stop)
+    worker.start()
+    assert receiver.stop_entered.wait(5.0)
+    for _ in range(closes):
+        service.close()  # cannot wait: deferred to the end of the stop
+        assert "close() is pending" in (service.last_error or "")
+    receiver.stop_gate.set()
+    worker.join(5.0)
+    assert not worker.is_alive()
+    return service, receiver, rig, raised
+
+
+def test_a_close_that_timed_out_behind_a_failing_stop_retries_when_the_stop_ends() -> None:
+    """Regression: stop() held the lock, close() timed out, the stop's receiver cleanup failed and
+    the resource stayed unreleased with no retry although close() had been requested."""
+    service, receiver, rig, raised = stop_behind_close(OSError("receiver busy"), None)
+
+    assert len(raised) == 1 and isinstance(raised[0], StreamCleanupError)  # the stop's own result
+    assert receiver.stops == 2  # the stop, then exactly one retry for the deferred close
+    assert rig.events.count("publisher.stop") == 1 and rig.events.count("encoder.stop") == 1
+    assert unreleased(service) == () and state(service) is SessionState.STOPPED
+    assert service.last_error is None
+    assert receiver.active == set() and not rig.publisher.active and not rig.encoder.active
+
+
+def test_a_persistent_failure_keeps_the_resource_and_retries_only_once() -> None:
+    service, receiver, _, raised = stop_behind_close(
+        OSError("receiver busy"), OSError("still busy"), closes=2
+    )
+
+    assert len(raised) == 1 and isinstance(raised[0], StreamCleanupError)
+    assert receiver.stops == 2  # two deferred closes, one retry, no loop
+    assert unreleased(service) == ("receiver",) and state(service) is SessionState.FAILED
+    assert "deferred close() retry: receiver cleanup failed: OSError" in (service.last_error or "")
+    assert receiver.active == {"receiver-1"}
+
+    service.stop()  # the lock is free again; a later retry stops only what is still owned
+    assert receiver.stops == 3 and unreleased(service) == ()
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt(), SystemExit(4)])
+def test_an_interrupted_stop_still_runs_the_deferred_close_then_re_raises(
+    interruption: BaseException,
+) -> None:
+    service, receiver, _, raised = stop_behind_close(interruption, None)
+
+    assert raised == [interruption]
+    assert receiver.stops == 2 and unreleased(service) == ()
+    assert state(service) is SessionState.STOPPED
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt(), SystemExit(5)])
+def test_an_interruption_during_the_deferred_retry_wins_and_keeps_the_resource(
+    interruption: BaseException,
+) -> None:
+    service, receiver, _, raised = stop_behind_close(OSError("receiver busy"), interruption)
+
+    assert raised == [interruption]  # an interruption is never swallowed by a cleanup error
+    assert isinstance(raised[0].__cause__, StreamCleanupError)
+    assert receiver.stops == 2 and unreleased(service) == ("receiver",)
+    assert state(service) is SessionState.FAILED
+    service.stop()  # the lock was released despite the interruption
+    assert unreleased(service) == ()
+
+
+def test_an_interruption_in_flight_is_kept_when_the_retry_is_interrupted_too() -> None:
+    service, receiver, _, raised = stop_behind_close(KeyboardInterrupt(), SystemExit(6))
+
+    assert len(raised) == 1 and isinstance(raised[0], KeyboardInterrupt)
+    assert receiver.stops == 2 and unreleased(service) == ("receiver",)
+
+
+class _LockThatTimesOutOnce:
+    """The lifecycle lock, except the first bounded wait reports a timeout although the call in
+    progress ends just then: the race close() must not lose."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._timed_out = False
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if timeout >= 0 and not self._timed_out:
+            self._timed_out = True
+            return False
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+
+def test_a_close_whose_wait_expires_as_the_call_ends_carries_itself_out() -> None:
+    rig = Rig()
+    rig.service.start(REQUEST)
+    rig.service._lock = _LockThatTimesOutOnce()  # type: ignore[assignment]
+
+    rig.service.close()
+
+    assert rig.events[-3:] == ["receiver.stop", "publisher.stop", "encoder.stop"]
+    assert state(rig.service) is SessionState.STOPPED and unreleased(rig.service) == ()
+    assert rig.service.last_error is None  # not left "pending": nobody else would run it
+    rig.service.stop()  # the lock was released
+    rig.assert_no_resources()
+
+
+def test_a_close_holding_the_lock_runs_a_second_deferred_close_and_re_raises_its_interruption() -> (
+    None
+):
+    service, receiver, _, raised = stop_behind_close(
+        OSError("receiver busy"), KeyboardInterrupt(), holder="close"
+    )
+
+    # The first close() swallows its own cleanup failure (recorded), the deferred retry is
+    # interrupted: the interruption reaches the caller, the lock is released.
+    assert len(raised) == 1 and isinstance(raised[0], KeyboardInterrupt)
+    assert receiver.stops == 2 and unreleased(service) == ("receiver",)
+    service.stop()
+    assert unreleased(service) == ()

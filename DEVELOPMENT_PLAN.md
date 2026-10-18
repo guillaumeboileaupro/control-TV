@@ -686,7 +686,9 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
     ([`docs/SCREENCAST_D1_RECEIVER_SPIKE.md`](docs/SCREENCAST_D1_RECEIVER_SPIKE.md)); review
     follow-ups: a concurrent `close()` is recorded and carried out (no later start, an in-progress
     start cancels itself), and an interruption during cleanup no longer skips steps or leaves
-    `stopping` (unreleased resources stay owned and are retried once);
+    `stopping` (unreleased resources stay owned and are retried once); a `close()` that timed
+    out behind another call is carried out by that call before it releases the lock (one
+    retry of what is still owned, interruptions re-raised, no loop);
   - [ ] after PR #81 (merged): adapt the D0 encoder to the D1 `ScreenEncoder` port without duplicating its
     FFmpeg or process-lifecycle implementation;
   - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
