@@ -723,8 +723,14 @@ unless the owner reprioritizes. Nothing below is implemented or validated.
     `stopping` (unreleased resources stay owned and are retried once); a `close()` that timed
     out behind another call is carried out by that call before it releases the lock (one
     retry of what is still owned, interruptions re-raised, no loop);
-  - [ ] after PR #81 (merged): adapt the D0 encoder to the D1 `ScreenEncoder` port without duplicating its
-    FFmpeg or process-lifecycle implementation;
+  - [x] D0 encoder adapted to the D1 `ScreenEncoder` port (`D0LiveEncoder`, branch
+    `feat/screencast-d1-encoder-adapter`): D0 selection, argument builders and process groups
+    reused, live HLS arguments (`live_hls_command`, real-time synthetic input, bounded session,
+    rolling segments), unreleased streams kept and retried, idempotent and serialized `stop()`
+    (a released stream is confirmed, never released twice), a started process never left
+    untracked by an interrupted start, the encoder preference normalized (a software-only
+    request never selects VA-API); synthetic only, no capture, listener
+    or receiver; three port gaps documented in the D1 spike doc;
   - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
     Ubuntu-to-Freebox duplication;
 - [ ] D2: extension (virtual monitor), guaranteed removal;

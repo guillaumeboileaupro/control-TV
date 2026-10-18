@@ -109,6 +109,8 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
     orchestration synthétique et nettoyage testés sans capture, réseau ni TV ; comparaison HLS,
     Cast Streaming et Sunshine/Moonlight documentée sans revendiquer de compatibilité Freebox.
     Suites de revue : `close()` concurrent jamais perdu, nettoyage poursuivi malgré une interruption.
+    Adaptateur d'encodage D0 → `ScreenEncoder` (HLS en direct, source synthétique) : branche
+    `feat/screencast-d1-encoder-adapter` ; publisher HLS et récepteur Freebox non commencés.
   - [ ] Après fusion et revue de #81, adapter D0 au port d'encodage puis choisir un récepteur sur
     preuve matérielle autorisée ; la duplication réelle reste non validée.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.

@@ -126,14 +126,63 @@ translation layer, not a second engine:
 | `ScreenEncoder.start/stop`                                            | `select_encoder`, `encoder_arguments` (VA-API CQP, explicit x264 fallback), `SubprocessRunner` / `stop_process` (whole process group, unstoppable groups kept) | D0's `encode_command` writes a bounded MP4; a live output (HLS segments) needs a new muxer argument builder beside it                     |
 | `ScreenEncoder.stop` failing                                          | D0's kept, unreaped group (`unstoppable_pids`)                                                                                                                 | maps to D1's `unreleased` encoder: retried by `stop()`/`close()`                                                                          |
 
+### The live encoder adapter (`screen_streaming.h264_encoder.D0LiveEncoder`)
+
+Implemented on top of D0 without a second engine:
+
+- **selection:** D0's one policy, now `select_plan` (`select_encoder` delegates to it): VA-API
+  constant QP when usable, libx264 only when `LiveEncoderSettings.preference` allows it, with its
+  reason (`LiveOutput.fallback_reason`); the preference is normalized to the `EncoderPreference`
+  member (its exact value as a plain string is accepted, anything else - other case, spaces,
+  another enum with the same value - is refused), and `select_plan` refuses anything but a
+  member, so a software-only request can never select VA-API;
+- **arguments:** `screencast.ffmpeg.live_hls_command`, beside `encode_command`, reuses
+  `source_arguments` and `encoder_arguments` and adds: the synthetic input read in real time
+  (`-re`), the session bound (`-t`, at most 3600 s), H.264 High, a key frame at the start of each
+  segment (`-g`/`-keyint_min` = fps × segment length, no scene-cut key frames for libx264), no
+  B-frames, HLS MPEG-TS segments in a rolling playlist whose old segments are deleted
+  (`HlsSegmenting`: 1–10 s segments, 3–20 kept);
+- **processes:** D0's `SubprocessRunner` (own process group) and `stop_process` (TERM, then
+  KILL, never reaped while a member runs);
+- **ownership:** each stream is tracked until its group is released **and** its private 0700
+  directory removed; a stop that cannot finish (group surviving SIGKILL, directory not
+  removable, interruption) keeps it in `unreleased` and raises, so the D1 service keeps the
+  encoder owned and a retry only redoes what is left; `close()` attempts every stream;
+- **start ownership:** the stream is registered inside the start's guard; a start that fails
+  or is interrupted after FFmpeg started stops it, or, when it cannot (survives SIGKILL,
+  another interruption), keeps it in `unreleased` with its output for `stop()`/`close()`: a
+  started process is never untracked; an output directory that cannot be removed is kept the
+  same way (the process is not stopped again) and the start's own exception is re-raised;
+- **idempotent stop** (the `ScreenEncoder` contract): stopping a stream already released
+  succeeds without touching anything, so a service interrupted after the release but before
+  recording it confirms it on retry instead of failing forever; concurrent stops of one stream
+  are serialized and release it once; a handle the encoder never issued is still refused;
+- **no capture:** D1's `CapturedVideo` is refused until a capture adapter exists.
+
+Measured on the owner's machine with the synthetic picture only (no capture, no network): a 3 s
+1080p30 VA-API live session ran 3.3 s and wrote a terminated playlist with 3 segments, then was
+cleaned; without `-re` the same session had been produced in 0.6 s, which is why the input is
+paced. The tests run the same flow with libx264 when FFmpeg is installed, otherwise skip it.
+
+**Contract gaps of the D1 ports (documented, not changed here):**
+
+1. `ScreenEncoder.start(source, profile)` does not receive the session lifetime
+   (`PublicationConfig.max_session_seconds`); the adapter applies its own
+   `LiveEncoderSettings.max_session_seconds`. The composition root must keep it at or below the
+   publication bound, or the port should carry the bound.
+2. `EncodedStream` is opaque: a publisher needs the HLS directory and playlist, today available
+   only from the concrete adapter (`D0LiveEncoder.output(stream)`). A small lookup port (or an
+   output field on `EncodedStream`) would keep the publisher independent of the adapter.
+3. The port has no health call: when FFmpeg ends by itself (session bound reached, or a
+   failure), the service still reports RUNNING; `D0LiveEncoder.ended(stream)` exists, but the
+   service cannot see it through the port.
+
 Remaining:
 
-1. write the D1 `ScreenEncoder` adapter on top of those D0 pieces (no copy of FFmpeg construction
-   or process management), with a live muxer builder and the D1 session bound;
-2. decide whether D0 must evolve from a bounded file encode to a supervised live H.264 output;
-3. implement one publisher/receiver pair only after the owner chooses an authorized hardware spike;
-4. add bridge/UI integration only after the chosen path has receiver evidence;
-5. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
+1. resolve the three contract gaps above when the publisher is written;
+2. implement one publisher/receiver pair only after the owner chooses an authorized hardware spike;
+3. add bridge/UI integration only after the chosen path has receiver evidence;
+4. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
    physically observed results distinct.
 
 Estimated remaining D1 effort after D0 integration: HLS MVP **12–20 hours** if the Freebox accepts
