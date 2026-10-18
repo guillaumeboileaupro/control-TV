@@ -223,27 +223,36 @@ class D0LiveEncoder:
     def _abandon_start(
         self, handle: str, output: LiveOutput, process: ManagedProcess | None
     ) -> None:
-        """Undo a failed or interrupted start. A process that started is stopped; when it cannot
-        be (survives SIGKILL, signal error, another interruption) it is registered instead, so it
-        stays in `unreleased` for `stop()`/`close()` with its output: never untracked."""
+        """Undo a failed or interrupted start; the caller re-raises its own exception. A process
+        that started is stopped, then the output is removed. Whatever cannot be released (a
+        process surviving SIGKILL, a signal error, an output that cannot be removed, another
+        interruption) stays registered, so it is in `unreleased` and `stop()`/`close()` retry
+        exactly what is left: never untracked, never released twice. A removal failure is kept
+        for that retry instead of replacing the caller's exception."""
         with self._lock:
             session = self._sessions.get(handle)
-            registered = session is not None and session.process is process
-        if process is not None:
+        if session is None or session.process is not process:
+            session = _LiveSession(output, process)
+        try:
+            if session.process is not None:
+                status = stop_process(session.process, float(self._settings.stop_grace_seconds))
+                if status is None:
+                    self._register(handle, session)
+                    return
+                session.process = None  # released: a retry only removes the output
             try:
-                status = stop_process(process, float(self._settings.stop_grace_seconds))
-            except BaseException:
-                if not registered:
-                    self._register(handle, _LiveSession(output, process))
-                raise
-            if status is None:
-                if not registered:
-                    self._register(handle, _LiveSession(output, process))
+                shutil.rmtree(output.directory)
+            except FileNotFoundError:
+                pass  # already gone: nothing left to release
+            except OSError:
+                self._register(handle, session)
                 return
+        except BaseException:
+            self._register(handle, session)
+            raise
         with self._lock:
-            if registered:
+            if self._sessions.get(handle) is session:
                 del self._sessions[handle]
-        shutil.rmtree(output.directory, ignore_errors=True)
 
     def stop(self, stream: EncodedStream) -> None:
         """Release the stream's process group, then its output. Idempotent, as `ScreenEncoder`

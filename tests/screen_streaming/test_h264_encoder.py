@@ -9,7 +9,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -911,3 +911,97 @@ def test_an_interruption_right_after_registration_is_undone_once(
         runner.group.survives = False
         live.stop(EncodedStream("live-1"))
     assert held(live) == () and runner.group.releases == 1 and nothing_left(tmp_path)
+
+
+# The output of an abandoned start is never left untracked ---------------------------------
+
+
+def refusing_rmtree(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
+    """Make directory removal fail (busy, permission) until the returned callable restores it."""
+    real = shutil.rmtree
+
+    def refuse(path: object, *args: object, ignore_errors: bool = False, **kwargs: object) -> None:
+        if ignore_errors:
+            return  # like the real rmtree: the failure is swallowed and the directory stays
+        raise PermissionError("busy")
+
+    monkeypatch.setattr(shutil, "rmtree", refuse)
+    return lambda: monkeypatch.setattr(shutil, "rmtree", real)
+
+
+@pytest.mark.parametrize(
+    "error", [KeyboardInterrupt(), SystemExit(11), RuntimeError("bug")], ids=["kbi", "exit", "bug"]
+)
+def test_an_output_that_cannot_be_removed_after_an_abandoned_start_stays_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    """Regression: the session was dropped before its directory was removed with errors
+    ignored, so a failed removal leaked the HLS directory with nothing left to retry it."""
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(error)  # type: ignore[assignment]
+    restore = refusing_rmtree(monkeypatch)
+
+    with pytest.raises(type(error)) as raised:  # the initial exception, never the removal's
+        live.start(SOURCE, PROFILE)
+    assert raised.value is error
+
+    assert runner.group.releases == 1  # the process was stopped once
+    assert held(live) == ("live-1",) and not nothing_left(tmp_path)  # output still tracked
+
+    restore()
+    live.close()  # application exit retries only the removal
+    assert held(live) == () and nothing_left(tmp_path)
+    assert runner.group.releases == 1 and runner.group.signals == [signal.SIGTERM]
+    live.stop(EncodedStream("live-1"))  # idempotent afterwards
+    assert runner.group.releases == 1
+
+
+def test_an_output_that_cannot_be_removed_when_the_runner_failed_stays_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner(error=OSError("exec failed"))
+    live = encoder(tmp_path, runner)
+    restore = refusing_rmtree(monkeypatch)
+
+    with pytest.raises(StreamStartError, match="could not start: OSError"):
+        live.start(SOURCE, PROFILE)
+    assert held(live) == ("live-1",) and not nothing_left(tmp_path)
+
+    restore()
+    live.stop(EncodedStream("live-1"))
+    assert held(live) == () and nothing_left(tmp_path)
+
+
+def test_a_persistent_removal_failure_keeps_the_output_and_close_reports_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(KeyboardInterrupt())  # type: ignore[assignment]
+    refusing_rmtree(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        live.start(SOURCE, PROFILE)
+    for _ in range(2):
+        with pytest.raises(StreamCleanupError, match="could not be removed: PermissionError"):
+            live.close()
+        assert held(live) == ("live-1",) and runner.group.releases == 1  # never stopped twice
+
+
+def test_an_output_already_gone_when_a_start_is_abandoned_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live._lock = FailingOnceLock(KeyboardInterrupt())  # type: ignore[assignment]
+    real = shutil.rmtree
+
+    def already_gone(path: Path, *args: object, **kwargs: object) -> None:
+        real(path)
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", already_gone)
+    with pytest.raises(KeyboardInterrupt):
+        live.start(SOURCE, PROFILE)
+    assert held(live) == () and nothing_left(tmp_path) and runner.group.releases == 1

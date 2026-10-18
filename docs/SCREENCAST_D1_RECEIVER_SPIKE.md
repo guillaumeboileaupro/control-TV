@@ -151,7 +151,8 @@ Implemented on top of D0 without a second engine:
 - **start ownership:** the stream is registered inside the start's guard; a start that fails
   or is interrupted after FFmpeg started stops it, or, when it cannot (survives SIGKILL,
   another interruption), keeps it in `unreleased` with its output for `stop()`/`close()`: a
-  started process is never untracked;
+  started process is never untracked; an output directory that cannot be removed is kept the
+  same way (the process is not stopped again) and the start's own exception is re-raised;
 - **idempotent stop** (the `ScreenEncoder` contract): stopping a stream already released
   succeeds without touching anything, so a service interrupted after the release but before
   recording it confirms it on retry instead of failing forever; concurrent stops of one stream
