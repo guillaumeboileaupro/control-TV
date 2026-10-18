@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from enum import StrEnum
 from pathlib import Path
 
 from control_tv.command_trace import (
@@ -29,6 +30,18 @@ OBSERVER = TraceRole.OBSERVER.value
 _TOKEN = re.compile(r"[0-9a-f]{32}")
 
 Verdict = tuple[bool, str]
+
+
+class Classification(StrEnum):
+    """PASS; FAIL: a violation demonstrated by complete evidence; BLOCKED: no usable evidence
+    (absent, incomplete or uncorrelated), which is never a hardware failure."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+    BLOCKED = "BLOCKED"
+
+
+Classified = tuple[Classification, str]
 
 
 def _optional_integer(raw: dict[str, object], key: str) -> int | None:
@@ -121,22 +134,39 @@ def integrity_problem(stream: Sequence[TraceEvent], *, terminal: bool) -> str | 
     return None
 
 
-def _acting(streams: dict[str, list[TraceEvent]], step: str) -> tuple[list[TraceEvent], str]:
+def _acting(
+    streams: dict[str, list[TraceEvent]], step: str, request_id: str
+) -> tuple[list[TraceEvent], str]:
+    if not streams:
+        raise _Blocked(f"{step}: no event for request {request_id} in these traces")
     remotes = sorted(REMOTES & streams.keys())
     if len(remotes) != 1:
-        raise _Rejected(f"{step} needs the trace of exactly one remote for this request")
+        raise _Blocked(f"{step} needs the trace of exactly one remote for this request")
     stream = streams[remotes[0]]
     problem = integrity_problem(stream, terminal=True)
     if problem is not None:
-        raise _Rejected(f"{step} remote trace: {problem}")
+        raise _Blocked(f"{step} remote trace: {problem}")
     commands = {event.command for event in stream if event.command is not None}
     if len(commands) != 1:
-        raise _Rejected(f"{step} events are not correlated to one identifiable command")
+        raise _Blocked(f"{step} events are not correlated to one identifiable command")
     return stream, remotes[0]
 
 
 class _Rejected(Exception):
-    pass
+    """A violation that complete evidence demonstrates (FAIL)."""
+
+
+class _Blocked(_Rejected):
+    """No usable evidence for the claim: absent, incomplete or uncorrelated (BLOCKED)."""
+
+
+def _classified(check: Callable[[], str]) -> Classified:
+    try:
+        return Classification.PASS, check()
+    except _Blocked as blocked:
+        return Classification.BLOCKED, str(blocked)
+    except _Rejected as rejected:
+        return Classification.FAIL, str(rejected)
 
 
 def _first(stream: Sequence[TraceEvent], name: str) -> TraceEvent:
@@ -146,97 +176,119 @@ def _first(stream: Sequence[TraceEvent], name: str) -> TraceEvent:
     return found
 
 
+def classify_c6(events: Sequence[TraceEvent], request_id: str) -> Classified:
+    """C6: PASS, FAIL for a demonstrated violation, BLOCKED without usable evidence."""
+    return _classified(lambda: _check_c6(events, request_id))
+
+
 def validate_c6(events: Sequence[TraceEvent], request_id: str) -> Verdict:
+    classification, reason = classify_c6(events, request_id)
+    return classification is Classification.PASS, reason
+
+
+def _check_c6(events: Sequence[TraceEvent], request_id: str) -> str:
     """C6: the send used the captured session, the independent observer proved a new session
     after the send and before the confirmation was released, and nothing confirmed from it."""
-    try:
-        streams = _streams(events, request_id)
-        acting, _ = _acting(streams, "C6")
-        observer = streams.get(OBSERVER)
-        if not observer:
-            raise _Rejected("C6 has no independent observer trace for this request")
-        problem = integrity_problem(observer, terminal=False)
-        if problem is not None:
-            raise _Rejected(f"C6 observer trace: {problem}")
-        if any(event.event == "observer_session_already_changed" for event in observer):
-            raise _Rejected(
-                "C6 session had already changed when the hold began: the switch may precede "
-                "the send"
-            )
-        names = [event.event for event in acting]
-        if {"confirmation_hold_timeout", "confirmation_hold_failed"} & set(names):
-            raise _Rejected("C6 confirmation hold was not released by the observer")
-        pre = _first(acting, "pre_status")
-        send = _first(acting, "send_attempt")
-        response = _first(acting, "transport_response")
-        held = _first(acting, "confirmation_held")
-        released = _first(acting, "confirmation_released")
-        if not pre.index < send.index < response.index < held.index < released.index:
-            raise _Rejected("C6 remote events are not in the order pre-read, send, hold, release")
-        reads = [event for event in acting if event.event == "confirmation_status"]
-        if not reads or any(event.index < released.index for event in reads):
-            raise _Rejected("C6 confirmation was read before the observer released it")
-        old = pre.media_session_id
-        if old is None or send.media_session_id != old or held.media_session_id != old:
-            raise _Rejected("C6 send was not bound to the captured mediaSessionId")
-        seen = _first(observer, "observer_hold_seen")
-        change = _first(observer, "independent_session_change")
-        release = _first(observer, "observer_release_sent")
-        if not seen.index < change.index < release.index:
-            raise _Rejected("C6 observer events are not in the order seen, change, release")
-        if seen.media_session_id != old:
-            raise _Rejected(
-                "C6 observer did not see the captured session after the send: the switch may "
-                "precede the send"
-            )
-        new = change.media_session_id
-        if new is None or new == old:
-            raise _Rejected("C6 observer did not prove a different mediaSessionId")
-        if released.token is None or release.token != released.token:
-            raise _Rejected("C6 confirmation was not released by the observer's proof")
-        if any(
-            event.event == "command_confirmed" and event.media_session_id != old for event in acting
-        ):
-            raise _Rejected("C6 command was confirmed on a session other than the captured one")
-    except _Rejected as rejected:
-        return False, str(rejected)
+    streams = _streams(events, request_id)
+    acting, _ = _acting(streams, "C6", request_id)
+    observer = streams.get(OBSERVER)
+    if not observer:
+        raise _Blocked("C6 has no independent observer trace for this request")
+    problem = integrity_problem(observer, terminal=False)
+    if problem is not None:
+        raise _Blocked(f"C6 observer trace: {problem}")
+    if any(event.event == "observer_session_already_changed" for event in observer):
+        raise _Rejected(
+            "C6 session had already changed when the hold began: the switch may precede the send"
+        )
+    names = [event.event for event in acting]
+    if {"confirmation_hold_timeout", "confirmation_hold_failed"} & set(names):
+        raise _Rejected("C6 confirmation hold was not released by the observer")
+    pre = _first(acting, "pre_status")
+    send = _first(acting, "send_attempt")
+    response = _first(acting, "transport_response")
+    held = _first(acting, "confirmation_held")
+    released = _first(acting, "confirmation_released")
+    if not pre.index < send.index < response.index < held.index < released.index:
+        raise _Rejected("C6 remote events are not in the order pre-read, send, hold, release")
+    reads = [event for event in acting if event.event == "confirmation_status"]
+    if not reads or any(event.index < released.index for event in reads):
+        raise _Rejected("C6 confirmation was read before the observer released it")
+    old = pre.media_session_id
+    if old is None or send.media_session_id != old or held.media_session_id != old:
+        raise _Rejected("C6 send was not bound to the captured mediaSessionId")
+    seen = _first(observer, "observer_hold_seen")
+    change = _first(observer, "independent_session_change")
+    release = _first(observer, "observer_release_sent")
+    if not seen.index < change.index < release.index:
+        raise _Rejected("C6 observer events are not in the order seen, change, release")
+    if seen.media_session_id != old:
+        raise _Rejected(
+            "C6 observer did not see the captured session after the send: the switch may "
+            "precede the send"
+        )
+    new = change.media_session_id
+    if new is None or new == old:
+        raise _Rejected("C6 observer did not prove a different mediaSessionId")
+    if released.token is None or release.token != released.token:
+        raise _Rejected("C6 confirmation was not released by the observer's proof")
+    if any(
+        event.event == "command_confirmed" and event.media_session_id != old for event in acting
+    ):
+        raise _Rejected("C6 command was confirmed on a session other than the captured one")
     return (
-        True,
         "C6: send bound to the captured session; the independent observer proved a new session "
         "after the send and before the released confirmation; nothing confirmed from it "
-        "(application-side evidence only)",
+        "(application-side evidence only)"
     )
 
 
+def classify_c7(events: Sequence[TraceEvent], request_id: str) -> Classified:
+    """C7: PASS, FAIL for a demonstrated violation, BLOCKED without usable evidence."""
+    return _classified(lambda: _check_c7(events, request_id))
+
+
 def validate_c7(events: Sequence[TraceEvent], request_id: str) -> Verdict:
+    classification, reason = classify_c7(events, request_id)
+    return classification is Classification.PASS, reason
+
+
+def _check_c7(events: Sequence[TraceEvent], request_id: str) -> str:
     """C7: one low-level send attempt, an ambiguous outcome, no application replay."""
-    try:
-        acting, _ = _acting(_streams(events, request_id), "C7")
-        counts = Counter(event.event for event in acting)
-        if counts["send_attempt"] != 1:
-            raise _Rejected(
-                f"C7 requires exactly one low-level send attempt, observed {counts['send_attempt']}"
-            )
-        if counts["automatic_retry"] or counts["replay"]:
-            raise _Rejected("C7 trace records an automatic retry or replay")
-        if acting[-1].event != "ambiguous_result":
-            raise _Rejected("C7 needs an ambiguous delivery result as the command's outcome")
-        if counts["transport_response"]:
-            raise _Rejected("C7 transport answered, so the delivery was not ambiguous")
-        _reject_application_replay(events, acting)
-    except _Rejected as rejected:
-        return False, str(rejected)
-    return True, "C7: one local send attempt, an ambiguous outcome and no application replay"
+    acting, _ = _acting(_streams(events, request_id), "C7", request_id)
+    counts = Counter(event.event for event in acting)
+    if counts["send_attempt"] != 1:
+        raise _Rejected(
+            f"C7 requires exactly one low-level send attempt, observed {counts['send_attempt']}"
+        )
+    application_request_id = _application_request(acting)
+    if application_request_id is not None:
+        _reject_application_replay(events, application_request_id)
+    if counts["automatic_retry"] or counts["replay"]:
+        raise _Rejected("C7 trace records an automatic retry or replay")
+    if acting[-1].event != "ambiguous_result":
+        raise _Rejected("C7 needs an ambiguous delivery result as the command's outcome")
+    if counts["transport_response"]:
+        raise _Rejected("C7 transport answered, so the delivery was not ambiguous")
+    if application_request_id is None:
+        raise _Blocked("C7 trace is not correlated to an application request (bridge requestId)")
+    return "C7: one local send attempt, an ambiguous outcome and no application replay"
 
 
-def _reject_application_replay(events: Sequence[TraceEvent], acting: Sequence[TraceEvent]) -> None:
-    """C7's 'no application replay': every send of the command's application request counts,
-    whichever invocation (trace request id) made it. A trace that names no application request
-    cannot prove the absence of a replay by another invocation."""
+def _application_request(acting: Sequence[TraceEvent]) -> str | None:
+    """The one application request a command stream belongs to, or None when it names none (or
+    several, which no product trace does)."""
     application = {event.application_request_id for event in acting}
-    if len(application) != 1 or None in application:
-        raise _Rejected("C7 trace is not correlated to an application request (bridge requestId)")
+    if len(application) != 1:
+        return None
     (application_request_id,) = application
+    return application_request_id
+
+
+def _reject_application_replay(events: Sequence[TraceEvent], application_request_id: str) -> None:
+    """C7's 'no application replay': every send of the command's application request counts,
+    whichever invocation (trace request id) made it; more than one is a demonstrated replay. A
+    trace that names no application request cannot prove the absence of a replay (BLOCKED)."""
     sends = [
         event
         for event in events

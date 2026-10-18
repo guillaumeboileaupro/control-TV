@@ -4,8 +4,11 @@
     python3 scripts/validate_command_trace.py c6 --request-id ID REMOTE_TRACE OBSERVER_TRACE
     python3 scripts/validate_command_trace.py c7 --request-id ID REMOTE_TRACE
 
-Exit status 0 means PASS, 1 FAIL (with the reason). A PASS is application-side evidence only:
-not a network transmission, a reception by the TV or a physical effect (docs/COMMAND_TRACE.md).
+Exit status 0 means PASS, 1 FAIL (a violation the evidence demonstrates), 2 BLOCKED (no usable
+evidence: a trace that is absent, empty, unreadable or incomplete, an invalid or unknown request
+id, an uncorrelated C7 trace), always with the reason. BLOCKED is never a hardware failure. A
+PASS is application-side evidence only: not a network transmission, a reception by the TV or a
+physical effect (docs/COMMAND_TRACE.md).
 """
 
 from __future__ import annotations
@@ -20,11 +23,15 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(SCRIPTS.parent / "src"))
 
 from acceptance_trace_evidence import (  # noqa: E402
+    Classification,
+    classify_c6,
+    classify_c7,
     load_traces,
     summarize,
-    validate_c6,
-    validate_c7,
 )
+from control_tv.trace_files import is_request_id  # noqa: E402
+
+EXIT_STATUS = {Classification.PASS: 0, Classification.FAIL: 1, Classification.BLOCKED: 2}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -37,19 +44,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         check.add_argument("--request-id", required=True)
         check.add_argument("traces", type=Path, nargs="+")
     arguments = parser.parse_args(argv)
+    if arguments.command != "list" and not is_request_id(arguments.request_id):
+        print(f"BLOCKED: invalid request id {arguments.request_id!r}")
+        return EXIT_STATUS[Classification.BLOCKED]
     try:
         events = load_traces(arguments.traces)
     except (OSError, ValueError) as error:
-        print(f"FAIL: unusable trace: {error}")
-        return 1
+        print(f"BLOCKED: unusable trace: {error}")
+        return EXIT_STATUS[Classification.BLOCKED]
     if arguments.command == "list":
         for line in summarize(events):
             print(line)
         return 0
-    validate = validate_c6 if arguments.command == "c6" else validate_c7
-    valid, reason = validate(events, arguments.request_id)
-    print(f"{'PASS' if valid else 'FAIL'}: {reason}")
-    return 0 if valid else 1
+    classify = classify_c6 if arguments.command == "c6" else classify_c7
+    classification, reason = classify(events, arguments.request_id)
+    print(f"{classification.value}: {reason}")
+    return EXIT_STATUS[classification]
 
 
 if __name__ == "__main__":

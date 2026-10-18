@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import stat
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -81,3 +83,47 @@ def test_without_configuration_nothing_is_traced(monkeypatch: pytest.MonkeyPatch
     service = bridge.default_service()
 
     assert service._trace.active is False and service._gate is None
+
+
+def load_evidence() -> ModuleType:
+    path = Path(__file__).parents[2] / "scripts" / "acceptance_trace_evidence.py"
+    spec = importlib.util.spec_from_file_location("acceptance_trace_evidence", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def widget_line(message_id: int, tap: str) -> str:
+    """The request line `WidgetActionRunner` builds for a command: its tap as `requestId`."""
+    return json.dumps(
+        {
+            "id": message_id,
+            "method": "set_muted",
+            "params": {"muted": True, "deviceId": "never-discovered"},
+            "requestId": tap,
+        }
+    )
+
+
+def test_a_widget_order_issued_twice_is_one_request_that_c7_rejects(tmp_path: Path) -> None:
+    """The Android path: the embedded bridge, the real ControlService and the Android trace.
+    The same tap issued twice keeps its identity, so C7 sees two sends of one request."""
+    directory = tmp_path / "files" / "acceptance"
+    embedded.configure_acceptance_trace(str(directory))
+    tap = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+    for message_id in (1, 2):
+        answer = json.loads(embedded.handle(widget_line(message_id, tap)))
+        assert answer["ok"] is False and answer["error"]["code"] == "device_not_found"
+    embedded.handle(widget_line(3, "another-tap"))
+
+    evidence = load_evidence()
+    events = evidence.load_trace(directory / "command-trace.jsonl")
+    sends = [event for event in events if event.event == "send_attempt"]
+    assert [event.application_request_id for event in sends] == [tap, tap, "another-tap"]
+    assert {event.client for event in sends} == {"android"}
+    verdict, reason = evidence.classify_c7(events, sends[0].request_id)
+    assert verdict.value == "FAIL" and "was sent 2 times (2 invocations)" in reason
+    _, reason = evidence.classify_c7(events, sends[2].request_id)
+    assert "sent 2 times" not in reason

@@ -21,9 +21,10 @@ effect. A simulated PASS (the tests) is never a hardware result.
 
 Every event has `sequence` (local to one process), `client` (`ubuntu`, `android` or `observer`),
 `event`, `request_id` (opaque, one per command invocation), `index` (contiguous per request,
-from 0), `application_request_id` (the bridge request the command belongs to: the host's
-`requestId`, reused when the host issues the same request again, or one per bridge message
-without it) and, when relevant, `media_session_id`, `command`, `error_code` and the hold `token`.
+from 0), `application_request_id` (the order the command belongs to: the host's `requestId` -
+one per window command on Ubuntu and in the Android app, made once per order by the Tauri
+shell; the tap itself for an Android widget command - reused if the same order is issued again,
+or one per bridge message without it) and, when relevant, `media_session_id`, `command`, `error_code` and the hold `token`.
 Never a device id or address, a media URL or title, a command argument, a credential or
 exception text.
 
@@ -126,7 +127,12 @@ the switch may have preceded the send (the known gap of PR #38 review P3-3).
 ## C7
 
 Record a trace on the remote (no hold needed), press one command and cut Wi-Fi immediately (owner
-agreement), then `python3 scripts/validate_command_trace.py c7 --request-id <id> TRACE`. Every
+agreement), then `python3 scripts/validate_command_trace.py c7 --request-id <id> TRACE`.
+
+The validator exits 0 **PASS**, 1 **FAIL** (complete evidence demonstrates a violation) or 2
+**BLOCKED** (no usable evidence: a trace absent, empty, unreadable or incomplete, an invalid or
+unknown request id, no observer trace for C6, a C7 trace with no application request). BLOCKED is
+recorded NOT RUN, never as a hardware failure. Every
 `send_attempt` of the same `application_request_id` counts, whichever invocation made it: a
 request sent again by another invocation fails C7, and a trace without an application request
 id never passes. A PASS proves one application-side invocation, an ambiguous outcome and no

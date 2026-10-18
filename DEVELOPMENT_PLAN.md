@@ -679,7 +679,9 @@ nothing run on a device.
   first: "not installed" only without any dpkg record and any file of the package, any other
   dpkg status (half-configured, unpacked, config-files...) or leftover is BLOCKED;
 - [x] C6/C7 send/trace instrumentation: product command trace, confirmation hold, independent
-  observer and offline validators ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md));
+  observer and offline validators ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md)); every
+  order carries an application request id from the Tauri shell or the Android widget (its tap),
+  so C7 counts every send of one order; missing or unusable evidence is BLOCKED, not FAIL;
   automation-validated only: C6 and C7 stay NOT RUN on hardware until the owner authorizes them.
 
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV

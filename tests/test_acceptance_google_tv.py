@@ -623,18 +623,18 @@ def test_the_offline_command_needs_no_flag_and_reports_pass_or_fail(
 
     assert cli.main(["c6", "--request-id", "r1", str(remote), str(observer)]) == 0
     assert capsys.readouterr().out.startswith("PASS: C6")
-    assert cli.main(["c6", "--request-id", "r1", str(remote)]) == 1
-    assert "no independent observer" in capsys.readouterr().out
-    assert cli.main(["c7", "--request-id", "r1", str(remote)]) == 1
-    capsys.readouterr()
+    assert cli.main(["c6", "--request-id", "r1", str(remote)]) == 2  # no observer: BLOCKED
+    assert "BLOCKED: C6 has no independent observer" in capsys.readouterr().out
+    assert cli.main(["c7", "--request-id", "r1", str(remote)]) == 1  # answered: a C7 FAIL
+    assert capsys.readouterr().out.startswith("FAIL: ")
     assert cli.main(["list", str(remote), str(observer)]) == 0
     listed = capsys.readouterr().out.splitlines()
     assert listed == [
         "r1 observer - 3 events, outcome -",
         "r1 ubuntu pause 8 events, outcome command_unconfirmed",
     ]
-    assert cli.main(["list", str(tmp_path / "missing.jsonl")]) == 1
-    assert "unusable trace" in capsys.readouterr().out
+    assert cli.main(["list", str(tmp_path / "missing.jsonl")]) == 2
+    assert capsys.readouterr().out.startswith("BLOCKED: unusable trace")
 
 
 def test_the_application_request_id_survives_the_jsonl_round_trip(tmp_path: Path) -> None:
@@ -659,3 +659,116 @@ def test_an_invalid_application_request_id_is_refused(request_id: str) -> None:
         application_request(request_id),
     ):
         pass  # pragma: no cover - never entered
+
+
+# Classification: no usable evidence is BLOCKED, a demonstrated violation is FAIL ------------
+
+
+def correlated(events: list[TraceEvent], application: str = "app-request-1") -> list[TraceEvent]:
+    return [dataclasses.replace(event, application_request_id=application) for event in events]
+
+
+C7_AMBIGUOUS: list[Step] = [
+    ("command_prepared", None),
+    ("send_attempt", 1),
+    ("command_failed", 1),
+    ("ambiguous_result", 1),
+]
+
+
+def run_cli(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str]:
+    code = cli.main(list(argv))
+    return int(code), capsys.readouterr().out
+
+
+@pytest.mark.parametrize("step", ["c6", "c7"])
+def test_missing_empty_or_unusable_traces_are_blocked_not_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], step: str
+) -> None:
+    """Regression (Codex P2): an absent, empty or unusable trace, or an unknown request id, was
+    reported FAIL - a hardware failure - although no evidence could be read at all."""
+    absent = tmp_path / "absent.jsonl"
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    broken = tmp_path / "broken.jsonl"
+    broken.write_text("{not json\n", encoding="utf-8")
+    other = write_jsonl(tmp_path / "o" / "other.jsonl", correlated(stream("ubuntu", C7_AMBIGUOUS)))
+
+    for traces, reason in (
+        ([absent], "unusable trace"),
+        ([broken], "unusable trace"),
+        ([empty], "no event for request r1"),
+        ([other], "no event for request unknown-id"),
+    ):
+        request = "unknown-id" if traces == [other] else "r1"
+        code, out = run_cli(capsys, step, "--request-id", request, *map(str, traces))
+        assert code == 2 and out.startswith("BLOCKED: ") and reason in out
+
+
+@pytest.mark.parametrize("request_id", ["", "a b", "../r1", "x" * 65])
+def test_an_invalid_request_id_is_blocked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], request_id: str
+) -> None:
+    trace = write_jsonl(tmp_path / "t.jsonl", correlated(stream("ubuntu", C7_AMBIGUOUS)))
+    code, out = run_cli(capsys, "c7", "--request-id", request_id, str(trace))
+    assert code == 2 and out.startswith("BLOCKED: invalid request id")
+
+
+def test_incomplete_or_uncorrelated_evidence_is_blocked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gap = correlated(stream("ubuntu", C7_AMBIGUOUS))
+    del gap[1]  # an event lost: the per-request index is no longer contiguous
+    uncorrelated = stream("ubuntu", C7_AMBIGUOUS)
+    no_observer = write_jsonl(tmp_path / "c6.jsonl", stream("ubuntu", REMOTE))
+
+    for name, events in (("gap", gap), ("uncorrelated", uncorrelated)):
+        trace = write_jsonl(tmp_path / name / "t.jsonl", events)
+        code, out = run_cli(capsys, "c7", "--request-id", "r1", str(trace))
+        assert code == 2 and out.startswith("BLOCKED: "), name
+    code, out = run_cli(capsys, "c6", "--request-id", "r1", str(no_observer))
+    assert code == 2 and "no independent observer" in out
+
+
+def test_a_demonstrated_violation_still_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answered = correlated(
+        stream(
+            "ubuntu",
+            [
+                ("command_prepared", None),
+                ("send_attempt", 1),
+                ("transport_response", 1),
+                ("command_unconfirmed", 1),
+            ],
+        )
+    )
+    replayed = correlated(stream("ubuntu", C7_AMBIGUOUS)) + correlated(
+        stream("ubuntu", C7_AMBIGUOUS, first_sequence=100, request_id="r2")
+    )
+    wrong_session = replace(REMOTE, "send_attempt", ("send_attempt", 99))
+
+    trace = write_jsonl(tmp_path / "a" / "t.jsonl", answered)
+    assert run_cli(capsys, "c7", "--request-id", "r1", str(trace))[0] == 1
+    trace = write_jsonl(tmp_path / "b" / "t.jsonl", replayed)
+    code, out = run_cli(capsys, "c7", "--request-id", "r1", str(trace))
+    assert code == 1 and out.startswith("FAIL: ") and "sent 2 times" in out
+    remote = write_jsonl(tmp_path / "c" / "r.jsonl", stream("ubuntu", wrong_session))
+    observer = write_jsonl(tmp_path / "c" / "o.jsonl", stream("observer", OBSERVER))
+    code, out = run_cli(capsys, "c6", "--request-id", "r1", str(remote), str(observer))
+    assert code == 1 and "captured mediaSessionId" in out
+
+
+def test_the_classification_functions_tell_blocked_from_fail() -> None:
+    blocked, reason = evidence.classify_c7((), "r1")
+    assert blocked is evidence.Classification.BLOCKED and "no event" in reason
+    fail, _ = evidence.classify_c7(
+        correlated(stream("ubuntu", C7_AMBIGUOUS))
+        + correlated(stream("ubuntu", C7_AMBIGUOUS, first_sequence=100, request_id="r2")),
+        "r1",
+    )
+    assert fail is evidence.Classification.FAIL
+    passed, _ = evidence.classify_c6(stream("ubuntu", REMOTE) + stream("observer", OBSERVER), "r1")
+    assert passed is evidence.Classification.PASS
+    assert evidence.validate_c7((), "r1")[0] is False  # the boolean API is unchanged
