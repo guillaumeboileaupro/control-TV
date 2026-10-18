@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-from deb_fixtures import BRIDGE, COMMIT, make_deb, md5sums, payload_sha256, sha256
+from deb_fixtures import BRIDGE, COMMIT, _ar, _tar, make_deb, md5sums, payload_sha256, sha256
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -249,7 +249,7 @@ def test_a_clean_host_is_not_installed_rather_than_an_error(tmp_path: Path) -> N
 
     status, lines = check(deb, clean)
 
-    assert status == 0 and "not installed (no installed binary and no dpkg record)" in lines
+    assert status == 0 and "not installed (no dpkg record and no file of the package)" in lines
     assert check(deb, clean, require=True)[0] == 1
 
 
@@ -365,7 +365,7 @@ def test_a_package_dpkg_has_not_finished_installing_is_never_this_build(
 
     code, lines = check(deb, root, commit=COMMIT, run=7, require=True)
 
-    assert code == 2 and any(f"dpkg reports {status!r}" in line for line in lines)
+    assert code == 2 and any(f"dpkg records control-tv as {status!r}" in line for line in lines)
 
 
 def test_a_package_unknown_to_dpkg_while_its_files_exist_is_blocked(tmp_path: Path) -> None:
@@ -375,7 +375,9 @@ def test_a_package_unknown_to_dpkg_while_its_files_exist_is_blocked(tmp_path: Pa
     (root / "var/lib/dpkg/status").write_text("Package: other\nStatus: install ok installed\n")
 
     code, lines = check(deb, root, commit=COMMIT, run=7)
-    assert code == 2 and any("dpkg reports None" in line for line in lines)
+    assert code == 2 and any(
+        "no dpkg record but package files are present" in line for line in lines
+    )
 
 
 def test_the_payload_digest_is_taken_from_the_record_bytes(tmp_path: Path) -> None:
@@ -419,4 +421,126 @@ def test_files_without_any_dpkg_status_are_blocked(tmp_path: Path) -> None:
     (root / "var/lib/dpkg/status").unlink()
 
     code, lines = check(deb, root, require=True)
-    assert code == 2 and any("dpkg reports None" in line for line in lines)
+    assert code == 2 and any(
+        "no dpkg record but package files are present" in line for line in lines
+    )
+
+
+# Codex review follow-ups (db3ef0c) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "install ok half-configured",
+        "install ok unpacked",
+        "install reinstreq half-installed",
+        "deinstall ok config-files",
+        "purge ok not-installed",
+    ],
+)
+@pytest.mark.parametrize("require", [False, True], ids=["campaign-start", "require-installed"])
+def test_a_dpkg_record_without_the_package_files_is_blocked_not_absent(
+    tmp_path: Path, status: str, require: bool
+) -> None:
+    """Regression: with the binary and dpkg's md5sums gone, a package dpkg still records (an
+    interrupted install or removal, residual configuration) was reported 'not installed'."""
+    deb = built(tmp_path)
+    root = tmp_path / "root"
+    dpkg_status(root, status)
+
+    code, lines = check(deb, root, require=require)
+
+    assert code == 2 and lines[-1] == "BLOCKED: the installed state cannot be established"
+    assert any(f"dpkg records control-tv as {status!r}" in line for line in lines)
+    assert not any(line.startswith("not installed") for line in lines)
+
+
+@pytest.mark.parametrize(
+    "leftover", [BRIDGE, "var/lib/dpkg/info/control-tv.list", "usr/bin/control-tv"]
+)
+def test_a_packaged_file_without_any_dpkg_record_is_blocked_not_absent(
+    tmp_path: Path, leftover: str
+) -> None:
+    deb = built(tmp_path)
+    root = tmp_path / "root"
+    dpkg_status(root, "install ok installed")
+    (root / "var/lib/dpkg/status").write_text("Package: other\nStatus: install ok installed\n")
+    (root / leftover).parent.mkdir(parents=True, exist_ok=True)
+    (root / leftover).write_bytes(b"left behind")
+
+    code, lines = check(deb, root)
+
+    assert code == 2 and any(
+        "no dpkg record but package files are present" in line for line in lines
+    )
+
+
+def test_only_a_host_without_record_and_files_is_absent(tmp_path: Path) -> None:
+    deb = built(tmp_path)
+    root = tmp_path / "root"
+    dpkg_status(root, "install ok installed")
+    (root / "var/lib/dpkg/status").write_text("Package: other\nStatus: install ok installed\n")
+
+    assert check(deb, root)[0] == 0
+    code, lines = check(deb, root, require=True)
+    assert code == 1 and lines[-1] == "FAIL: the installed package is not this build"
+
+
+def test_an_unreadable_dpkg_database_or_an_entry_without_status_is_never_absent(
+    tmp_path: Path,
+) -> None:
+    deb = built(tmp_path)
+    unreadable = tmp_path / "unreadable"
+    (unreadable / "var/lib/dpkg/status").mkdir(parents=True)  # a directory: IsADirectoryError
+    code, lines = check(deb, unreadable)
+    assert code == 2 and any(
+        "status database is unreadable: IsADirectoryError" in line for line in lines
+    )
+
+    no_status = tmp_path / "no-status"
+    (no_status / "var/lib/dpkg").mkdir(parents=True)
+    (no_status / "var/lib/dpkg/status").write_text("Package: control-tv\nVersion: 0.1.0\n")
+    code, lines = check(deb, no_status)
+    assert code == 2 and any("dpkg records control-tv as ''" in line for line in lines)
+
+    info_is_a_file = tmp_path / "info-is-a-file"
+    (info_is_a_file / "var/lib/dpkg").mkdir(parents=True)
+    (info_is_a_file / "var/lib/dpkg/info").write_text("not a directory")
+    code, lines = check(deb, info_is_a_file)
+    assert code == 2 and any(
+        "package files are unreadable: NotADirectoryError" in line for line in lines
+    )
+
+
+@pytest.mark.parametrize("kind", ["dangling-binary-link", "multiarch-dpkg-file"])
+def test_leftovers_dpkg_forgot_are_found(tmp_path: Path, kind: str) -> None:
+    deb = built(tmp_path)
+    root = tmp_path / "root"
+    if kind == "dangling-binary-link":
+        (root / "usr/bin").mkdir(parents=True)
+        (root / "usr/bin/control-tv").symlink_to(root / "gone")
+    else:
+        (root / "var/lib/dpkg/info").mkdir(parents=True)
+        (root / "var/lib/dpkg/info/control-tv:amd64.postrm").write_text("#!/bin/sh\n")
+        (root / "var/lib/dpkg/info/control-tv-other.list").write_text("unrelated\n")
+
+    code, lines = check(deb, root)
+    assert code == 2 and any(
+        "no dpkg record but package files are present" in line for line in lines
+    )
+
+
+def test_the_package_file_list_ignores_unsafe_or_malformed_lines(tmp_path: Path) -> None:
+    assert identity.deb_packaged_files(built(tmp_path)) == ("usr/bin/control-tv", BRIDGE)
+    listed = (
+        f"{'0' * 32}  usr/share/control-tv/kept\n"
+        f"{'0' * 32}  /etc/absolute\n"
+        f"{'0' * 32}  usr/../../escape\n"
+        "not an md5sums line\n"
+    ).encode()
+    control = _tar({"./control": b"Package: control-tv\n", "./md5sums": listed}, "w:gz")
+    deb = tmp_path / "unsafe.deb"
+    deb.write_bytes(_ar([("debian-binary", b"2.0\n"), ("control.tar.gz", control)]))
+
+    assert identity.deb_packaged_files(deb) == ("usr/share/control-tv/kept",)

@@ -213,12 +213,24 @@ def check_apk(
     *,
     expect_commit: str,
     expect_run_id: int,
-    expect_apk_sha256: str | None,
+    expect_apk_sha256: str,
     environ: Mapping[str, str],
     run: Runner | None = None,
 ) -> tuple[int, list[str]]:
     """The `check-apk` verdict: 0 PASS, 1 FAIL (another APK, key, commit or run), 2 BLOCKED
-    (the identity cannot be established), with report lines."""
+    (the identity cannot be established), with report lines.
+
+    `expect_apk_sha256` is the digest the CI run published in its log: the provenance travels
+    with the APK, so only that independent value proves which APK the run built."""
+    if not _DIGEST.fullmatch(expect_apk_sha256):
+        return 2, [
+            "BLOCKED: no validation without the independent SHA-256 published by the CI run "
+            "(64 lower-case hexadecimal characters)"
+        ]
+    try:
+        pin = read_pin(pin_path)
+    except SigningError as error:
+        return 2, [f"BLOCKED: the pinned certificate cannot be read: {error}"]
     try:
         provenance = read_apk_provenance(provenance_path)
         digest = hashlib.sha256(apk.read_bytes()).hexdigest()
@@ -229,13 +241,12 @@ def check_apk(
     problems: list[str] = []
     if digest != provenance.apk_sha256:
         problems.append("the APK SHA-256 differs from its provenance (another APK)")
-    if expect_apk_sha256 is not None and digest != expect_apk_sha256:
+    if digest != expect_apk_sha256:
         problems.append("the APK SHA-256 differs from the one the CI run published")
     if provenance.commit != expect_commit:
         problems.append("the APK provenance commit is not the expected one")
     if provenance.run_id != expect_run_id:
         problems.append("the APK provenance CI run is not the expected one")
-    pin = read_pin(pin_path)
     if provenance.identity is Identity.PINNED and pin is None:
         return 2, [
             "BLOCKED: the provenance names the pinned test key but no certificate is pinned "
@@ -360,7 +371,7 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] = os.envi
     acceptance.add_argument("--pin", type=Path, default=PIN)
     acceptance.add_argument("--expect-commit", required=True)
     acceptance.add_argument("--expect-run-id", type=int, required=True)
-    acceptance.add_argument("--expect-apk-sha256", type=_sha256_argument)
+    acceptance.add_argument("--expect-apk-sha256", type=_sha256_argument, required=True)
     record = commands.add_parser(
         "write-apk-provenance", help="record the provenance of an older CI APK (never overwrites)"
     )

@@ -36,14 +36,16 @@ Use one pair of artifacts, from one CI run of `main`, for the whole campaign.
 
 ```bash
 # Ubuntu package: the provenance binds commit, run, version, .deb, binary and payload SHA-256;
-# the installed package is reported as not installed, this build (dpkg status "install ok
-# installed", binary, dpkg record and every installed file), another build, or unreadable
-# (partial, or dpkg not finished). --expect-commit and --expect-run-id are required.
+# the installed package is reported as not installed (no dpkg record and no file of the
+# package), this build (dpkg status "install ok installed", binary, dpkg record and every
+# installed file), another build, or BLOCKED (any other dpkg status - half-configured, unpacked,
+# config-files... - leftovers, unreadable files). --expect-commit and --expect-run-id are required.
 .venv/bin/python scripts/acceptance_identity.py check-deb \
   --deb dist/acceptance-<sha>/linux/control-tv_0.1.0_amd64.deb \
   --expect-commit <run head SHA> --expect-run-id <run id>
 # Android APK: exactly the APK its provenance names, from the expected commit and run, with the
-# digest the CI run published in its log, signed by the recorded (or pinned) certificate.
+# digest the CI run published in its log (mandatory), signed by the recorded (or pinned)
+# certificate.
 .venv/bin/python scripts/android_test_signing.py check-apk \
   --apk dist/acceptance-<sha>/android/app-universal-debug.apk \
   --apksigner "$ANDROID_HOME/build-tools/<version>/apksigner" \
@@ -52,7 +54,8 @@ Use one pair of artifacts, from one CI run of `main`, for the whole campaign.
 
 Both commands exit 0 (identified), 1 **FAIL** (a contradiction: another package or APK, commit,
 run, key or installed build) or 2 **BLOCKED** (the identity cannot be established: no or
-unreadable provenance, partial installation, apksigner unavailable). Only 0 lets the campaign
+unreadable provenance, no published APK digest, unreadable pinned certificate, a package dpkg has
+not finished installing or removing, apksigner unavailable). Only 0 lets the campaign
 start; after session 1, `check-deb ... --require-installed` must also report "installed: this
 build". Record in the private record: CI run id, commit, `.deb` SHA-256, binary and payload
 SHA-256, APK SHA-256, APK signer certificate and identity (`pinned-test-key` or

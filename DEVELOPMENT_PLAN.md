@@ -674,6 +674,10 @@ nothing run on a device.
   and the expected CI run name it (digest, published digest, commit, run, signer); `check-deb`
   reports a clean host as not installed and verifies every installed file against dpkg's record,
   which the runner now also checks (BLOCKED before installing, FAIL after);
+- [x] review follow-ups (Codex, `db3ef0c`): the CI-published APK digest is mandatory for
+  `check-apk`, and an unusable pinned certificate is BLOCKED; `check-deb` reads dpkg's status
+  first: "not installed" only without any dpkg record and any file of the package, any other
+  dpkg status (half-configured, unpacked, config-files...) or leftover is BLOCKED;
 - [ ] C6/C7 send/trace instrumentation (absent: C6/C7 stay NOT RUN without it).
 
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV

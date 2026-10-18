@@ -24,8 +24,10 @@ Usage:
         [--expect-commit SHA] [--expect-run-id ID] [--require-installed] [--root /]
 
 `check-deb` exits 0 (identified; the installed state is printed), 1 FAIL (a contradiction:
-another build), or 2 BLOCKED (the identity cannot be established). An absent installation is
-"not installed", not an error, unless `--require-installed` is given.
+another build), or 2 BLOCKED (the identity cannot be established, including any package dpkg
+still records without having finished installing it). "Not installed" means dpkg has no record of
+control-tv and no file of the package is present; it is not an error unless
+`--require-installed` is given.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import re
 import sys
 import tarfile
@@ -118,6 +121,22 @@ def deb_payload_sha256(deb: Path) -> str:
     return hashlib.sha256(
         _tar_member(_ar_members(deb), "control.tar", PAYLOAD_MEMBER, deb)
     ).hexdigest()
+
+
+def deb_packaged_files(deb: Path) -> tuple[str, ...]:
+    """The relative paths the package installs, as its `md5sums` control file lists them."""
+    listed = _tar_member(_ar_members(deb), "control.tar", PAYLOAD_MEMBER, deb)
+    files: list[str] = []
+    for line in listed.decode("utf-8", errors="surrogateescape").splitlines():
+        match = _MD5SUMS_LINE.fullmatch(line)
+        if match is not None and _inside_root(match.group(2)):
+            files.append(match.group(2))
+    return tuple(files)
+
+
+def _inside_root(name: str) -> bool:
+    """Whether a path from an md5sums list stays under the root it is resolved against."""
+    return not name.startswith("/") and ".." not in Path(name).parts
 
 
 def deb_control_fields(deb: Path) -> Mapping[str, str]:
@@ -250,7 +269,7 @@ def installed_file_problems(root: Path, md5sums: str) -> list[str]:
         return ["dpkg's file list is empty"]
     for line in lines:
         match = _MD5SUMS_LINE.fullmatch(line)
-        if match is None or match.group(2).startswith("/") or ".." in Path(match.group(2)).parts:
+        if match is None or not _inside_root(match.group(2)):
             problems.append("dpkg's file list is malformed")
             continue
         path = root / match.group(2)
@@ -268,18 +287,48 @@ def installed_file_problems(root: Path, md5sums: str) -> list[str]:
 
 
 def dpkg_status(root: Path, package: str = "control-tv") -> str | None:
-    """The `Status:` dpkg records for `package` under `root`, or None when it has no entry."""
+    """The `Status:` dpkg records for `package` under `root` ("" when its entry has none), or
+    None when dpkg has no entry for it. An unreadable status database raises `IdentityError`:
+    it never means "not installed"."""
     try:
         text = (root / DPKG_STATUS).read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError as error:
+        raise IdentityError(
+            f"dpkg's status database is unreadable: {type(error).__name__}"
+        ) from None
     for stanza in text.split("\n\n"):
         fields = dict(
             line.split(":", 1) for line in stanza.splitlines() if ":" in line and line[0] != " "
         )
         if fields.get("Package", "").strip() == package:
-            return fields.get("Status", "").strip() or None
+            return fields.get("Status", "").strip()
     return None
+
+
+def package_leftovers(
+    root: Path, packaged: Sequence[str], package: str = "control-tv"
+) -> list[str]:
+    """The files of `package` present under `root`: its binary, any file it packages and any of
+    dpkg's own files for it (`var/lib/dpkg/info/<package>.*`), dangling links included."""
+    candidates = [INSTALLED_BINARY.as_posix(), *packaged]
+    found = [name for name in dict.fromkeys(candidates) if os.path.lexists(root / name)]
+    info = root / INSTALLED_PAYLOAD.parent
+    try:
+        entries = sorted(entry.name for entry in info.iterdir())
+    except FileNotFoundError:
+        entries = []
+    except OSError as error:
+        raise IdentityError(
+            f"dpkg's package files are unreadable: {type(error).__name__}"
+        ) from None
+    found += [
+        (INSTALLED_PAYLOAD.parent / name).as_posix()
+        for name in entries
+        if name.startswith((f"{package}.", f"{package}:"))
+    ]
+    return found
 
 
 class Installed(StrEnum):
@@ -295,16 +344,29 @@ class InstalledState:
     detail: str
 
 
-def installed_state(root: Path, provenance: DebProvenance) -> InstalledState:
-    """Whether the system under `root` has no control-tv, this build (binary, dpkg record and
-    every installed file), another build, or a state that cannot be read (partial install)."""
+def installed_state(
+    root: Path, provenance: DebProvenance, packaged: Sequence[str] = ()
+) -> InstalledState:
+    """Whether the system under `root` has no control-tv (no dpkg record and none of its files,
+    `packaged` being the package's file list), this build (dpkg status `install ok installed`,
+    binary, dpkg record and every installed file), another build, or a state that cannot be
+    established (an install or removal dpkg has not finished, leftovers, unreadable files)."""
     binary, record = root / INSTALLED_BINARY, root / INSTALLED_PAYLOAD
-    if not binary.exists() and not record.exists():
-        return InstalledState(Installed.ABSENT, "no installed binary and no dpkg record")
-    status = dpkg_status(root)
+    try:
+        status = dpkg_status(root)
+        leftovers = package_leftovers(root, packaged) if status is None else []
+    except IdentityError as error:
+        return InstalledState(Installed.UNKNOWN, str(error))
+    if status is None:
+        if not leftovers:
+            return InstalledState(Installed.ABSENT, "no dpkg record and no file of the package")
+        return InstalledState(
+            Installed.UNKNOWN,
+            "no dpkg record but package files are present: " + ", ".join(leftovers[:3]),
+        )
     if status != INSTALLED_OK:
         return InstalledState(
-            Installed.UNKNOWN, f"files are present but dpkg reports {status!r}, not installed"
+            Installed.UNKNOWN, f"dpkg records control-tv as {status!r}, not {INSTALLED_OK!r}"
         )
     try:
         binary_sha256 = sha256_file(binary)
@@ -338,6 +400,7 @@ def check_deb(
     try:
         provenance = read_deb_provenance(provenance_path)
         problems = verify_deb(deb, provenance)
+        packaged = deb_packaged_files(deb)
     except IdentityError as error:
         return 2, [f"BLOCKED: the build identity cannot be established: {error}"]
     if provenance.commit != expect_commit:
@@ -352,7 +415,7 @@ def check_deb(
         f"deb {provenance.deb_sha256}, binary {provenance.binary_sha256}, "
         f"payload {provenance.payload_sha256}",
     ]
-    state = installed_state(root, provenance)
+    state = installed_state(root, provenance, packaged)
     lines.append(f"{state.kind.value} ({state.detail})")
     if state.kind is Installed.UNKNOWN:
         return 2, [*lines, "BLOCKED: the installed state cannot be established"]

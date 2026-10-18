@@ -36,7 +36,10 @@ release key: it is never used for a store, and it changes nothing for the Ubuntu
 - The artifact carries `apk-provenance.json` (commit, CI run, APK SHA-256, signer certificate,
   signing identity), and the step summary shows the same values. Before a recipe,
   `check-apk --expect-commit … --expect-run-id … --expect-apk-sha256 …` refuses any APK that its
-  provenance and the expected run do not name, even one signed with the same key.
+  provenance and the expected run do not name, even one signed with the same key. The published
+  digest is mandatory: the provenance travels with the APK, so only the digest copied from the CI
+  run's log is independent of it; without it, or with an unreadable or malformed pinned
+  certificate, the check is BLOCKED (exit 2).
 
 ## Owner setup (once)
 

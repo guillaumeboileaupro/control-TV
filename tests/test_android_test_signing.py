@@ -10,7 +10,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -405,7 +405,7 @@ def checked(
     signer: str = PINNED,
     commit: str = COMMIT,
     run_id: int | None = 39034444658,
-    published: str | None = None,
+    published: str = hashlib.sha256(b"the APK of de31c94").hexdigest(),
     apk_bytes: bytes = b"the APK of de31c94",
 ) -> tuple[int, list[str]]:
     apk = tmp_path / "app-universal-debug.apk"
@@ -430,8 +430,7 @@ def checked(
 
 
 def test_check_apk_passes_only_for_the_expected_ci_build(tmp_path: Path) -> None:
-    published = hashlib.sha256(b"the APK of de31c94").hexdigest()
-    status, lines = checked(tmp_path, published=published)
+    status, lines = checked(tmp_path)
     assert status == 0 and lines[-1].startswith("OK:")
 
 
@@ -497,7 +496,7 @@ def test_a_missing_provenance_apk_or_apksigner_blocks(tmp_path: Path) -> None:
     common: dict[str, Any] = {
         "expect_commit": COMMIT,
         "expect_run_id": 39034444658,
-        "expect_apk_sha256": None,
+        "expect_apk_sha256": hashlib.sha256(b"apk").hexdigest(),
         "environ": {},
     }
 
@@ -536,6 +535,7 @@ def test_the_check_apk_and_write_apk_provenance_commands(
     monkeypatch.chdir(tmp_path)  # a relative apksigner path stays local, not a PATH lookup
     check = ["check-apk", "--apk", str(apk), "--apksigner", "./apksigner"]
     check += ["--pin", str(tmp_path / "no-pin"), "--expect-commit", COMMIT, "--expect-run-id", "5"]
+    check += ["--expect-apk-sha256", hashlib.sha256(b"apk").hexdigest()]
     assert signing.main(check, {}) == 0
     assert "OK: the APK is the one" in capsys.readouterr().out
 
@@ -553,7 +553,7 @@ def test_check_apk_fails_when_apksigner_rejects_the_signature(tmp_path: Path) ->
         tmp_path / "pin",
         expect_commit=COMMIT,
         expect_run_id=39034444658,
-        expect_apk_sha256=None,
+        expect_apk_sha256=hashlib.sha256(b"apk").hexdigest(),
         environ={},
     )
     assert status == 1 and lines == ["FAIL: signature: apksigner rejected the APK signature"]
@@ -606,7 +606,7 @@ def test_a_pinned_claim_without_a_repository_pin_is_blocked_not_failed(tmp_path:
         tmp_path / "no-pin",
         expect_commit=COMMIT,
         expect_run_id=39034444658,
-        expect_apk_sha256=None,
+        expect_apk_sha256=hashlib.sha256(b"apk").hexdigest(),
         environ={},
     )
     assert status == 2 and "no certificate is pinned in the repository" in lines[0]
@@ -623,3 +623,99 @@ def test_the_check_apk_command_requires_the_run_and_a_well_formed_published_dige
         signing.main(base, {})
     with pytest.raises(SystemExit):
         signing.main([*base, "--expect-run-id", "5", "--expect-apk-sha256", "ABC"], {})
+
+
+# Codex review follow-ups (db3ef0c) ---------------------------------------------------------
+
+
+def test_check_apk_refuses_to_validate_without_the_published_ci_digest(tmp_path: Path) -> None:
+    """Regression: without --expect-apk-sha256 the APK was accepted on its provenance alone, a
+    file that travels with the APK and so cannot prove which APK the CI run published."""
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    (tmp_path / "apk-provenance.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    pin = tmp_path / "pin"
+    pin.write_text(PINNED + "\n", encoding="ascii")
+    check = ["check-apk", "--apk", str(apk), "--apksigner", str(fake_apksigner(tmp_path, PINNED))]
+    check += ["--pin", str(pin), "--expect-commit", COMMIT, "--expect-run-id", "39034444658"]
+
+    with pytest.raises(SystemExit) as omitted:
+        signing.main(check, {})
+    assert omitted.value.code == 2  # argparse: the published digest is a required option
+
+    for unusable in ("", "ABC", "0" * 63):
+        status, lines = signing.check_apk(
+            apk,
+            fake_apksigner(tmp_path, PINNED),
+            tmp_path / "apk-provenance.json",
+            pin,
+            expect_commit=COMMIT,
+            expect_run_id=39034444658,
+            expect_apk_sha256=unusable,
+            environ={},
+        )
+        assert status == 2 and "independent SHA-256 published by the CI run" in lines[0]
+
+
+def test_check_apk_fails_on_a_wrong_published_digest_even_if_the_provenance_agrees(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    (tmp_path / "apk-provenance.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    pin = tmp_path / "pin"
+    pin.write_text(PINNED + "\n", encoding="ascii")
+    check = ["check-apk", "--apk", str(apk), "--apksigner", str(fake_apksigner(tmp_path, PINNED))]
+    check += ["--pin", str(pin), "--expect-commit", COMMIT, "--expect-run-id", "39034444658"]
+
+    assert signing.main([*check, "--expect-apk-sha256", "0" * 64], {}) == 1
+    assert "differs from the one the CI run published" in capsys.readouterr().out
+    published = hashlib.sha256(b"apk").hexdigest()
+    assert signing.main([*check, "--expect-apk-sha256", published], {}) == 0
+    assert "OK: the APK is the one" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("write", "message"),
+    [
+        (lambda pin: pin.mkdir(), "unreadable pin file: IsADirectoryError"),
+        (lambda pin: pin.write_text("not a digest\n"), "must hold one lower-case SHA-256"),
+        (lambda pin: pin.write_bytes(b"\xff\xfe" + PINNED.encode()), "UnicodeDecodeError"),
+        (lambda pin: pin.write_text(f"{PINNED}\n{OTHER}\n"), "must hold one lower-case SHA-256"),
+    ],
+    ids=["unreadable", "malformed", "mis-encoded", "several-digests"],
+)
+def test_an_unusable_pinned_certificate_blocks_check_apk(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    write: Callable[[Path], object],
+    message: str,
+) -> None:
+    """Regression: read_pin's SigningError escaped check-apk as a traceback (exit 1, a FAIL)."""
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"apk")
+    (tmp_path / "apk-provenance.json").write_text(json.dumps(provenance_for(apk)), encoding="utf-8")
+    pin = tmp_path / "pin"
+    write(pin)
+    published = hashlib.sha256(b"apk").hexdigest()
+
+    status, lines = signing.check_apk(
+        apk,
+        fake_apksigner(tmp_path, PINNED),
+        tmp_path / "apk-provenance.json",
+        pin,
+        expect_commit=COMMIT,
+        expect_run_id=39034444658,
+        expect_apk_sha256=published,
+        environ={},
+    )
+    assert status == 2
+    assert (
+        lines[0].startswith("BLOCKED: the pinned certificate cannot be read")
+        and message in lines[0]
+    )
+
+    check = ["check-apk", "--apk", str(apk), "--apksigner", str(fake_apksigner(tmp_path, PINNED))]
+    check += ["--pin", str(pin), "--expect-commit", COMMIT, "--expect-run-id", "39034444658"]
+    assert signing.main([*check, "--expect-apk-sha256", published], {}) == 2
+    assert "BLOCKED: the pinned certificate cannot be read" in capsys.readouterr().out
