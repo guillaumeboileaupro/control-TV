@@ -87,8 +87,14 @@ specifications contain no command-line arguments.
 9. `close()` is a definitive shutdown: it is recorded first (no later `start()` is accepted),
    then waits, bounded by `close_timeout` (90 s by default), for an in-progress call; a start
    that sees the recorded close between its steps or before reporting running stops what it
-   acquired and fails as cancelled, so a close that could not wait is still carried out
-   (`last_error` says it is pending), never lost.
+   acquired and fails as cancelled. A close that could not wait is deferred, never lost
+   (`last_error` says it is pending): the call holding the lock (a `start()`, a `stop()` or a
+   first `close()`) carries it out before releasing the lock, whatever its own outcome, with
+   one cleanup attempt of what is still owned; a close whose wait expires just as that call
+   ends carries itself out. A persistent failure keeps the resource in `unreleased` (one
+   attempt per deferred close, no loop, nothing released twice); an interruption of that
+   attempt is re-raised after the lock is released and is never swallowed by an ordinary
+   error.
 
 The tests use in-memory fakes. Their `http://127.0.0.1/...` value is data only; no socket is
 created. There is no concrete publisher, receiver, capture or encoder adapter in this PR.

@@ -9,8 +9,11 @@ step was attempted and the state recorded. A resource whose stop did not succeed
 Serialization: ``start`` and ``stop`` refuse to run beside another lifecycle call.  ``close`` is a
 definitive shutdown: it is recorded first (no later ``start`` is accepted), then it waits (bounded
 by ``close_timeout``) for an in-progress call.  A start that sees the recorded close between its
-steps or before reporting RUNNING stops what it acquired and fails as cancelled, so a close that
-could not wait is still carried out, never lost.
+steps or before reporting RUNNING stops what it acquired and fails as cancelled.  A close that
+could not wait is deferred, never lost: the call holding the lock carries it out (one cleanup
+attempt of what is still owned) before releasing the lock, whatever that call's own outcome, and
+a close whose wait expires just as that call ends carries itself out.  Each deferred close is one
+attempt: a persistent failure keeps its resources in ``unreleased``, without retry loops.
 """
 
 from __future__ import annotations
@@ -44,6 +47,10 @@ from control_tv.screen_streaming.ports import ScreenEncoder, StreamPublisher, St
 _MAX_RECEIVER_TIMEOUT = 60.0
 _DEFAULT_CLOSE_TIMEOUT = 90.0
 _STARTABLE = {SessionState.IDLE, SessionState.STOPPED, SessionState.FAILED}
+_CLOSE_PENDING = (
+    "close() is pending: it runs when the lifecycle call in progress ends, before the lock is "
+    "released"
+)
 T = TypeVar("T")
 
 
@@ -138,6 +145,9 @@ class StreamingSessionService:
         self._publisher = publisher
         self._receiver = receiver
         self._lock = threading.Lock()
+        # Guards the hand-over of a deferred close between close() and the lock holder.
+        self._handoff = threading.Lock()
+        self._close_deferred = False
         self._owned: _OwnedSession | None = None
         self._state = SessionState.IDLE
         self.last_error: str | None = None
@@ -227,16 +237,15 @@ class StreamingSessionService:
         `state`, `last_error` and `unreleased`; an interruption is re-raised after cleanup."""
         self._closed.set()
         if not self._lock.acquire(timeout=self._close_timeout):
-            self.last_error = (
-                "close() is pending: another lifecycle call is still running and will release "
-                "what it acquired"
-            )
-            return
-        try:
-            with contextlib.suppress(StreamCleanupError):
-                self._stop_owned_session()
-        finally:
-            self._lock.release()
+            with self._handoff:
+                if not self._lock.acquire(blocking=False):
+                    # The holder checks this flag under the same guard before releasing.
+                    self._close_deferred = True
+                    self.last_error = _CLOSE_PENDING
+                    return
+                # The call in progress ended as the wait expired: nobody else will run it.
+        with self._holding(), contextlib.suppress(StreamCleanupError):
+            self._stop_owned_session()
 
     def __enter__(self) -> StreamingSessionService:
         return self
@@ -278,10 +287,55 @@ class StreamingSessionService:
     def _exclusive(self) -> Iterator[None]:
         if not self._lock.acquire(blocking=False):
             raise StreamStartError("another stream lifecycle call is in progress")
+        with self._holding():
+            yield
+
+    @contextlib.contextmanager
+    def _holding(self) -> Iterator[None]:
+        """Run with the lock already held; release it through `_release`, which first carries
+        out any close() deferred meanwhile. The call's own outcome is kept, except that an
+        interruption of the deferred close replaces an ordinary error (never swallowed)."""
         try:
             yield
-        finally:
-            self._lock.release()
+        except BaseException as error:
+            interruption = self._release()
+            if interruption is not None and isinstance(error, Exception):
+                raise interruption from error
+            raise
+        interruption = self._release()
+        if interruption is not None:
+            raise interruption
+
+    def _release(self) -> BaseException | None:
+        """Carry out each deferred close once, then release the lock (atomically with the last
+        check, so a close deferring itself meanwhile is never lost). Returns an interruption."""
+        interruption: BaseException | None = None
+        while True:
+            with self._handoff:
+                if not self._close_deferred:
+                    self._lock.release()
+                    return interruption
+                self._close_deferred = False
+            try:
+                self._deferred_close()
+            except BaseException as caught:  # recorded; the lock is still released
+                interruption = interruption or caught
+
+    def _deferred_close(self) -> None:
+        """One cleanup attempt of what is still owned, for a close() that could not wait."""
+        earlier = self.last_error
+        had_resources = self._owned is not None
+        try:
+            self._stop_owned_session()
+        except StreamCleanupError:
+            failures = self.last_error or ""
+            if earlier and earlier not in (_CLOSE_PENDING, failures):
+                self.last_error = f"{earlier}; deferred close() retry: {failures}"
+            else:
+                self.last_error = f"deferred close() retry: {failures}"
+            return
+        if had_resources or self.last_error == _CLOSE_PENDING:
+            self.last_error = None
 
     def _cleanup(self, owned: _OwnedSession) -> _Cleanup:
         """Stop receiver, publisher, encoder: every step is attempted, whatever happens."""
