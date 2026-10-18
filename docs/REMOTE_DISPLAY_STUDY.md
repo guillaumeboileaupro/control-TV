@@ -6,6 +6,11 @@ acceptance ([`HARDWARE_ACCEPTANCE_PLAN.md`](HARDWARE_ACCEPTANCE_PLAN.md)) unless
 otherwise. Points marked _to check_ must be measured on the owner's machine and TV before any
 choice is final.
 
+The receiver comparison and isolated lifecycle prototype are refined in
+[`SCREENCAST_D1_RECEIVER_SPIKE.md`](SCREENCAST_D1_RECEIVER_SPIKE.md). That prototype contains no
+capture, encoder implementation, listener or receiver adapter and does not demonstrate Freebox
+compatibility.
+
 ## 1. Goals and terms
 
 - **Duplication (mirroring):** the TV shows what one existing Ubuntu monitor shows.
