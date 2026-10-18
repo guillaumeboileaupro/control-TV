@@ -1,0 +1,4 @@
+interface:
+  display_name: "Conception SOLID"
+  short_description: "Conçoit et refactorise du code selon SOLID"
+  default_prompt: "Analyse ce changement selon SOLID, applique la plus petite refactorisation utile et vérifie que le comportement reste couvert."
