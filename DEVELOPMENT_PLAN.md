@@ -28,6 +28,11 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 - [x] Manual application control operates independently of ChatGPT/MCP.
 - [x] Build output, platform intermediates and temporary files are controlled and disposable.
 - [x] Project cleanup is limited to verified project-owned generated output; shared/global caches remain separate.
+- [ ] CI cost (PR #89, not merged): pull requests run only the platform builds their changed files can affect, chosen
+  from every path since the merge base (deletions and both sides of a rename included; unknown paths run everything) by
+  `scripts/ci_scope.py`; pushes to `main` always run every job. Build caches: one Rust entry per job and `Cargo.lock`,
+  never the `.deb`/`.apk` bundles; npm, Gradle and `cargo-audit` cached by their locks or version. Audits, provenance
+  and security checks are unchanged whenever their job runs.
 
 ## Current state and critical path
 

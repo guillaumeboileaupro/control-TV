@@ -72,3 +72,113 @@ def test_workflow_and_unknown_files_fail_safe_to_every_job(tmp_path: Path) -> No
 
 def test_empty_pull_request_scope_is_fast_only(tmp_path: Path) -> None:
     assert scope(tmp_path, []) == FAST_ONLY
+
+
+# The real changed-file detection: a temporary Git repository and the workflow's own command ---
+
+WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+DIFF_COMMAND = 'git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA"'
+
+
+def git(repository: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "test@invalid",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "test@invalid",
+            "HOME": str(repository),
+            "PATH": "/usr/bin:/bin",
+        },
+    ).stdout
+
+
+def repository(tmp_path: Path) -> tuple[Path, str]:
+    """A repository whose base commit holds Python, Rust, Kotlin and documentation files."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    files = {
+        "src/control_tv/service.py": "VALUE = 1\nOTHER = 2\nTHIRD = 3\n",
+        "src-tauri/src/bridge.rs": "pub fn bridge() {}\npub fn other() {}\n",
+        "src-tauri/gen/android/app/src/main/java/Widget.kt": "class Widget\n",
+        "docs/guide.md": "# Guide\n",
+    }
+    for name, content in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(content, encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "base")
+    base = git(root, "rev-parse", "HEAD").strip()
+    git(root, "switch", "-q", "-c", "pull-request")
+    return root, base
+
+
+def pull_request_scope(tmp_path: Path, root: Path, base: str) -> dict[str, str]:
+    """What the workflow's scope step selects: its diff command piped into ci_scope.py."""
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "change")
+    head = git(root, "rev-parse", "HEAD").strip()
+    changed = git(root, "diff", "--name-only", "--no-renames", f"{base}...{head}")
+    return scope(tmp_path, changed.splitlines())
+
+
+def test_the_workflow_lists_changes_with_the_tested_command_and_no_filter() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert DIFF_COMMAND in text
+    assert "--diff-filter" not in text
+
+
+def test_deleting_python_and_rust_sources_runs_every_build(tmp_path: Path) -> None:
+    """Regression (review of 9f392e9): --diff-filter=ACMR dropped deletions, so a pull request
+    removing sources listed nothing and skipped every platform build."""
+    root, base = repository(tmp_path)
+    git(root, "rm", "-q", "src/control_tv/service.py", "src-tauri/src/bridge.rs")
+
+    assert pull_request_scope(tmp_path, root, base) == ALL
+
+
+def test_deleting_only_a_kotlin_source_still_runs_the_android_build(tmp_path: Path) -> None:
+    root, base = repository(tmp_path)
+    git(root, "rm", "-q", "src-tauri/gen/android/app/src/main/java/Widget.kt")
+
+    assert pull_request_scope(tmp_path, root, base)["android"] == "true"
+
+
+def test_moving_a_source_into_docs_runs_every_build(tmp_path: Path) -> None:
+    """Regression: a rename was reported under its new path only, so moving a source into docs/
+    looked like a documentation change and skipped every build."""
+    root, base = repository(tmp_path)
+    git(root, "mv", "src/control_tv/service.py", "docs/service.py")
+
+    assert pull_request_scope(tmp_path, root, base) == ALL
+
+
+def test_a_modified_source_runs_every_build(tmp_path: Path) -> None:
+    root, base = repository(tmp_path)
+    (root / "src/control_tv/service.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    assert pull_request_scope(tmp_path, root, base) == ALL
+
+
+def test_a_documentation_change_stays_fast_even_after_main_moved(tmp_path: Path) -> None:
+    """Only the pull request's own changes count (merge base): a source change merged to main
+    meanwhile was validated by main's own complete run."""
+    root, base = repository(tmp_path)
+    (root / "docs/guide.md").write_text("# Guide\n\nMore.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "docs")
+    head = git(root, "rev-parse", "HEAD").strip()
+    git(root, "switch", "-q", "main")
+    (root / "src/control_tv/service.py").write_text("VALUE = 9\n", encoding="utf-8")
+    git(root, "commit", "-q", "-am", "main moved")
+    moved_base = git(root, "rev-parse", "HEAD").strip()
+
+    changed = git(root, "diff", "--name-only", "--no-renames", f"{moved_base}...{head}")
+    assert changed.splitlines() == ["docs/guide.md"]
+    assert scope(tmp_path, changed.splitlines()) == FAST_ONLY
+    assert base != moved_base

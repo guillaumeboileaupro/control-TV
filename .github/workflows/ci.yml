@@ -38,7 +38,9 @@ jobs:
         run: |
           set -o pipefail
           if [ "$EVENT_NAME" = pull_request ]; then
-            git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" \
+            # Every path the pull request touches since its merge base: deleted files and both
+            # sides of a rename included, so removing or moving a source never skips a build.
+            git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" \
               | python3 scripts/ci_scope.py --event "$EVENT_NAME" --github-output "$GITHUB_OUTPUT"
           else
             python3 scripts/ci_scope.py --event "$EVENT_NAME" --github-output "$GITHUB_OUTPUT" \
@@ -141,8 +143,10 @@ jobs:
         run: npm ci --prefix ui
 
       # Restore dependencies and incremental objects, but save explicitly before the mandatory
-      # workspace cleanup removes src-tauri/target. Keys are isolated by OS, architecture, job,
-      # lockfile and commit; restore prefixes allow safe incremental reuse after source changes.
+      # workspace cleanup removes src-tauri/target. One entry per OS, architecture, job and
+      # Cargo.lock: an exact hit is reused as is (cargo recompiles what changed) and not saved
+      # again; after a lockfile change the job's latest entry is restored as a base and the new
+      # lockfile's entry saved. Bundles (.deb) are never cached: every package is built fresh.
       - name: Restore the Rust build cache
         id: rust-build-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -152,9 +156,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
 
       # High and critical npm advisories fail the job unless ui/npm-audit-waivers.json waives
       # them until a date (an expired waiver fails too).
@@ -194,6 +200,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
 
       - name: Inspect remaining project-owned generated footprint
@@ -261,9 +269,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
 
       # The debug job never compiles the release-only bridge resolution.
       - name: Lint the release build of the Tauri shell crate
@@ -330,6 +340,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
 
       - name: Inspect remaining project-owned generated footprint
@@ -418,9 +430,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
 
       - name: Lint the Android build of the Tauri shell crate
         working-directory: src-tauri
@@ -491,6 +505,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             src-tauri/target
+            !src-tauri/target/*/bundle
+            !src-tauri/target/*/*/bundle
           key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
 
       - name: Inspect remaining project-owned generated footprint
