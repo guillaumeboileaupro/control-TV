@@ -58,8 +58,17 @@ work. `DEVELOPMENT_PLAN.md` is the source of truth for scope and progress; read 
     re-pasted rules (skill `agent-token-efficiency`).
 13. [rule:final-report] End every mission with the standard report (skill
     `development-reporting`), local and CI results kept apart.
-14. [rule:remaining-estimate] Every report gives the measured time and an updated estimate of the
-    remaining work for the milestone.
+14. [rule:remaining-estimate] Project estimates belong to the coordinator. Agents must not
+    measure elapsed time or estimate remaining hours.
+    Project-wide time estimates are managed by the coordinator, not by coding agents.
+15. [rule:progress-docs] For every project change, update `TODO.md` and
+    `DEVELOPMENT_PLAN.md` as part of the same branch/PR, before handoff. Keep changes
+    limited to the affected tasks and D0-D4 phases; mark complete only work actually done,
+    add newly discovered issues and unfinished work, and correct stale dependencies or
+    statements. Clearly distinguish implementation, automated checks/CI and real hardware
+    validation. Preserve relevant history and never silently remove unfinished tasks. Verify
+    that both files reflect the delivered change even when no checkbox changes are needed.
+    For read-only audits, report necessary follow-up edits without modifying other PRs.
 
 ## Temporary and build cleanup (blocking)
 
@@ -92,7 +101,8 @@ agent): `.agents/inactive-skills/`. Usage: `docs/AGENT_INSTRUCTIONS.md`; consist
 ## Handoff and definition of done
 
 Scope complete; relevant checks run; hardware claims classified (simulated, CI, hardware);
-cleanup done and footprint recorded; only genuinely complete `DEVELOPMENT_PLAN.md` checkboxes
-updated; PR workflow respected; the report of skill `development-reporting` gives the other agent
+cleanup done and footprint recorded; `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized as required;
+PR workflow respected; the report of skill `development-reporting`
+gives the other agent
 everything needed to continue (objective, branch/PR, files, interfaces, decisions, dependencies,
 checks, validation, artifacts kept and cleaned, risks, assumptions, next task, files to read).

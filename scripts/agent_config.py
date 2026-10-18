@@ -50,6 +50,7 @@ RULES = (
     "context-minimization",
     "final-report",
     "remaining-estimate",
+    "progress-docs",
 )
 REQUIRED_SKILLS = (
     "git-worktree-pr-workflow",
