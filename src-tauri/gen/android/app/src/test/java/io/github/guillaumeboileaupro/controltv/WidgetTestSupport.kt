@@ -36,6 +36,9 @@ class MemoryWidgetStore : WidgetStore {
 class FakeBridge(private val answer: (method: String, params: JSONObject) -> String) : (String) -> String {
     val requests = mutableListOf<Pair<String, JSONObject>>()
 
+    /** Every request line as received, envelope included (`id`, `method`, `requestId`...). */
+    val lines = mutableListOf<JSONObject>()
+
     val methods: List<String> get() = requests.map { it.first }
 
     val commands: List<Pair<String, JSONObject>>
@@ -43,6 +46,7 @@ class FakeBridge(private val answer: (method: String, params: JSONObject) -> Str
 
     override fun invoke(line: String): String {
         val request = JSONObject(line)
+        lines += request
         val method = request.getString("method")
         val params = request.getJSONObject("params")
         requests += method to params

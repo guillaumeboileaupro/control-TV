@@ -15,23 +15,53 @@ from __future__ import annotations
 import json
 import os
 import platform
+from pathlib import Path
 
 import control_tv
 from control_tv.bridge import default_service, handle_line
 from control_tv.service import ControlService
+from control_tv.trace_files import AcceptanceTracing, android_tracing
 
 # protobuf's native extension is not available on Android; its pure-Python implementation
 # is the one the embedded runtime ships, chosen before anything imports protobuf.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 _control: ControlService | None = None
+_tracing: AcceptanceTracing | None = None
 
 
 def _service() -> ControlService:
     global _control
     if _control is None:
-        _control = default_service()
+        _control = default_service(_tracing)
     return _control
+
+
+def configure_acceptance_trace(directory: str) -> str:
+    """Switch on the acceptance trace and confirmation hold under `directory` (the app's
+    private files). Called only by the Android **debug** build, after the owner enabled the
+    acceptance mode, and before the first request: the service is built once per process."""
+    global _tracing
+    if _control is not None:
+        raise RuntimeError("the acceptance trace must be configured before the first request")
+    _tracing = android_tracing(Path(directory))
+    return acceptance_trace_status()
+
+
+def acceptance_trace_status() -> str:
+    """Whether this process records an acceptance trace, for the debug acceptance screen."""
+    tracing = _tracing
+    if tracing is None or not tracing.recorder.active:
+        return json.dumps({"active": False, "role": None, "hold": False, "file": ""})
+    role = tracing.recorder.role
+    return json.dumps(
+        {
+            "active": True,
+            "role": None if role is None else role.value,
+            "hold": tracing.gate is not None,
+            "file": "" if tracing.trace_file is None else str(tracing.trace_file),
+        }
+    )
 
 
 def handle(line: str) -> str:

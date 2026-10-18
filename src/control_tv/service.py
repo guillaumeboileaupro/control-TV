@@ -18,9 +18,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
     AppLaunchResult,
     Command,
+    CommandRejectedError,
     CommandResult,
     Confirmation,
     ConnectionState,
@@ -334,6 +336,8 @@ class ControlService:
         sleep: Callable[[float], None] = time.sleep,
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
+        trace: TraceRecorder | None = None,
+        gate: ConfirmationGate | None = None,
     ) -> None:
         _require(
             confirm_timeout is None or (_is_finite(confirm_timeout) and confirm_timeout >= 0),
@@ -363,6 +367,10 @@ class ControlService:
         self._volume_tolerance = volume_tolerance
         self._clock = clock
         self._sleep = sleep
+        self._trace = trace or TraceRecorder()
+        # Acceptance only (C6): holds a sent playback command's confirmation until an
+        # independent observer has recorded the session change. None in normal use.
+        self._gate = gate
         self._channels = TvChannels(self._discovered, remote=remote, apps=apps)
         self._devices: dict[DeviceId, Device] = {}
 
@@ -378,49 +386,79 @@ class ControlService:
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> CommandResult:
         device_id = _checked_id(device_id)
-        self._transport.load_media(device_id, request)
-        return self._verify(Command.LOAD_MEDIA, device_id, _loaded(request.url), "media loaded")
+        trace = self._trace.command(Command.LOAD_MEDIA)
+        self._send(trace, lambda: self._transport.load_media(device_id, request))
+        return self._verify(
+            Command.LOAD_MEDIA, device_id, _loaded(request.url), "media loaded", trace=trace
+        )
 
     def play(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        trace = self._trace.command(Command.PLAY)
         deadline = self._confirmation_deadline()
-        target = self._playback_target(device_id, deadline)
+        target = self._playback_target(device_id, deadline, trace)
+        trace.record("pre_status", media_session_id=target.media_session_id)
         expected = target.identity
-        self._transport.play(device_id, target.media_session_id)
+        self._send(
+            trace,
+            lambda: self._transport.play(device_id, target.media_session_id),
+            media_session_id=target.media_session_id,
+        )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.PLAY,
             device_id,
             _playback_in(expected, PlaybackState.PLAYING),
             "playback playing",
             deadline=deadline,
+            trace=trace,
+            target_session_id=target.media_session_id,
         )
 
     def pause(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        trace = self._trace.command(Command.PAUSE)
         deadline = self._confirmation_deadline()
-        target = self._playback_target(device_id, deadline)
+        target = self._playback_target(device_id, deadline, trace)
+        trace.record("pre_status", media_session_id=target.media_session_id)
         expected = target.identity
-        self._transport.pause(device_id, target.media_session_id)
+        self._send(
+            trace,
+            lambda: self._transport.pause(device_id, target.media_session_id),
+            media_session_id=target.media_session_id,
+        )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.PAUSE,
             device_id,
             _playback_in(expected, PlaybackState.PAUSED),
             "playback paused",
             deadline=deadline,
+            trace=trace,
+            target_session_id=target.media_session_id,
         )
 
     def stop(self, device_id: DeviceId) -> CommandResult:
         device_id = _checked_id(device_id)
+        trace = self._trace.command(Command.STOP)
         deadline = self._confirmation_deadline()
-        target = self._playback_target(device_id, deadline)
+        target = self._playback_target(device_id, deadline, trace)
+        trace.record("pre_status", media_session_id=target.media_session_id)
         expected = target.identity
-        self._transport.stop(device_id, target.media_session_id)
+        self._send(
+            trace,
+            lambda: self._transport.stop(device_id, target.media_session_id),
+            media_session_id=target.media_session_id,
+        )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.STOP,
             device_id,
             _stopped(expected),
             "playback stopped",
             deadline=deadline,
+            trace=trace,
+            target_session_id=target.media_session_id,
         )
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
@@ -431,40 +469,55 @@ class ControlService:
             f"seek position must be a finite number >= 0: {position_seconds}",
             device_id,
         )
+        trace = self._trace.command(Command.SEEK)
         deadline = self._confirmation_deadline()
-        target = self._playback_target(device_id, deadline)
+        target = self._playback_target(device_id, deadline, trace)
+        trace.record("pre_status", media_session_id=target.media_session_id)
         media = target.media
         expected = target.identity
         if media is not None and media.supports_seek is False:
-            raise UnsupportedOperationError(
+            error = UnsupportedOperationError(
                 "the current media does not support seeking", device_id=device_id
             )
-        self._transport.seek(device_id, position_seconds, target.media_session_id)
+            self._record_not_sent(trace, error, target.media_session_id)
+            raise error
+        self._send(
+            trace,
+            lambda: self._transport.seek(device_id, position_seconds, target.media_session_id),
+            media_session_id=target.media_session_id,
+        )
+        deadline = self._hold(trace, target.media_session_id, deadline)
         return self._verify(
             Command.SEEK,
             device_id,
             _position_near(position_seconds, self._seek_tolerance, expected),
             f"position near {position_seconds:g}s",
             deadline=deadline,
+            trace=trace,
+            target_session_id=target.media_session_id,
         )
 
     def set_volume(self, device_id: DeviceId, level: float) -> CommandResult:
         device_id = _checked_id(device_id)
         level = _number(level, "volume level", device_id)
         _require(0.0 <= level <= 1.0, f"volume level must be within 0.0-1.0: {level}", device_id)
+        trace = self._trace.command(Command.SET_VOLUME)
         deadline = self._confirmation_deadline()
         if self._volume_is_fixed(device_id, deadline):
-            raise UnsupportedOperationError(
+            error = UnsupportedOperationError(
                 "this device reports a fixed volume, which cannot be changed",
                 device_id=device_id,
             )
-        self._transport.set_volume(device_id, level)
+            self._record_not_sent(trace, error)
+            raise error
+        self._send(trace, lambda: self._transport.set_volume(device_id, level))
         return self._verify(
             Command.SET_VOLUME,
             device_id,
             _volume_near(level, self._volume_tolerance),
             f"volume near {level:g}",
             deadline=deadline,
+            trace=trace,
         )
 
     def set_muted(self, device_id: DeviceId, muted: bool) -> CommandResult:
@@ -472,9 +525,14 @@ class ControlService:
         # An absolute state: only a real bool, never 0/1, a string or None.
         if not isinstance(muted, bool):
             raise InvalidArgumentError(f"muted must be a boolean: {muted!r}", device_id=device_id)
-        self._transport.set_muted(device_id, muted)
+        trace = self._trace.command(Command.SET_MUTED)
+        self._send(trace, lambda: self._transport.set_muted(device_id, muted))
         return self._verify(
-            Command.SET_MUTED, device_id, _muted_is(muted), "mute on" if muted else "mute off"
+            Command.SET_MUTED,
+            device_id,
+            _muted_is(muted),
+            "mute on" if muted else "mute off",
+            trace=trace,
         )
 
     # The TV's own channels (remote and apps) live in `TvChannels`; these methods keep the
@@ -535,7 +593,9 @@ class ControlService:
             and receiver.volume_control_type is VolumeControlType.FIXED
         )
 
-    def _playback_target(self, device_id: DeviceId, deadline: float | None) -> _PlaybackTarget:
+    def _playback_target(
+        self, device_id: DeviceId, deadline: float | None, trace: CommandTrace
+    ) -> _PlaybackTarget:
         """Capture the one exact Cast session that a playback command may target.
 
         This read is mandatory even when post-command confirmation is disabled. A read error
@@ -551,12 +611,14 @@ class ControlService:
                     device_id=device_id,
                 )
                 error.delivery = "not_sent"
+                self._record_not_sent(trace, error)
                 raise error
             timeout = min(timeout, remaining)
         try:
             status = self._transport.get_status(device_id, timeout=timeout)
         except ControlError as error:
             error.delivery = "not_sent"
+            self._record_not_sent(trace, error)
             raise
         media = status.media
         session_id = media.media_session_id if media is not None else None
@@ -569,8 +631,74 @@ class ControlService:
                 "the current media did not report a media session id", device_id=device_id
             )
             unavailable_error.delivery = "not_sent"
+            self._record_not_sent(trace, unavailable_error)
             raise unavailable_error
         return _PlaybackTarget(_identity_of(media), session_id, media)
+
+    @staticmethod
+    def _record_not_sent(
+        trace: CommandTrace, error: ControlError, media_session_id: int | None = None
+    ) -> None:
+        trace.record("command_failed", media_session_id=media_session_id, error_code=error.code)
+        trace.record("not_sent", media_session_id=media_session_id, error_code=error.code)
+
+    def _hold(
+        self, trace: CommandTrace, media_session_id: int, deadline: float | None
+    ) -> float | None:
+        """Acceptance only: wait (bounded by the gate) for the observer's release before any
+        confirmation read. The command is never resent; a hold gives the confirmation a fresh
+        budget, so the time spent held is not counted against it."""
+        gate = self._gate
+        if gate is None or self._confirm_timeout is None:
+            return deadline
+        trace.record("confirmation_held", media_session_id=media_session_id)
+        try:
+            outcome = gate.hold(HoldRequest(trace.request_id, trace.command, media_session_id))
+        except Exception:
+            trace.record("confirmation_hold_failed", media_session_id=media_session_id)
+        else:
+            trace.record(
+                "confirmation_released" if outcome.released else "confirmation_hold_timeout",
+                media_session_id=media_session_id,
+                token=outcome.token,
+            )
+        return self._confirmation_deadline()
+
+    @staticmethod
+    def _send(
+        trace: CommandTrace,
+        operation: Callable[[], None],
+        *,
+        media_session_id: int | None = None,
+    ) -> None:
+        """Record one application-side transport invocation without ever retrying it.
+
+        Its outcome: `transport_response`; `not_sent` when the error proves nothing left;
+        `command_rejected` when the receiver answered with a rejection; otherwise, including an
+        unexpected exception (recorded as `unexpected_error`, then re-raised unchanged),
+        `ambiguous_result`: the command may or may not have reached the TV."""
+        trace.record("send_attempt", media_session_id=media_session_id)
+        try:
+            operation()
+        except ControlError as error:
+            trace.record(
+                "command_failed",
+                media_session_id=media_session_id,
+                error_code=error.code,
+            )
+            if error.delivery == "not_sent":
+                outcome = "not_sent"
+            elif isinstance(error, CommandRejectedError):
+                outcome = "command_rejected"
+            else:
+                outcome = "ambiguous_result"
+            trace.record(outcome, media_session_id=media_session_id, error_code=error.code)
+            raise
+        except Exception:
+            trace.record("unexpected_error", media_session_id=media_session_id)
+            trace.record("ambiguous_result", media_session_id=media_session_id)
+            raise
+        trace.record("transport_response", media_session_id=media_session_id)
 
     def _verify(
         self,
@@ -580,6 +708,8 @@ class ControlService:
         description: str,
         *,
         deadline: float | None = None,
+        trace: CommandTrace,
+        target_session_id: int | None = None,
     ) -> CommandResult:
         """Read the TV status until `expected` holds or the time budget is spent.
 
@@ -595,6 +725,7 @@ class ControlService:
         """
         timeout = self._confirm_timeout
         if timeout is None:
+            trace.record("confirmation_skipped")
             return CommandResult(
                 command=command, device_id=device_id, confirmation=Confirmation.NOT_CHECKED
             )
@@ -604,6 +735,7 @@ class ControlService:
         last_status: DeviceStatus | None = None
         last_error: ControlError | None = None
         last_observation: Observation | None = None
+        session_change_recorded = False
         while True:
             remaining = deadline - self._clock()
             if remaining <= 0:
@@ -612,8 +744,31 @@ class ControlService:
                 status = self._transport.get_status(device_id, timeout=remaining)
             except ControlError as error:
                 last_error = error
+                trace.record("confirmation_read_failed", error_code=error.code)
+            except Exception:
+                # Keep the existing behavior (the unexpected exception propagates unchanged),
+                # but leave non-sensitive, fail-closed evidence of where the trace stopped.
+                trace.record("confirmation_unexpected_error")
+                raise
             else:
                 last_status, last_error = status, None
+                media = status.media
+                observed_session_id = None if media is None else media.media_session_id
+                if (
+                    target_session_id is not None
+                    and observed_session_id is not None
+                    and observed_session_id != target_session_id
+                    and not session_change_recorded
+                ):
+                    # What the product itself saw: never the independent C6 evidence.
+                    trace.record(
+                        "confirmation_session_changed", media_session_id=observed_session_id
+                    )
+                    session_change_recorded = True
+                trace.record(
+                    "confirmation_status",
+                    media_session_id=observed_session_id,
+                )
                 if self._clock() >= deadline:
                     # The read itself succeeded, but only after the window closed: that
                     # evidence arrived too late to confirm anything.
@@ -626,6 +781,10 @@ class ControlService:
                 else:
                     last_observation = expected(status)
                     if last_observation.matched:
+                        trace.record(
+                            "command_confirmed",
+                            media_session_id=None if media is None else media.media_session_id,
+                        )
                         return CommandResult(
                             command=command,
                             device_id=device_id,
@@ -646,6 +805,15 @@ class ControlService:
                 f"command sent; the confirmation budget ({timeout:g}s) expired "
                 "before a status could be read"
             )
+        trace.record(
+            "command_unconfirmed",
+            media_session_id=(
+                None
+                if last_status is None or last_status.media is None
+                else last_status.media.media_session_id
+            ),
+            error_code=None if last_error is None else last_error.code,
+        )
         return CommandResult(
             command=command,
             device_id=device_id,

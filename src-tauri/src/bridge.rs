@@ -24,6 +24,38 @@ pub(crate) const CODE_BRIDGE_TRANSPORT: &str = "bridge_transport";
 /// A request that timed out before it was written: certainly not sent, so not ambiguous.
 pub(crate) const CODE_BRIDGE_BUSY: &str = "bridge_busy";
 
+/// One application request - one order from the user - as the bridge's `requestId`: every
+/// message of that order carries it, so the acceptance trace counts every invocation of the
+/// order (C7). A new order gets a new id; issuing the same order again must reuse it. Unique
+/// from the process id, the clock and a counter, without a dependency; letters, digits and
+/// dashes only, at most 64 characters (the bridge's `requestId` format).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ApplicationRequestId(String);
+
+impl ApplicationRequestId {
+    pub(crate) fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        Self(format!(
+            "{:x}-{nanos:x}-{:x}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for ApplicationRequestId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The fate of one bridge call, settled once: see `call_bridge`.
 pub(crate) const CLAIM_PENDING: u8 = 0;
 pub(crate) const CLAIM_STARTED: u8 = 1;
@@ -268,10 +300,19 @@ impl PythonBridge {
 
     #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
     pub(crate) fn spawn(program: &BridgeProgram) -> Result<Self, String> {
-        let mut child = Self::command(program).spawn().map_err(|error| {
+        Self::spawn_command(Self::command(program), &program.executable)
+    }
+
+    /// Spawn a bridge from a prepared `command` (`executable` names it in errors).
+    #[cfg_attr(target_os = "android", allow(dead_code))] // desktop bridge process only
+    pub(crate) fn spawn_command(
+        mut command: Command,
+        executable: &std::path::Path,
+    ) -> Result<Self, String> {
+        let mut child = command.spawn().map_err(|error| {
             format!(
                 "failed to spawn the Python control bridge ({}): {error}",
-                program.executable.display()
+                executable.display()
             )
         })?;
 
@@ -307,12 +348,29 @@ impl PythonBridge {
         }
     }
 
-    /// Send one `{method, params}` request and return its result, or the bridge's own
-    /// `{code, message}` error, or a `bridge_transport` failure when the request or its
-    /// response could not travel to/from the process at all.
+    /// One request as a new order of its own.
+    #[cfg(test)]
     pub(crate) fn call(&self, method: &str, params: Value) -> Result<Value, BridgeFailure> {
+        self.call_as(&ApplicationRequestId::new(), method, params)
+    }
+
+    /// Send one `{method, params}` request of `order` and return its result, or the bridge's
+    /// own `{code, message}` error, or a `bridge_transport` failure when the request or its
+    /// response could not travel to/from the process at all. Every message of one order
+    /// carries the same `requestId`; nothing here sends a message again.
+    pub(crate) fn call_as(
+        &self,
+        order: &ApplicationRequestId,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, BridgeFailure> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let request = json!({ "id": id, "method": method, "params": params });
+        let request = json!({
+            "id": id,
+            "method": method,
+            "params": params,
+            "requestId": order.as_str(),
+        });
         let line = serde_json::to_string(&request).map_err(|error| {
             BridgeFailure::transport(format!("failed to encode bridge request: {error}"))
         })?;
@@ -492,6 +550,8 @@ pub(crate) async fn call_bridge(
     params: Value,
     timeout: Duration,
 ) -> Result<Value, BridgeFailure> {
+    // This call is one order: its id is made once, here, and travels with the request.
+    let order = ApplicationRequestId::new();
     let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
     let worker_claim = Arc::clone(&claim);
     // The process this request is written to, set before the claim, so a caller that loses
@@ -534,7 +594,7 @@ pub(crate) async fn call_bridge(
                 "the request was abandoned before it was sent",
             ));
         }
-        let result = bridge.call(method, params);
+        let result = bridge.call_as(&order, method, params);
         if let Err(failure) = &result {
             if failure.code == CODE_BRIDGE_TRANSPORT {
                 slot.retire(failure.message.clone());
