@@ -11,7 +11,7 @@ how those scenarios are run by hand, reproducibly.
 | ------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `android.real.install-launch-logs`                | install, launch, display, widget, CSP, logs on the phone | below, session 2                                                         |
 | `R1`–`R4`, `dual-controller.convergence`          | two remotes, read-only                                   | [DUAL_CONTROLLER_VALIDATION.md](DUAL_CONTROLLER_VALIDATION.md)           |
-| `C1`–`C7`                                         | two remotes, commands (C6/C7 need instrumentation)       | same                                                                     |
+| `C1`–`C7`                                         | two remotes, commands (C6/C7 need the command trace)     | same                                                                     |
 | `K1`–`K3`, `latency.remote-keys`                  | key latency, filmed                                      | same                                                                     |
 | `TV-POWER`, `TV-KEYBOARD`, `TV-APPS`, `TV-ERRORS` | power, keyboard, apps, error reads                       | [GOOGLE_TV_ACCEPTANCE_AUTOMATION.md](GOOGLE_TV_ACCEPTANCE_AUTOMATION.md) |
 
@@ -27,7 +27,7 @@ how those scenarios are run by hand, reproducibly.
    `DEVELOPMENT_PLAN.md`.
 4. **Classification:** PASS only when every PASS criterion was observed; FAIL when a FAIL
    criterion was observed; NOT RUN otherwise (including a missing authorization, a missing
-   video for K1–K3, or missing instrumentation for C6/C7). Simulated or CI results never become
+   video for K1–K3, or a C6/C7 trace the offline validator does not accept). Simulated or CI results never become
    hardware results.
 
 ## Before session 1: identify the builds (no device involved)
@@ -84,7 +84,7 @@ power is last.
 | 4c  | Apps              | launch an app from Ubuntu, another from Android (the launched media serves 4d)                                                                                                                                                                                    | TV commands; ADB      | 0.5 h    |
 | 4d  | Media playing     | C1–C5; Stop and Seek bound to the media session (#59); audible volume from Android; widget Play/Pause/Volume                                                                                                                                                      | TV commands           | 1–1.5 h  |
 | 4e  | End               | power off, then on                                                                                                                                                                                                                                                | TV command            | 0.25 h   |
-| 5   | C6–C7             | only with the send/trace instrumentation (absent today); otherwise record NOT RUN                                                                                                                                                                                 | Wi-Fi cut (C7)        | 0–1.5 h  |
+| 5   | C6–C7             | with the command trace ([COMMAND_TRACE.md](COMMAND_TRACE.md)): C6 from the Ubuntu development mode with the observer, C7 from Ubuntu or the Android debug build; validate offline, otherwise record NOT RUN                                                       | Wi-Fi cut (C7)        | 0–1.5 h  |
 | 6   | Android lifecycle | process death, battery saver, network loss and return, TV not found; update with pending work (only between two builds with the same signer)                                                                                                                      | —                     | 1–1.5 h  |
 | 7   | Report            | per-step classes into `DEVELOPMENT_PLAN.md` and `TODO.md`                                                                                                                                                                                                         | —                     | 1–2 h    |
 

@@ -94,8 +94,10 @@ CONTROL_TV_DEB=dist/acceptance-de31c94/linux/control-tv_0.1.0_amd64.deb \
 ```
 
 The Android and Google TV categories may still be run for their static and simulated checks;
-their real scenarios report `BLOCKED` (manual) by design. C6 and C7 need the send/trace
-instrumentation, which the product does not have: without it they are NOT RUN. `--resume` keeps
+their real scenarios report `BLOCKED` (manual) by design. C6 and C7 use the command trace
+([COMMAND_TRACE.md](COMMAND_TRACE.md)): C6 from the Ubuntu development mode with the independent
+observer (the hold is refused in the packaged bridge), C7 from Ubuntu or the Android debug
+build; without a trace the offline validator accepts, they are NOT RUN. `--resume` keeps
 earlier PASS results and retries the others.
 
 ## 5. Authorizations needed (owner)
@@ -115,5 +117,6 @@ earlier PASS results and retries the others.
 
 ## 6. Estimate
 
-Sessions 1–7: ≈ 7.5–12 h, 6–9 h of them with the owner at the TV (see the protocol), plus the
-optional C6/C7 instrumentation (≈ 3–5 h of development and review) if the owner wants them run.
+Sessions 1–7: ≈ 7.5–12 h, 6–9 h of them with the owner at the TV (see the protocol). The C6/C7
+instrumentation exists ([COMMAND_TRACE.md](COMMAND_TRACE.md)); running C6 and C7 is part of the
+sessions.

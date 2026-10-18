@@ -678,7 +678,9 @@ nothing run on a device.
   `check-apk`, and an unusable pinned certificate is BLOCKED; `check-deb` reads dpkg's status
   first: "not installed" only without any dpkg record and any file of the package, any other
   dpkg status (half-configured, unpacked, config-files...) or leftover is BLOCKED;
-- [ ] C6/C7 send/trace instrumentation (absent: C6/C7 stay NOT RUN without it).
+- [x] C6/C7 send/trace instrumentation: product command trace, confirmation hold, independent
+  observer and offline validators ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md));
+  automation-validated only: C6 and C7 stay NOT RUN on hardware until the owner authorizes them.
 
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV
 
