@@ -16,6 +16,35 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    name: Select required platform builds
+    runs-on: ubuntu-latest
+    outputs:
+      tauri: ${{ steps.scope.outputs.tauri }}
+      linux_release: ${{ steps.scope.outputs.linux_release }}
+      android: ${{ steps.scope.outputs.android }}
+    steps:
+      - name: Check out the repository and comparison commits
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select platform jobs conservatively
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" \
+              | python3 scripts/ci_scope.py --event "$EVENT_NAME" --github-output "$GITHUB_OUTPUT"
+          else
+            python3 scripts/ci_scope.py --event "$EVENT_NAME" --github-output "$GITHUB_OUTPUT" \
+              < /dev/null
+          fi
+
   quality:
     name: Lint, type-check, test and coverage
     runs-on: ubuntu-latest
@@ -59,6 +88,8 @@ jobs:
 
   tauri:
     name: Tauri shell (Rust and frontend)
+    needs: scope
+    if: needs.scope.outputs.tauri == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -89,6 +120,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -107,6 +140,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix ui
 
+      # Restore dependencies and incremental objects, but save explicitly before the mandatory
+      # workspace cleanup removes src-tauri/target. Keys are isolated by OS, architecture, job,
+      # lockfile and commit; restore prefixes allow safe incremental reuse after source changes.
+      - name: Restore the Rust build cache
+        id: rust-build-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
+
       # High and critical npm advisories fail the job unless ui/npm-audit-waivers.json waives
       # them until a date (an expired waiver fails too).
       - name: Audit the frontend dependencies
@@ -114,7 +163,15 @@ jobs:
 
       # A RustSec vulnerability of the Tauri crate fails the job unless
       # src-tauri/cargo-audit-waivers.json waives it until a date; warnings are printed.
+      - name: Restore cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-0.22.2
+
       - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit the Tauri crate's Rust dependencies
         run: python3 scripts/dev.py rust-audit
@@ -128,6 +185,17 @@ jobs:
       - name: Build the frontend and the Tauri application (debug profile)
         run: npx --prefix ui tauri build --debug --bundles deb
 
+      - name: Save the Rust build cache before cleanup
+        if: success() && steps.rust-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
+
       - name: Inspect remaining project-owned generated footprint
         if: always()
         run: python3 scripts/dev.py disk-usage
@@ -138,6 +206,8 @@ jobs:
 
   linux-release:
     name: Linux release package (frozen bridge and .deb)
+    needs: scope
+    if: needs.scope.outputs.linux_release == 'true'
     # The oldest supported Ubuntu LTS runner: the frozen bridge copies this system's GCC
     # runtime, so the build host sets the oldest glibc the package can run on.
     runs-on: ubuntu-22.04
@@ -165,6 +235,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -179,6 +251,19 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix ui
+
+      - name: Restore the Rust build cache
+        id: rust-build-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
 
       # The debug job never compiles the release-only bridge resolution.
       - name: Lint the release build of the Tauri shell crate
@@ -236,6 +321,17 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      - name: Save the Rust build cache before cleanup
+        if: success() && steps.rust-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
+
       - name: Inspect remaining project-owned generated footprint
         if: always()
         run: python3 scripts/dev.py disk-usage
@@ -246,6 +342,8 @@ jobs:
 
   android:
     name: Android APK (arm64 debug build and JVM tests)
+    needs: scope
+    if: needs.scope.outputs.android == 'true'
     # Build-level evidence only: no device, no emulator, nothing installed or launched.
     # Real-phone validation is recorded separately (DEVELOPMENT_PLAN.md, Phase 7b).
     runs-on: ubuntu-latest
@@ -267,6 +365,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/gen/android/**/*.gradle
+            src-tauri/gen/android/**/*.gradle.kts
+            src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
 
       # @stable: see the tauri job.
       - name: Install the Rust stable toolchain with the Android arm64 target
@@ -279,6 +382,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -303,6 +408,19 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix ui
+
+      - name: Restore the Rust build cache
+        id: rust-build-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
 
       - name: Lint the Android build of the Tauri shell crate
         working-directory: src-tauri
@@ -363,6 +481,17 @@ jobs:
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/apk-provenance.json
           retention-days: 7
           if-no-files-found: error
+
+      - name: Save the Rust build cache before cleanup
+        if: success() && steps.rust-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ steps.rust-build-cache.outputs.cache-primary-key }}
 
       - name: Inspect remaining project-owned generated footprint
         if: always()
