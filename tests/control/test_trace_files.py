@@ -12,6 +12,7 @@ import pytest
 
 from control_tv import trace_files
 from control_tv.command_trace import (
+    HoldOutcome,
     HoldRequest,
     TraceConfigurationError,
     TraceEvent,
@@ -69,6 +70,26 @@ def test_a_linked_directory_or_a_plain_file_is_refused(tmp_path: Path) -> None:
     for path in (tmp_path / "link", tmp_path / "file"):
         with pytest.raises(TraceConfigurationError, match="real directory"):
             private_directory(path)
+
+
+def test_a_directory_owned_by_another_effective_user_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "evidence"
+    directory.mkdir(mode=0o700)
+    monkeypatch.setattr(os, "geteuid", lambda: directory.stat().st_uid + 1)
+
+    with pytest.raises(TraceConfigurationError, match="owned by the current user"):
+        private_directory(directory)
+
+
+def test_a_symbolic_parent_component_is_refused(tmp_path: Path) -> None:
+    real = private_directory(tmp_path / "real")
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(TraceConfigurationError, match="no symbolic path component"):
+        private_directory(linked_parent / "nested")
 
 
 def test_a_linked_trace_file_is_never_followed(tmp_path: Path) -> None:
@@ -130,6 +151,24 @@ def test_a_path_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
         JsonLinesTraceSink(directory / "trace.jsonl").write(EVENT)
 
 
+def test_a_trace_file_reported_as_owned_by_another_user_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fstat = os.fstat
+
+    def foreign_regular_file(descriptor: int) -> os.stat_result:
+        info = real_fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            return info
+        fields = list(info)
+        fields[4] = info.st_uid + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "fstat", foreign_regular_file)
+    with pytest.raises(OSError, match="regular file of this user"):
+        JsonLinesTraceSink(tmp_path / "evidence" / "trace.jsonl").write(EVENT)
+
+
 # The file confirmation hold ------------------------------------------------------------------
 
 
@@ -186,6 +225,21 @@ def test_a_hold_times_out_bounded_and_ignores_a_malformed_release(tmp_path: Path
     assert ticks.now == pytest.approx(1.0) and list(gate_dir.iterdir()) == []
 
 
+def test_a_non_regular_release_is_ignored_and_cleaned(tmp_path: Path) -> None:
+    gate_dir = private_directory(tmp_path / "gate")
+
+    def forge() -> None:
+        (gate_dir / "request-1.release").mkdir(exist_ok=True)
+
+    ticks = Ticks(forge)
+    outcome = FileConfirmationGate(
+        gate_dir, timeout_seconds=1, clock=ticks.clock, sleep=ticks.sleep, poll_seconds=0.25
+    ).hold(request())
+
+    assert outcome.released is False
+    assert [path.name for path in gate_dir.iterdir()] == ["request-1.release"]
+
+
 def test_an_interrupted_hold_cleans_its_files(tmp_path: Path) -> None:
     gate_dir = tmp_path / "gate"
 
@@ -216,6 +270,7 @@ def test_malformed_hold_markers_are_ignored_and_bad_releases_refused(tmp_path: P
     (gate_dir / "b.held").write_text(json.dumps({"request_id": "other", "media_session_id": 1}))
     (gate_dir / "c.held").write_text(json.dumps({"request_id": "c", "media_session_id": True}))
     (gate_dir / "d.held").write_text("[]")
+    (gate_dir / "directory.held").mkdir()
 
     assert held_commands(gate_dir) == ()
     with pytest.raises(TraceConfigurationError, match="invalid request id or release token"):
@@ -325,3 +380,42 @@ def test_a_concurrent_hold_and_release_with_real_time(tmp_path: Path) -> None:
     thread.join(5)
 
     assert released.is_set() and outcome.released and outcome.token == TOKEN
+
+
+def test_two_simultaneous_holds_keep_their_sessions_and_tokens_separate(tmp_path: Path) -> None:
+    gate_dir = tmp_path / "gate"
+    gate = FileConfirmationGate(gate_dir, timeout_seconds=5, poll_seconds=0.01)
+    requests = (
+        HoldRequest("request-a", Command.PAUSE, 17),
+        HoldRequest("request-b", Command.PLAY, 29),
+    )
+    tokens = {"request-a": "a" * 32, "request-b": "b" * 32}
+    outcomes: dict[str, HoldOutcome] = {}
+
+    def wait(request_value: HoldRequest) -> None:
+        outcomes[request_value.request_id] = gate.hold(request_value)
+
+    threads = [threading.Thread(target=wait, args=(item,)) for item in requests]
+    for thread in threads:
+        thread.start()
+    for _ in range(500):
+        held = held_commands(gate_dir)
+        if {(item.request_id, item.media_session_id) for item in held} == {
+            ("request-a", 17),
+            ("request-b", 29),
+        }:
+            break
+        threading.Event().wait(0.01)
+    else:
+        pytest.fail("both hold markers were not visible together")
+
+    # Release in the opposite lexical order: neither request may consume the other's token.
+    release_command(gate_dir, "request-b", tokens["request-b"])
+    release_command(gate_dir, "request-a", tokens["request-a"])
+    for thread in threads:
+        thread.join(5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert outcomes["request-a"].token == tokens["request-a"]
+    assert outcomes["request-b"].token == tokens["request-b"]
+    assert list(gate_dir.iterdir()) == []

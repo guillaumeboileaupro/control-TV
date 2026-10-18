@@ -42,40 +42,101 @@ INCOMPLETE_SUFFIX = ".incomplete"
 _REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 _TOKEN = re.compile(r"[0-9a-f]{32}")
 _FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _private_directory_fd(path: Path) -> int:
+    """Open ``path`` without following any symbolic component.
+
+    Missing components are created mode 0700 relative to an already-open parent. The returned
+    descriptor is the final directory after checking its owner and permissions, which prevents a
+    path component from being exchanged between validation and the open used by callers.
+    """
+    absolute = Path(os.path.abspath(path))
+    descriptor = os.open(absolute.anchor, _DIRECTORY_FLAGS)
+    try:
+        for component in absolute.parts[1:]:
+            try:
+                child = os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptor)
+            except FileNotFoundError:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                child = os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        info = os.fstat(descriptor)
+        if info.st_uid != os.geteuid():
+            raise TraceConfigurationError(f"{path} must be owned by the current user")
+        if info.st_mode & 0o077:
+            raise TraceConfigurationError(
+                f"{path} must be private (mode 0700): use a dedicated directory"
+            )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 def private_directory(path: Path) -> Path:
     """`path` as a private directory: created 0700 when missing; refused when it is a symbolic
     link, not a directory, or accessible by group or others."""
-    if not path.exists() and not path.is_symlink():
-        try:
-            path.mkdir(mode=0o700, parents=True)
-        except FileExistsError:
-            pass  # created meanwhile (the observer and the hold may race): checked below
-        else:
-            path.chmod(0o700)
-    info = path.lstat()
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-        raise TraceConfigurationError(f"{path} must be a real directory, not a link or a file")
-    if info.st_mode & 0o077:
+    try:
+        descriptor = _private_directory_fd(path)
+    except OSError as error:
         raise TraceConfigurationError(
-            f"{path} must be private (mode 0700): use a dedicated directory"
-        )
+            f"{path} must be a real directory with no symbolic path component"
+        ) from error
+    os.close(descriptor)
     return path
 
 
 def _open_private(path: Path, flags: int) -> int:
     """A file descriptor on a regular file owned by this user, mode 0600, never through a link."""
-    descriptor = os.open(path, _FILE_FLAGS | flags, 0o600)
+    directory = _private_directory_fd(path.parent)
     try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
-            raise OSError(f"{path.name} is not a regular file of this user")
-        os.fchmod(descriptor, 0o600)
-    except BaseException:
+        descriptor = os.open(path.name, _FILE_FLAGS | flags, 0o600, dir_fd=directory)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise OSError(f"{path.name} is not a regular file of this user")
+            os.fchmod(descriptor, 0o600)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
+    finally:
+        os.close(directory)
+
+
+def _open_private_read(path: Path) -> int:
+    """Open an existing private regular file without following its directory or file links."""
+    directory = _private_directory_fd(path.parent)
+    try:
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=directory,
+        )
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise OSError(f"{path.name} is not a regular file of this user")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
+    finally:
+        os.close(directory)
+
+
+def _unlink_private(directory: Path, *names: str) -> None:
+    descriptor = _private_directory_fd(directory)
+    try:
+        for name in names:
+            with contextlib.suppress(FileNotFoundError, IsADirectoryError):
+                os.unlink(name, dir_fd=descriptor)
+    finally:
         os.close(descriptor)
-        raise
-    return descriptor
 
 
 def _write_atomically(path: Path, text: str) -> None:
@@ -83,7 +144,11 @@ def _write_atomically(path: Path, text: str) -> None:
     descriptor = _open_private(temporary, os.O_TRUNC)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         stream.write(text)
-    os.replace(temporary, path)
+    directory = _private_directory_fd(path.parent)
+    try:
+        os.replace(temporary.name, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        os.close(directory)
 
 
 class JsonLinesTraceSink:
@@ -160,8 +225,7 @@ class FileConfirmationGate:
                 self._sleep(self._poll)
             return HoldOutcome(released=False)
         finally:
-            for path in (held, release):
-                path.unlink(missing_ok=True)
+            _unlink_private(directory, held.name, release.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,24 +240,37 @@ class HeldCommand:
 def held_commands(directory: Path) -> tuple[HeldCommand, ...]:
     """The commands currently held in `directory`; malformed markers are ignored."""
     held: list[HeldCommand] = []
-    for path in sorted(private_directory(directory).glob(f"*{HELD_SUFFIX}")):
-        try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
-                marker = json.loads(stream.read())
-        except (OSError, ValueError):
-            continue
-        request_id = marker.get("request_id") if isinstance(marker, dict) else None
-        session = marker.get("media_session_id") if isinstance(marker, dict) else None
-        if (
-            isinstance(request_id, str)
-            and _REQUEST_ID.fullmatch(request_id)
-            and path.name == f"{request_id}{HELD_SUFFIX}"
-            and isinstance(session, int)
-            and not isinstance(session, bool)
-            and session >= 0
-        ):
-            held.append(HeldCommand(request_id, session, path))
+    descriptor = _private_directory_fd(directory)
+    try:
+        names = sorted(name for name in os.listdir(descriptor) if name.endswith(HELD_SUFFIX))
+        for name in names:
+            path = directory / name
+            try:
+                file_descriptor = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=descriptor,
+                )
+                with os.fdopen(file_descriptor, "r", encoding="utf-8") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                        continue
+                    marker = json.loads(stream.read())
+            except (OSError, ValueError):
+                continue
+            request_id = marker.get("request_id") if isinstance(marker, dict) else None
+            session = marker.get("media_session_id") if isinstance(marker, dict) else None
+            if (
+                isinstance(request_id, str)
+                and _REQUEST_ID.fullmatch(request_id)
+                and name == f"{request_id}{HELD_SUFFIX}"
+                and isinstance(session, int)
+                and not isinstance(session, bool)
+                and session >= 0
+            ):
+                held.append(HeldCommand(request_id, session, path))
+    finally:
+        os.close(descriptor)
     return tuple(held)
 
 
@@ -206,8 +283,8 @@ def release_command(directory: Path, request_id: str, token: str) -> None:
 
 def _read_token(path: Path) -> str | None:
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except FileNotFoundError:
+        descriptor = _open_private_read(path)
+    except OSError:
         return None
     with os.fdopen(descriptor, "r", encoding="ascii", errors="replace") as stream:
         token = stream.read().strip()

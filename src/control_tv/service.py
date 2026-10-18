@@ -745,6 +745,11 @@ class ControlService:
             except ControlError as error:
                 last_error = error
                 trace.record("confirmation_read_failed", error_code=error.code)
+            except Exception:
+                # Keep the existing behavior (the unexpected exception propagates unchanged),
+                # but leave non-sensitive, fail-closed evidence of where the trace stopped.
+                trace.record("confirmation_unexpected_error")
+                raise
             else:
                 last_status, last_error = status, None
                 media = status.media

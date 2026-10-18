@@ -44,7 +44,9 @@ cli = load("validate_command_trace")
 Step = tuple[str, int | None] | tuple[str, int | None, str]
 
 
-def stream(client: str, steps: list[Step], *, first_sequence: int = 1) -> list[TraceEvent]:
+def stream(
+    client: str, steps: list[Step], *, first_sequence: int = 1, request_id: str = "r1"
+) -> list[TraceEvent]:
     """One client's events for request `r1`, with contiguous indexes and local sequences."""
     events = []
     for index, step in enumerate(steps):
@@ -54,7 +56,7 @@ def stream(client: str, steps: list[Step], *, first_sequence: int = 1) -> list[T
                 sequence=first_sequence + index,
                 client=client,
                 event=step[0],
-                request_id="r1",
+                request_id=request_id,
                 index=index,
                 media_session_id=step[1],
                 command=None if client == "observer" else "pause",
@@ -245,6 +247,58 @@ def test_c6_rejects_a_gap_a_lost_event_two_remotes_or_two_commands() -> None:
         "one identifiable command"
         in evidence.validate_c6(commands + stream("observer", OBSERVER), "r1")[1]
     )
+
+
+def test_c6_two_concurrent_requests_cannot_exchange_sessions_or_tokens() -> None:
+    token_a, token_b = "a" * 32, "b" * 32
+    remote_a = replace(REMOTE, "confirmation_released", ("confirmation_released", 10, token_a))
+    observer_a = replace(
+        OBSERVER, "observer_release_sent", ("observer_release_sent", None, token_a)
+    )
+
+    def other_sessions(steps: list[Step]) -> list[Step]:
+        changed: list[Step] = []
+        for step in steps:
+            session = 20 if step[1] == 10 else 21 if step[1] == 11 else step[1]
+            changed.append((step[0], session, step[2]) if len(step) == 3 else (step[0], session))
+        return changed
+
+    remote_b = other_sessions(REMOTE)
+    remote_b = replace(remote_b, "confirmation_released", ("confirmation_released", 20, token_b))
+    observer_b = other_sessions(OBSERVER)
+    observer_b = replace(
+        observer_b, "observer_release_sent", ("observer_release_sent", None, token_b)
+    )
+    events = (
+        stream("ubuntu", remote_a, request_id="request-a")
+        + stream("observer", observer_a, request_id="request-a")
+        + stream("android", remote_b, first_sequence=10_000, request_id="request-b")
+        + stream("observer", observer_b, first_sequence=20_000, request_id="request-b")
+    )
+
+    assert evidence.validate_c6(events, "request-a")[0] is True
+    assert evidence.validate_c6(events, "request-b")[0] is True
+
+    wrong = [
+        TraceEvent(
+            event.sequence,
+            event.client,
+            event.event,
+            event.request_id,
+            event.index,
+            event.media_session_id,
+            event.command,
+            event.error_code,
+            (
+                token_b
+                if event.request_id == "request-a" and event.event == "confirmation_released"
+                else event.token
+            ),
+        )
+        for event in events
+    ]
+    valid, reason = evidence.validate_c6(wrong, "request-a")
+    assert valid is False and "observer's proof" in reason
 
 
 # The C6 simulation, end to end ------------------------------------------------------------

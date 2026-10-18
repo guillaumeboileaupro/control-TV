@@ -58,6 +58,7 @@ class IndependentObserver:
         sleep: Callable[[float], None] = time.sleep,
         token_factory: Callable[[], str] = lambda: secrets.token_hex(16),
         on_hold_seen: Callable[[], None] = lambda: None,
+        request_id: str | None = None,
     ) -> None:
         if recorder.role is not TraceRole.OBSERVER or not recorder.active:
             raise TraceConfigurationError("the observer needs an active trace with its own role")
@@ -70,6 +71,7 @@ class IndependentObserver:
         self._sleep = sleep
         self._token_factory = token_factory
         self._on_hold_seen = on_hold_seen  # tells the owner to switch the media now
+        self._request_id = request_id
 
     def observe(self) -> ObserverOutcome:
         """Observe one held command, within `timeout_seconds` overall."""
@@ -110,8 +112,13 @@ class IndependentObserver:
     def _wait_for_hold(self, deadline: float) -> HeldCommand | None:
         while self._clock() < deadline:
             held = held_commands(self._directory)
-            if held:
-                return held[0]
+            matching = (
+                held
+                if self._request_id is None
+                else tuple(command for command in held if command.request_id == self._request_id)
+            )
+            if matching:
+                return matching[0]
             self._sleep(self._poll)
         return None
 

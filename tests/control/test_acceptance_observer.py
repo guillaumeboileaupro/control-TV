@@ -56,6 +56,8 @@ def observer(
     sink: MemoryTraceSink,
     ticks: Ticks,
     seen: list[str] | None = None,
+    request_id: str | None = None,
+    token: str = TOKEN,
 ) -> IndependentObserver:
     return IndependentObserver(
         directory,
@@ -65,8 +67,9 @@ def observer(
         poll_seconds=0.1,
         clock=ticks.clock,
         sleep=ticks.sleep,
-        token_factory=lambda: TOKEN,
+        token_factory=lambda: token,
         on_hold_seen=lambda: (seen if seen is not None else []).append("now"),
+        request_id=request_id,
     )
 
 
@@ -131,3 +134,36 @@ def test_the_observer_needs_its_own_active_role() -> None:
     for recorder in (TraceRecorder(), TraceRecorder(MemoryTraceSink(), role=TraceRole.UBUNTU)):
         with pytest.raises(TraceConfigurationError, match="own role"):
             IndependentObserver(Path("."), reader(), recorder)
+
+
+def test_two_observers_target_distinct_simultaneous_holds(tmp_path: Path) -> None:
+    gate = private_directory(tmp_path / "gate")
+    markers = (("request-a", 17), ("request-b", 29))
+    for request_id, session_id in markers:
+        (gate / f"{request_id}.held").write_text(
+            json.dumps({"request_id": request_id, "media_session_id": session_id})
+        )
+
+    sinks = {request_id: MemoryTraceSink() for request_id, _ in markers}
+    tokens = {"request-a": "a" * 32, "request-b": "b" * 32}
+    outcomes = {
+        request_id: observer(
+            gate,
+            reader(session_id, session_id + 1),
+            sinks[request_id],
+            Ticks(),
+            request_id=request_id,
+            token=tokens[request_id],
+        ).observe()
+        for request_id, session_id in reversed(markers)
+    }
+
+    assert outcomes == {
+        "request-a": ObserverOutcome.RELEASED,
+        "request-b": ObserverOutcome.RELEASED,
+    }
+    for request_id, session_id in markers:
+        events = sinks[request_id].events()
+        assert {event.request_id for event in events} == {request_id}
+        assert [event.media_session_id for event in events[:2]] == [session_id, session_id + 1]
+        assert (gate / f"{request_id}.release").read_text().strip() == tokens[request_id]

@@ -349,6 +349,27 @@ def test_a_broken_trace_sink_does_not_change_or_repeat_the_command() -> None:
     assert transport.attempted() == ["pause"]
 
 
+def test_an_unexpected_confirmation_error_is_traced_without_its_message() -> None:
+    class BrokenConfirmation(FakeTransport):
+        reads = 0
+
+        def get_status(self, device_id: object, *, timeout: float) -> DeviceStatus:
+            self.reads += 1
+            if self.reads > 1:
+                raise RuntimeError("sensitive receiver failure")
+            return super().get_status(DEVICE_ID, timeout=timeout)
+
+    sink = MemoryTraceSink()
+    transport = BrokenConfirmation()
+
+    with pytest.raises(RuntimeError, match="sensitive receiver failure"):
+        ControlService(transport, trace=recorder(sink)).pause(DEVICE_ID)
+
+    assert names(sink)[-1] == "confirmation_unexpected_error"
+    assert names(sink).count("send_attempt") == 1
+    assert "sensitive receiver failure" not in repr(sink.events())
+
+
 # The confirmation hold (acceptance only) ------------------------------------------------------
 
 
