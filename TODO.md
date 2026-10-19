@@ -1,5 +1,69 @@
 # control-TV — TODO
 
+## Temps restant consolidé — 2026-10-19
+
+**Référence Git :** `main` `3396328`, CI `39146163412` verte. Les PR #79, #81, #83,
+#84, #85, #86, #88 et #89 sont fusionnées. La PR documentaire #82 est la seule branche traitée
+ici. Les durées ci-dessous sont des heures de travail, pas des délais calendaires. L'estimation
+centrale est le milieu de la plage, pas un pourcentage d'avancement.
+
+### État vérifié des PR concernées
+
+| PR / SHA | État démontré | Revue / blocage | CI |
+|---|---|---|---|
+| #79 / #81 | Architecture VA-API documentée et socle D0 H.264 synthétique intégré | Implémentation et revues terminées ; essai GPU local et réception Freebox non effectués | `main` `c1cf34d`, run `39066643266` verte |
+| #83 `dfc9265` | Ports et orchestration D1, cycle de vie et nettoyage simulés | Corrections de concurrence et d'interruption revues puis fusionnées | `main` `e2621ba`, run `39134050753` verte |
+| #84 `8e652e7` | Provenance `.deb`/APK, états dpkg et préparation de recette | Implémentation et revue terminées ; signature stable et recette physique restent à réaliser | `main` `be2296b`, run `39123802992` verte |
+| #85 `4bc33f2` | Trace C6/C7, corrélation `requestId` Rust/Android et verdicts PASS/FAIL/BLOCKED | Revue finale APPROVED ; validation simulée seulement | `main` `b047f81`, run `39143826587` verte |
+| #86 `0370a5e` | Adaptateur D0 vers le port d'encodage D1 | Cycle de vie, nettoyage et erreurs revus ; aucune capture ni diffusion réelle | `main` `ca48743`, run `39136214248` verte |
+| #88 `793fee1` | Règles de suivi synchronisées dans les instructions agents | Fusionnée | incluse dans les CI ultérieures de `main` |
+| #89 `642bf18` | CI mise en cache et validations de plateforme ciblées | Fusionnée ; les changements Python conservent les builds Linux et Android | `main` `3396328`, run `39146163412` verte |
+| #82 | Consolidation documentaire D0–D4 | Mise à jour avec `main`; nouvelle CI requise sur le SHA final | en attente |
+
+### Budget unique restant
+
+| Chantier | État vérifié | Min. | Max. | Centre | Blocage / dépendance | Prochaine action | Responsable |
+|---|---|---:|---:|---:|---|---|---|
+| D0 — H.264 et validation | Implémentation et tests automatisés terminés (#79/#81) | 1 h | 3 h | 2 h | Essai FFmpeg/GPU local non effectué ; aucune preuve Freebox | Exécuter l'essai synthétique borné après accord | Propriétaire + Codex |
+| D1 — duplication Ubuntu vers Freebox | Ports, orchestration simulée et adaptateur d'encodage D0 terminés (#83/#86) ; capture, publication et réception concrètes non commencées | 12 h | 20 h | 16 h | Compatibilité HLS Freebox inconnue ; capture et réseau soumis à accord | Implémenter un publisher/récepteur HLS borné, puis une capture X11 consentie et la validation matérielle | Codex, revue indépendante, propriétaire |
+| D2 — extension du bureau | Non commencé | 12 h | 24 h | 18 h | Dépend de D1 et des capacités X11/i915 ; modification X11 soumise à accord | Spike d'écran virtuel réversible, puis diffusion de ce seul écran | Codex, revue Claude, propriétaire |
+| D3 — interface screencast | Non commencé | 8 h | 12 h | 10 h | Dépend des contrats stabilisés D1/D2 | Concevoir puis tester Dupliquer / Étendre / Arrêter et les états associés | Codex, revue Claude |
+| D4 — sécurité screencast | Non commencé ; exigences documentées | 6 h | 10 h | 8 h | Dépend de D1–D3 ; n'inclut ni les essais de réception D1 ni la recette télécommande | Revue sécurité, consentement, confinement LAN, nettoyage et RD1–RD8 hors essais déjà comptés | Codex + revue indépendante + propriétaire |
+| C6/C7 — développement, revue et simulation | Terminé et fusionné (#85) ; tests automatisés réussis | 0 h | 0 h | 0 h | La trace applicative ne prouve pas la livraison physique | Conserver les preuves lors de la recette matérielle | Propriétaire + Codex |
+| Packaging et préparation de recette | Automatisation terminée et fusionnée (#84) | 1 h | 3 h | 2 h | Création/sauvegarde de la clé Android et certificat publié par le propriétaire | Configurer la signature stable puis produire les artefacts identifiés | Propriétaire |
+| Recette matérielle télécommandes | Fonctionnalités et automatisation prêtes ; validations réelles majoritairement en attente | 6,5 h | 11 h | 8,75 h | Artefacts identifiés et autorisations explicites par étape | Exécuter le protocole manuel et produire le rapport final | Propriétaire + Codex pour les preuves |
+| **TOTAL UNIQUE** | **D0–D4 + packaging restant + recette matérielle** | **46,5 h** | **83 h** | **64,75 h** | **Réestimer D1 si HLS échoue ; Cast Streaming (20–40 h) ou Sunshine/Moonlight (8–16 h) sont des alternatives, jamais des budgets additionnés** | **Poursuivre D1, puis D2–D4, sans confondre CI et matériel** | — |
+
+### Détail non additionnel de la recette matérielle (inclus dans les 6,5–11 h)
+
+| Preuve à obtenir | État vérifié | Min. | Max. | Centre | Blocage / dépendance | Prochaine action | Responsable |
+|---|---|---:|---:|---:|---|---|---|
+| Ubuntu réel | Installation/lancement déjà observés sur un ancien build ; recette finale ouverte | 0,75 h | 1,25 h | 1 h | #84 corrigée, `.deb` et provenance exacts, accord d'installation | Lancement, IPC, tray, fermeture et journaux | Propriétaire + Codex |
+| Android réel | Application construite ; commandes matérielles non validées | 1 h | 1,75 h | 1,375 h | #84 corrigée, APK identifié/signé, accord d'installation | Installer sans perdre les données, lancer et relever les journaux | Propriétaire + Codex |
+| Widget | Implémenté et partiellement essayé ; scénarios de reprise ouverts | 0,5 h | 1 h | 0,75 h | Android installé avec signature stable | Reprise de processus, Wi-Fi, batterie, notification et verrou multicast | Propriétaire + Codex |
+| Applications installées | Liste Ubuntu observée ; lancement et Android ouverts | 0,5 h | 0,75 h | 0,625 h | ADB uniquement après accord | Lister et lancer depuis les deux clients | Propriétaire + Codex |
+| Clavier distant | Développement terminé, matériel non validé | 0,25 h | 0,5 h | 0,375 h | Champ TV disponible et autorisation de commande | Texte, effacement et validation | Propriétaire + Codex |
+| Alimentation | Développement terminé, matériel non validé | 0,25 h | 0,5 h | 0,375 h | Veille/réveil dépendants du matériel | Tester veille et réveil séparément | Propriétaire + Codex |
+| Commandes simultanées C1–C5 | Simulation terminée ; matériel non validé | 0,75 h | 1,25 h | 1 h | Deux clients installés et autorisations par étape | Exécuter les commandes, vérifier convergence et absence de rejeu | Propriétaire + Codex |
+| Latence K1–K3 | Instrumentation statistique présente ; aucune mesure matérielle | 0,75 h | 1,25 h | 1 h | Seuils K1/K2 à faire adopter par le propriétaire | Filmer/mesurer puis classer sans seuil inventé | Propriétaire + Codex |
+| C6/C7 matériel | Non exécuté | 0,75 h | 1,25 h | 1 h | Observation indépendante et interruption autorisée | Exécuter une fois chaque scénario et conserver la trace | Propriétaire + Codex |
+| Rapport et documentation | Non commencé pour la campagne finale | 1 h | 1,5 h | 1,25 h | Dépend de tous les résultats ci-dessus | Consolider preuves, FAIL/BLOCKED/NOT RUN et versions exactes | Codex, revue Claude |
+
+**Absence de double comptage :** les essais de réception et de capture appartiennent à D1, les
+essais matériels C6/C7 à la recette de 6,5–11 h ; les corrections/revues de #85 sont terminées et
+ne sont plus comptées. D4 couvre uniquement la sécurité/validation du partage d'écran. Le packaging prépare les
+artefacts ; leur installation et leur manipulation devant les appareils appartiennent à la recette.
+
+**Ordre actuel :** #79, #81, #84, #83, #86, #88, #85 et #89 sont déjà fusionnées. #82,
+documentaire, est resynchronisée en dernier avec leur historique et reste soumise à revue et à
+l'autorisation de fusion du propriétaire.
+
+**Sécurité et consentement :** aucune fusion, installation, capture, activation ADB, commande TV ou
+test matériel sans l'autorisation expresse correspondante. Une CI verte prouve l'automatisation du
+commit testé, jamais le comportement du matériel.
+
+---
+
 ## 0. Suivi de la recette finale et de l'affichage distant — 2026-10-17
 
 **État de référence :** PR #71 (logos) et #72 (recette automatisée) fusionnées dans `main` ; commit `7569c1c`, CI push `39021854559` réussie. Artefacts de cette CI récupérés localement dans `dist/final-acceptance/` : `control-tv_0.1.0_amd64.deb` et `app-universal-debug.apk`. Les anciens artefacts du 15 octobre ne sont pas des preuves pour cette version.
@@ -16,7 +80,7 @@
 - [x] Contrôles statiques refaits sans installation avec les **artefacts finaux** : cinq PASS Ubuntu (métadonnées/contenu `.deb`, CSP/IPC, tray, simulation IPC), quatre PASS Android (archive/arm64/pont, bridge/widget, CSP, simulation), métadonnées Android SKIP faute de `aapt`, scénarios réels BLOCKED faute d'autorisations. L'installation Ubuntu existante n'a pas été modifiée.
 - [x] SHA-256 conservés : `.deb` `52248c8fef03fb1588bf5bce7ab57596814b517212d283de32fb1c293502d039`, APK `8db2e69ce0be597f2bba10ef6c43393ec1c69605fa9d011215105dbff1e31d79` ; les rapports de recette enregistrent le SHA Git exécuté.
 
-- [ ] CI (PR #89, non fusionnée) : une PR ne lance que les builds de plateforme que ses fichiers peuvent affecter, calculés sur tous les chemins depuis la base de fusion (suppressions et deux côtés d'un renommage compris ; chemin inconnu = tous les builds) ; `main` lance toujours tout ; caches Rust par job et `Cargo.lock`, sans les paquets `.deb`/`.apk`.
+- [x] CI (PR #89 fusionnée) : une PR ne lance que les builds de plateforme que ses fichiers peuvent affecter, calculés sur tous les chemins depuis la base de fusion (suppressions et deux côtés d'un renommage compris ; chemin inconnu = tous les builds) ; `main` lance toujours tout ; caches Rust par job et `Cargo.lock`, sans les paquets `.deb`/`.apk`.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
 
@@ -101,8 +165,13 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 
 ### D. Nouvelle fonctionnalité après recette : affichage Ubuntu X11 vers Google TV
 
+**Périmètre conservé :** plusieurs appareils et plusieurs protocoles peuvent coexister derrière
+les ports communs, mais toute découverte, commande, publication et réception restent exclusivement
+sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est introduit.
+
 - [x] **Étude de faisabilité (2026-10-17, documentation seulement) :** [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md) — récepteurs (HLS vers le récepteur Cast par défaut, protocole de recopie Cast Streaming, récepteur web dédié, Sunshine/Moonlight, VNC), capture et encodage, écrans virtuels X11 (evdi, têtes virtuelles du pilote, `xrandr --setmonitor`), architecture et interfaces, sécurité, critères RD1–RD8, risques et estimations.
-- [ ] **Phase D0 — inventaire et essais :** inventaire en lecture seule (GPU, encodeurs matériels, sorties, Secure Boot), puis essais sur un flux de test : HLS vers le récepteur par défaut et émetteur Cast Streaming. 6–10 h.
+- [ ] **Phase D0 — implémentation terminée, validation matérielle ouverte :** inventaire et
+  encodage synthétique documentés ; essai borné du service sur le GPU local encore à exécuter.
   - [x] Inventaire et encodage synthétique VA-API CQP mesurés à la main (PR #79) : Intel UHD, `iHD`, CQP seul (le mode débit échoue), 1920×1080@30, QP 24, 4,1× le temps réel.
   - [x] **Socle d'encodage local (issue #80)** : `control_tv.screencast` — valeurs validées, sources en spécifications typées (seule `SyntheticSource`, acceptée par type exact et revalidée avant toute sonde ou tout processus ; seul l'adaptateur FFmpeg la traduit en arguments), commandes FFmpeg bornées (VA-API CQP, repli `libx264` explicite ; 120 s, 256 Mio), sonde et choix d'encodeur, groupes de processus arrêtés en entier (SIGTERM puis SIGKILL ; le leader n'est récupéré qu'une fois le groupe vide, donc l'identifiant de groupe n'est jamais recyclé ; un groupe qui survit à SIGKILL fait échouer la session et est conservé pour `reclaim()`), machine d'états `ScreenCastService` (même contrôle du résultat pour `wait()` et `stop()`, nettoyage garanti, un appel à la fois) ; 138 tests automatisés (doublures, et vrais groupes de processus leader/descendant), sans GPU ni réseau en CI ; [`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md). Non exécuté sur le matériel dans cette PR.
   - [ ] Essai réel du socle sur la machine (encodage synthétique via le service), puis essais de récepteurs (HLS, Cast Streaming) — **avec accord**.
@@ -111,19 +180,23 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
     orchestration synthétique et nettoyage testés sans capture, réseau ni TV ; comparaison HLS,
     Cast Streaming et Sunshine/Moonlight documentée sans revendiquer de compatibilité Freebox.
     Suites de revue : `close()` concurrent jamais perdu, nettoyage poursuivi malgré une interruption.
-    Adaptateur d'encodage D0 → `ScreenEncoder` (HLS en direct, source synthétique) : branche
-    `feat/screencast-d1-encoder-adapter` ; publisher HLS et récepteur Freebox non commencés.
-  - [ ] Après fusion et revue de #81, adapter D0 au port d'encodage puis choisir un récepteur sur
-    preuve matérielle autorisée ; la duplication réelle reste non validée.
+    Adaptateur d'encodage D0 → `ScreenEncoder` fusionné dans #86 : HLS synthétique en direct,
+    cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS et récepteur
+    Freebox non commencés.
+  - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
+    capture X11 consentie ; la duplication réelle reste non validée.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
-- [ ] Ne pas lancer les travaux D1–D4 avant clôture de la recette de la télécommande, sauf nouvelle priorité explicite du propriétaire.
-- **Dépendances et priorités :** 1) logos (#77) ; 2) recette matérielle C (séances A–D) ; 3) D0 ; 4) D1 duplication ; 5) D2 extension ; 6) D3 interface ; 7) D4 sécurité et validation. D0 peut commencer pendant la recette s'il reste en lecture seule et sans diffusion réelle.
-- **Estimations :** D1 12–20 h ; D2 12–24 h (selon GPU et pilote) ; D3 8–12 h ; D4 8–12 h ; total D0–D4 ≈ 46–78 h.
+- [x] Le propriétaire a explicitement repriorisé D0 puis la préparation D1 avant la clôture de la recette ; les opérations matérielles restent soumises à des accords séparés.
+- **Dépendances et priorités actuelles :** D0, les contrats D1 et leur adaptateur sont dans
+  `main` (#81, #83, #86). Prochaine étape : publisher/récepteur D1 et preuve Freebox autorisée,
+  puis capture X11, D2, D3 et D4. La recette télécommande et le packaging (#84/#85) suivent leur
+  chaîne matérielle séparée, sans être recomptés dans D4.
+- **Estimations :** le tableau consolidé en tête de ce fichier est l'unique estimation courante. Les anciennes plages de cette section sont conservées dans l'historique Git et ne doivent plus être additionnées.
 - **Autorisations nécessaires :** toute diffusion réelle vers la TV ; installation d'une application sur la TV (Moonlight, si cette voie est retenue) ; module noyau evdi ou modification de la configuration Xorg ; démon hôte (Sunshine) pendant la diffusion.
 
-**Organisation :** Codex implémente sur branche dédiée ; Claude révise indépendamment ; PR, CI et preuve de rendu avant fusion ; aucune modification directe de `main`. Estimations indicatives : diagnostic/correction UI 2–5 h ; recette matérielle 6–10 h ; duplication/extension X11 26–52 h après recette.
+**Organisation :** Codex implémente sur branche dédiée ; Claude révise indépendamment ; PR, CI et preuve de rendu avant fusion ; aucune modification directe de `main`.
 
 
 État au 2026-10-15, `main` `d95fc7b`. Les corrections d'audit et la CI de packaging sont terminées ; les validations matérielles restent distinctes et ouvertes. La référence complète reste [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) (section « Plan complet et suivi du temps ») et [DEVELOPMENT_CHECKLIST.md](DEVELOPMENT_CHECKLIST.md).
