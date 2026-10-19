@@ -780,8 +780,22 @@ exposure and no permanent server.
     on a private Xvfb only the refusals were seen (its screen cannot grow);
   - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
+  - [x] "Screen to TV" card in the Ubuntu window (Duplicate a screen / Extend the desktop / Stop,
+    screen, 1280x720 or 1920x1080, 25/30/60 fps, consent step, state and error text, Dismiss
+    after a failure), shown only where the screens can be listed (X11), hidden on Android and
+    Wayland; Tauri commands `bridge_list_screens`, `bridge_start_screen_stream`,
+    `bridge_stop_screen_stream`, `bridge_get_screen_stream` relaying the bridge methods of the
+    same names; `ScreenStreamController` runs one background session (D1 composition reused);
+    unit-tested only (TypeScript, Rust, Python), the card not yet seen in the running app;
+  - [ ] the card used against the TV during the authorized run;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).
+  - [x] software protections: the bridge refuses a start without explicit consent, keeps one
+    stream at a time, bounds it to one hour and stops it on Stop, on failure and when the
+    application quits (bridge exit); publication on one home-network IPv4 address with a random
+    port and token, no logs, no address or token reported; commands and TV procedure in
+    [`docs/SCREENCAST_TV_TEST_PROCEDURE.md`](docs/SCREENCAST_TV_TEST_PROCEDURE.md);
+  - [ ] RD1–RD8 on the TV (owner authorization; procedure above, not run).
 ## Mandatory build/temp cleanup
 
 At every build/test/package iteration:
