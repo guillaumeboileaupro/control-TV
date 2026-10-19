@@ -748,8 +748,16 @@ exposure and no permanent server.
     untracked by an interrupted start, the encoder preference normalized (a software-only
     request never selects VA-API); synthetic only, no capture, listener
     or receiver; three port gaps documented in the D1 spike doc;
-  - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
-    Ubuntu-to-Freebox duplication;
+  - [x] path A adapters implemented, automation-validated only: `HlsPublisher` (one HTTP server
+    per publication on one home-network IPv4 address, random port and token, playlist and `.ts`
+    segments only, no link, no listing, no request log, bounded by `max_session_seconds`,
+    idempotent stop) and `CastHlsReceiver` (one `load_media` through `TvControl`, a session only
+    when confirmed, stops the TV's media only while it is still this stream); end to end with
+    `D0LiveEncoder` (fake process), loopback and the fake transport; contract gap 2 resolved by
+    injecting D0's output lookup; no Freebox compatibility claimed;
+  - [ ] composition root (the home-network address the TV reaches) and the owner-authorized
+    hardware run of path A (synthetic picture, then RD1–RD8) before claiming Ubuntu-to-Freebox
+    duplication;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the

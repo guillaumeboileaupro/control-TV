@@ -1,7 +1,9 @@
-"""Receiver-independent screen-stream orchestration prototype (D1 preparation).
+"""Receiver-independent screen-stream orchestration (D1).
 
-This package contains contracts and lifecycle policy only.  It captures no display, encodes no
-frame, opens no socket and contacts no receiver.
+This package exports the contracts and the lifecycle policy; importing it captures no display,
+encodes no frame, opens no socket and contacts no receiver. The adapters live in their own
+modules and act only when a caller starts them: `h264_encoder` (D0's live encoder),
+`hls_publisher` (the home-network HLS publication) and `cast_receiver` (path A's receiver).
 """
 
 from control_tv.screen_streaming.model import (
