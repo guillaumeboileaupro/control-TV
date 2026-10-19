@@ -161,7 +161,8 @@ describe("the stream", () => {
   test("a failed stream shows its error and is dismissed with stop", () => {
     const failed = finishPoll(available(), stream("failed", "the stream ended by itself"));
     const view = describeScreen(failed, true);
-    assert.equal(view.errorText, "the stream ended by itself");
+    assert.equal(view.errorText, "The stream ended by itself.");
+    assert.equal(choose(failed, { fps: 60 }), failed);
     assert.equal(view.stopLabel, "Dismiss");
     assert.equal(view.canAsk, false);
     assert.equal(startStop(failed).send, true);
@@ -173,7 +174,7 @@ describe("the stream", () => {
       ok: false,
       failure: { code: "invalid_argument", message: "a screen stream is already running" },
     });
-    assert.equal(describeScreen(refused, true).errorText, "a screen stream is already running");
+    assert.equal(describeScreen(refused, true).errorText, "A screen stream is already running.");
     assert.equal(describeScreen(refused, true).canChoose, true);
     const unreadable = finishScreen(sent, { ok: true, result: { stream: { state: "lost" } } });
     assert.equal(unreadable.failure?.message, "The stream state could not be read.");

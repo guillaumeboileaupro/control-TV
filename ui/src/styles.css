@@ -1202,6 +1202,15 @@ h2 {
   border-radius: var(--radius-small);
 }
 
+.screen-consent p {
+  margin: 0;
+}
+
+.screen-panel .field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .screen-consent[hidden] {
   display: none;
 }

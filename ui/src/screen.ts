@@ -131,6 +131,10 @@ export function withScreens(
 }
 
 export function choose(state: ScreenPanelState, choice: Partial<ScreenChoice>): ScreenPanelState {
+  // Nothing changes while a stream runs, fails or a request is in flight.
+  if (!describeScreen(state, true).canChoose) {
+    return state;
+  }
   // A changed choice needs a new consent: the step describes exactly what will be shown.
   return { ...state, choice: { ...state.choice, ...choice }, confirming: false, failure: null };
 }
@@ -176,6 +180,15 @@ function consentText(choice: ScreenChoice): string {
   );
 }
 
+// The control layer's message as a sentence: capital first letter, final full stop.
+function sentence(message: string | null): string | null {
+  if (message === null || message === "") {
+    return null;
+  }
+  const capital = message.charAt(0).toUpperCase() + message.slice(1);
+  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
 export function describeScreen(state: ScreenPanelState, tvSelected: boolean): ScreenDescription {
   const screens = state.availability.kind === "available" ? state.availability.screens : [];
   const running = active(state.stream);
@@ -200,7 +213,7 @@ export function describeScreen(state: ScreenPanelState, tvSelected: boolean): Sc
         : screens.length === 0 && state.choice.mode === "duplicate" && !running
           ? "No screen can be duplicated: extend instead."
           : STATUS_TEXT[state.stream.state],
-    errorText: state.failure?.message ?? state.stream.error,
+    errorText: sentence(state.failure?.message ?? state.stream.error),
   };
 }
 

@@ -4,6 +4,7 @@
 // It is shown only where this computer's screen can be captured (an X11 desktop): elsewhere
 // (Android, Wayland) the listing fails and the panel stays hidden.
 
+import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
 import {
@@ -126,7 +127,7 @@ export function createScreenPanel(
         "aria-pressed",
         String(button.dataset["screenMode"] === state.choice.mode),
       );
-      button.disabled = !view.canChoose;
+      setBusy(button, !view.canChoose);
     }
     el.screenField.hidden = state.choice.mode !== "duplicate";
     const screens = state.availability.kind === "available" ? state.availability.screens : [];
@@ -146,14 +147,15 @@ export function createScreenPanel(
     for (const field of [el.screen, el.size, el.fps]) {
       field.disabled = !view.canChoose;
     }
-    el.ask.hidden = view.confirming;
-    el.ask.disabled = !view.canAsk;
+    // Starting is offered only from the choice; a running or failed stream offers Stop/Dismiss.
+    el.ask.hidden = view.confirming || state.stream.state !== "idle";
+    setBusy(el.ask, !view.canAsk);
     el.ask.textContent =
       state.choice.mode === "duplicate" ? "Duplicate on the TV" : "Extend to the TV";
     el.consent.hidden = !view.confirming;
     el.consentText.textContent = view.consentText;
     el.stop.hidden = !view.canStop && state.stream.state !== "stopping";
-    el.stop.disabled = !view.canStop;
+    setBusy(el.stop, !view.canStop);
     el.stop.textContent = view.stopLabel;
     el.status.textContent = view.statusText;
     el.error.hidden = view.errorText === null;
