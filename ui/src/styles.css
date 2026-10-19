@@ -830,9 +830,16 @@ h2 {
   padding: 4px 0;
 }
 
-/* The pad: one ring cut in four keys, OK in the middle. */
+/* The pad: one ring, four identical round keys on its axes and OK exactly in the middle. All
+   positions are fractions of one size, so the pad is symmetric at any width: each key spans
+   3%-31% of its axis, OK 32%-68%, and nothing overlaps. */
 .dpad {
   --pad: min(240px, 68vw);
+  --key: 28%;
+  --key-edge: 3%;
+  --key-across: 36%; /* (100% - --key) / 2 */
+  --ok: 36%;
+  --ok-edge: 32%; /* (100% - --ok) / 2 */
   position: relative;
   width: var(--pad);
   height: var(--pad);
@@ -845,11 +852,11 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 33%;
-  height: 33%;
+  width: var(--key);
+  height: var(--key);
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 50%;
   background: transparent;
   color: var(--text);
 }
@@ -863,32 +870,42 @@ h2 {
   background: var(--surface-3);
 }
 
+.dpad-key:active:not([aria-disabled="true"]) {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* Inside the key, so the focus ring never reaches OK. */
+.dpad-key:focus-visible {
+  outline-offset: -3px;
+}
+
 .dpad-up {
-  top: 2%;
-  left: 33.5%;
+  top: var(--key-edge);
+  left: var(--key-across);
 }
 
 .dpad-down {
-  bottom: 2%;
-  left: 33.5%;
+  bottom: var(--key-edge);
+  left: var(--key-across);
 }
 
 .dpad-left {
-  top: 33.5%;
-  left: 2%;
+  top: var(--key-across);
+  left: var(--key-edge);
 }
 
 .dpad-right {
-  top: 33.5%;
-  right: 2%;
+  top: var(--key-across);
+  right: var(--key-edge);
 }
 
 .dpad-ok {
   position: absolute;
-  top: 31%;
-  left: 31%;
-  width: 38%;
-  height: 38%;
+  top: var(--ok-edge);
+  left: var(--ok-edge);
+  width: var(--ok);
+  height: var(--ok);
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -901,6 +918,16 @@ h2 {
 
 .dpad-ok:hover {
   background: var(--accent-hover);
+}
+
+.dpad-ok:active:not([aria-disabled="true"]) {
+  background: var(--accent-hover);
+  box-shadow: none;
+}
+
+.dpad-ok:focus-visible {
+  outline-offset: -3px;
+  outline-color: var(--accent-text);
 }
 
 .dpad-ok[aria-disabled="true"]:hover {
