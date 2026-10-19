@@ -263,6 +263,14 @@ class HlsPublisher:
                 del self._publications[publication.uri]
                 self._released.add(publication.uri)
 
+    def ended(self, publication: PublishedStream) -> bool:
+        """Whether this owned publication's bounded server has stopped by itself."""
+        with self._lock:
+            owned = self._publications.get(publication.uri)
+        if owned is None:
+            raise StreamStartError("this publisher owns no such publication")
+        return not owned.thread.is_alive()
+
     def close(self) -> None:
         """Stop every publication still owned (application exit); every one is attempted."""
         failures: list[str] = []

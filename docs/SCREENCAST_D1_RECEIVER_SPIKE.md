@@ -203,11 +203,12 @@ paced. The tests run the same flow with libx264 when FFmpeg is installed, otherw
 
 Remaining:
 
-1. gaps 1 and 3 above: the composition root keeps the encoder's bound at or below the
-   publication's, and the service cannot yet see an encoder or publication that ended by itself;
+1. _Resolved in the path-A composition root:_ it keeps the encoder's bound at or below the
+   publication's and supervises both concrete adapters; an encoder or publication that ends by
+   itself triggers the service's reverse cleanup. This is automation evidence only;
 2. path A (HLS publisher and Cast receiver) is implemented, automation-validated only; the
-   composition root (the home-network address the TV reaches, D0's lookup) and a first
-   owner-authorized hardware run (synthetic picture, then RD1–RD8) come next;
+   composition root selects the local IPv4 chosen by the OS route towards the receiver; a first
+   owner-authorized hardware run (synthetic picture, then RD1–RD8) comes next;
 3. add bridge/UI integration (D3) only after the chosen path has receiver evidence;
 4. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
    physically observed results distinct.

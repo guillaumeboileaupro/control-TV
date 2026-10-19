@@ -6,6 +6,12 @@ modules and act only when a caller starts them: `h264_encoder` (D0's live encode
 `hls_publisher` (the home-network HLS publication) and `cast_receiver` (path A's receiver).
 """
 
+from control_tv.screen_streaming.composition import (
+    HlsCompositionConfig,
+    HlsStreamingSession,
+    assemble_hls_session,
+    routed_lan_ipv4,
+)
 from control_tv.screen_streaming.model import (
     MAX_SESSION_SECONDS,
     CapturedVideo,
@@ -41,6 +47,8 @@ __all__ = [
     "DisplaySelection",
     "EncodedStream",
     "EncodingProfile",
+    "HlsCompositionConfig",
+    "HlsStreamingSession",
     "InvalidStreamConfiguration",
     "PublicationConfig",
     "PublicationKind",
@@ -59,4 +67,6 @@ __all__ = [
     "StreamingSessionService",
     "SyntheticPattern",
     "SyntheticVideoSource",
+    "assemble_hls_session",
+    "routed_lan_ipv4",
 ]
