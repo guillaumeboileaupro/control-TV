@@ -129,6 +129,20 @@ per second gives about 17 ms per frame). For each sent press, count the frames:
 - *send to ready*: from that same frame to the first frame where the remote is idle again (the
   loading indicator gone), which sets how fast the owner can navigate.
 
+**Classifying K1 and K2.** Read, for each press, whether the remote was idle, whether the key
+showed its loading indicator, how many times the focus moved, whether an outcome was shown (and
+whether it was "may or may not have reached the TV"), and the three frame numbers; write them to
+a private record (under `.ai-private/hardware/`, never committed), then:
+
+```bash
+python3 scripts/acceptance_latency.py key-step --fps 60 .ai-private/hardware/k1.json
+```
+
+It applies the rules below and prints the verdict (exit 0 PASS, 1 FAIL, 2 NOT RUN), the
+median and slowest *send to effect* and *send to ready* in seconds, and "measured, no criterion
+adopted" unless an adopted criterion is passed (`--effect-median`, `--effect-slowest`,
+`--ready-median`, all three). Nothing in it touches a device.
+
 | Step | Action | Record |
 |---|---|---|
 | K1 | Ubuntu: ten presses, alternating → and ←, each made only once the remote is idle again | per press: sent or refused, the focus move, *send to effect*, *send to ready*; then the median and the slowest of each |
