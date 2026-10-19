@@ -189,6 +189,12 @@ paced. The tests run the same flow with libx264 when FFmpeg is installed, otherw
   a receiver failure and an interruption release the receiver, the port and the encoder;
   repeated sessions use a new port and token; two sessions are isolated.
 
+- Command (`screen_streaming.d1`): `python3 -m control_tv.screen_streaming.d1 --no-tv` (loopback,
+  prints the playlist URL for `ffplay`) or `--device DEVICE_ID` (owner authorization: discovery,
+  the LAN address the TV is reached from, load on its Cast receiver); `--seconds` (60),
+  `--encoder software|vaapi|auto` (software). It stops everything at the duration, on Ctrl-C or
+  when FFmpeg ends by itself.
+
 **Contract gaps of the D1 ports:**
 
 1. `ScreenEncoder.start(source, profile)` does not receive the session lifetime

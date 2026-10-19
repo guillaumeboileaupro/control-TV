@@ -755,9 +755,14 @@ exposure and no permanent server.
     when confirmed, stops the TV's media only while it is still this stream); end to end with
     `D0LiveEncoder` (fake process), loopback and the fake transport; contract gap 2 resolved by
     injecting D0's output lookup; no Freebox compatibility claimed;
-  - [ ] composition root (the home-network address the TV reaches) and the owner-authorized
-    hardware run of path A (synthetic picture, then RD1–RD8) before claiming Ubuntu-to-Freebox
-    duplication;
+  - [x] composition root and command (`python3 -m control_tv.screen_streaming.d1`): the IPv4
+    address this computer reaches the TV from (route lookup, no packet sent), one duration for
+    the encoder and (15 s longer) the publication, the session stopped at that duration, on
+    Ctrl-C or as soon as FFmpeg ends by itself (contract gaps 1 and 3 handled there); `--no-tv`
+    run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
+    loopback, wrong token 404, port closed and output removed at the end;
+  - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
+    before claiming Ubuntu-to-Freebox duplication;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
