@@ -721,12 +721,15 @@ exposure and no permanent server.
     process-group ownership (SIGTERM then SIGKILL to the whole group, the leader reaped only once
     its group is empty so the group id is never recycled; a group surviving SIGKILL fails the
     session and is kept for `reclaim()`); `ScreenCastService` state machine with one result check
-    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 138 automated tests
+    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 153 automated tests
     (fakes, and real leader/descendant process groups), no GPU or network in CI. Not run on
     hardware in this PR; no capture, stream, bridge or UI
     ([`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md));
-  - [ ] receiver spikes (HLS to the Default Media Receiver, Cast Streaming) — need the owner's
-    go-ahead;
+  - [x] automated integrated service path: real capability-probe, selection, service,
+    `SubprocessRunner`, process-group wait/stop and cleanup wired together with a local executable
+    double; no FFmpeg, GPU, display, network or device;
+  - [ ] bounded synthetic service runs with the real local FFmpeg (`libx264`, then VA-API CQP) —
+    need the owner's go-ahead;
 - [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
   `ScreenCastService`, automated tests;
   - [x] isolated receiver/publication preparation: typed source and configuration, injectable
@@ -749,7 +752,7 @@ exposure and no permanent server.
     request never selects VA-API); synthetic only, no capture, listener
     or receiver; three port gaps documented in the D1 spike doc;
   - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
-    Ubuntu-to-Freebox duplication;
+    Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
