@@ -786,8 +786,13 @@ exposure and no permanent server.
     Wayland; Tauri commands `bridge_list_screens`, `bridge_start_screen_stream`,
     `bridge_stop_screen_stream`, `bridge_get_screen_stream` relaying the bridge methods of the
     same names; `ScreenStreamController` runs one background session (D1 composition reused);
-    unit-tested only (TypeScript, Rust, Python), the card not yet seen in the running app;
-    the frontend bundle budget raised from 64 to 80 KiB for it (62.0 kB before, 68.9 kB after;
+    unit-tested (TypeScript, Rust, Python); seen on 2026-10-19 in the running app on a private
+    Xvfb display (real bridge and `xrandr`, no TV selected, no click) and, for the states that
+    need a TV (consent, streaming, failed, refused), in the built frontend with a fictitious
+    shell; fixed after that check: unavailable controls dimmed like the rest of the window
+    (`aria-disabled`), the start button hidden while a stream runs or failed, the choice frozen
+    meanwhile, errors shown as sentences;
+    the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
     the guard still catches a bundled icon catalogue);
   - [ ] the card used against the TV during the authorized run;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the

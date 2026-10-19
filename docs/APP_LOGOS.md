@@ -85,7 +85,7 @@ the exact marks above. Version 16.33.0 has no transitive runtime dependency. Its
 occupy 16,230,532 bytes (about 26 MiB of allocated local disk), while Vite tree-shakes the named
 imports: the complete frontend JavaScript bundle is measured by the build and remains below its
 limit (56,745 bytes at this revision, under the 65,536-byte limit of the time; the limit is
-81,920 bytes since the Screen to TV card, which brought the bundle to about 68,850 bytes). Replacing these
+73,728 bytes since the Screen to TV card, which brought the bundle to about 69,000 bytes). Replacing these
 imports with copied paths would remove the development install
 footprint but would not materially reduce the compiled paths shipped to users, and would move
 upstream provenance and updates into this repository.
@@ -94,5 +94,5 @@ The package is CC0-1.0, but its disclaimer says individual icons may have separa
 trademark rights are granted. Each catalogue change therefore still requires an exact product
 identity and a review of the icon's current source and brand guidelines.
 
-The production build rejects more than 80 KiB of uncompressed application JavaScript. This guards
+The production build rejects more than 72 KiB of uncompressed application JavaScript. This guards
 the targeted imports against accidentally bundling the complete Simple Icons catalogue.
