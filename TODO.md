@@ -9,14 +9,14 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | Chantier | Travail logiciel livré | Reste à faire / preuve attendue |
 |---|---|---|
 | D0 — encodage H.264 | Socle et intégration automatisée (#79, #81, #91) ; flux H.264 logiciel réel exécuté via #92 | Validation VA-API/GPU autorisée et intégrité réelle selon protocole ; ne pas confondre avec la réception TV |
-| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast et CLI FFmpeg/HLS réel sur la PR #92, sans TV | Terminer capture X11 et branchement sur la chaîne existante ; validation réelle de la réception Cast/Freebox uniquement sur décision du propriétaire |
-| D2 — extension | Pas de diffusion d'écran virtuel validée | Affichage virtuel X11 indépendant, diffusion du seul écran étendu, nettoyage réversible |
-| D3 — interface | Pas d'intégration screencast livrée | Actions Dupliquer / Étendre / Arrêter, choix TV/écran, résolution/FPS et états |
-| D4 — sécurité | Confinement IPv4 LAN, URL à jeton, expiration et nettoyage présents dans #92 | Consentement capture, sécurité complète du parcours, vérification RD1–RD8 sans compter deux fois les essais D1 |
+| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) | Réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
+| D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
+| D3 — interface | Carte « Screen to TV » (Dupliquer / Étendre / Arrêter, écran, résolution, FPS, consentement, états) et commandes Tauri, tests unitaires (PR D3/D4) | Utilisation de la carte avec la TV lors de la recette autorisée |
+| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` | Vérification RD1–RD8 sur matériel, sans compter deux fois les essais D1 |
 | Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-**Statuts d'intégration :** #82, #90 et #91 fusionnées ; #92 encore ouverte, même si sa chaîne FFmpeg → HLS fonctionne localement.
+**Statuts d'intégration :** #82, #90 et #91 fusionnées ; #92 (D1 capture, D2) et la PR D3/D4 empilée dessus encore ouvertes.
 Les éléments de #92 ne sont pas déclarés fusionnés avant leur intégration à `main`.
 
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
@@ -156,6 +156,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     reste non validée.
 - [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
+- [x] **D3, carte « Screen to TV » (logiciel) :** Dupliquer / Étendre / Arrêter, choix de l'écran, résolution, FPS, étape de consentement, états et erreurs ; affichée seulement sous X11 ; tests unitaires ; contrôle visuel le 2026-10-19 sur Xvfb privé (application réelle sans TV, puis états consentement/flux/échec avec un shell fictif) et défauts corrigés ; jamais utilisée avec la TV. Budget du bundle JavaScript relevé de 64 à 72 Kio (62,0 → 69,0 ko, modules locaux seulement).
+- [x] **D4, protections logicielles :** consentement exigé à chaque démarrage, un flux à la fois, une heure au plus, arrêt sur Stop, échec ou fermeture de l'application ; procédure de recette documentée (`docs/SCREENCAST_TV_TEST_PROCEDURE.md`), non lancée.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
 - [x] Le propriétaire a explicitement repriorisé D0 puis la préparation D1 avant la clôture de la recette ; les opérations matérielles restent soumises à des accords séparés.

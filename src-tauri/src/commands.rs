@@ -40,6 +40,10 @@ pub(crate) const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
 /// checks of the app in front (`control_tv.adapters.tv_apps`). That is 70s at most before
 /// bridge overhead; this bound leaves margin above it.
 pub(crate) const APPS_TIMEOUT: Duration = Duration::from_secs(90);
+/// Outer bound on one screen stream request. Starting and stopping only hand the session to the
+/// bridge's own background thread and return; listing the screens reads `xrandr` (5s at most in
+/// `control_tv.screen_streaming.x11_capture`). Only a stuck bridge exceeds this bound.
+pub(crate) const SCREEN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Desktop has no home-screen widget; accepting the selection keeps one frontend contract.
 #[cfg(not(target_os = "android"))]
@@ -366,6 +370,84 @@ pub(crate) async fn bridge_launch_tv_app(
         APPS_TIMEOUT,
     )
     .await
+}
+
+/// The request that starts streaming this computer's screen to the TV: "duplicate" one screen or
+/// "extend" onto a virtual monitor, at one of the offered sizes and rates. `consent` is the
+/// owner's explicit agreement given in the window; the bridge refuses without it.
+pub(crate) fn screen_stream_request(
+    device_id: &str,
+    mode: &str,
+    screen: Option<&str>,
+    size: (u32, u32),
+    fps: u32,
+    consent: bool,
+) -> Value {
+    json!({
+        "deviceId": device_id,
+        "mode": mode,
+        "screen": screen,
+        "width": size.0,
+        "height": size.1,
+        "fps": fps,
+        "consent": consent,
+    })
+}
+
+/// Forwards one screen stream request: no retry, no state of its own; the session lives in the
+/// bridge, which stops it when it exits.
+pub(crate) async fn send_screen(
+    state: SharedBridgeState,
+    method: &'static str,
+    params: Value,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(state, method, params, SCREEN_TIMEOUT).await
+}
+
+/// Read-only: the screens that can be duplicated (an X11 session only).
+#[tauri::command]
+pub(crate) async fn bridge_list_screens(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "list_screens", json!({})).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn bridge_start_screen_stream(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    mode: String,
+    screen: Option<String>,
+    width: u32,
+    height: u32,
+    fps: u32,
+    consent: bool,
+) -> Result<Value, BridgeFailure> {
+    let params = screen_stream_request(
+        &device_id,
+        &mode,
+        screen.as_deref(),
+        (width, height),
+        fps,
+        consent,
+    );
+    send_screen(state.inner().clone(), "start_screen_stream", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_stop_screen_stream(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "stop_screen_stream", json!({})).await
+}
+
+/// Read-only: the screen stream's state (idle, starting, running, stopping or failed).
+#[tauri::command]
+pub(crate) async fn bridge_get_screen_stream(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "get_screen_stream", json!({})).await
 }
 
 /// Brings the window to the front: the window calls it when a tray action cannot run (no TV

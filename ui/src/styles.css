@@ -1164,3 +1164,53 @@ h2 {
 .sound .note {
   margin: 4px 0 0;
 }
+
+/* Screen to TV: the mode choice, the options in one wrapping row, then the consent step. */
+
+.screen-mode,
+.screen-actions,
+.screen-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.screen-mode [aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.screen-option {
+  display: flex;
+  flex: 1 1 10rem;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.screen-option[hidden] {
+  display: none;
+}
+
+.screen-consent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-small);
+}
+
+.screen-consent p {
+  margin: 0;
+}
+
+.screen-panel .field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.screen-consent[hidden] {
+  display: none;
+}
