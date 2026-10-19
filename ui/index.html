@@ -443,6 +443,78 @@
             <p id="sound-note" class="note" hidden></p>
           </div>
         </section>
+
+        <!-- This computer's screen on the TV (an X11 desktop only; hidden elsewhere): duplicate
+             one screen or extend onto a virtual monitor, after an explicit consent step. The
+             stream runs in the control layer, which stops it on Stop, after one hour or when the
+             application quits. Static elements updated in place. -->
+        <div
+          id="screen-panel"
+          class="card screen-panel"
+          role="group"
+          aria-labelledby="screen-title"
+          hidden
+        >
+          <h2 id="screen-title" class="card-title">Screen to TV</h2>
+          <div id="screen-mode" class="screen-mode" role="group" aria-label="What the TV shows">
+            <button
+              class="btn btn-small"
+              type="button"
+              data-screen-mode="duplicate"
+              aria-pressed="true"
+            >
+              Duplicate a screen
+            </button>
+            <button
+              class="btn btn-small"
+              type="button"
+              data-screen-mode="extend"
+              aria-pressed="false"
+            >
+              Extend the desktop
+            </button>
+          </div>
+          <div class="screen-options">
+            <label id="screen-field" class="screen-option">
+              <span>Screen</span>
+              <select id="screen-select" class="field"></select>
+            </label>
+            <label class="screen-option">
+              <span>Resolution</span>
+              <select id="screen-size" class="field">
+                <option value="1280x720">1280×720</option>
+                <option value="1920x1080">1920×1080</option>
+              </select>
+            </label>
+            <label class="screen-option">
+              <span>Frame rate</span>
+              <select id="screen-fps" class="field">
+                <option value="25">25 fps</option>
+                <option value="30">30 fps</option>
+                <option value="60">60 fps</option>
+              </select>
+            </label>
+          </div>
+          <button id="screen-ask" class="btn btn-primary" type="button">Duplicate on the TV</button>
+          <div
+            id="screen-consent"
+            class="screen-consent"
+            role="alertdialog"
+            aria-labelledby="screen-consent-text"
+            hidden
+          >
+            <p id="screen-consent-text"></p>
+            <div class="screen-actions">
+              <button id="screen-confirm" class="btn btn-primary" type="button">
+                Show on the TV
+              </button>
+              <button id="screen-cancel" class="btn" type="button">Cancel</button>
+            </div>
+          </div>
+          <button id="screen-stop" class="btn" type="button" hidden>Stop</button>
+          <p id="screen-status" class="readout" aria-live="polite"></p>
+          <p id="screen-error" class="note" role="alert" hidden></p>
+        </div>
       </main>
     </div>
   </body>

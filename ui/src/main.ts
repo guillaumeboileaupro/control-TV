@@ -56,6 +56,7 @@ import {
 import { describeSound } from "./sound.ts";
 import { byId, disclosure, icon, setBusy, setIcon, text } from "./dom.ts";
 import { createRemotePanel, type RemotePanelElements } from "./remote-panel.ts";
+import { createScreenPanel, type ScreenPanelElements } from "./screen-panel.ts";
 import { isTrayAction, trayRequest } from "./tray.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
@@ -90,6 +91,7 @@ interface CommandAnswer {
 
 interface Elements {
   remote: RemotePanelElements;
+  screen: ScreenPanelElements;
   serviceNotice: HTMLElement;
   picker: HTMLDetailsElement;
   pickerSummary: HTMLElement;
@@ -623,9 +625,13 @@ function start(elements: Elements): void {
     }
   }
 
+  // Drawn again when the selected TV changes: the stream needs one.
+  let screenPanel: { refresh(): void; render(): void } | null = null;
+
   function update(next: AppState): void {
     state = next;
     render();
+    screenPanel?.render();
   }
 
   function onSelect(deviceId: string): void {
@@ -828,12 +834,37 @@ function start(elements: Elements): void {
     }
   }).catch(() => undefined);
 
+  // The screen stream has its own small state (screen-panel.ts); its calls are the shell's
+  // commands like every other request.
+  screenPanel = createScreenPanel(elements.screen, {
+    call: (command, args) => invoke<JsonValue>(command, args),
+    selectedTv: () => state.selected?.id ?? null,
+    timers: { set: (callback, delayMs) => window.setTimeout(callback, delayMs) },
+  });
+
   render();
   void checkBackend();
+  screenPanel.refresh();
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   start({
+    screen: {
+      panel: byId("screen-panel"),
+      mode: byId("screen-mode"),
+      screenField: byId("screen-field"),
+      screen: byId<HTMLSelectElement>("screen-select"),
+      size: byId<HTMLSelectElement>("screen-size"),
+      fps: byId<HTMLSelectElement>("screen-fps"),
+      ask: byId<HTMLButtonElement>("screen-ask"),
+      consent: byId("screen-consent"),
+      consentText: byId("screen-consent-text"),
+      confirm: byId<HTMLButtonElement>("screen-confirm"),
+      cancel: byId<HTMLButtonElement>("screen-cancel"),
+      stop: byId<HTMLButtonElement>("screen-stop"),
+      status: byId("screen-status"),
+      error: byId("screen-error"),
+    },
     remote: {
       tvRemote: byId("tv-remote"),
       remotePairing: byId("remote-pairing"),
