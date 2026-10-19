@@ -9,15 +9,15 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | Chantier | Travail logiciel livré | Reste à faire / preuve attendue |
 |---|---|---|
 | D0 — encodage H.264 | Socle et intégration automatisée (#79, #81, #91) ; flux H.264 logiciel réel exécuté via #92 | Validation VA-API/GPU autorisée et intégrité réelle selon protocole ; ne pas confondre avec la réception TV |
-| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) | Réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
+| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) ; surveillance complémentaire de l'arrêt spontané du publisher dans #95 | Revue et intégration de #95, puis réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
 | D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
 | D3 — interface | Carte « Screen to TV » (Dupliquer / Étendre / Arrêter, écran, résolution, FPS, consentement, états) et commandes Tauri, tests unitaires (PR D3/D4) | Utilisation de la carte avec la TV lors de la recette autorisée |
 | D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` | Vérification RD1–RD8 sur matériel, sans compter deux fois les essais D1 |
 | Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-**Statuts d'intégration :** #82, #90 et #91 fusionnées ; #92 (D1 capture, D2) et la PR D3/D4 empilée dessus encore ouvertes.
-Les éléments de #92 ne sont pas déclarés fusionnés avant leur intégration à `main`.
+**Statuts d'intégration :** #82, #90, #91, #92 et #93 sont fusionnées ; #95 reste ouverte pour
+la surveillance complémentaire du publisher D1.
 
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
@@ -149,11 +149,10 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     Cast Streaming et Sunshine/Moonlight documentée sans revendiquer de compatibilité Freebox.
     Suites de revue : `close()` concurrent jamais perdu, nettoyage poursuivi malgré une interruption.
     Adaptateur d'encodage D0 → `ScreenEncoder` fusionné dans #86 : HLS synthétique en direct,
-    cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS et récepteur
-    Freebox non commencés.
-  - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
-    capture X11 consentie ; exécuter ici les essais de réception HLS/Cast. La duplication réelle
-    reste non validée.
+    cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS, récepteur et
+    capture X11 fusionnés dans #92 ; surveillance complémentaire du publisher dans #95.
+  - [ ] Faire relire et intégrer #95, puis exécuter sur autorisation distincte les essais de
+    réception HLS/Cast. La duplication réelle reste non validée.
 - [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [x] **D3, carte « Screen to TV » (logiciel) :** Dupliquer / Étendre / Arrêter, choix de l'écran, résolution, FPS, étape de consentement, états et erreurs ; affichée seulement sous X11 ; tests unitaires ; contrôle visuel le 2026-10-19 sur Xvfb privé (application réelle sans TV, puis états consentement/flux/échec avec un shell fictif) et défauts corrigés ; jamais utilisée avec la TV. Budget du bundle JavaScript relevé de 64 à 72 Kio (62,0 → 69,0 ko, modules locaux seulement).
@@ -162,8 +161,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
 - [x] Le propriétaire a explicitement repriorisé D0 puis la préparation D1 avant la clôture de la recette ; les opérations matérielles restent soumises à des accords séparés.
 - **Dépendances et priorités actuelles :** D0, les contrats D1 et leur adaptateur sont dans
-  `main` (#81, #83, #86). Prochaine étape : publisher/récepteur D1 et preuve Freebox autorisée,
-  puis capture X11, D2, D3 et D4. La recette télécommande et le packaging (#84/#85) suivent leur
+  `main` (#81, #83, #86, #92). Prochaine étape : revue et intégration de #95, puis preuve Freebox
+  autorisée. La recette télécommande et le packaging (#84/#85) suivent leur
   chaîne matérielle séparée, sans être recomptés dans D4.
 - **Suivi :** les tâches et preuves figurent ici ; toute estimation de temps est réservée à la conversation.
 - **Autorisations nécessaires :** toute diffusion réelle vers la TV ; installation d'une application sur la TV (Moonlight, si cette voie est retenue) ; module noyau evdi ou modification de la configuration Xorg ; démon hôte (Sunshine) pendant la diffusion.

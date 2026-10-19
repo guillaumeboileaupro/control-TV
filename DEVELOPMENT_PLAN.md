@@ -761,7 +761,8 @@ exposure and no permanent server.
   - [x] composition root and command (`python3 -m control_tv.screen_streaming.d1`): the IPv4
     address this computer reaches the TV from (route lookup, no packet sent), one duration for
     the encoder and (15 s longer) the publication, the session stopped at that duration, on
-    Ctrl-C or as soon as FFmpeg ends by itself (contract gaps 1 and 3 handled there); `--no-tv`
+    Ctrl-C or as soon as FFmpeg or the HLS publisher ends by itself (contract gaps 1 and 3
+    handled there; publisher supervision completed by #95); `--no-tv`
     run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
     loopback, wrong token 404, port closed and output removed at the end;
   - [x] real X11 capture (`X11Capture`, `X11GrabSource`): an output read with

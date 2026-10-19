@@ -193,33 +193,27 @@ paced. The tests run the same flow with libx264 when FFmpeg is installed, otherw
   prints the playlist URL for `ffplay`) or `--device DEVICE_ID` (owner authorization: discovery,
   the LAN address the TV is reached from, load on its Cast receiver); `--seconds` (60),
   `--encoder software|vaapi|auto` (software). It stops everything at the duration, on Ctrl-C or
-  when FFmpeg ends by itself.
+  when FFmpeg or the HLS publisher ends by itself.
 
 **Contract gaps of the D1 ports:**
 
 1. `ScreenEncoder.start(source, profile)` does not receive the session lifetime
    (`PublicationConfig.max_session_seconds`); the adapter applies its own
    `LiveEncoderSettings.max_session_seconds`. The composition root must keep it at or below the
-   publication bound, or the port should carry the bound.
+   publication bound, or the port should carry the bound. The D1 composition currently applies
+   this invariant explicitly; the port itself still does not express it.
 2. _Resolved without changing the ports:_ `EncodedStream` stays opaque; the publisher receives
    the lookup it needs (`output_of`, for D0 `D0LiveEncoder.output`) from the composition root.
-3. The port has no health call: when FFmpeg ends by itself (session bound reached, or a
-   failure), the service still reports RUNNING; `D0LiveEncoder.ended(stream)` exists, but the
-   service cannot see it through the port.
+3. The generic ports have no health call. The D1 composition uses the concrete
+   `D0LiveEncoder.ended(stream)` and `HlsPublisher.ended(publication)` adapters to stop and clean
+   the whole session when either side ends. Generic `StreamingSessionService` users do not gain
+   that supervision through the ports.
 
 Remaining:
 
-1. gaps 1 and 3 above: the composition root keeps the encoder's bound at or below the
-   publication's, and the service cannot yet see an encoder or publication that ended by itself;
-2. path A (HLS publisher and Cast receiver) is implemented, automation-validated only; the
-   composition root (the home-network address the TV reaches, D0's lookup) and a first
-   owner-authorized hardware run (synthetic picture, then RD1–RD8) come next;
-3. add bridge/UI integration (D3) only after the chosen path has receiver evidence;
-4. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
+1. path A (HLS publisher and Cast receiver) and its composition are implemented and
+   automation-validated only; an owner-authorized hardware run (synthetic picture, then RD1–RD8)
+   is still required;
+2. add bridge/UI integration (D3) only after the chosen path has receiver evidence;
+3. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
    physically observed results distinct.
-
-Estimated remaining D1 effort after D0 integration: HLS MVP **12–20 hours** if the Freebox accepts
-the live playlist; Cast Streaming sender **20–40 hours** for a time-boxed native prototype and
-hardening; Sunshine/Moonlight integration **8–16 hours** excluding installation approval and
-hardware acceptance. These alternatives are not additive: implementation follows the selected
-path.

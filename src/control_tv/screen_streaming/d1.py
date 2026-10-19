@@ -122,9 +122,17 @@ class D1Session:
             raise
 
     def ended(self) -> bool:
-        """Whether FFmpeg ended by itself (session bound or failure)."""
+        """Whether the encoder or publisher ended without an explicit stop."""
+        return self._ended_reason() is not None
+
+    def _ended_reason(self) -> str | None:
         streams = self.encoder.unreleased
-        return not streams or self.encoder.ended(EncodedStream(streams[0]))
+        if not streams or self.encoder.ended(EncodedStream(streams[0])):
+            return "encoder ended"
+        publications = self.publisher.unreleased
+        if not publications or self.publisher.ended(PublishedStream(publications[0])):
+            return "publisher ended"
+        return None
 
     def stop(self) -> None:
         """Stop the receiver, the publication and the encoder, then forget the capture and
@@ -156,8 +164,9 @@ class D1Session:
         try:
             deadline = clock() + self.seconds
             while clock() < deadline:
-                if self.ended():
-                    reason = "encoder ended"
+                ended = self._ended_reason()
+                if ended is not None:
+                    reason = ended
                     break
                 sleep(_POLL_SECONDS)
         except KeyboardInterrupt:

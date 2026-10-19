@@ -173,10 +173,12 @@ def test_two_publications_are_isolated(tmp_path: Path) -> None:
 def test_a_publication_ends_by_itself_at_its_session_bound(tmp_path: Path) -> None:
     hls = publisher(hls_directory(tmp_path))
     published = hls.start(STREAM, PublicationConfig(PublicationKind.HLS, max_session_seconds=0.2))
+    assert not hls.ended(published)
     deadline = time.monotonic() + 5
     while not refused(published.uri) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert refused(published.uri)
+    assert hls.ended(published)
     hls.stop(published)  # still released exactly once
     assert hls.unreleased == ()
 

@@ -10,18 +10,27 @@ import threading
 import time
 from pathlib import Path
 from types import TracebackType
+from typing import cast
 from urllib.parse import urlsplit
 
 import pytest
 
 from control_tv.screen_streaming import (
+    EncodedStream,
+    EncodingProfile,
     InvalidStreamConfiguration,
+    PublicationConfig,
+    PublicationKind,
     PublishedStream,
     ReceiverTarget,
+    StreamingSessionService,
+    StreamRequest,
     StreamStartError,
+    SyntheticVideoSource,
     d1,
 )
 from control_tv.screen_streaming.h264_encoder import D0LiveEncoder
+from control_tv.screen_streaming.hls_publisher import HlsPublisher
 from live_encoder_fakes import FakeRunner, encoder
 
 
@@ -137,6 +146,53 @@ def test_a_session_ends_as_soon_as_the_encoder_ends_by_itself(tmp_path: Path) ->
 
     assert clock.now < 60 and session.publisher.unreleased == ()
     assert runner.group.releases == 1
+
+
+class HealthEncoder:
+    unreleased = ("encoded",)
+
+    def ended(self, stream: EncodedStream) -> bool:
+        return False
+
+
+class HealthPublisher:
+    unreleased = ("http://127.0.0.1/private/index.m3u8",)
+
+    def ended(self, publication: PublishedStream) -> bool:
+        return True
+
+
+class Lifecycle:
+    def __init__(self) -> None:
+        self.started = 0
+        self.closed = 0
+
+    def start(self, request: StreamRequest) -> None:
+        self.started += 1
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def test_a_session_ends_and_cleans_up_when_the_publisher_ends() -> None:
+    lifecycle = Lifecycle()
+    request = StreamRequest(
+        SyntheticVideoSource(),
+        EncodingProfile(),
+        PublicationConfig(PublicationKind.HLS, 60),
+        ReceiverTarget("no-tv"),
+    )
+    session = d1.D1Session(
+        cast(D0LiveEncoder, HealthEncoder()),
+        cast(HlsPublisher, HealthPublisher()),
+        cast(StreamingSessionService, lifecycle),
+        request,
+        60,
+    )
+
+    clock = Clock()
+    assert session.run(clock.time, clock.sleep) == "publisher ended"
+    assert lifecycle.started == lifecycle.closed == 1
 
 
 def test_ctrl_c_ends_the_session_and_stops_everything(tmp_path: Path) -> None:
