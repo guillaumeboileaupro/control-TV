@@ -213,7 +213,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 | Fonction | Ubuntu | Android | Ce qui manque |
 |---|---|---|---|
 | Volume +/−, Mute (son réel) | ✅ validé le 2026-10-12 | codé, 0 % confirmé | installer l'APK de #41 |
-| Power (veille / réveil) | codé, 0 % confirmé | codé, 0 % confirmé | essai |
+| Power (veille / réveil) | codé ; depuis la PR du pavé, « confirmé » seulement si la TV rapporte son nouvel état d'alimentation (attente bornée à 4 s), testé en simulation ; 0 % sur TV | idem (même couche Python) | essai : réveil depuis la veille, mise en veille, délai réel du rapport d'état ; une TV en veille profonde (réseau coupé) reste injoignable par ce canal, le Wake-on-LAN n'est ni codé ni vérifié sur la Freebox |
+| Pavé directionnel (rendu) | corrigé le 2026-10-19 : symétrique, sans chevauchement, états survol/appui/focus ; vérifié sous WebKitGTK sur Xvfb privé avec données fictives | même interface | contrôle visuel dans l'application installée |
 | Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai, et mesure de la latence par touche (étapes K1–K3 de `docs/DUAL_CONTROLLER_VALIDATION.md`, vidéo) |
 | Clavier distant (texte, Backspace, Entrée) | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai : TV allumée, recherche YouTube ouverte |
 | Application active affichée | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai |

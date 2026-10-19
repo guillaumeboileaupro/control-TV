@@ -42,6 +42,10 @@ from fakes import DEVICE_ID, FakeTransport
 HOST = "192.168.1.20"  # FakeTransport's discovered address
 
 
+def power(is_on: bool | None) -> RemoteObservation:
+    return RemoteObservation(is_on=is_on, volume=None)
+
+
 def volume(level: int, muted: bool = False) -> RemoteObservation:
     return RemoteObservation(
         is_on=True, volume=AudibleVolume(level=level, maximum=100, muted=muted)
@@ -172,7 +176,11 @@ def test_without_a_remote_channel_the_service_says_so() -> None:
             volume(11),
             Confirmation.UNCONFIRMED,
         ),
-        (RemoteKey.POWER, volume(10), volume(10), Confirmation.NOT_CHECKED),
+        (RemoteKey.POWER, power(False), power(True), Confirmation.CONFIRMED),
+        (RemoteKey.POWER, power(True), power(False), Confirmation.CONFIRMED),
+        (RemoteKey.POWER, power(False), power(False), Confirmation.UNCONFIRMED),
+        (RemoteKey.POWER, power(None), power(True), Confirmation.UNCONFIRMED),
+        (RemoteKey.POWER, power(False), power(None), Confirmation.UNCONFIRMED),
         (RemoteKey.DPAD_CENTER, volume(10), volume(10), Confirmation.NOT_CHECKED),
     ],
 )
@@ -199,6 +207,17 @@ def test_the_detail_states_what_the_tv_reported() -> None:
 
     assert up.detail == "the TV reports volume 11/100"
     assert mute.detail == "sent; the TV still reports its sound not muted"
+
+
+def test_power_is_confirmed_only_by_the_tvs_power_report() -> None:
+    def pressed(before: bool | None, after: bool | None) -> str:
+        remote = FakeRemote(before=power(before), after=power(after))
+        return discovered(remote).press_remote_key(DEVICE_ID, RemoteKey.POWER).detail
+
+    assert pressed(False, True) == "the TV reports it is on"
+    assert pressed(True, False) == "the TV reports it is off"
+    assert pressed(False, False) == "sent; the TV still reports it is off"
+    assert pressed(True, None) == "sent; the TV did not report whether it is on"
 
 
 def test_a_tv_that_does_not_report_its_sound_is_named_for_the_key_pressed() -> None:
