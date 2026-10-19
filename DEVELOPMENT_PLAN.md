@@ -334,7 +334,7 @@ Deliverables (after feasibility):
 - [ ] one non-Cast endpoint adapter behind the shared service (pairing and secret storage where needed), capability-detected per device; Cast-only devices report the operations as unsupported;
 - [ ] power on and off in the service, bridge and GUI;
 - [ ] the TV's audible volume and mute in the service, bridge and GUI, distinct from the Cast logical volume and mute;
-- [ ] navigation keys and input sources where available; key latency measured on hardware (steps K1-K3 of `docs/DUAL_CONTROLLER_VALIDATION.md`, added 2026-10-13 after the `main` audit, P3-6);
+- [ ] navigation keys and input sources where available; key latency measured on hardware (steps K1-K3 of `docs/DUAL_CONTROLLER_VALIDATION.md`, added 2026-10-13 after the `main` audit, P3-6); K1/K2 records are classified offline by `scripts/acceptance_latency.py key-step` (exactly ten presses, protocol rules, delays from frame numbers, criterion checked only once adopted; automation-validated, no video measured yet);
 - [ ] the TV's applications listed (installed where an endpoint allows it, otherwise launchable) and launched on the TV from the GUI (Ubuntu and Android);
 - [ ] Linux GUI first, then Android parity.
 
@@ -721,12 +721,15 @@ exposure and no permanent server.
     process-group ownership (SIGTERM then SIGKILL to the whole group, the leader reaped only once
     its group is empty so the group id is never recycled; a group surviving SIGKILL fails the
     session and is kept for `reclaim()`); `ScreenCastService` state machine with one result check
-    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 138 automated tests
+    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 153 automated tests
     (fakes, and real leader/descendant process groups), no GPU or network in CI. Not run on
     hardware in this PR; no capture, stream, bridge or UI
     ([`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md));
-  - [ ] receiver spikes (HLS to the Default Media Receiver, Cast Streaming) — need the owner's
-    go-ahead;
+  - [x] automated integrated service path: real capability-probe, selection, service,
+    `SubprocessRunner`, process-group wait/stop and cleanup wired together with a local executable
+    double; no FFmpeg, GPU, display, network or device;
+  - [ ] bounded synthetic service runs with the real local FFmpeg (`libx264`, then VA-API CQP) —
+    need the owner's go-ahead;
 - [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
   `ScreenCastService`, automated tests;
   - [x] isolated receiver/publication preparation: typed source and configuration, injectable
@@ -755,14 +758,28 @@ exposure and no permanent server.
     when confirmed, stops the TV's media only while it is still this stream); end to end with
     `D0LiveEncoder` (fake process), loopback and the fake transport; contract gap 2 resolved by
     injecting D0's output lookup; no Freebox compatibility claimed;
-  - [x] path-A software composition root (#95): select the local IPv4 chosen by the OS route towards
-    the receiver, keep the D0 encoder bound at or below the publication bound, and supervise an
-    encoder or publisher that ends by itself so reverse cleanup runs; automation-validated with
-    route/process/receiver doubles and a CI loopback publisher, no capture, LAN stream, GPU or
-    receiver hardware;
-  - [ ] owner-authorized hardware run of path A (synthetic picture, then RD1–RD8) before claiming
-    Ubuntu-to-Freebox duplication;
+  - [x] composition root and command (`python3 -m control_tv.screen_streaming.d1`): the IPv4
+    address this computer reaches the TV from (route lookup, no packet sent), one duration for
+    the encoder and (15 s longer) the publication, the session stopped at that duration, on
+    Ctrl-C or as soon as FFmpeg or the HLS publisher ends by itself (contract gaps 1 and 3
+    handled there; publisher supervision completed by #95); `--no-tv`
+    run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
+    loopback, wrong token 404, port closed and output removed at the end;
+  - [x] real X11 capture (`X11Capture`, `X11GrabSource`): an output read with
+    `xrandr --listmonitors` (read only), grabbed by D0's live encoder (`x11grab`, real time, scaled
+    to the requested size), local X11 only (not Wayland, never a remote X server);
+    `d1 --screen OUTPUT`, `--list-screens`, `--size`, `--fps`; run on a private Xvfb display
+    (never the owner's desktop): H.264 High 1280x720 30 fps HLS served on loopback;
+  - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
+    before claiming Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
+  - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
+    added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
+    D1 capture (`d1 --extend --yes-change-display`), removed and the screen size restored on
+    stop, failure or Ctrl-C/SIGTERM (idempotent, a leftover removed first); explicit consent
+    required; runtime only, no configuration file; automation-validated with a fake `xrandr`;
+    on a private Xvfb only the refusals were seen (its screen cannot grow);
+  - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).

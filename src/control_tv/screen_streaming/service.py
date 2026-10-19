@@ -27,6 +27,8 @@ from types import TracebackType
 from typing import TypeVar
 
 from control_tv.screen_streaming.model import (
+    CapturedVideo,
+    CaptureHandle,
     EncodedStream,
     EncodingProfile,
     InvalidStreamConfiguration,
@@ -56,15 +58,17 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class StreamRequest:
-    source: SyntheticVideoSource
+    source: SyntheticVideoSource | CapturedVideo
     profile: EncodingProfile
     publication: PublicationConfig
     receiver: ReceiverTarget
     receiver_timeout: float = 10.0
 
     def __post_init__(self) -> None:
-        if type(self.source) is not SyntheticVideoSource:
-            raise InvalidStreamConfiguration("only the exact synthetic source is allowed here")
+        if type(self.source) not in (SyntheticVideoSource, CapturedVideo):
+            raise InvalidStreamConfiguration(
+                "only the exact synthetic source or a screen capture is allowed here"
+            )
         if type(self.profile) is not EncodingProfile:
             raise InvalidStreamConfiguration("profile must be an EncodingProfile")
         if type(self.publication) is not PublicationConfig:
@@ -87,7 +91,11 @@ class StreamRequest:
         """Rebuild every value so post-construction mutation cannot reach an adapter."""
         try:
             return StreamRequest(
-                SyntheticVideoSource(SyntheticPattern(self.source.pattern)),
+                (
+                    CapturedVideo(CaptureHandle(self.source.handle.value))
+                    if isinstance(self.source, CapturedVideo)
+                    else SyntheticVideoSource(SyntheticPattern(self.source.pattern))
+                ),
                 EncodingProfile(self.profile.width, self.profile.height, self.profile.fps),
                 PublicationConfig(
                     PublicationKind(self.publication.kind),
@@ -129,8 +137,6 @@ class StreamingSessionService:
         receiver: StreamReceiver,
         *,
         close_timeout: float = _DEFAULT_CLOSE_TIMEOUT,
-        encoder_ended: Callable[[EncodedStream], bool] | None = None,
-        publisher_ended: Callable[[PublishedStream], bool] | None = None,
     ) -> None:
         if (
             isinstance(close_timeout, bool)
@@ -146,8 +152,6 @@ class StreamingSessionService:
         self._encoder = encoder
         self._publisher = publisher
         self._receiver = receiver
-        self._encoder_ended = encoder_ended
-        self._publisher_ended = publisher_ended
         self._lock = threading.Lock()
         # Guards the hand-over of a deferred close between close() and the lock holder.
         self._handoff = threading.Lock()
@@ -233,41 +237,6 @@ class StreamingSessionService:
         """Stop in receiver/publisher/encoder order; idempotent outside an active session."""
         with self._exclusive():
             self._stop_owned_session()
-
-    def reconcile(self) -> bool:
-        """Release a running session whose encoder or publisher ended by itself.
-
-        Returns whether an ended component was observed. Health-check failures fail closed:
-        cleanup is still attempted and the failure remains visible without exposing details.
-        """
-        with self._exclusive():
-            owned = self._owned
-            if self._state is not SessionState.RUNNING or owned is None:
-                return False
-            if owned.encoded is None or owned.publication is None:
-                raise StreamCleanupError("a running session has incomplete ownership")
-            if self._encoder_ended is None or self._publisher_ended is None:
-                raise StreamCleanupError("stream health monitoring is not configured")
-            try:
-                ended = self._encoder_ended(owned.encoded) or self._publisher_ended(
-                    owned.publication
-                )
-            except BaseException as error:
-                cleanup = self._cleanup(owned)
-                self._settle(owned)
-                self._state = SessionState.FAILED
-                self.last_error = f"stream health check failed: {type(error).__name__}"
-                if cleanup.failures:
-                    self.last_error += "; " + "; ".join(cleanup.failures)
-                if not isinstance(error, Exception):
-                    raise
-                if cleanup.interruption is not None:
-                    raise cleanup.interruption from error
-                raise StreamCleanupError(self.last_error) from error
-            if not ended:
-                return False
-            self._stop_owned_session()
-            return True
 
     def close(self) -> None:
         """Definitive, idempotent shutdown. It is recorded before anything else, so no later start

@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from control_tv.screen_streaming.model import (
+    CapturedVideo,
+    CaptureHandle,
     EncodedStream,
     EncodingProfile,
     InvalidStreamConfiguration,
@@ -51,6 +53,7 @@ from control_tv.screencast.model import (
     SyntheticSource,
     VaapiCqp,
     VaapiDevice,
+    X11GrabSource,
 )
 from control_tv.screencast.process import ManagedProcess, ProcessRunner, stop_process
 
@@ -155,7 +158,11 @@ class D0LiveEncoder:
         ffmpeg: str = "ffmpeg",
         make_workdir: Callable[[], Path] = _private_workdir,
         handle_factory: Callable[[], str] = lambda: f"live-{uuid.uuid4().hex}",
+        capture_region: Callable[[CaptureHandle], X11GrabSource] | None = None,
     ) -> None:
+        """`capture_region` resolves a `CapturedVideo` source into the X11 region FFmpeg grabs
+        (`X11Capture.region`); without it, only the synthetic picture can be encoded."""
+        self._capture_region = capture_region
         self._runner = runner
         self._probe = probe
         self._settings = settings or LiveEncoderSettings()
@@ -174,7 +181,7 @@ class D0LiveEncoder:
 
     def start(self, source: VideoSource, profile: EncodingProfile) -> EncodedStream:
         frame = self._checked_profile(profile)
-        synthetic = self._d0_source(source)
+        live_source = self._live_source(source)
         settings = self._settings
         try:
             choice = select_plan(
@@ -193,7 +200,7 @@ class D0LiveEncoder:
         try:
             argv = live_hls_command(
                 self._ffmpeg,
-                synthetic,
+                live_source,
                 frame,
                 choice.plan,
                 directory,
@@ -336,12 +343,15 @@ class D0LiveEncoder:
         # Rebuilt so a value changed after construction is checked again (its own bounds).
         return EncodingProfile(profile.width, profile.height, profile.fps)
 
-    @staticmethod
-    def _d0_source(source: VideoSource) -> SyntheticSource:
+    def _live_source(self, source: VideoSource) -> SyntheticSource | X11GrabSource:
+        if type(source) is CapturedVideo:
+            if self._capture_region is None:
+                raise InvalidStreamConfiguration(
+                    "a captured screen needs a capture adapter: no capture adapter is configured"
+                )
+            return self._capture_region(source.handle)
         if type(source) is not SyntheticVideoSource:
-            raise InvalidStreamConfiguration(
-                "only the synthetic source can be encoded: no capture adapter exists yet"
-            )
+            raise InvalidStreamConfiguration("only the synthetic picture or a screen capture")
         try:
             return SyntheticSource(source.pattern.value)
         except (InvalidScreenCastOption, AttributeError) as error:
