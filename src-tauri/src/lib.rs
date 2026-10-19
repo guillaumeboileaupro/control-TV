@@ -83,6 +83,10 @@ pub fn run() {
             commands::bridge_type_remote_text,
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
+            commands::bridge_list_screens,
+            commands::bridge_start_screen_stream,
+            commands::bridge_stop_screen_stream,
+            commands::bridge_get_screen_stream,
             commands::show_main_window,
             remember_selection
         ])
@@ -910,6 +914,34 @@ done"#,
 
         assert_eq!(result["received"]["method"], "get_status");
         assert_eq!(result["received"]["params"], json!({"deviceId": "uuid-1"}));
+    }
+
+    #[test]
+    fn a_screen_stream_request_carries_the_mode_size_rate_and_consent() {
+        assert_eq!(
+            screen_stream_request("uuid-1", "duplicate", Some("eDP-1"), (1280, 720), 30, true),
+            json!({"deviceId": "uuid-1", "mode": "duplicate", "screen": "eDP-1",
+                   "width": 1280, "height": 720, "fps": 30, "consent": true})
+        );
+        assert_eq!(
+            screen_stream_request("uuid-1", "extend", None, (1920, 1080), 60, false)["screen"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn send_screen_forwards_the_request_to_the_bridge_once() {
+        let (state, _script) =
+            ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
+        let params = screen_stream_request("uuid-1", "extend", None, (1920, 1080), 25, true);
+
+        let result =
+            tauri::async_runtime::block_on(send_screen(state, "start_screen_stream", params))
+                .unwrap();
+
+        assert_eq!(result["received"]["method"], "start_screen_stream");
+        assert_eq!(result["received"]["params"]["consent"], true);
+        assert_eq!(result["received"]["params"]["mode"], "extend");
     }
 
     #[test]

@@ -217,9 +217,3 @@ Remaining:
 2. add bridge/UI integration (D3) only after the chosen path has receiver evidence;
 3. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
    physically observed results distinct.
-
-Estimated remaining D1 effort after D0 integration: HLS MVP **12–20 hours** if the Freebox accepts
-the live playlist; Cast Streaming sender **20–40 hours** for a time-boxed native prototype and
-hardening; Sunshine/Moonlight integration **8–16 hours** excluding installation approval and
-hardware acceptance. These alternatives are not additive: implementation follows the selected
-path.

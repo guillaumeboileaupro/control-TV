@@ -1,0 +1,228 @@
+"""D3/D4: the window's screen stream — one session at a time, started and stopped on request.
+
+The bridge owns one controller. `start` validates the request (the owner's explicit consent is
+required: the desktop becomes visible on the TV, and "Étendre" changes the display), then a
+background thread assembles D1 (`d1.assemble`), starts it and waits until it is stopped, ends by
+itself or reaches the session bound (one hour); everything is then stopped. The stream uses its
+own control layer (`d1.tv_and_route`: its own discovery, the LAN address this computer reaches
+the TV from), so it never shares the Cast transport with the remote's commands. `close` stops the
+session when the bridge exits (the application quits). No address, URL or token is reported.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from typing import Protocol
+
+from control_tv.ports import TvControl
+from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
+from control_tv.screen_streaming.d1 import (
+    MAX_D1_SECONDS,
+    D1Session,
+    Mode,
+    Picture,
+    assemble,
+    tv_and_route,
+)
+from control_tv.screen_streaming.model import InvalidStreamConfiguration, ScreenStreamError
+from control_tv.screen_streaming.ports import StreamReceiver
+from control_tv.screen_streaming.x11_capture import X11Capture, X11Output
+
+SIZES = ((1280, 720), (1920, 1080))
+RATES = (25, 30, 60)
+_POLL_SECONDS = 0.5
+_CLOSE_SECONDS = 20.0
+
+
+class StreamState(StrEnum):
+    IDLE = "idle"
+    STARTING = "starting"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ScreenRequest:
+    """What the window asks for; checked by `checked()` before anything is touched."""
+
+    device_id: str
+    mode: Mode
+    screen: str | None
+    width: int
+    height: int
+    fps: int
+    consent: bool
+
+    def checked(self) -> ScreenRequest:
+        if self.consent is not True:
+            raise InvalidStreamConfiguration(
+                "streaming the screen needs the owner's explicit consent"
+            )
+        if not isinstance(self.device_id, str) or not self.device_id.strip():
+            raise InvalidStreamConfiguration("choose the TV to stream to")
+        if self.mode not in (Mode.DUPLICATE, Mode.EXTEND):
+            raise InvalidStreamConfiguration("the mode is duplicate or extend")
+        if self.mode is Mode.DUPLICATE and not self.screen:
+            raise InvalidStreamConfiguration("choose the screen to duplicate")
+        if (self.width, self.height) not in SIZES:
+            raise InvalidStreamConfiguration("the resolution is 1280x720 or 1920x1080")
+        if self.fps not in RATES:
+            raise InvalidStreamConfiguration("the frame rate is 25, 30 or 60")
+        return self
+
+
+@dataclass(frozen=True)
+class ScreenStatus:
+    state: StreamState
+    mode: Mode | None = None
+    screen: str | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: int | None = None
+    error: str | None = None
+
+
+Connect = Callable[[str], tuple[TvControl, str]]
+
+
+class Assemble(Protocol):
+    def __call__(
+        self,
+        *,
+        seconds: int,
+        bind_address: str,
+        receiver: StreamReceiver,
+        device_id: str,
+        picture: Picture | None = None,
+        capture: X11Capture | None = None,
+    ) -> D1Session: ...
+
+
+class ScreenStreamController:
+    def __init__(
+        self,
+        *,
+        connect: Connect = tv_and_route,
+        capture: Callable[[], X11Capture] = X11Capture,
+        build: Assemble = assemble,
+        seconds: int = MAX_D1_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._connect = connect
+        self._capture = capture
+        self._build = build
+        self._seconds = seconds
+        self._clock = clock
+        self._sleep = sleep
+        self._status = ScreenStatus(StreamState.IDLE)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def screens(self) -> tuple[X11Output, ...]:
+        """The outputs that can be duplicated (read only); the virtual monitor is not one."""
+        return tuple(
+            output
+            for output in self._capture().outputs()
+            if not output.name.startswith("control-tv-")
+        )
+
+    def status(self) -> ScreenStatus:
+        with self._lock:
+            return self._status
+
+    def start(self, request: ScreenRequest) -> ScreenStatus:
+        checked = request.checked()
+        with self._lock:
+            if self._status.state in (
+                StreamState.STARTING,
+                StreamState.RUNNING,
+                StreamState.STOPPING,
+            ):
+                raise InvalidStreamConfiguration(
+                    "a screen stream is already running: stop it first"
+                )
+            self._stop.clear()
+            self._status = ScreenStatus(
+                StreamState.STARTING,
+                checked.mode,
+                checked.screen if checked.mode is Mode.DUPLICATE else None,
+                checked.width,
+                checked.height,
+                checked.fps,
+            )
+            self._thread = threading.Thread(
+                target=self._serve, args=(checked,), name="control-tv-screen", daemon=True
+            )
+            self._thread.start()
+            return self._status
+
+    def stop(self) -> ScreenStatus:
+        """Ask the session to stop (everything is stopped by its thread); idempotent."""
+        with self._lock:
+            if self._status.state in (StreamState.STARTING, StreamState.RUNNING):
+                self._status = replace(self._status, state=StreamState.STOPPING)
+            elif self._status.state is StreamState.FAILED:
+                self._status = ScreenStatus(StreamState.IDLE)
+            self._stop.set()
+            return self._status
+
+    def close(self) -> None:
+        """Stop the session and wait for its cleanup (the bridge is exiting)."""
+        self.stop()
+        thread = self._thread
+        if thread is not None:
+            thread.join(_CLOSE_SECONDS)
+
+    def _serve(self, request: ScreenRequest) -> None:
+        session: D1Session | None = None
+        error: str | None = None
+        try:
+            control, address = self._connect(request.device_id)
+            session = self._build(
+                seconds=self._seconds,
+                bind_address=address,
+                receiver=CastHlsReceiver(control),
+                device_id=request.device_id,
+                picture=Picture(
+                    request.mode,
+                    request.screen,
+                    request.width,
+                    request.height,
+                    request.fps,
+                    consent=request.consent,
+                ),
+                capture=self._capture(),
+            )
+            if not self._stop.is_set():
+                session.start()
+                with self._lock:
+                    if self._status.state is StreamState.STARTING:
+                        self._status = replace(self._status, state=StreamState.RUNNING)
+                deadline = self._clock() + self._seconds
+                while not self._stop.is_set() and self._clock() < deadline:
+                    if session.ended():
+                        error = "the stream ended by itself"
+                        break
+                    self._sleep(_POLL_SECONDS)
+        except ScreenStreamError as caught:
+            error = caught.message
+        except Exception as caught:  # a host thread must report, never die silently
+            error = f"the screen stream failed: {type(caught).__name__}"
+        finally:
+            if session is not None:
+                try:
+                    session.stop()
+                except ScreenStreamError as caught:
+                    error = error or f"the screen stream did not stop cleanly: {caught.message}"
+            with self._lock:
+                if error is None:
+                    self._status = ScreenStatus(StreamState.IDLE)
+                else:
+                    self._status = replace(self._status, state=StreamState.FAILED, error=error)

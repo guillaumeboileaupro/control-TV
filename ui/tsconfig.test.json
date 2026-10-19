@@ -26,7 +26,9 @@
     "src/tray.ts",
     "src/tray.test.ts",
     "src/interaction.ts",
-    "src/interaction.test.ts"
+    "src/interaction.test.ts",
+    "src/screen.ts",
+    "src/screen.test.ts"
   ],
   "exclude": []
 }

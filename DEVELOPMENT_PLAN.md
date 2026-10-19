@@ -781,8 +781,29 @@ exposure and no permanent server.
     on a private Xvfb only the refusals were seen (its screen cannot grow);
   - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
+  - [x] "Screen to TV" card in the Ubuntu window (Duplicate a screen / Extend the desktop / Stop,
+    screen, 1280x720 or 1920x1080, 25/30/60 fps, consent step, state and error text, Dismiss
+    after a failure), shown only where the screens can be listed (X11), hidden on Android and
+    Wayland; Tauri commands `bridge_list_screens`, `bridge_start_screen_stream`,
+    `bridge_stop_screen_stream`, `bridge_get_screen_stream` relaying the bridge methods of the
+    same names; `ScreenStreamController` runs one background session (D1 composition reused);
+    unit-tested (TypeScript, Rust, Python); seen on 2026-10-19 in the running app on a private
+    Xvfb display (real bridge and `xrandr`, no TV selected, no click) and, for the states that
+    need a TV (consent, streaming, failed, refused), in the built frontend with a fictitious
+    shell; fixed after that check: unavailable controls dimmed like the rest of the window
+    (`aria-disabled`), the start button hidden while a stream runs or failed, the choice frozen
+    meanwhile, errors shown as sentences;
+    the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
+    the guard still catches a bundled icon catalogue);
+  - [ ] the card used against the TV during the authorized run;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).
+  - [x] software protections: the bridge refuses a start without explicit consent, keeps one
+    stream at a time, bounds it to one hour and stops it on Stop, on failure and when the
+    application quits (bridge exit); publication on one home-network IPv4 address with a random
+    port and token, no logs, no address or token reported; commands and TV procedure in
+    [`docs/SCREENCAST_TV_TEST_PROCEDURE.md`](docs/SCREENCAST_TV_TEST_PROCEDURE.md);
+  - [ ] RD1–RD8 on the TV (owner authorization; procedure above, not run).
 ## Mandatory build/temp cleanup
 
 At every build/test/package iteration:

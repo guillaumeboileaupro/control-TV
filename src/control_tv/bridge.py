@@ -102,7 +102,7 @@ import json
 import sys
 import uuid
 from collections.abc import Callable
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 import control_tv
 from control_tv.command_trace import application_request, is_application_request_id
@@ -120,6 +120,7 @@ from control_tv.domain import (
     RemoteObservation,
     RemoteTextResult,
     TvApp,
+    UnsupportedOperationError,
 )
 from control_tv.json_types import JsonObject, JsonValue
 from control_tv.ports import TvControl
@@ -127,6 +128,9 @@ from control_tv.service import DEFAULT_DISCOVERY_TIMEOUT, ControlService
 from control_tv.trace_files import AcceptanceTracing
 
 Handler = Callable[[TvControl, JsonObject], JsonObject]
+
+if TYPE_CHECKING:
+    from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
 INTERNAL_ERROR_CODE = "internal_error"
 
 
@@ -379,6 +383,109 @@ def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     return {"result": _app_launch_to_json(control.launch_tv_app(device_id, package))}
 
 
+# The screen stream (D3/D4): one controller per bridge process, created on first use (never on
+# Android or without X11), closed when the bridge exits so quitting the app stops the stream.
+_screen_controller: ScreenStreamController | None = None
+
+
+def _screen() -> ScreenStreamController:
+    global _screen_controller
+    if _screen_controller is None:
+        from control_tv.screen_streaming.controller import ScreenStreamController
+
+        _screen_controller = ScreenStreamController()
+    return _screen_controller
+
+
+def close_screen_stream() -> None:
+    """Stop the screen stream, if one was ever started (the bridge is exiting)."""
+    if _screen_controller is not None:
+        _screen_controller.close()
+
+
+def _screen_call(call: Callable[[], JsonObject]) -> JsonObject:
+    from control_tv.screen_streaming.model import InvalidStreamConfiguration, ScreenStreamError
+
+    try:
+        return call()
+    except InvalidStreamConfiguration as error:
+        raise InvalidArgumentError(error.message) from None
+    except ScreenStreamError as error:
+        raise UnsupportedOperationError(error.message) from None
+
+
+def _screen_status_to_json(status: ScreenStatus) -> JsonObject:
+    return {
+        "state": status.state.value,
+        "mode": None if status.mode is None else status.mode.value,
+        "screen": status.screen,
+        "width": status.width,
+        "height": status.height,
+        "fps": status.fps,
+        "error": status.error,
+    }
+
+
+def _strict_int(params: JsonObject, name: str) -> int:
+    value = params.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidArgumentError(f"{name} must be an integer: {value!r}")
+    return value
+
+
+def _handle_list_screens(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+
+    def listed() -> JsonObject:
+        return {
+            "screens": [
+                {
+                    "name": output.name,
+                    "width": output.width,
+                    "height": output.height,
+                    "primary": output.primary,
+                }
+                for output in _screen().screens()
+            ]
+        }
+
+    return _screen_call(listed)
+
+
+def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    from control_tv.screen_streaming.controller import ScreenRequest
+    from control_tv.screen_streaming.d1 import Mode
+
+    mode, screen, consent = params.get("mode"), params.get("screen"), params.get("consent")
+    if mode not in ("duplicate", "extend"):
+        raise InvalidArgumentError(f"mode must be duplicate or extend: {mode!r}")
+    if screen is not None and not isinstance(screen, str):
+        raise InvalidArgumentError("screen must be a string")
+    if not isinstance(consent, bool):
+        raise InvalidArgumentError("consent must be true or false")
+    request = ScreenRequest(
+        str(_device_id_param(params)),
+        Mode(mode),
+        screen,
+        _strict_int(params, "width"),
+        _strict_int(params, "height"),
+        _strict_int(params, "fps"),
+        consent,
+    )
+    return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
+
+
+def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return {"stream": _screen_status_to_json(_screen().stop())}
+
+
+def _handle_get_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return {"stream": _screen_status_to_json(_screen().status())}
+
+
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
@@ -396,6 +503,10 @@ _HANDLERS: dict[str, Handler] = {
     "type_remote_text": _handle_type_remote_text,
     "list_tv_apps": _handle_list_tv_apps,
     "launch_tv_app": _handle_launch_tv_app,
+    "list_screens": _handle_list_screens,
+    "start_screen_stream": _handle_start_screen_stream,
+    "stop_screen_stream": _handle_stop_screen_stream,
+    "get_screen_stream": _handle_get_screen_stream,
 }
 
 
@@ -451,14 +562,18 @@ def handle_line(control: TvControl, line: str) -> JsonObject:
 
 
 def run(control: TvControl, *, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
-    """Serve requests until `stdin` is closed. Exactly one response line per request line."""
-    for line in stdin:
-        line = line.strip()
-        if not line:
-            continue
-        response = handle_line(control, line)
-        stdout.write(json.dumps(response) + "\n")
-        stdout.flush()
+    """Serve requests until `stdin` is closed. Exactly one response line per request line. The
+    screen stream, if any, is stopped when it ends (the application quits)."""
+    try:
+        for line in stdin:
+            line = line.strip()
+            if not line:
+                continue
+            response = handle_line(control, line)
+            stdout.write(json.dumps(response) + "\n")
+            stdout.flush()
+    finally:
+        close_screen_stream()
 
 
 def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
