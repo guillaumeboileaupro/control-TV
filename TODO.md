@@ -24,7 +24,7 @@ centrale est le milieu de la plage, pas un pourcentage d'avancement.
 
 | Chantier | État vérifié | Min. | Max. | Centre | Blocage / dépendance | Prochaine action | Responsable |
 |---|---|---:|---:|---:|---|---|---|
-| D0 — H.264 et validation | Implémentation et tests automatisés terminés (#79/#81) | 1 h | 3 h | 2 h | Essai FFmpeg/GPU local non effectué ; aucune preuve Freebox | Exécuter l'essai synthétique borné après accord | Propriétaire + Codex |
+| D0 — H.264 et validation | Implémentation et parcours automatisé complet du service terminés | 1 h | 3 h | 2 h | FFmpeg/libx264/VA-API non exécutés sur la machine dans cette validation ; aucune preuve Freebox | Exécuter les essais synthétiques logiciels et GPU bornés après accord | Propriétaire + Codex |
 | D1 — duplication Ubuntu vers Freebox | Ports, orchestration simulée et adaptateur d'encodage D0 terminés (#83/#86) ; capture, publication et réception concrètes non commencées | 12 h | 20 h | 16 h | Compatibilité HLS Freebox inconnue ; capture et réseau soumis à accord | Implémenter un publisher/récepteur HLS borné, puis une capture X11 consentie et la validation matérielle | Codex, revue indépendante, propriétaire |
 | D2 — extension du bureau | Non commencé | 12 h | 24 h | 18 h | Dépend de D1 et des capacités X11/i915 ; modification X11 soumise à accord | Spike d'écran virtuel réversible, puis diffusion de ce seul écran | Codex, revue Claude, propriétaire |
 | D3 — interface screencast | Non commencé | 8 h | 12 h | 10 h | Dépend des contrats stabilisés D1/D2 | Concevoir puis tester Dupliquer / Étendre / Arrêter et les états associés | Codex, revue Claude |
@@ -160,6 +160,7 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 - [ ] Android : autorisation explicite avant installation de l'APK ; lancement, affichage, widget, CSP et journaux ; préserver les données existantes.
 - [ ] Google TV : obtenir l'accord explicite du propriétaire **avant toute exécution**, y compris R1–R4 bien qu'ils soient en lecture seule ; obtenir également cet accord avant chaque étape C1–C7 et avant toute autre commande TV. Toute activation ADB exige elle aussi un accord explicite préalable. Exécuter ensuite, selon `docs/DUAL_CONTROLLER_VALIDATION.md`, R1–R4, C1–C7, TV-POWER, TV-KEYBOARD, TV-APPS, TV-ERRORS et la concurrence des deux télécommandes.
 - [ ] Latence : K1–K3 et `latency.remote-keys`, mesures vidéo et seuils à adopter par le propriétaire.
+  - [x] Classement hors ligne de K1/K2 à partir des numéros d'images relevés sur la vidéo : `scripts/acceptance_latency.py key-step` (exactement dix pressions, règles PASS/FAIL/NOT RUN du protocole, médiane et pire délai, critère vérifié seulement s'il est fourni) ; validé en automatique uniquement.
 - [ ] Distinguer systématiquement PASS simulé, PASS CI et PASS matériel ; rapport de preuves par scénario.
 - [ ] Mettre à jour `DEVELOPMENT_PLAN.md`, `DEVELOPMENT_CHECKLIST.md`, README et rapports à l'issue des essais.
 
@@ -170,11 +171,16 @@ les ports communs, mais toute découverte, commande, publication et réception r
 sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est introduit.
 
 - [x] **Étude de faisabilité (2026-10-17, documentation seulement) :** [`docs/REMOTE_DISPLAY_STUDY.md`](docs/REMOTE_DISPLAY_STUDY.md) — récepteurs (HLS vers le récepteur Cast par défaut, protocole de recopie Cast Streaming, récepteur web dédié, Sunshine/Moonlight, VNC), capture et encodage, écrans virtuels X11 (evdi, têtes virtuelles du pilote, `xrandr --setmonitor`), architecture et interfaces, sécurité, critères RD1–RD8, risques et estimations.
-- [ ] **Phase D0 — implémentation terminée, validation matérielle ouverte :** inventaire et
-  encodage synthétique documentés ; essai borné du service sur le GPU local encore à exécuter.
+- [ ] **Phase D0 — implémentation et validation automatisée terminées, validation de plateforme
+  ouverte :** inventaire et encodage synthétique documentés ; essais bornés du service avec le
+  vrai FFmpeg en logiciel puis sur le GPU local encore à exécuter.
   - [x] Inventaire et encodage synthétique VA-API CQP mesurés à la main (PR #79) : Intel UHD, `iHD`, CQP seul (le mode débit échoue), 1920×1080@30, QP 24, 4,1× le temps réel.
-  - [x] **Socle d'encodage local (issue #80)** : `control_tv.screencast` — valeurs validées, sources en spécifications typées (seule `SyntheticSource`, acceptée par type exact et revalidée avant toute sonde ou tout processus ; seul l'adaptateur FFmpeg la traduit en arguments), commandes FFmpeg bornées (VA-API CQP, repli `libx264` explicite ; 120 s, 256 Mio), sonde et choix d'encodeur, groupes de processus arrêtés en entier (SIGTERM puis SIGKILL ; le leader n'est récupéré qu'une fois le groupe vide, donc l'identifiant de groupe n'est jamais recyclé ; un groupe qui survit à SIGKILL fait échouer la session et est conservé pour `reclaim()`), machine d'états `ScreenCastService` (même contrôle du résultat pour `wait()` et `stop()`, nettoyage garanti, un appel à la fois) ; 138 tests automatisés (doublures, et vrais groupes de processus leader/descendant), sans GPU ni réseau en CI ; [`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md). Non exécuté sur le matériel dans cette PR.
-  - [ ] Essai réel du socle sur la machine (encodage synthétique via le service), puis essais de récepteurs (HLS, Cast Streaming) — **avec accord**.
+  - [x] **Socle d'encodage local (issue #80)** : `control_tv.screencast` — valeurs validées, sources en spécifications typées (seule `SyntheticSource`, acceptée par type exact et revalidée avant toute sonde ou tout processus ; seul l'adaptateur FFmpeg la traduit en arguments), commandes FFmpeg bornées (VA-API CQP, repli `libx264` explicite ; 120 s, 256 Mio), sonde et choix d'encodeur, groupes de processus arrêtés en entier (SIGTERM puis SIGKILL ; le leader n'est récupéré qu'une fois le groupe vide, donc l'identifiant de groupe n'est jamais recyclé ; un groupe qui survit à SIGKILL fait échouer la session et est conservé pour `reclaim()`), machine d'états `ScreenCastService` (même contrôle du résultat pour `wait()` et `stop()`, nettoyage garanti, un appel à la fois) ; 153 tests automatisés (doublures, et vrais groupes de processus leader/descendant), sans GPU ni réseau en CI ; [`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md). Non exécuté sur le matériel dans cette PR.
+  - [x] Parcours automatisé intégré : sonde, sélection avec repli explicite, service, vraie
+    gestion de groupe de processus, attente/arrêt et nettoyage ; exécutable FFmpeg simulé, donc
+    aucune revendication sur l'encodeur de la machine.
+  - [ ] Essais réels du socle sur la machine (encodage synthétique via le service, `libx264` puis
+    VA-API CQP) — **avec accord**. Les essais de réception HLS/Cast appartiennent à D1.
 - [x] **D1, voie A — publication HLS et récepteur Cast (logiciel) :** `HlsPublisher` (serveur HTTP par session sur une adresse du réseau domestique, port et jeton aléatoires, playlist et segments seulement, durée bornée, arrêt idempotent) et `CastHlsReceiver` (un `load_media` via la couche partagée, session seulement si confirmée, n'arrête jamais un autre contenu) ; validés en automatique uniquement (boucle locale et faux transport), aucune compatibilité Freebox annoncée.
 - [x] **D1, commande :** `python3 -m control_tv.screen_streaming.d1 --no-tv` produit un vrai flux HLS H.264 (image synthétique, libx264) servi en boucle locale ; essai réel fait sur cette machine. `--device ID` (découverte, adresse LAN, chargement sur le récepteur Cast) reste à lancer **avec accord**.
 - [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
@@ -186,7 +192,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS et récepteur
     Freebox non commencés.
   - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
-    capture X11 consentie ; la duplication réelle reste non validée.
+    capture X11 consentie ; exécuter ici les essais de réception HLS/Cast. La duplication réelle
+    reste non validée.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
