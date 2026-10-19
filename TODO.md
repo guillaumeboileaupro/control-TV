@@ -1,66 +1,25 @@
 # control-TV — TODO
 
-## Temps restant consolidé — 2026-10-19
+## État des travaux — 2026-10-19
 
-**Référence Git :** `main` `3396328`, CI `39146163412` verte. Les PR #79, #81, #83,
-#84, #85, #86, #88 et #89 sont fusionnées. La PR documentaire #82 est la seule branche traitée
-ici. Les durées ci-dessous sont des heures de travail, pas des délais calendaires. L'estimation
-centrale est le milieu de la plage, pas un pourcentage d'avancement.
+Ce fichier suit uniquement les tâches, leurs dépendances et les preuves d'exécution.
+**Aucune estimation de charge ni budget horaire n'est conservé ici : le suivi du temps est exclusivement dans la conversation avec le propriétaire.**
+Les validations automatisées et matérielles sont distinctes. Aucun essai TV, GPU, capture, installation ou modification système sans accord explicite.
 
-### État vérifié des PR concernées
+| Chantier | Travail logiciel livré | Reste à faire / preuve attendue |
+|---|---|---|
+| D0 — encodage H.264 | Socle et intégration automatisée (#79, #81, #91) ; flux H.264 logiciel réel exécuté via #92 | Validation VA-API/GPU autorisée et intégrité réelle selon protocole ; ne pas confondre avec la réception TV |
+| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast et CLI FFmpeg/HLS réel sur la PR #92, sans TV | Terminer capture X11 et branchement sur la chaîne existante ; validation réelle de la réception Cast/Freebox uniquement sur décision du propriétaire |
+| D2 — extension | Pas de diffusion d'écran virtuel validée | Affichage virtuel X11 indépendant, diffusion du seul écran étendu, nettoyage réversible |
+| D3 — interface | Pas d'intégration screencast livrée | Actions Dupliquer / Étendre / Arrêter, choix TV/écran, résolution/FPS et états |
+| D4 — sécurité | Confinement IPv4 LAN, URL à jeton, expiration et nettoyage présents dans #92 | Consentement capture, sécurité complète du parcours, vérification RD1–RD8 sans compter deux fois les essais D1 |
+| Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
+| Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-| PR / SHA | État démontré | Revue / blocage | CI |
-|---|---|---|---|
-| #79 / #81 | Architecture VA-API documentée et socle D0 H.264 synthétique intégré | Implémentation et revues terminées ; essai GPU local et réception Freebox non effectués | `main` `c1cf34d`, run `39066643266` verte |
-| #83 `dfc9265` | Ports et orchestration D1, cycle de vie et nettoyage simulés | Corrections de concurrence et d'interruption revues puis fusionnées | `main` `e2621ba`, run `39134050753` verte |
-| #84 `8e652e7` | Provenance `.deb`/APK, états dpkg et préparation de recette | Implémentation et revue terminées ; signature stable et recette physique restent à réaliser | `main` `be2296b`, run `39123802992` verte |
-| #85 `4bc33f2` | Trace C6/C7, corrélation `requestId` Rust/Android et verdicts PASS/FAIL/BLOCKED | Revue finale APPROVED ; validation simulée seulement | `main` `b047f81`, run `39143826587` verte |
-| #86 `0370a5e` | Adaptateur D0 vers le port d'encodage D1 | Cycle de vie, nettoyage et erreurs revus ; aucune capture ni diffusion réelle | `main` `ca48743`, run `39136214248` verte |
-| #88 `793fee1` | Règles de suivi synchronisées dans les instructions agents | Fusionnée | incluse dans les CI ultérieures de `main` |
-| #89 `642bf18` | CI mise en cache et validations de plateforme ciblées | Fusionnée ; les changements Python conservent les builds Linux et Android | `main` `3396328`, run `39146163412` verte |
-| #82 | Consolidation documentaire D0–D4 | Mise à jour avec `main`; nouvelle CI requise sur le SHA final | en attente |
+**Statuts d'intégration :** #82, #90 et #91 fusionnées ; #92 encore ouverte, même si sa chaîne FFmpeg → HLS fonctionne localement.
+Les éléments de #92 ne sont pas déclarés fusionnés avant leur intégration à `main`.
 
-### Budget unique restant
-
-| Chantier | État vérifié | Min. | Max. | Centre | Blocage / dépendance | Prochaine action | Responsable |
-|---|---|---:|---:|---:|---|---|---|
-| D0 — H.264 et validation | Implémentation et parcours automatisé complet du service terminés | 1 h | 3 h | 2 h | FFmpeg/libx264/VA-API non exécutés sur la machine dans cette validation ; aucune preuve Freebox | Exécuter les essais synthétiques logiciels et GPU bornés après accord | Propriétaire + Codex |
-| D1 — duplication Ubuntu vers Freebox | Ports, orchestration simulée et adaptateur d'encodage D0 terminés (#83/#86) ; capture, publication et réception concrètes non commencées | 12 h | 20 h | 16 h | Compatibilité HLS Freebox inconnue ; capture et réseau soumis à accord | Implémenter un publisher/récepteur HLS borné, puis une capture X11 consentie et la validation matérielle | Codex, revue indépendante, propriétaire |
-| D2 — extension du bureau | Non commencé | 12 h | 24 h | 18 h | Dépend de D1 et des capacités X11/i915 ; modification X11 soumise à accord | Spike d'écran virtuel réversible, puis diffusion de ce seul écran | Codex, revue Claude, propriétaire |
-| D3 — interface screencast | Non commencé | 8 h | 12 h | 10 h | Dépend des contrats stabilisés D1/D2 | Concevoir puis tester Dupliquer / Étendre / Arrêter et les états associés | Codex, revue Claude |
-| D4 — sécurité screencast | Non commencé ; exigences documentées | 6 h | 10 h | 8 h | Dépend de D1–D3 ; n'inclut ni les essais de réception D1 ni la recette télécommande | Revue sécurité, consentement, confinement LAN, nettoyage et RD1–RD8 hors essais déjà comptés | Codex + revue indépendante + propriétaire |
-| C6/C7 — développement, revue et simulation | Terminé et fusionné (#85) ; tests automatisés réussis | 0 h | 0 h | 0 h | La trace applicative ne prouve pas la livraison physique | Conserver les preuves lors de la recette matérielle | Propriétaire + Codex |
-| Packaging et préparation de recette | Automatisation terminée et fusionnée (#84) | 1 h | 3 h | 2 h | Création/sauvegarde de la clé Android et certificat publié par le propriétaire | Configurer la signature stable puis produire les artefacts identifiés | Propriétaire |
-| Recette matérielle télécommandes | Fonctionnalités et automatisation prêtes ; validations réelles majoritairement en attente | 6,5 h | 11 h | 8,75 h | Artefacts identifiés et autorisations explicites par étape | Exécuter le protocole manuel et produire le rapport final | Propriétaire + Codex pour les preuves |
-| **TOTAL UNIQUE** | **D0–D4 + packaging restant + recette matérielle** | **46,5 h** | **83 h** | **64,75 h** | **Réestimer D1 si HLS échoue ; Cast Streaming (20–40 h) ou Sunshine/Moonlight (8–16 h) sont des alternatives, jamais des budgets additionnés** | **Poursuivre D1, puis D2–D4, sans confondre CI et matériel** | — |
-
-### Détail non additionnel de la recette matérielle (inclus dans les 6,5–11 h)
-
-| Preuve à obtenir | État vérifié | Min. | Max. | Centre | Blocage / dépendance | Prochaine action | Responsable |
-|---|---|---:|---:|---:|---|---|---|
-| Ubuntu réel | Installation/lancement déjà observés sur un ancien build ; recette finale ouverte | 0,75 h | 1,25 h | 1 h | #84 corrigée, `.deb` et provenance exacts, accord d'installation | Lancement, IPC, tray, fermeture et journaux | Propriétaire + Codex |
-| Android réel | Application construite ; commandes matérielles non validées | 1 h | 1,75 h | 1,375 h | #84 corrigée, APK identifié/signé, accord d'installation | Installer sans perdre les données, lancer et relever les journaux | Propriétaire + Codex |
-| Widget | Implémenté et partiellement essayé ; scénarios de reprise ouverts | 0,5 h | 1 h | 0,75 h | Android installé avec signature stable | Reprise de processus, Wi-Fi, batterie, notification et verrou multicast | Propriétaire + Codex |
-| Applications installées | Liste Ubuntu observée ; lancement et Android ouverts | 0,5 h | 0,75 h | 0,625 h | ADB uniquement après accord | Lister et lancer depuis les deux clients | Propriétaire + Codex |
-| Clavier distant | Développement terminé, matériel non validé | 0,25 h | 0,5 h | 0,375 h | Champ TV disponible et autorisation de commande | Texte, effacement et validation | Propriétaire + Codex |
-| Alimentation | Développement terminé, matériel non validé | 0,25 h | 0,5 h | 0,375 h | Veille/réveil dépendants du matériel | Tester veille et réveil séparément | Propriétaire + Codex |
-| Commandes simultanées C1–C5 | Simulation terminée ; matériel non validé | 0,75 h | 1,25 h | 1 h | Deux clients installés et autorisations par étape | Exécuter les commandes, vérifier convergence et absence de rejeu | Propriétaire + Codex |
-| Latence K1–K3 | Instrumentation statistique présente ; aucune mesure matérielle | 0,75 h | 1,25 h | 1 h | Seuils K1/K2 à faire adopter par le propriétaire | Filmer/mesurer puis classer sans seuil inventé | Propriétaire + Codex |
-| C6/C7 matériel | Non exécuté | 0,75 h | 1,25 h | 1 h | Observation indépendante et interruption autorisée | Exécuter une fois chaque scénario et conserver la trace | Propriétaire + Codex |
-| Rapport et documentation | Non commencé pour la campagne finale | 1 h | 1,5 h | 1,25 h | Dépend de tous les résultats ci-dessus | Consolider preuves, FAIL/BLOCKED/NOT RUN et versions exactes | Codex, revue Claude |
-
-**Absence de double comptage :** les essais de réception et de capture appartiennent à D1, les
-essais matériels C6/C7 à la recette de 6,5–11 h ; les corrections/revues de #85 sont terminées et
-ne sont plus comptées. D4 couvre uniquement la sécurité/validation du partage d'écran. Le packaging prépare les
-artefacts ; leur installation et leur manipulation devant les appareils appartiennent à la recette.
-
-**Ordre actuel :** #79, #81, #84, #83, #86, #88, #85 et #89 sont déjà fusionnées. #82,
-documentaire, est resynchronisée en dernier avec leur historique et reste soumise à revue et à
-l'autorisation de fusion du propriétaire.
-
-**Sécurité et consentement :** aucune fusion, installation, capture, activation ADB, commande TV ou
-test matériel sans l'autorisation expresse correspondante. Une CI verte prouve l'automatisation du
-commit testé, jamais le comportement du matériel.
+**Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
 ---
 
@@ -142,7 +101,7 @@ Bilan : 20 applications avec logo, 8 sans (raisons ci-dessus). Anomalie relevée
 
 ### C. Recette matérielle des deux télécommandes — après correction de l'UI
 
-Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md) ; étapes manuelles, ordre des séances (1 à 7, ≈ 7,5–12 h dont 6–9 h devant la TV) et fiche de preuve : [`docs/MANUAL_ACCEPTANCE_PROTOCOL.md`](docs/MANUAL_ACCEPTANCE_PROTOCOL.md). Constat réel déjà acquis : la liste des 28 applications s'affiche sur Ubuntu (débogage activé sur la Freebox, captures du 2026-10-17).
+Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md) ; étapes manuelles, ordre des séances et fiche de preuve : [`docs/MANUAL_ACCEPTANCE_PROTOCOL.md`](docs/MANUAL_ACCEPTANCE_PROTOCOL.md). Constat réel déjà acquis : la liste des 28 applications s'affiche sur Ubuntu (débogage activé sur la Freebox, captures du 2026-10-17).
 
 **Préparation de la recette — blocages corrigés (branche `fix/hardware-acceptance-readiness`, validation automatisée seulement) :**
 
@@ -181,6 +140,9 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     aucune revendication sur l'encodeur de la machine.
   - [ ] Essais réels du socle sur la machine (encodage synthétique via le service, `libx264` puis
     VA-API CQP) — **avec accord**. Les essais de réception HLS/Cast appartiennent à D1.
+- [x] **D1, voie A — publication HLS et récepteur Cast (logiciel) :** `HlsPublisher` (serveur HTTP par session sur une adresse du réseau domestique, port et jeton aléatoires, playlist et segments seulement, durée bornée, arrêt idempotent) et `CastHlsReceiver` (un `load_media` via la couche partagée, session seulement si confirmée, n'arrête jamais un autre contenu) ; validés en automatique uniquement (boucle locale et faux transport), aucune compatibilité Freebox annoncée.
+- [x] **D1, commande :** `python3 -m control_tv.screen_streaming.d1 --no-tv` produit un vrai flux HLS H.264 (image synthétique, libx264) servi en boucle locale ; essai réel fait sur cette machine. `--device ID` (découverte, adresse LAN, chargement sur le récepteur Cast) reste à lancer **avec accord**.
+- [x] **D1, capture X11 réelle :** `d1 --screen SORTIE` capture une sortie X11 (lecture `xrandr --listmonitors`, `x11grab`, mise à l'échelle) ; essai réel sur un affichage Xvfb privé (jamais le bureau du propriétaire).
 - [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
   - [x] Préparation indépendante sans matériel : contrats typés capture/encodage/publication/réception,
     orchestration synthétique et nettoyage testés sans capture, réseau ni TV ; comparaison HLS,
@@ -192,6 +154,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
   - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
     capture X11 consentie ; exécuter ici les essais de réception HLS/Cast. La duplication réelle
     reste non validée.
+- [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
@@ -200,7 +163,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
   `main` (#81, #83, #86). Prochaine étape : publisher/récepteur D1 et preuve Freebox autorisée,
   puis capture X11, D2, D3 et D4. La recette télécommande et le packaging (#84/#85) suivent leur
   chaîne matérielle séparée, sans être recomptés dans D4.
-- **Estimations :** le tableau consolidé en tête de ce fichier est l'unique estimation courante. Les anciennes plages de cette section sont conservées dans l'historique Git et ne doivent plus être additionnées.
+- **Suivi :** les tâches et preuves figurent ici ; toute estimation de temps est réservée à la conversation.
 - **Autorisations nécessaires :** toute diffusion réelle vers la TV ; installation d'une application sur la TV (Moonlight, si cette voie est retenue) ; module noyau evdi ou modification de la configuration Xorg ; démon hôte (Sunshine) pendant la diffusion.
 
 **Organisation :** Codex implémente sur branche dédiée ; Claude révise indépendamment ; PR, CI et preuve de rendu avant fusion ; aucune modification directe de `main`.
@@ -277,10 +240,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 ## Suivi
 
-| Lot | Avancement | Restant estimé |
+| Lot | Avancement | Prochaine preuve |
 |---|---|---|
-| Phase 1 : autonomie et convergence | tests simulés 100 %, fusionnés (#38) ; matériel partiel, non classé | 14–28 h (enveloppe) |
-| Phase 2 : commandes, applications, clavier | son validé sur Ubuntu ; le reste codé, 0 % confirmé sur TV ; applications 0 % | 16–32 h, à réestimer après la décision ADB |
-| Phase 3 : livraison | CI `d95fc7b` verte, APK et `.deb` construits, `.deb` installé/testé/purgé en CI ; recette matérielle finale à faire | 10–20 h |
-
-**Total réaliste restant : 40–80 h** selon la disponibilité du téléphone et de la TV, les autorisations de commandes, le comportement ADB du téléviseur et les corrections révélées par la recette. Ce temps concerne principalement les validations physiques et leurs éventuelles reprises, pas les neuf corrections d'audit déjà fusionnées.
+| Phase 1 : autonomie et convergence |  tests simulés 100 %, fusionnés (#38) ; matériel partiel, non classé | Recette matérielle R1–R4 autorisée |
+| Phase 2 : commandes, applications, clavier |  son validé sur Ubuntu ; le reste codé, 0 % confirmé sur TV ; applications 0 % | Commandes sur TV et décision ADB du propriétaire |
+| Phase 3 : livraison |  CI `d95fc7b` verte, APK et `.deb` construits, `.deb` installé/testé/purgé en CI ; recette matérielle finale à faire | Installation et recette finale autorisées |

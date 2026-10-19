@@ -1,8 +1,9 @@
 # D1 receiver and publication spike — no capture, network or device
 
-Status: **automated prototype only**. This work does not capture the desktop, encode media, open a
-listener, contact the Freebox or prove that any receiver path works on that hardware. It prepares
-the boundary that will consume D0 after PR #81 is merged and reviewed.
+Status: **automated prototype only**. Path A (HLS to a Cast receiver) now has its publisher and
+receiver adapters, tested against loopback and a fake transport only. Nothing here captures the
+desktop, contacts the Freebox or proves that any receiver path works on that hardware: that is
+the owner-authorized RD1–RD8 validation.
 
 ## Evidence and comparison
 
@@ -164,24 +165,56 @@ Measured on the owner's machine with the synthetic picture only (no capture, no 
 cleaned; without `-re` the same session had been produced in 0.6 s, which is why the input is
 paced. The tests run the same flow with libx264 when FFmpeg is installed, otherwise skip it.
 
-**Contract gaps of the D1 ports (documented, not changed here):**
+### Path A adapters: HLS publisher and Cast receiver
+
+- **`screen_streaming.hls_publisher.HlsPublisher`** (`StreamPublisher`): one small HTTP server
+  per publication, bound to one IPv4 address of the home network chosen by the composition root
+  (private, link-local or loopback; every interface `0.0.0.0`, a public address and IPv6 are
+  refused), on a random port, under a random 32-character token (RD8: a host of the same network
+  without the URL gets nothing). It serves only the playlist and the `.ts` segments of that
+  publication's directory - no listing, no other file (not the encoder's log), never through a
+  link, GET/HEAD (and OPTIONS) only, with the CORS header Cast receivers need - and logs no
+  request (no client address anywhere). Each publication stops serving and closes its socket at
+  its `max_session_seconds`; `stop()` releases it, idempotent and never twice, `close()` all.
+  No port is opened on the router (no UPnP), no tunnel, no cloud; a host firewall is not changed.
+- **`screen_streaming.cast_receiver.CastHlsReceiver`** (`StreamReceiver`): one `load_media` of
+  the publication URL (`application/x-mpegURL`) through the shared `TvControl`, sent once, never
+  retried; a session only when the receiver's status confirms that URL ("started", not "seen").
+  `stop()` stops the TV's media only while it is still this stream (content the person started
+  since is never stopped); a status that cannot be read or a stop that is not confirmed keeps the
+  session for the service's retry. An unconfirmed load is stopped if it plays anyway, then fails.
+- End to end (`tests/screen_streaming/test_hls_session.py`): `StreamingSessionService` with
+  `D0LiveEncoder` (fake process), the publisher on loopback and the receiver on the real
+  `ControlService` with the fake transport: the URL the receiver is told to load is served; stop,
+  a receiver failure and an interruption release the receiver, the port and the encoder;
+  repeated sessions use a new port and token; two sessions are isolated.
+
+- Command (`screen_streaming.d1`): `python3 -m control_tv.screen_streaming.d1 --no-tv` (loopback,
+  prints the playlist URL for `ffplay`) or `--device DEVICE_ID` (owner authorization: discovery,
+  the LAN address the TV is reached from, load on its Cast receiver); `--seconds` (60),
+  `--encoder software|vaapi|auto` (software). It stops everything at the duration, on Ctrl-C or
+  when FFmpeg ends by itself.
+
+**Contract gaps of the D1 ports:**
 
 1. `ScreenEncoder.start(source, profile)` does not receive the session lifetime
    (`PublicationConfig.max_session_seconds`); the adapter applies its own
    `LiveEncoderSettings.max_session_seconds`. The composition root must keep it at or below the
    publication bound, or the port should carry the bound.
-2. `EncodedStream` is opaque: a publisher needs the HLS directory and playlist, today available
-   only from the concrete adapter (`D0LiveEncoder.output(stream)`). A small lookup port (or an
-   output field on `EncodedStream`) would keep the publisher independent of the adapter.
+2. _Resolved without changing the ports:_ `EncodedStream` stays opaque; the publisher receives
+   the lookup it needs (`output_of`, for D0 `D0LiveEncoder.output`) from the composition root.
 3. The port has no health call: when FFmpeg ends by itself (session bound reached, or a
    failure), the service still reports RUNNING; `D0LiveEncoder.ended(stream)` exists, but the
    service cannot see it through the port.
 
 Remaining:
 
-1. resolve the three contract gaps above when the publisher is written;
-2. implement one publisher/receiver pair only after the owner chooses an authorized hardware spike;
-3. add bridge/UI integration only after the chosen path has receiver evidence;
+1. gaps 1 and 3 above: the composition root keeps the encoder's bound at or below the
+   publication's, and the service cannot yet see an encoder or publication that ended by itself;
+2. path A (HLS publisher and Cast receiver) is implemented, automation-validated only; the
+   composition root (the home-network address the TV reaches, D0's lookup) and a first
+   owner-authorized hardware run (synthetic picture, then RD1–RD8) come next;
+3. add bridge/UI integration (D3) only after the chosen path has receiver evidence;
 4. run RD1–RD8 with explicit authorization and keep receiver-started, receiver-confirmed and
    physically observed results distinct.
 

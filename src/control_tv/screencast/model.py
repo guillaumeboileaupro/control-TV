@@ -48,9 +48,11 @@ class ScreenCastStateError(ScreenCastError):
 
 
 class SourceKind(StrEnum):
-    """What a source shows. D0 allows only the synthetic test picture."""
+    """What a source shows. The bounded D0 encode allows only the synthetic test picture; the
+    live (D1) encode also accepts a region of the local X11 screen."""
 
     SYNTHETIC = "synthetic"
+    X11 = "x11"
 
 
 class ScreenCastState(StrEnum):
@@ -172,7 +174,43 @@ class SyntheticSource:
 
 # Every source the package knows, as a closed union of specifications (D0: the synthetic picture
 # only; D1 adds a display source here and its translation in the FFmpeg adapter).
+_LOCAL_DISPLAY = re.compile(r":[0-9]{1,4}(\.[0-9]{1,2})?")
+_MAX_X11_COORDINATE = 32767
+_MAX_CAPTURE_DIMENSION = 8192
+
+
+@dataclass(frozen=True)
+class X11GrabSource:
+    """A region of a local X11 display (FFmpeg `x11grab`), as a typed specification. Local
+    displays only (`:N` or `:N.S`): never a remote X server."""
+
+    display: str
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.display, str) or _LOCAL_DISPLAY.fullmatch(self.display) is None:
+            raise InvalidScreenCastOption(
+                f"only a local X11 display can be captured: {self.display!r}"
+            )
+        _require_int("capture x", self.x, 0, _MAX_X11_COORDINATE)
+        _require_int("capture y", self.y, 0, _MAX_X11_COORDINATE)
+        _require_int("capture width", self.width, 16, _MAX_CAPTURE_DIMENSION)
+        _require_int("capture height", self.height, 16, _MAX_CAPTURE_DIMENSION)
+        if self.width % 2 or self.height % 2:
+            raise InvalidScreenCastOption(
+                f"H.264 needs an even capture size: {self.width}x{self.height}"
+            )
+
+    @property
+    def kind(self) -> SourceKind:
+        return SourceKind.X11
+
+
 VideoSource = SyntheticSource
+LiveSource = SyntheticSource | X11GrabSource
 
 
 def require_d0_source(source: object) -> VideoSource:

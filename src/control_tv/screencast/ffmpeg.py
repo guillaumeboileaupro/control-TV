@@ -21,10 +21,12 @@ from control_tv.screencast.model import (
     EncoderPlan,
     HlsSegmenting,
     InvalidScreenCastOption,
+    LiveSource,
     SoftwareX264,
     VaapiCqp,
     VideoProfile,
     VideoSource,
+    X11GrabSource,
     require_d0_source,
 )
 
@@ -43,8 +45,21 @@ class FrameFormat(Protocol):
     def fps(self) -> int: ...
 
 
-def source_arguments(source: VideoSource, profile: FrameFormat) -> tuple[str, ...]:
+def source_arguments(source: LiveSource, profile: FrameFormat) -> tuple[str, ...]:
     """FFmpeg input arguments for a known source type; `InvalidScreenCastOption` otherwise."""
+    if type(source) is X11GrabSource:
+        return (
+            "-f",
+            "x11grab",
+            "-draw_mouse",
+            "1",
+            "-framerate",
+            str(profile.fps),
+            "-video_size",
+            f"{source.width}x{source.height}",
+            "-i",
+            f"{source.display}+{source.x},{source.y}",
+        )
     synthetic = require_d0_source(source)
     if synthetic.pattern not in SYNTHETIC_PATTERNS:  # changed after construction
         raise InvalidScreenCastOption(f"unknown synthetic pattern: {synthetic.pattern!r}")
@@ -52,11 +67,14 @@ def source_arguments(source: VideoSource, profile: FrameFormat) -> tuple[str, ..
     return ("-f", "lavfi", "-i", f"{synthetic.pattern}=size={size}:rate={profile.fps}")
 
 
-def encoder_arguments(plan: EncoderPlan) -> tuple[str, ...]:
+def encoder_arguments(plan: EncoderPlan, scale: tuple[int, int] | None = None) -> tuple[str, ...]:
+    """The encoder's arguments; `scale` resizes the picture first (a captured screen to the
+    requested size)."""
+    resize = "" if scale is None else f"scale={scale[0]}:{scale[1]},"
     if isinstance(plan, VaapiCqp):
         return (
             "-vf",
-            "format=nv12,hwupload",
+            f"{resize}format=nv12,hwupload",
             "-c:v",
             "h264_vaapi",
             "-rc_mode",
@@ -64,7 +82,8 @@ def encoder_arguments(plan: EncoderPlan) -> tuple[str, ...]:
             "-qp",
             str(plan.qp),
         )
-    return _x264_arguments(plan)
+    scaled = () if scale is None else ("-vf", resize.rstrip(","))
+    return (*scaled, *_x264_arguments(plan))
 
 
 def _x264_arguments(plan: SoftwareX264) -> tuple[str, ...]:
@@ -111,7 +130,7 @@ def encode_command(
 
 def live_hls_command(
     ffmpeg: str,
-    source: VideoSource,
+    source: LiveSource,
     frame: FrameFormat,
     plan: EncoderPlan,
     output_directory: Path,
@@ -124,7 +143,8 @@ def live_hls_command(
     old segments are deleted, and an end after `session_seconds` (`-t`) whatever happens.
 
     The synthetic picture is read at its own frame rate (`-re`): without it FFmpeg generates it
-    as fast as it can, so a "live" session would be produced in a fraction of its duration."""
+    as fast as it can, so a "live" session would be produced in a fraction of its duration. A
+    captured X11 region is real time already (no `-re`) and is scaled to `frame`'s size."""
     if (
         isinstance(session_seconds, bool)
         or not isinstance(session_seconds, int)
@@ -138,6 +158,9 @@ def live_hls_command(
     keyframes = str(segmenting.keyframe_interval(frame.fps))
     # libx264 alone would add key frames at scene cuts and misalign segments.
     scene_cut = () if isinstance(plan, VaapiCqp) else ("-sc_threshold", "0")
+    captured = type(source) is X11GrabSource
+    pacing = () if captured else ("-re",)
+    scale = (frame.width, frame.height) if captured else None
     return (
         ffmpeg,
         "-hide_banner",
@@ -145,11 +168,11 @@ def live_hls_command(
         "-loglevel",
         "error",
         *device,
-        "-re",
+        *pacing,
         *source_arguments(source, frame),
         "-t",
         str(session_seconds),
-        *encoder_arguments(plan),
+        *encoder_arguments(plan, scale),
         "-profile:v",
         "high",
         "-g",

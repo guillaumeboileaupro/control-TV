@@ -751,9 +751,34 @@ exposure and no permanent server.
     untracked by an interrupted start, the encoder preference normalized (a software-only
     request never selects VA-API); synthetic only, no capture, listener
     or receiver; three port gaps documented in the D1 spike doc;
-  - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
-    Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
+  - [x] path A adapters implemented, automation-validated only: `HlsPublisher` (one HTTP server
+    per publication on one home-network IPv4 address, random port and token, playlist and `.ts`
+    segments only, no link, no listing, no request log, bounded by `max_session_seconds`,
+    idempotent stop) and `CastHlsReceiver` (one `load_media` through `TvControl`, a session only
+    when confirmed, stops the TV's media only while it is still this stream); end to end with
+    `D0LiveEncoder` (fake process), loopback and the fake transport; contract gap 2 resolved by
+    injecting D0's output lookup; no Freebox compatibility claimed;
+  - [x] composition root and command (`python3 -m control_tv.screen_streaming.d1`): the IPv4
+    address this computer reaches the TV from (route lookup, no packet sent), one duration for
+    the encoder and (15 s longer) the publication, the session stopped at that duration, on
+    Ctrl-C or as soon as FFmpeg ends by itself (contract gaps 1 and 3 handled there); `--no-tv`
+    run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
+    loopback, wrong token 404, port closed and output removed at the end;
+  - [x] real X11 capture (`X11Capture`, `X11GrabSource`): an output read with
+    `xrandr --listmonitors` (read only), grabbed by D0's live encoder (`x11grab`, real time, scaled
+    to the requested size), local X11 only (not Wayland, never a remote X server);
+    `d1 --screen OUTPUT`, `--list-screens`, `--size`, `--fps`; run on a private Xvfb display
+    (never the owner's desktop): H.264 High 1280x720 30 fps HLS served on loopback;
+  - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
+    before claiming Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
+  - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
+    added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
+    D1 capture (`d1 --extend --yes-change-display`), removed and the screen size restored on
+    stop, failure or Ctrl-C/SIGTERM (idempotent, a leftover removed first); explicit consent
+    required; runtime only, no configuration file; automation-validated with a fake `xrandr`;
+    on a private Xvfb only the refusals were seen (its screen cannot grow);
+  - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).
