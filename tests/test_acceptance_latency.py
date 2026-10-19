@@ -136,8 +136,21 @@ def test_ten_alternating_presses_pass_with_their_delays_and_no_adopted_criterion
 
 def test_a_press_refused_while_busy_is_not_a_failure() -> None:
     refused = press(made_while_idle=False, sent=False, focus_moves=0, send_frame=None)
-    result = latency.evaluate_key_step([press(), refused], fps=60)
-    assert result.verdict is latency.Verdict.PASS and result.send_to_ready.count == 1
+    result = latency.evaluate_key_step([*ten_presses()[:-1], refused], fps=60)
+    assert result.verdict is latency.Verdict.PASS and result.send_to_ready.count == 9
+
+
+@pytest.mark.parametrize("count", [1, 9, 11])
+def test_an_incomplete_or_oversized_step_is_not_run(count: int) -> None:
+    result = latency.evaluate_key_step([press()] * count, fps=60)
+    assert result.verdict is latency.Verdict.NOT_RUN
+    assert result.reasons == (f"expected exactly 10 presses, recorded {count}",)
+
+
+def test_a_demonstrated_failure_outranks_an_incomplete_step() -> None:
+    result = latency.evaluate_key_step([press(focus_moves=2)], fps=60)
+    assert result.verdict is latency.Verdict.FAIL
+    assert result.reasons == ("press 1 moved the focus 2 times: a key sent twice",)
 
 
 @pytest.mark.parametrize(
@@ -191,7 +204,7 @@ def test_an_adopted_criterion_is_checked_only_when_given() -> None:
     assert within.verdict is latency.Verdict.PASS
     assert within.latency == "within the adopted criterion"
 
-    slow = [*ten_presses(), press(effect_frame=190, ready_frame=200)]  # 1.5 s to the effect
+    slow = [*ten_presses()[:-1], press(effect_frame=190, ready_frame=200)]
     outside = latency.evaluate_key_step(slow, fps=60, criterion=proposed)
     assert outside.verdict is latency.Verdict.FAIL
     assert outside.reasons == ("outside the adopted criterion: slowest send-to-effect",)
@@ -211,6 +224,9 @@ def test_an_adopted_criterion_is_checked_only_when_given() -> None:
         ([press(send_frame=-1)], 60, "frame number"),
         ([press(effect_frame=True)], 60, "frame number"),
         ([press(focus_moves=-1)], 60, "focus_moves"),
+        ([press(focus_moves=True)], 60, "focus_moves"),
+        ([press(focus_moves=1.5)], 60, "focus_moves"),
+        ([press(focus_moves="1")], 60, "focus_moves"),
     ],
 )
 def test_an_inconsistent_record_is_refused_not_guessed(
@@ -257,7 +273,7 @@ def test_the_key_step_command_reports_and_exits_with_the_verdict(
     empty = record(tmp_path, [], "empty")
     assert latency.main(["key-step", "--fps", "60", str(empty)]) == 2
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "NOT RUN: no press was recorded"
+    assert out[0] == ("NOT RUN: expected exactly 10 presses, recorded 0; no press was recorded")
     assert out[1] == "send to effect: median -, slowest -"
 
 
@@ -282,6 +298,17 @@ def test_an_unusable_record_is_not_run(
     path.write_text(content, encoding="utf-8")
     assert latency.main(["key-step", "--fps", "60", str(path)]) == 2
     assert capsys.readouterr().out.startswith("NOT RUN: unusable record")
+
+
+@pytest.mark.parametrize("focus_moves", [True, 1.5, "1"])
+def test_an_invalid_focus_move_count_is_not_run_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], focus_moves: object
+) -> None:
+    invalid = record(tmp_path, [as_json(press(focus_moves=focus_moves))], "invalid-focus")
+    assert latency.main(["key-step", "--fps", "60", str(invalid)]) == 2
+    assert capsys.readouterr().out.startswith(
+        "NOT RUN: unusable record: press 1: focus_moves must be an integer"
+    )
 
 
 def test_a_missing_record_or_a_partial_criterion_is_refused(

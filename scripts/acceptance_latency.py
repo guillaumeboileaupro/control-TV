@@ -185,11 +185,17 @@ def evaluate_key_step(
         raise ValueError("the video frame rate must be positive")
     failures: list[str] = []
     missing: list[str] = []
+    if len(presses) != 10:
+        missing.append(f"expected exactly 10 presses, recorded {len(presses)}")
     effect: list[float] = []
     ready: list[float] = []
     for number, press in enumerate(presses, 1):
-        if isinstance(press.focus_moves, bool) or press.focus_moves < 0:
-            raise ValueError(f"press {number}: focus_moves must be 0 or more")
+        if (
+            isinstance(press.focus_moves, bool)
+            or not isinstance(press.focus_moves, int)
+            or press.focus_moves < 0
+        ):
+            raise ValueError(f"press {number}: focus_moves must be an integer (0 or more)")
         send = _frame(press.send_frame, "send_frame", number)
         moved = _frame(press.effect_frame, "effect_frame", number)
         idle = _frame(press.ready_frame, "ready_frame", number)
