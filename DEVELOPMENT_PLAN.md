@@ -755,7 +755,7 @@ exposure and no permanent server.
     when confirmed, stops the TV's media only while it is still this stream); end to end with
     `D0LiveEncoder` (fake process), loopback and the fake transport; contract gap 2 resolved by
     injecting D0's output lookup; no Freebox compatibility claimed;
-  - [x] path-A software composition root: select the local IPv4 chosen by the OS route towards
+  - [x] path-A software composition root (#95): select the local IPv4 chosen by the OS route towards
     the receiver, keep the D0 encoder bound at or below the publication bound, and supervise an
     encoder or publisher that ends by itself so reverse cleanup runs; automation-validated with
     route/process/receiver doubles and a CI loopback publisher, no capture, LAN stream, GPU or
