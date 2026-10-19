@@ -787,6 +787,8 @@ exposure and no permanent server.
     `bridge_stop_screen_stream`, `bridge_get_screen_stream` relaying the bridge methods of the
     same names; `ScreenStreamController` runs one background session (D1 composition reused);
     unit-tested only (TypeScript, Rust, Python), the card not yet seen in the running app;
+    the frontend bundle budget raised from 64 to 80 KiB for it (62.0 kB before, 68.9 kB after;
+    the guard still catches a bundled icon catalogue);
   - [ ] the card used against the TV during the authorized run;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).
