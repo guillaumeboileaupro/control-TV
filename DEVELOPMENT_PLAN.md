@@ -28,6 +28,11 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 - [x] Manual application control operates independently of ChatGPT/MCP.
 - [x] Build output, platform intermediates and temporary files are controlled and disposable.
 - [x] Project cleanup is limited to verified project-owned generated output; shared/global caches remain separate.
+- [x] CI cost (PR #89, merged): pull requests run only the platform builds their changed files can affect, chosen
+  from every path since the merge base (deletions and both sides of a rename included; unknown paths run everything) by
+  `scripts/ci_scope.py`; pushes to `main` always run every job. Build caches: one Rust entry per job and `Cargo.lock`,
+  never the `.deb`/`.apk` bundles; npm, Gradle and `cargo-audit` cached by their locks or version. Audits, provenance
+  and security checks are unchanged whenever their job runs.
 
 ## Current state and critical path
 
@@ -52,7 +57,7 @@ Critical path:
   - second part (PR #40, merged 2026-10-12): `control_tv.adapters.tv_remote`, the Android TV Remote channel behind the optional extra `control-tv[tvremote]` (`androidtvremote2==0.3.2`; adds `aiofiles` to the lock, nothing else changes): explicit pairing with the code shown on the TV, private client credentials (0700/0600), an allowlist of keys (volume, speaker mute, power, D-pad, OK, Back, Home) sent once each over one short connection per operation, the TV's own power and audible volume/mute reports returned as observed, new error `pairing_required`. Then wired (same branch): `ControlService` `TvRemote` port and methods, bridge methods `get_remote_status` / `start_remote_pairing` / `finish_remote_pairing` / `press_remote_key`, four Tauri commands, and a **TV remote** panel in the window (Vol −/+, Mute, Power, arrows, OK, Back, Home, Read TV volume, explicit pairing), shared by the Ubuntu and Android hosts through `bridge.default_service`. Fakes and a headless render with a mock bridge only; not in the frozen bridge or the APK. Nothing was sent to a TV.
 - [ ] **P. TV endpoints feasibility (proposed S1, Phase 5b, gates G3-G5):** read-only identification of each owner TV's platform, audio path and control endpoints.
 - [ ] **Q. Power, audible sound, navigation and applications (proposed P5-P9, Phase 5b):** in the GUI (Linux, then Android), per proven capability.
-- [x] **R. Ubuntu and Android remotes in parallel on one TV (issue #37 phase 1):** first PR, the dual-controller state convergence contract (PR #38, merged 2026-10-12): a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`) and 19 test cases (`tests/test_dual_controller.py`; 18 pass and originally 1 strict expected failure): each controller must discover the TV itself; one controller's command is seen by the other at its next read, never cached; 60 random commands from both leave both reading the TV's real state; internal send barriers force concurrent play/pause and volume calls to overlap, each controller attempts its command once, and both converge on the last delivered state; a command undone by the other controller stays unconfirmed and is never resent; an ambiguous attempt is modeled both before delivery and after delivery, so the TV receives it zero or one time and no status read replays it; a pause, seek or stop is never confirmed by media the other controller loaded meanwhile, nor by the same content reloaded in a new session, nor by a new session at the same position, while a change that keeps the session (volume) does not block a confirmation. Every CONFIRMED result is checked against the statuses the simulated TV actually returned to that controller and must show the requested state (review P3-7). The original P3-3 expected failure is resolved by PR #59: the pre-read session id is carried to the Cast transport, a concurrently replaced session is never targeted implicitly, and no command is replayed. Simulator evidence only: the Ubuntu + Android hardware protocol is `docs/DUAL_CONTROLLER_VALIDATION.md`, not yet run; C6 and C7 require explicit timing/send instrumentation before they can prove their respective claims.
+- [x] **R. Ubuntu and Android remotes in parallel on one TV (issue #37 phase 1):** first PR, the dual-controller state convergence contract (PR #38, merged 2026-10-12): a simulated TV shared by two independent `ControlService` instances (`tests/shared_tv.py`) and 19 test cases (`tests/test_dual_controller.py`; 18 pass and originally 1 strict expected failure): each controller must discover the TV itself; one controller's command is seen by the other at its next read, never cached; 60 random commands from both leave both reading the TV's real state; internal send barriers force concurrent play/pause and volume calls to overlap, each controller attempts its command once, and both converge on the last delivered state; a command undone by the other controller stays unconfirmed and is never resent; an ambiguous attempt is modeled both before delivery and after delivery, so the TV receives it zero or one time and no status read replays it; a pause, seek or stop is never confirmed by media the other controller loaded meanwhile, nor by the same content reloaded in a new session, nor by a new session at the same position, while a change that keeps the session (volume) does not block a confirmation. Every CONFIRMED result is checked against the statuses the simulated TV actually returned to that controller and must show the requested state (review P3-7). The original P3-3 expected failure is resolved by PR #59: the pre-read session id is carried to the Cast transport, a concurrently replaced session is never targeted implicitly, and no command is replayed. Simulator evidence only: the Ubuntu + Android hardware protocol is `docs/DUAL_CONTROLLER_VALIDATION.md`, not yet run; the structured product trace needed by C6 and C7 is implemented, but no hardware claim exists until the authorized protocol is run and its evidence validated.
 - Abandoned on 2026-10-12 (owner): **N** (content started from ChatGPT tools), **O** (ChatGPT reach, gate G1) and **F** (Windows).
 
 ### Audit remediation integrated in `main` (2026-10-15)
@@ -646,6 +651,44 @@ Verify:
 - [ ] build disk usage remains understood and controlled.
 
 
+## Hardware acceptance readiness (2026-10-17, branch `fix/hardware-acceptance-readiness`)
+
+Blockers found while preparing the remote-control acceptance
+([`docs/HARDWARE_ACCEPTANCE_PLAN.md`](docs/HARDWARE_ACCEPTANCE_PLAN.md)); automation-validated only,
+nothing run on a device.
+
+- [x] Ubuntu build identity: every package is 0.1.0, so the runner now requires a provenance
+  manifest (commit, CI run, version, architecture, `.deb` SHA-256, `usr/bin/control-tv` SHA-256,
+  payload SHA-256 of the package's `md5sums`, which covers the Python bridge: the binary is
+  reproducible), recomputes them, refuses an unidentified build, an installed package of another build
+  and an installation that leaves another binary; CI writes `provenance.json` with the package
+  (`scripts/acceptance_identity.py`, `scripts/acceptance_ubuntu.py`);
+- [x] Android stable test signing support: Gradle signs debug builds with the `control-tv-test`
+  key from the environment, CI from two repository secrets (build step only, keystore 0600,
+  removed), `verify-apk` refuses a key other than the pinned certificate and writes
+  `apk-provenance.json` ([`docs/ANDROID_TEST_SIGNING.md`](docs/ANDROID_TEST_SIGNING.md));
+- [ ] owner: create the test key, back it up, set the two secrets and commit the certificate pin;
+  then one last uninstall per phone (the installed APKs have ephemeral signers);
+- [x] runner honesty: every TV, phone, two-remote and latency scenario reports "no automated
+  adapter exists … run it by hand", whatever flags; manual protocol
+  [`docs/MANUAL_ACCEPTANCE_PROTOCOL.md`](docs/MANUAL_ACCEPTANCE_PROTOCOL.md) (session order,
+  per-step authorization, record template);
+- [x] CI artifacts of `main` `de31c94` (run `39034444658`) downloaded and identified (provenance,
+  SHA-256, version, architecture, APK signer); the installed Ubuntu binary is that build;
+- [x] review follow-ups (Codex, `8f29903`): `check-apk` accepts an APK only when its provenance
+  and the expected CI run name it (digest, published digest, commit, run, signer); `check-deb`
+  reports a clean host as not installed and verifies every installed file against dpkg's record,
+  which the runner now also checks (BLOCKED before installing, FAIL after);
+- [x] review follow-ups (Codex, `db3ef0c`): the CI-published APK digest is mandatory for
+  `check-apk`, and an unusable pinned certificate is BLOCKED; `check-deb` reads dpkg's status
+  first: "not installed" only without any dpkg record and any file of the package, any other
+  dpkg status (half-configured, unpacked, config-files...) or leftover is BLOCKED;
+- [x] C6/C7 send/trace instrumentation: product command trace, confirmation hold, independent
+  observer and offline validators ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md)); every
+  order carries an application request id from the Tauri shell or the Android widget (its tap),
+  so C7 counts every send of one order; missing or unusable evidence is BLOCKED, not FAIL;
+  automation-validated only: C6 and C7 stay NOT RUN on hardware until the owner authorizes them.
+
 ## Phase 10 - Remote display: Ubuntu (X11) to the TV
 
 Owner request (2026-10-17): show the Ubuntu desktop on the Freebox (Google TV), first as a
@@ -656,18 +699,57 @@ unless the owner reprioritizes. No material validation has been performed.
 
 The owner subsequently reprioritized D0 and D1 preparation. The authoritative remaining-time
 table is now at the top of [`TODO.md`](TODO.md); older estimates later in this historical plan must
-not be added to it. As of 2026-10-17, none of PR #79, #81 or #83 is in `main`.
+not be added to it. As of 2026-10-19, PR #79, #81, #83, #84, #85, #86 and #88 are in `main`.
+Their implementation and automated tests are distinct from the hardware validation still open.
+The remote-display architecture remains multi-device and multi-protocol behind explicit ports,
+but discovery, control and streaming are confined to the owner's domestic network: no Internet
+exposure and no permanent server.
 
 - [x] feasibility study: receivers (HLS to the Default Media Receiver, Cast Streaming mirroring,
   custom web receiver, Sunshine/Moonlight, VNC), capture and encoding, virtual monitors (evdi,
   driver virtual heads, `xrandr --setmonitor`), architecture, security, tests, risks (documentation
   only, 2026-10-17);
-- [x] D0 automated implementation in PR #81 (`3ba057e`): bounded synthetic H.264 encoder,
-  VA-API CQP / libx264 selection, process ownership and cleanup; independent review completed and
-  CI 4/4 green. Local invocation through the service and every Freebox claim remain unvalidated;
-- [ ] D1 preparation in PR #83 (`fedda7f`): typed ports and simulated lifecycle exist, but two P2
-  review findings remain; no concrete capture, D0 adapter, publisher, listener, receiver, network
-  operation or Freebox evidence exists;
+- [ ] D0: read-only inventory (GPU, hardware encoders, outputs, Secure Boot) and spikes on a test
+  stream (HLS to the Default Media Receiver; Cast Streaming sender);
+  - inventory and a manual synthetic VA-API CQP encode measured on the owner's Intel UHD (PR #79:
+    CQP only, bitrate mode fails; 1920×1080@30, QP 24, 4.1× real time);
+  - [x] local encoder foundation (issue #80, branch `feat/screencast-d0-foundation`):
+    `control_tv.screencast` — typed values; sources as typed specifications (only
+    `SyntheticSource`, accepted by exact type and revalidated before any probe or process; only
+    the FFmpeg adapter turns it into arguments); FFmpeg commands (VA-API CQP, explicit `libx264`
+    fallback; every encode bounded to 120 s and 256 MiB); capability probe and selection policy;
+    process-group ownership (SIGTERM then SIGKILL to the whole group, the leader reaped only once
+    its group is empty so the group id is never recycled; a group surviving SIGKILL fails the
+    session and is kept for `reclaim()`); `ScreenCastService` state machine with one result check
+    for `wait()` and `stop()`, guaranteed cleanup and one call at a time; 138 automated tests
+    (fakes, and real leader/descendant process groups), no GPU or network in CI. Not run on
+    hardware in this PR; no capture, stream, bridge or UI
+    ([`docs/SCREENCAST_D0.md`](docs/SCREENCAST_D0.md));
+  - [ ] receiver spikes (HLS to the Default Media Receiver, Cast Streaming) — need the owner's
+    go-ahead;
+- [ ] D1: duplication behind `DisplaySource` / `StreamEncoder` / `StreamPublisher` /
+  `ScreenCastService`, automated tests;
+  - [x] isolated receiver/publication preparation: typed source and configuration, injectable
+    `ScreenCapture` / `ScreenEncoder` / `StreamPublisher` / `StreamReceiver` ports and deterministic
+    lifecycle/cleanup orchestration; no capture, encoder implementation, listener, network or
+    device operation; receiver alternatives compared from primary documentation, with Freebox
+    compatibility explicitly unvalidated
+    ([`docs/SCREENCAST_D1_RECEIVER_SPIKE.md`](docs/SCREENCAST_D1_RECEIVER_SPIKE.md)); review
+    follow-ups: a concurrent `close()` is recorded and carried out (no later start, an in-progress
+    start cancels itself), and an interruption during cleanup no longer skips steps or leaves
+    `stopping` (unreleased resources stay owned and are retried once); a `close()` that timed
+    out behind another call is carried out by that call before it releases the lock (one
+    retry of what is still owned, interruptions re-raised, no loop);
+  - [x] D0 encoder adapted to the D1 `ScreenEncoder` port (`D0LiveEncoder`, branch
+    `feat/screencast-d1-encoder-adapter`): D0 selection, argument builders and process groups
+    reused, live HLS arguments (`live_hls_command`, real-time synthetic input, bounded session,
+    rolling segments), unreleased streams kept and retried, idempotent and serialized `stop()`
+    (a released stream is confirmed, never released twice), a started process never left
+    untracked by an interrupted start, the encoder preference normalized (a software-only
+    request never selects VA-API); synthetic only, no capture, listener
+    or receiver; three port gaps documented in the D1 spike doc;
+  - [ ] implement and hardware-validate one authorized publisher/receiver path before claiming
+    Ubuntu-to-Freebox duplication;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
@@ -798,7 +880,7 @@ Les estimations par fonctionnalité sont provisoires ; certaines commandes peuve
 
 **Concurrence :** si Ubuntu envoie une commande et Android en envoie une autre, les deux applications doivent retrouver l'état réel sans rejouer automatiquement une commande ambiguë. Une tentative peut entraîner zéro ou une réception, jamais une livraison garantie.
 
-Les tests de commandes réelles C1–C7 nécessiteront l'autorisation explicite du propriétaire. C6 exige une fenêtre instrumentée de changement de session entre prélecture et confirmation ; C7 exige une instrumentation des tentatives et, pour établir les livraisons réelles, une capture réseau ou récepteur.
+Les tests de commandes réelles C1–C7 nécessiteront l'autorisation explicite du propriétaire. C6 et C7 disposent désormais d'une trace applicative structurée et vérifiable (index contigus par requête, issue finale obligatoire, `trace_incomplete`, rôle explicite `ubuntu`/`android`/`observer`) ; C6 s'appuie sur une retenue de confirmation réservée à la recette et sur un observateur indépendant dont la preuve est liée à la confirmation par un jeton, jamais par les horloges ; validation hors ligne par `scripts/validate_command_trace.py` ; mode recette Android uniquement dans le build debug ([`docs/COMMAND_TRACE.md`](docs/COMMAND_TRACE.md)). Validé en simulation seulement. Pour établir le nombre de livraisons réelles de C7, une capture réseau ou récepteur reste nécessaire.
 
 ### 4. Phase 3 — Tests, qualité et livraison
 

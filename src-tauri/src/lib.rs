@@ -368,6 +368,172 @@ mod tests {
         assert_eq!(error.code, "device_not_found");
     }
 
+    // --- C7: every message of one order names its application request --------------------
+
+    /// An in-process bridge that answers `{}` and records every request line it receives.
+    fn recording_bridge() -> (PythonBridge, Arc<Mutex<Vec<Value>>>) {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&lines);
+        let bridge = PythonBridge::in_process(Box::new(move |line| {
+            let request: Value = serde_json::from_str(&line).unwrap();
+            let answer = json!({"id": request["id"], "ok": true, "result": {}}).to_string();
+            seen.lock().unwrap().push(request);
+            Ok(answer)
+        }));
+        (bridge, lines)
+    }
+
+    fn request_ids(lines: &Mutex<Vec<Value>>) -> Vec<String> {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request["requestId"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// The bridge's `requestId` format: 1 to 64 letters, digits or dashes.
+    fn is_bridge_request_id(value: &str) -> bool {
+        (1..=64).contains(&value.len())
+            && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    }
+
+    #[test]
+    fn every_message_of_one_order_carries_its_request_id() {
+        let (bridge, lines) = recording_bridge();
+        let order = ApplicationRequestId::new();
+
+        bridge.call_as(&order, "pause", json!({})).unwrap();
+        bridge.call_as(&order, "pause", json!({})).unwrap(); // the same order, issued again
+        bridge.call("pause", json!({})).unwrap(); // another order
+
+        let ids = request_ids(&lines);
+        assert_eq!(ids[0], order.as_str());
+        assert_eq!(ids[0], ids[1], "the same order kept its identity");
+        assert_ne!(ids[1], ids[2], "another order got its own");
+        assert!(ids.iter().all(|id| is_bridge_request_id(id)), "{ids:?}");
+        assert_ne!(ApplicationRequestId::default(), ApplicationRequestId::new());
+    }
+
+    #[test]
+    fn each_call_bridge_is_one_order_with_its_own_request_id() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let launch_lines = Arc::clone(&lines);
+        let launcher: BridgeLauncher = Box::new(move || {
+            let seen = Arc::clone(&launch_lines);
+            Ok(PythonBridge::in_process(Box::new(move |line| {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let answer = json!({"id": request["id"], "ok": true, "result": {}}).to_string();
+                seen.lock().unwrap().push(request);
+                Ok(answer)
+            })))
+        });
+        let state: SharedBridgeState = Arc::new(Mutex::new(BridgeSlot::new(launcher)));
+
+        for _ in 0..2 {
+            tauri::async_runtime::block_on(call_bridge(
+                Arc::clone(&state),
+                "pause",
+                json!({}),
+                Duration::from_secs(5),
+            ))
+            .unwrap();
+        }
+
+        let ids = request_ids(&lines);
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        assert!(ids.iter().all(|id| is_bridge_request_id(id)), "{ids:?}");
+    }
+
+    /// The whole C7 path: this host -> the real Python bridge and `ControlService` -> the trace
+    /// file -> the offline validator. An order issued twice is one application request with
+    /// two send attempts, which C7 rejects as a replay; another order stays apart. No network
+    /// I/O: the device was never discovered, so each send attempt ends `not_sent`.
+    #[test]
+    fn the_real_bridge_traces_an_order_issued_twice_and_c7_rejects_the_replay() {
+        let python = resolve_python();
+        if !python.exists() {
+            eprintln!(
+                "skipping: {} not found - run `python3 scripts/dev.py setup`",
+                python.display()
+            );
+            return;
+        }
+        let directory = std::env::temp_dir().join(format!(
+            "control-tv-c7-{}",
+            ApplicationRequestId::new().as_str()
+        ));
+        let trace = directory.join("ubuntu.jsonl");
+        let program = development_program();
+        let mut command = PythonBridge::command(&program);
+        command
+            .env("CONTROL_TV_COMMAND_TRACE", &trace)
+            .env("CONTROL_TV_TRACE_CLIENT", "ubuntu")
+            .env_remove("CONTROL_TV_CONFIRMATION_GATE");
+        let bridge = PythonBridge::spawn_command(command, &program.executable)
+            .expect("failed to spawn the bridge process");
+
+        let order = ApplicationRequestId::new();
+        for _ in 0..2 {
+            let error = bridge
+                .call_as(&order, "set_muted", muted_request("never-discovered", true))
+                .unwrap_err();
+            assert_eq!(error.code, "device_not_found");
+        }
+        bridge
+            .call("set_muted", muted_request("never-discovered", true))
+            .unwrap_err();
+        drop(bridge);
+
+        let events: Vec<Value> = std::fs::read_to_string(&trace)
+            .expect("the bridge wrote no trace")
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let sends: Vec<&Value> = events
+            .iter()
+            .filter(|event| event["event"] == "send_attempt")
+            .collect();
+        assert_eq!(sends.len(), 3);
+        let same: Vec<&&Value> = sends
+            .iter()
+            .filter(|event| event["application_request_id"] == order.as_str())
+            .collect();
+        assert_eq!(same.len(), 2, "both invocations of the order carry its id");
+        assert_ne!(same[0]["request_id"], same[1]["request_id"]);
+
+        let validate = |request_id: &str| {
+            let output = Command::new(&python)
+                .arg(
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../scripts/validate_command_trace.py"),
+                )
+                .args(["c7", "--request-id", request_id])
+                .arg(&trace)
+                .output()
+                .expect("the validator did not run");
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+            )
+        };
+        let (code, out) = validate(same[0]["request_id"].as_str().unwrap());
+        assert_eq!(code, Some(1), "{out}");
+        assert!(out.contains("was sent 2 times (2 invocations)"), "{out}");
+        let other = sends
+            .iter()
+            .find(|event| event["application_request_id"] != order.as_str())
+            .unwrap();
+        let (_, out) = validate(other["request_id"].as_str().unwrap());
+        assert!(
+            !out.contains("sent 2 times"),
+            "another order is never counted: {out}"
+        );
+
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
     /// A bridge state that is never replaced: the behavior these tests pin does not involve
     /// recovery (see the recovery tests for that).
     fn fixed_slot(state: BridgeState) -> SharedBridgeState {

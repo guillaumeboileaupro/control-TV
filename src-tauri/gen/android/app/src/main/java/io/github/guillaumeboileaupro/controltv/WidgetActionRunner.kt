@@ -98,7 +98,9 @@ class WidgetActionRunner(
         log("widget command: ${command.method} $requested".trimEnd() + " (TV reported ${reported(state)})")
         val params = command.params.toJson().put("deviceId", selection.deviceId)
         val response = try {
-            JSONObject(bridge(request(command.method, params)))
+            // The tap is this order's application request id: the bridge's acceptance trace
+            // correlates every send of it (C7). Status reads are separate messages.
+            JSONObject(bridge(request(command.method, params, requestId = tapId)))
         } catch (error: PythonUnavailable) {
             log("widget command result: ${command.method} -> not sent (control-TV unavailable)")
             return WidgetOutcome.NotSent("backend_unavailable")
@@ -221,8 +223,11 @@ class WidgetActionRunner(
         return Choice.Send("set_volume", CommandParams.Volume(target))
     }
 
-    private fun request(method: String, params: JSONObject): String =
-        JSONObject().put("id", nextId++).put("method", method).put("params", params).toString()
+    private fun request(method: String, params: JSONObject, requestId: String? = null): String {
+        val line = JSONObject().put("id", nextId++).put("method", method).put("params", params)
+        requestId?.let { line.put("requestId", it) }
+        return line.toString()
+    }
 
     private fun errorCode(response: JSONObject): String? =
         if (response.optBoolean("ok", false)) null else response.optJSONObject("error")?.optString("code")

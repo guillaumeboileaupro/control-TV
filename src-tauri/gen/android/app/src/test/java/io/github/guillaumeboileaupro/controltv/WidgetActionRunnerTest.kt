@@ -339,4 +339,32 @@ class WidgetActionRunnerTest {
 
         assertEquals(listOf("get_status"), bridge.methods)
     }
+
+    // --- C7: the command names its order, the tap, as the bridge's requestId ---------------
+
+    @Test
+    fun theCommandCarriesItsTapAsTheApplicationRequestId() {
+        val bridge = tv(status(playback = "playing"))
+        val tap = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+        runner(bridge).run(WidgetAction.PLAY_PAUSE, SELECTED, tap)
+
+        val command = bridge.lines.single { it.getString("method") == "pause" }
+        assertEquals(tap, command.getString("requestId"))
+        // Status reads are not the order: each is its own bridge message.
+        assertTrue(bridge.lines.filter { it.getString("method") == "get_status" }.none { it.has("requestId") })
+    }
+
+    @Test
+    fun twoTapsAreTwoOrdersAndARerunOfOneTapSendsNothingMore() {
+        val bridge = tv(status(playback = "playing"))
+        val widget = runner(bridge)
+
+        widget.run(WidgetAction.PLAY_PAUSE, SELECTED, "tap-a")
+        widget.run(WidgetAction.PLAY_PAUSE, SELECTED, "tap-b")
+        widget.run(WidgetAction.PLAY_PAUSE, SELECTED, "tap-a") // Android runs the job again
+
+        val orders = bridge.lines.filter { it.getString("method") == "pause" }.map { it.getString("requestId") }
+        assertEquals(listOf("tap-a", "tap-b"), orders) // TapGuard's existing claim: no resend
+    }
 }

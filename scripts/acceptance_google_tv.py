@@ -6,100 +6,19 @@ sends a command; product behavior remains exclusively in the shared Python contr
 
 from __future__ import annotations
 
-import time
-from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
 
-from acceptance import Context, Contract, Outcome, Result, Scenario, make_result
+from acceptance import Context, Contract, Result, Scenario, manual_only
+from acceptance_trace_evidence import load_trace, validate_c6, validate_c7
+from control_tv.command_trace import TraceEvent
 
-
-@dataclass(frozen=True)
-class TraceEvent:
-    sequence: int
-    client: str
-    event: str
-    request_id: str
-    media_session_id: int | None = None
+__all__ = ["TraceEvent", "blocked_real", "contract", "load_trace", "validate_c6", "validate_c7"]
 
 
 def blocked_real(context: Context, scenario: Scenario) -> Result:
-    device = context.environment.devices.get("google_tv")
-    reason = (
-        "owner authorization is required"
-        if device
-        else "CONTROL_TV_GOOGLE_TV is not configured and owner authorization is required"
-    )
-    return make_result(
-        scenario,
-        Outcome.BLOCKED,
-        reason,
-        started=time.monotonic(),
-        log="No discovery, pairing, ADB operation or TV command was attempted.",
-        observed="scenario not executed",
-        proof="authorization gate and empty command log",
-    )
-
-
-def validate_c6(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, str]:
-    relevant = sorted(
-        (event for event in events if event.request_id == request_id), key=lambda e: e.sequence
-    )
-    names = [event.event for event in relevant]
-    required = ["pre_status", "send_attempt", "session_changed", "confirmation_status"]
-    if any(name not in names for name in required):
-        return (
-            False,
-            "C6 evidence incomplete: ordered pre-read, send, switch and confirmation required",
-        )
-    positions = [names.index(name) for name in required]
-    if positions != sorted(positions):
-        return False, "C6 evidence is not in the required order"
-    by_name = {event.event: event for event in relevant}
-    old = by_name["pre_status"].media_session_id
-    sent = by_name["send_attempt"].media_session_id
-    new = by_name["session_changed"].media_session_id
-    confirmed = by_name["confirmation_status"].media_session_id
-    if old is None or new is None or old == new:
-        return False, "C6 needs distinct, non-null old and new mediaSessionId values"
-    if sent != old:
-        return False, "send attempt was not bound to the captured mediaSessionId"
-    command_confirmed = [event for event in relevant if event.event == "command_confirmed"]
-    if command_confirmed:
-        if confirmed != old:
-            return False, "confirmation status does not belong to the captured mediaSessionId"
-        if any(event.media_session_id != old for event in command_confirmed):
-            return False, "command was confirmed on a session other than the captured one"
-        confirmation_position = names.index("confirmation_status")
-        if any(relevant.index(event) <= confirmation_position for event in command_confirmed):
-            return False, "command confirmation precedes its confirmation status"
-    return True, "C6 proves the send used the captured session and did not confirm from the new one"
-
-
-def validate_c7(events: Sequence[TraceEvent], request_id: str) -> tuple[bool, str]:
-    relevant = sorted(
-        (event for event in events if event.request_id == request_id),
-        key=lambda event: event.sequence,
-    )
-    counts = Counter(event.event for event in relevant)
-    if counts["send_attempt"] != 1:
-        return (
-            False,
-            f"C7 requires exactly one low-level send attempt, observed {counts['send_attempt']}",
-        )
-    if counts["automatic_retry"] or counts["replay"]:
-        return False, "C7 trace records an automatic retry or replay"
-    if counts["ambiguous_result"] != 1:
-        return False, "C7 needs exactly one ambiguous delivery result in the trace"
-    send_position = next(
-        index for index, event in enumerate(relevant) if event.event == "send_attempt"
-    )
-    ambiguous_position = next(
-        index for index, event in enumerate(relevant) if event.event == "ambiguous_result"
-    )
-    if send_position >= ambiguous_position:
-        return False, "C7 ambiguous result must follow the low-level send attempt"
-    return True, "C7 proves one local send attempt and no application replay"
+    """Every Google TV scenario is manual: no adapter drives a real TV, whatever the flags."""
+    del context
+    return manual_only(scenario, "this TV step")
 
 
 def contract(

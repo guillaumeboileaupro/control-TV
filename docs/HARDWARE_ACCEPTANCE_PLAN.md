@@ -1,10 +1,17 @@
 # Hardware acceptance plan — Ubuntu, Android and the Freebox (Google TV)
 
-Prepared 2026-10-17 from `main` `0e5b4ba`. Nothing here has been run: every step that touches a
+Prepared 2026-10-17 from `main` `0e5b4ba`, revised the same day for the build identity, the
+Android signing and the manual steps. Nothing here has been run: every step that touches a
 device needs the owner's explicit go-ahead first (see "Authorizations"). Step definitions stay in
 [`DUAL_CONTROLLER_VALIDATION.md`](DUAL_CONTROLLER_VALIDATION.md) (R1–R4, C1–C7, K1–K3) and
 [`GOOGLE_TV_ACCEPTANCE_AUTOMATION.md`](GOOGLE_TV_ACCEPTANCE_AUTOMATION.md); the runner is
 documented in [`ACCEPTANCE_AUTOMATION.md`](ACCEPTANCE_AUTOMATION.md).
+
+**What runs by hand.** The runner automates the static and simulated checks and one real
+scenario (Ubuntu install, launch, bridge and tray). **Every TV, phone, two-remote and latency
+step has no automated adapter**: the runner reports it `BLOCKED` whatever flags are given, and the
+step is run by hand per [`MANUAL_ACCEPTANCE_PROTOCOL.md`](MANUAL_ACCEPTANCE_PROTOCOL.md), which
+also holds the session order and the evidence record.
 
 Every result is classified as **simulated PASS**, **CI PASS** or **hardware PASS / FAIL / NOT RUN**,
 with its evidence (report, log, video or capture). A green CI is never a hardware result.
@@ -43,50 +50,73 @@ with its evidence (report, log, video or capture). A green CI is never a hardwar
 9. Widget commands on the current APK; Android lifecycle (process death, battery, network loss,
    update with pending work).
 
-## 3. Sessions (in order, each step only after its go-ahead)
+## 3. Builds under test
 
-All commands use the project's Python (`.venv/bin/python`: the system `python3` is 3.7 and lacks
-`tomllib`). Start every session with a dry run.
+One pair of artifacts from one CI run of `main` for the whole campaign, identified by more than
+its version (every build is 0.1.0):
 
-**Session A — install and read-only (≈ 1.5 h)**
+- **Ubuntu:** `provenance.json` next to the `.deb` binds commit, CI run, version, architecture,
+  `.deb` SHA-256, the SHA-256 of `usr/bin/control-tv` and the payload SHA-256 (the package's
+  `md5sums`, covering the Python bridge too). The runner recomputes them and refuses a real
+  validation when the manifest is missing, contradicts the package, or the installed binary,
+  dpkg file list or installed files are another build's (`scripts/acceptance_identity.py`,
+  `check-deb` before a session). CI writes the manifest from now on; for an older artifact it is
+  written from the run's recorded commit.
+- **Android:** `apk-provenance.json` binds commit, run, APK SHA-256 and signer certificate;
+  `android_test_signing.py check-apk` accepts an APK only when it is exactly the one its
+  provenance and the expected CI run name (digest, published digest, commit, run, signer). A build
+  signed with the stable test identity updates an installed one in place;
+  an ephemeral one needs an uninstall ([`ANDROID_TEST_SIGNING.md`](ANDROID_TEST_SIGNING.md)).
+
+Current candidate (downloaded 2026-10-17, kept under `dist/acceptance-de31c94/`, git-ignored):
+
+|                     | Value                                                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CI run / commit     | `39034444658` (push, `main`, success) / `de31c94dceb290f98bc8b0784ac17d3fd3d78727`                                                                                                                                                                     |
+| `.deb`              | `control-tv` 0.1.0 amd64, SHA-256 `d7d2278a…0c381a`; binary `11d98c55…6d95475`; payload `120108f4…4901bb9`; `SHA256SUMS` verified                                                                                                                      |
+| Installed on Ubuntu | binary, dpkg file list and every installed file equal to this build's: **this build** (`check-deb`)                                                                                                                                                    |
+| APK                 | `io.github.guillaumeboileaupro.controltv` 0.1.0 (code 1000), arm64-v8a, SHA-256 `a2e9dac5…4aa22c` (= the CI log); signer `9193947f…921a78`, **ephemeral** CI debug key (scheme v2); local `apk-provenance.json` written from the run, `check-apk` PASS |
+| Expiry on GitHub    | APK 2026-10-24, `.deb` 2026-10-31                                                                                                                                                                                                                      |
+
+## 4. Sessions
+
+Run in the order of [`MANUAL_ACCEPTANCE_PROTOCOL.md`](MANUAL_ACCEPTANCE_PROTOCOL.md) (sessions 1–7,
+≈ 7.5–12 h, 6–9 h of them at the TV), each step after its own go-ahead. All commands use the
+project's Python (`.venv/bin/python`: the system `python3` is 3.7 and lacks `tomllib`). Start
+with a dry run; the only real step the runner executes is session 1:
 
 ```bash
 .venv/bin/python scripts/run_acceptance.py --mode dry-run
-CONTROL_TV_DEB=dist/final-acceptance/control-tv-linux-release/<deb> \
-  .venv/bin/python scripts/run_acceptance.py --category ubuntu --execute --allow-deb-install
-CONTROL_TV_APK=dist/final-acceptance/control-tv-android-arm64-debug/<apk> \
-  .venv/bin/python scripts/run_acceptance.py --category android --execute --allow-apk-install --enable-adb
-.venv/bin/python scripts/run_acceptance.py --category google-tv --execute     # R1–R4, read-only
+sudo -v
+CONTROL_TV_DEB=dist/acceptance-de31c94/linux/control-tv_0.1.0_amd64.deb \
+  .venv/bin/python scripts/run_acceptance.py --category ubuntu --execute --allow-deb-install \
+  --allow-existing-deb-validation    # the installed binary is already this build
 ```
 
-Pass criteria: R1–R4 as defined (same stable id on both remotes, same reported state, both
-converge after an external change, repeated reads change nothing).
+The Android and Google TV categories may still be run for their static and simulated checks;
+their real scenarios report `BLOCKED` (manual) by design. C6 and C7 use the command trace
+([COMMAND_TRACE.md](COMMAND_TRACE.md)): C6 from the Ubuntu development mode with the independent
+observer (the hold is refused in the packaged bridge), C7 from Ubuntu or the Android debug
+build; without a trace the offline validator accepts, they are NOT RUN. `--resume` keeps
+earlier PASS results and retries the others.
 
-**Session B — remote keys and apps (≈ 2–3 h)** — with `--allow-tv-commands`: power, navigation,
-keyboard (a search field open on the TV), app in front, app launch, from Ubuntu then Android;
-K1–K3 filmed (remote screen and TV in the same frame).
+## 5. Authorizations needed (owner)
 
-**Session C — concurrency (≈ 2–3 h)** — C1–C7 with `--allow-tv-commands`; C6 and C7 only with the
-instrumented trace (`TraceEvent`), otherwise NOT RUN.
+| Operation                                                                                 | Why                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Install the `.deb` (sudo)                                                                 | replaces the installed package                                                                                                                                                                                             |
+| Install the APK                                                                           | replaces the phone app; an update keeps data and widget only between builds with the same signer, so moving from the current (ephemeral) signer needs one uninstall ([`ANDROID_TEST_SIGNING.md`](ANDROID_TEST_SIGNING.md)) |
+| Enable ADB (already enabled on the Freebox per 2026-10-17) and allow control-TV on the TV | app list and launch                                                                                                                                                                                                        |
+| Pair the phone (code on the TV)                                                           | remote channel from Android                                                                                                                                                                                                |
+| R1–R4                                                                                     | read-only, but still needs consent (validation protocol)                                                                                                                                                                   |
+| Each C1–C7 step and any other TV command                                                  | changes what the TV does                                                                                                                                                                                                   |
+| Filming K1–K3                                                                             | latency evidence                                                                                                                                                                                                           |
+| Adopt the latency criterion                                                               | proposed, not adopted                                                                                                                                                                                                      |
 
-**Session D — Android lifecycle and widget (≈ 1–2 h)** — widget commands, process death, battery
-saver, network loss and return, APK update with pending work.
+| Create the stable Android test key and its CI secrets | once, by the owner only ([`ANDROID_TEST_SIGNING.md`](ANDROID_TEST_SIGNING.md)) |
 
-`--resume` keeps earlier PASS results and retries the others.
+## 6. Estimate
 
-## 4. Authorizations needed (owner)
-
-| Operation                                                                                 | Why                                                                |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Install the `.deb` (sudo)                                                                 | replaces the installed package                                     |
-| Install the APK                                                                           | replaces the phone app; same signing key keeps the widget and data |
-| Enable ADB (already enabled on the Freebox per 2026-10-17) and allow control-TV on the TV | app list and launch                                                |
-| Pair the phone (code on the TV)                                                           | remote channel from Android                                        |
-| R1–R4                                                                                     | read-only, but still needs consent (validation protocol)           |
-| Each C1–C7 step and any other TV command                                                  | changes what the TV does                                           |
-| Filming K1–K3                                                                             | latency evidence                                                   |
-| Adopt the latency criterion                                                               | proposed, not adopted                                              |
-
-## 5. Estimate
-
-Sessions A–D: 6–10 h with the owner at the TV, plus 1–2 h of reporting and plan updates.
+Sessions 1–7: ≈ 7.5–12 h, 6–9 h of them with the owner at the TV (see the protocol). The C6/C7
+instrumentation exists ([COMMAND_TRACE.md](COMMAND_TRACE.md)); running C6 and C7 is part of the
+sessions.
