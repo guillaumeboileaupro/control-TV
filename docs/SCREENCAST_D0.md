@@ -77,7 +77,7 @@ refused with `ScreenCastStateError`; a refused `close()` does nothing and keeps 
 | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Synthetic H.264 VA-API CQP encode, 1920×1080@30, QP 24, on the owner's Intel UHD (iHD) | **verified manually** (D0, PR #79): 300 frames, 4.1× real time                     |
 | Bitrate mode (`-b:v 5M`) on that driver                                                | **fails** (driver supports CQP only) — never used                                  |
-| Command construction, validation, selection, state machine, cleanup                    | **automated tests** (fakes; real processes are the test interpreter, never FFmpeg) |
+| Command construction, validation, selection, state machine, cleanup                    | **automated tests** (unit doubles plus an end-to-end service wiring test through a real subprocess group; the executable remains a local FFmpeg double, never FFmpeg) |
 | This package running FFmpeg on the owner's machine                                     | **not run** in this PR                                                             |
 | `libx264` fallback encode                                                              | not run on hardware                                                                |
 | Live desktop capture, streaming, TV playback, latency                                  | **not implemented, not tested** (D1+)                                              |
@@ -97,3 +97,9 @@ refused with `ScreenCastStateError`; a refused `close()` does nothing and keeps 
 - One session per service; a new session replaces the last one's files.
 - `h264_qsv` is listed by the host's FFmpeg but not used (VA-API is the measured path).
 - Not wired to the bridge or the UI (deferred until D1, per the issue).
+
+The automated service wiring test covers the real `FfmpegCapabilityProbe`, encoder selection,
+`ScreenCastService`, command construction, `SubprocessRunner`, process-group wait/stop and private
+directory cleanup in one path. Its executable double only advertises encoders and writes a small
+sentinel output: it proves the components are correctly connected, not that FFmpeg, VA-API or
+`libx264` succeeds on a particular host.
