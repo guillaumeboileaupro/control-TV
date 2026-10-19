@@ -27,6 +27,8 @@ from types import TracebackType
 from typing import TypeVar
 
 from control_tv.screen_streaming.model import (
+    CapturedVideo,
+    CaptureHandle,
     EncodedStream,
     EncodingProfile,
     InvalidStreamConfiguration,
@@ -56,15 +58,17 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class StreamRequest:
-    source: SyntheticVideoSource
+    source: SyntheticVideoSource | CapturedVideo
     profile: EncodingProfile
     publication: PublicationConfig
     receiver: ReceiverTarget
     receiver_timeout: float = 10.0
 
     def __post_init__(self) -> None:
-        if type(self.source) is not SyntheticVideoSource:
-            raise InvalidStreamConfiguration("only the exact synthetic source is allowed here")
+        if type(self.source) not in (SyntheticVideoSource, CapturedVideo):
+            raise InvalidStreamConfiguration(
+                "only the exact synthetic source or a screen capture is allowed here"
+            )
         if type(self.profile) is not EncodingProfile:
             raise InvalidStreamConfiguration("profile must be an EncodingProfile")
         if type(self.publication) is not PublicationConfig:
@@ -87,7 +91,11 @@ class StreamRequest:
         """Rebuild every value so post-construction mutation cannot reach an adapter."""
         try:
             return StreamRequest(
-                SyntheticVideoSource(SyntheticPattern(self.source.pattern)),
+                (
+                    CapturedVideo(CaptureHandle(self.source.handle.value))
+                    if isinstance(self.source, CapturedVideo)
+                    else SyntheticVideoSource(SyntheticPattern(self.source.pattern))
+                ),
                 EncodingProfile(self.profile.width, self.profile.height, self.profile.fps),
                 PublicationConfig(
                     PublicationKind(self.publication.kind),

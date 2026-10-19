@@ -764,9 +764,21 @@ exposure and no permanent server.
     Ctrl-C or as soon as FFmpeg ends by itself (contract gaps 1 and 3 handled there); `--no-tv`
     run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
     loopback, wrong token 404, port closed and output removed at the end;
+  - [x] real X11 capture (`X11Capture`, `X11GrabSource`): an output read with
+    `xrandr --listmonitors` (read only), grabbed by D0's live encoder (`x11grab`, real time, scaled
+    to the requested size), local X11 only (not Wayland, never a remote X server);
+    `d1 --screen OUTPUT`, `--list-screens`, `--size`, `--fps`; run on a private Xvfb display
+    (never the owner's desktop): H.264 High 1280x720 30 fps HLS served on loopback;
   - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
     before claiming Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
+  - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
+    added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
+    D1 capture (`d1 --extend --yes-change-display`), removed and the screen size restored on
+    stop, failure or Ctrl-C/SIGTERM (idempotent, a leftover removed first); explicit consent
+    required; runtime only, no configuration file; automation-validated with a fake `xrandr`;
+    on a private Xvfb only the refusals were seen (its screen cannot grow);
+  - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).

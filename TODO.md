@@ -183,6 +183,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     VA-API CQP) — **avec accord**. Les essais de réception HLS/Cast appartiennent à D1.
 - [x] **D1, voie A — publication HLS et récepteur Cast (logiciel) :** `HlsPublisher` (serveur HTTP par session sur une adresse du réseau domestique, port et jeton aléatoires, playlist et segments seulement, durée bornée, arrêt idempotent) et `CastHlsReceiver` (un `load_media` via la couche partagée, session seulement si confirmée, n'arrête jamais un autre contenu) ; validés en automatique uniquement (boucle locale et faux transport), aucune compatibilité Freebox annoncée.
 - [x] **D1, commande :** `python3 -m control_tv.screen_streaming.d1 --no-tv` produit un vrai flux HLS H.264 (image synthétique, libx264) servi en boucle locale ; essai réel fait sur cette machine. `--device ID` (découverte, adresse LAN, chargement sur le récepteur Cast) reste à lancer **avec accord**.
+- [x] **D1, capture X11 réelle :** `d1 --screen SORTIE` capture une sortie X11 (lecture `xrandr --listmonitors`, `x11grab`, mise à l'échelle) ; essai réel sur un affichage Xvfb privé (jamais le bureau du propriétaire).
 - [ ] **Phase D1 — duplication :** prototype isolé de capture X11 et encodage, diffusion sur Google TV avec récepteur compatible ; mesurer latence, fluidité, résolution et arrêt propre.
   - [x] Préparation indépendante sans matériel : contrats typés capture/encodage/publication/réception,
     orchestration synthétique et nettoyage testés sans capture, réseau ni TV ; comparaison HLS,
@@ -194,6 +195,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
   - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
     capture X11 consentie ; exécuter ici les essais de réception HLS/Cast. La duplication réelle
     reste non validée.
+- [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
