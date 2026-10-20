@@ -777,6 +777,9 @@ exposure and no permanent server.
     1 s segments not played by the Freebox's Cast receiver; fixes on
     `fix/screencast-d1-d2-hardware` (load after four 2 s segments, system sound) are
     automation-validated only, the receiver ended the session in a state that showed nothing;
+    2026-10-20 (hardware): smooth without sound; with sound the grab lost frames (31 of 600),
+    fixed (input queue, sound resampled to the grab's clock): smooth, sound present and in sync;
+    60 fps not played smoothly by the TV (no longer offered); latency 9–11 s (HLS floor);
 - [ ] D2: extension (virtual monitor), guaranteed removal;
   - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
     added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
@@ -785,6 +788,11 @@ exposure and no permanent server.
     required; runtime only, no configuration file; automation-validated with a fake `xrandr`;
     on a private Xvfb only the refusals were seen (its screen cannot grow);
   - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
+    2026-10-20: the `--setmonitor` monitor cannot work under GNOME (the enlarged framebuffer is
+    undone, the capture falls outside the screen: the reported crash); replaced on
+    `fix/screencast-d1-d2-hardware` by a mode on a free connector reported connected (root,
+    owner-run, once per boot), with size, refresh rate and side chosen in the card; seen on the
+    desktop and on the TV once (a window moved onto it); smoothness not yet checked;
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
   - [x] "Screen to TV" card in the Ubuntu window (Duplicate a screen / Extend the desktop / Stop,
     screen, 1280x720 or 1920x1080, 25/30/60 fps, consent step, state and error text, Dismiss
