@@ -459,6 +459,44 @@ pub(crate) async fn bridge_stop_screen_stream(
     send_screen(state.inner().clone(), "stop_screen_stream", json!({})).await
 }
 
+/// Read-only: the desktop's screens, their modes and how each is set.
+#[tauri::command]
+pub(crate) async fn bridge_get_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "get_display_layout", json!({})).await
+}
+
+/// The request that sets every screen: the window's display manager sends the whole layout.
+pub(crate) fn display_layout_request(displays: Value) -> Value {
+    json!({ "displays": displays })
+}
+
+/// Sets every screen; the bridge restores the previous configuration if this fails, and reverts
+/// it by itself unless it is kept (`bridge_confirm_display_layout`) in time.
+#[tauri::command]
+pub(crate) async fn bridge_apply_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+    displays: Value,
+) -> Result<Value, BridgeFailure> {
+    let params = display_layout_request(displays);
+    send_screen(state.inner().clone(), "apply_display_layout", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_confirm_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "confirm_display_layout", json!({})).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_revert_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "revert_display_layout", json!({})).await
+}
+
 /// Read-only: the screen stream's state (idle, starting, running, stopping or failed).
 #[tauri::command]
 pub(crate) async fn bridge_get_screen_stream(

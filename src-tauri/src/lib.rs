@@ -87,6 +87,10 @@ pub fn run() {
             commands::bridge_start_screen_stream,
             commands::bridge_stop_screen_stream,
             commands::bridge_get_screen_stream,
+            commands::bridge_get_display_layout,
+            commands::bridge_apply_display_layout,
+            commands::bridge_confirm_display_layout,
+            commands::bridge_revert_display_layout,
             commands::show_main_window,
             remember_selection
         ])
@@ -949,6 +953,15 @@ done"#,
                 }
             )["screen"],
             Value::Null
+        );
+    }
+
+    #[test]
+    fn a_display_layout_request_carries_the_layout_as_given() {
+        let layout = json!([{"name": "eDP-1", "enabled": true}]);
+        assert_eq!(
+            display_layout_request(layout.clone()),
+            json!({ "displays": layout })
         );
     }
 
