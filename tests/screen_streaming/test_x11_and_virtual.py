@@ -263,7 +263,7 @@ def test_invalid_coordinates_change_nothing(place: tuple[object, object]) -> Non
             1280,
             720,
             consent=True,
-            x=place[0],
+            x=place[0],  # type: ignore[arg-type]
             y=place[1],  # type: ignore[arg-type]
         )
     assert xrandr.calls == []

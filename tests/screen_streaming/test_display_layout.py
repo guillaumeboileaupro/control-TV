@@ -380,7 +380,8 @@ def bridged(monkeypatch: pytest.MonkeyPatch) -> FakeScreens:
 def call(method: str, **params: object) -> dict[str, object]:
     from control_tv import bridge
 
-    return bridge.dispatch(None, {"id": 1, "method": method, "params": params})  # type: ignore[arg-type,return-value]
+    request = {"id": 1, "method": method, "params": params}
+    return bridge.dispatch(None, request)  # type: ignore[arg-type,return-value]
 
 
 def as_json(settings: Sequence[OutputSetting]) -> list[dict[str, object]]:
