@@ -25,7 +25,7 @@ from control_tv.screen_streaming.controller import (
     StreamState,
 )
 from control_tv.screen_streaming.ports import StreamReceiver
-from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, FakeClock, FakeTransport
@@ -95,6 +95,7 @@ class Rig:
             connect=self.connect,
             capture=self.capture,
             build=self.build,
+            extension=lambda: XrandrVirtualMonitor(X11, self.xrandr),
             sleep=lambda seconds: time.sleep(0.01),
             **options,  # type: ignore[arg-type]
         )
@@ -129,14 +130,19 @@ def test_duplicate_runs_until_stopped_then_everything_is_released(tmp_path: Path
 def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     controller = rig.controller()
-    request = ScreenRequest(str(DEVICE_ID), d1.Mode.EXTEND, None, 1920, 1080, 30, True)
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1920, 1080, 30, True, 50, Position.LEFT
+    )
 
     controller.start(request)
     assert wait_for(controller, StreamState.RUNNING) is StreamState.RUNNING
-    assert rig.xrandr.virtual and controller.status().screen is None
+    assert rig.xrandr.enabled is not None and controller.status().screen is None
+    assert ("--output", "HDMI-2", "--mode", "control-tv-1920x1080-50", "--left-of", "eDP-1") in (
+        rig.xrandr.calls
+    )
     controller.close()
 
-    assert not rig.xrandr.virtual and controller.status().state is StreamState.IDLE
+    assert rig.xrandr.enabled is None and controller.status().state is StreamState.IDLE
 
 
 @pytest.mark.parametrize(
@@ -148,6 +154,8 @@ def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
         ({"screen": None}, "choose the screen"),
         ({"width": 1024, "height": 768}, "1280x720 or 1920x1080"),
         ({"fps": 60}, "25 or 30"),
+        ({"mode": d1.Mode.EXTEND, "refresh": 30}, "60 or 50 Hz"),
+        ({"position": "left"}, "left, right, above or below"),
     ],
 )
 def test_an_invalid_request_touches_nothing(
@@ -278,12 +286,6 @@ def test_an_unexpected_error_or_an_unclean_stop_is_reported(tmp_path: Path) -> N
     assert unclean.status().error == "the screen stream did not stop cleanly: stuck"
 
 
-def test_the_virtual_monitor_is_not_offered_for_duplication(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
-    rig.xrandr.virtual = True
-    assert [output.name for output in rig.controller().screens()] == ["eDP-1", "HDMI-1"]
-
-
 # Bridge methods ---------------------------------------------------------------------------
 
 
@@ -319,7 +321,13 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
         "screens": [
             {"name": "eDP-1", "width": 1920, "height": 1080, "primary": True},
             {"name": "HDMI-1", "width": 2561, "height": 1441, "primary": False},
-        ]
+        ],
+        "extension": {
+            "output": "HDMI-2",
+            "sizes": [[1280, 720], [1920, 1080]],
+            "refreshRates": [60, 50],
+            "positions": ["left", "right", "above", "below"],
+        },
     }
     started = stream(
         "start_screen_stream",
@@ -356,6 +364,9 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
         ({"consent": "yes"}, "consent must be true or false"),
         ({"width": True}, "width must be an integer"),
         ({"consent": False}, "explicit consent"),
+        ({"position": "behind"}, "position must be left, right, above or below"),
+        ({"refresh": "60"}, "refresh must be an integer"),
+        ({"mode": "extend", "refresh": 30}, "60 or 50 Hz"),
     ],
 )
 def test_the_bridge_refuses_a_malformed_or_unconsented_request(

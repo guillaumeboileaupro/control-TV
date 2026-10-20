@@ -1,5 +1,6 @@
-// The "Screen to TV" panel: duplicate one screen or extend onto a virtual monitor, after an
-// explicit consent step, and stop. The panel owns its elements and its own small state (see
+// The "Screen to TV" panel: duplicate one screen or extend the desktop onto the TV (resolution,
+// refresh rate and where the TV's screen sits, chosen in the extension menu), after an explicit
+// consent step, and stop. The panel owns its elements and its own small state (see
 // screen.ts); every call goes through `call`, which `main.ts` maps onto the shell's commands.
 // It is shown only where this computer's screen can be captured (an X11 desktop): elsewhere
 // (Android, Wayland) the listing fails and the panel stays hidden.
@@ -8,7 +9,9 @@ import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
 import {
+  POSITIONS,
   RATES,
+  REFRESH_RATES,
   SIZES,
   askConsent,
   cancelConsent,
@@ -19,10 +22,12 @@ import {
   finishScreen,
   follows,
   initialScreenState,
-  parseScreens,
+  parseListing,
   startStop,
   withScreens,
+  type Placement,
   type Rate,
+  type RefreshRate,
   type ScreenMode,
   type ScreenPanelState,
   type SizeName,
@@ -38,6 +43,10 @@ export interface ScreenPanelElements {
   screen: HTMLSelectElement;
   size: HTMLSelectElement;
   fps: HTMLSelectElement;
+  // The extension menu: refresh rate and the arrangement of the TV's screen around the main one.
+  extension: HTMLElement;
+  refresh: HTMLSelectElement;
+  layout: HTMLElement;
   ask: HTMLButtonElement;
   consent: HTMLElement;
   consentText: HTMLElement;
@@ -69,6 +78,14 @@ function isSize(value: string): value is SizeName {
 
 function isRate(value: number): value is Rate {
   return (RATES as readonly number[]).includes(value);
+}
+
+function isRefresh(value: number): value is RefreshRate {
+  return (REFRESH_RATES as readonly number[]).includes(value);
+}
+
+function isPlacement(value: string | undefined): value is Placement {
+  return (POSITIONS as readonly (string | undefined)[]).includes(value);
 }
 
 export function createScreenPanel(
@@ -111,7 +128,7 @@ export function createScreenPanel(
 
   async function refresh(): Promise<void> {
     const listed = await answer("bridge_list_screens", {});
-    let next = withScreens(state, listed.ok ? parseScreens(listed.result) : null);
+    let next = withScreens(state, listed.ok ? parseListing(listed.result) : null);
     if (next.availability.kind === "available") {
       const current = await answer("bridge_get_screen_stream", {});
       next = current.ok ? finishPoll(next, current.result) : next;
@@ -144,8 +161,16 @@ export function createScreenPanel(
     el.screen.value = state.choice.screen ?? "";
     el.size.value = state.choice.size;
     el.fps.value = String(state.choice.fps);
-    for (const field of [el.screen, el.size, el.fps]) {
+    el.refresh.value = String(state.choice.refresh);
+    for (const field of [el.screen, el.size, el.fps, el.refresh]) {
       field.disabled = !view.canChoose;
+    }
+    el.extension.hidden = !view.extending;
+    for (const slot of el.layout.querySelectorAll<HTMLButtonElement>("[data-position]")) {
+      const chosen = slot.dataset["position"] === state.choice.position;
+      slot.setAttribute("aria-pressed", String(chosen));
+      slot.textContent = chosen ? "TV" : "";
+      setBusy(slot, !view.canChoose);
     }
     // Starting is offered only from the choice; a running or failed stream offers Stop/Dismiss.
     el.ask.hidden = view.confirming || state.stream.state !== "idle";
@@ -197,6 +222,18 @@ export function createScreenPanel(
       update(choose(state, { fps }));
     }
   });
+  el.refresh.addEventListener("change", () => {
+    const refresh = Number(el.refresh.value);
+    if (isRefresh(refresh)) {
+      update(choose(state, { refresh }));
+    }
+  });
+  for (const slot of el.layout.querySelectorAll<HTMLButtonElement>("[data-position]")) {
+    const position = slot.dataset["position"];
+    if (isPlacement(position)) {
+      slot.addEventListener("click", () => update(choose(state, { position })));
+    }
+  }
   el.ask.addEventListener("click", () => {
     update(askConsent(state, ports.selectedTv() !== null));
     if (state.confirming) {

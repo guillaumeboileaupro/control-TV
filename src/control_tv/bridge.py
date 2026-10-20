@@ -131,6 +131,7 @@ Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
     from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
+    from control_tv.screen_streaming.virtual_display import Position
 INTERNAL_ERROR_CODE = "internal_error"
 
 
@@ -436,20 +437,41 @@ def _strict_int(params: JsonObject, name: str) -> int:
 def _handle_list_screens(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
 
+    from control_tv.screen_streaming.virtual_display import REFRESH_RATES, SIZES
+
     def listed() -> JsonObject:
-        return {
-            "screens": [
-                {
-                    "name": output.name,
-                    "width": output.width,
-                    "height": output.height,
-                    "primary": output.primary,
-                }
-                for output in _screen().screens()
-            ]
+        controller = _screen()
+        screens: list[JsonValue] = [
+            {
+                "name": output.name,
+                "width": output.width,
+                "height": output.height,
+                "primary": output.primary,
+            }
+            for output in controller.screens()
+        ]
+        # What "Étendre" can offer here, as measured on the desktop; no output means the
+        # extension is not available until the owner enables one.
+        extension: JsonObject = {
+            "output": controller.extension_output(),
+            "sizes": [[width, height] for width, height in SIZES],
+            "refreshRates": list(REFRESH_RATES),
+            "positions": list(_positions()),
         }
+        return {"screens": screens, "extension": extension}
 
     return _screen_call(listed)
+
+
+def _positions() -> dict[str, Position]:
+    from control_tv.screen_streaming.virtual_display import Position
+
+    return {
+        "left": Position.LEFT,
+        "right": Position.RIGHT,
+        "above": Position.ABOVE,
+        "below": Position.BELOW,
+    }
 
 
 def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
@@ -464,6 +486,10 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         raise InvalidArgumentError("screen must be a string")
     if not isinstance(consent, bool):
         raise InvalidArgumentError("consent must be true or false")
+    position = params.get("position", "right")
+    if not isinstance(position, str) or position not in _positions():
+        raise InvalidArgumentError("position must be left, right, above or below")
+    refresh = _strict_int(params, "refresh") if "refresh" in params else 60
     request = ScreenRequest(
         str(_device_id_param(params)),
         Mode(mode),
@@ -472,6 +498,8 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         _strict_int(params, "height"),
         _strict_int(params, "fps"),
         consent,
+        refresh,
+        _positions()[position],
     )
     return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
 

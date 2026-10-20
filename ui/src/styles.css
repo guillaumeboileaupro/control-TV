@@ -1211,6 +1211,83 @@ h2 {
   cursor: not-allowed;
 }
 
+.screen-extension {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.screen-extension .screen-option {
+  flex: none;
+}
+
+.layout-title {
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.screen-extension[hidden] {
+  display: none;
+}
+
+/* The arrangement: the main screen in the middle, one slot on each side for the TV. */
+.screen-layout {
+  display: grid;
+  grid-template-areas:
+    ". above ."
+    "left main right"
+    ". below .";
+  grid-template-columns: 1fr 1.6fr 1fr;
+  grid-template-rows: 44px 64px 44px;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.layout-main {
+  display: flex;
+  grid-area: main;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-small);
+  background: var(--surface-3);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.layout-slot {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--accent-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.layout-slot:hover {
+  background: var(--surface-2);
+}
+
+.layout-slot[aria-pressed="true"] {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+}
+
+.layout-above {
+  grid-area: above;
+}
+
+.layout-left {
+  grid-area: left;
+}
+
+.layout-right {
+  grid-area: right;
+}
+
+.layout-below {
+  grid-area: below;
+}
+
 .screen-consent[hidden] {
   display: none;
 }

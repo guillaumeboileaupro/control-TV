@@ -482,6 +482,7 @@
             <label class="screen-option">
               <span>Resolution</span>
               <select id="screen-size" class="field">
+                <option value="auto">Auto (1920×1080)</option>
                 <option value="1280x720">1280×720</option>
                 <option value="1920x1080">1920×1080</option>
               </select>
@@ -493,6 +494,51 @@
                 <option value="30">30 fps</option>
               </select>
             </label>
+          </div>
+          <!-- The extension menu: the TV becomes a second screen of the desktop. The sizes and
+               refresh rates are the ones the desktop accepted; the arrangement places the TV's
+               screen around the main one (click a side). -->
+          <div id="screen-extension" class="screen-extension" hidden>
+            <label class="screen-option">
+              <span>Refresh rate</span>
+              <select id="screen-refresh" class="field">
+                <option value="60">60 Hz</option>
+                <option value="50">50 Hz</option>
+              </select>
+            </label>
+            <span id="screen-layout-title" class="layout-title">Arrangement</span>
+            <div
+              id="screen-layout"
+              class="screen-layout"
+              role="group"
+              aria-labelledby="screen-layout-title"
+            >
+              <button
+                class="layout-slot layout-above"
+                type="button"
+                data-position="above"
+                aria-label="TV above the main screen"
+              ></button>
+              <button
+                class="layout-slot layout-left"
+                type="button"
+                data-position="left"
+                aria-label="TV left of the main screen"
+              ></button>
+              <div class="layout-main">Main screen</div>
+              <button
+                class="layout-slot layout-right"
+                type="button"
+                data-position="right"
+                aria-label="TV right of the main screen"
+              ></button>
+              <button
+                class="layout-slot layout-below"
+                type="button"
+                data-position="below"
+                aria-label="TV below the main screen"
+              ></button>
+            </div>
           </div>
           <button id="screen-ask" class="btn btn-primary" type="button">Duplicate on the TV</button>
           <div
