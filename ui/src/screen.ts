@@ -18,7 +18,8 @@ const PIXELS: Record<SizeName, { width: number; height: number }> = {
   "1280x720": { width: 1280, height: 720 },
   "1920x1080": { width: 1920, height: 1080 },
 };
-export const RATES = [25, 30, 60] as const;
+// 60 is not offered: the TV's Cast receiver did not keep up with 1080p60 (hardware test).
+export const RATES = [25, 30] as const;
 export type Rate = (typeof RATES)[number];
 
 export interface ScreenOutput {

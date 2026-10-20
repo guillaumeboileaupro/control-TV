@@ -147,7 +147,7 @@ def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
         ({"mode": d1.Mode.SYNTHETIC}, "duplicate or extend"),
         ({"screen": None}, "choose the screen"),
         ({"width": 1024, "height": 768}, "1280x720 or 1920x1080"),
-        ({"fps": 24}, "25, 30 or 60"),
+        ({"fps": 60}, "25 or 30"),
     ],
 )
 def test_an_invalid_request_touches_nothing(

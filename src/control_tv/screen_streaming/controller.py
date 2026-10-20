@@ -33,7 +33,8 @@ from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output
 
 SIZES = ((1280, 720), (1920, 1080))
-RATES = (25, 30, 60)
+# 60 is not offered: the TV's Cast receiver did not keep up with 1080p60 (hardware, 2026-10-20).
+RATES = (25, 30)
 _POLL_SECONDS = 0.5
 _CLOSE_SECONDS = 20.0
 
@@ -72,7 +73,7 @@ class ScreenRequest:
         if (self.width, self.height) not in SIZES:
             raise InvalidStreamConfiguration("the resolution is 1280x720 or 1920x1080")
         if self.fps not in RATES:
-            raise InvalidStreamConfiguration("the frame rate is 25, 30 or 60")
+            raise InvalidStreamConfiguration("the frame rate is 25 or 30")
         return self
 
 

@@ -103,7 +103,7 @@ describe("consent", () => {
   });
 
   test("a changed choice or a cancel withdraws the consent step", () => {
-    assert.equal(choose(confirming(), { fps: 60 }).confirming, false);
+    assert.equal(choose(confirming(), { fps: 25 }).confirming, false);
     assert.equal(cancelConsent(confirming()).confirming, false);
   });
 
@@ -162,7 +162,7 @@ describe("the stream", () => {
     const failed = finishPoll(available(), stream("failed", "the stream ended by itself"));
     const view = describeScreen(failed, true);
     assert.equal(view.errorText, "The stream ended by itself.");
-    assert.equal(choose(failed, { fps: 60 }), failed);
+    assert.equal(choose(failed, { fps: 25 }), failed);
     assert.equal(view.stopLabel, "Dismiss");
     assert.equal(view.canAsk, false);
     assert.equal(startStop(failed).send, true);
