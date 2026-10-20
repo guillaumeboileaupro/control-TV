@@ -37,6 +37,8 @@ class FakeXrandr:
         self.accept = accept
         self.modes: set[str] = set() if leftover is None else {leftover}
         self.enabled: tuple[str, int, int, int, int] | None = None  # output, w, h, x, y
+        # Where the desktop's own screens are (moved when the TV goes left of or above them).
+        self.places = {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
 
     def __call__(
         self, argv: Sequence[str], environ: Mapping[str, str]
@@ -53,7 +55,12 @@ class FakeXrandr:
             return subprocess.CompletedProcess(argv, 1, "", "refused")
         out = ""
         if arguments[0] == "--listmonitors":
-            out = LISTING
+            (ex, ey), (hx, hy) = self.places["eDP-1"], self.places["HDMI-1"]
+            out = (
+                "Monitors: 2\n"
+                f" 0: +*eDP-1 1920/344x1080/194+{ex}+{ey}  eDP-1\n"
+                f" 1: +HDMI-1 2561/597x1441/336+{hx}+{hy}  HDMI-1\n"
+            )
             if self.enabled is not None and self.accept:
                 name, width, height, x, y = self.enabled
                 out += f" 2: +{name} {width}/508x{height}/286{x:+d}{y:+d}  {name}\n"
@@ -63,18 +70,28 @@ class FakeXrandr:
             self.modes.add(arguments[1])
         elif arguments[0] == "--rmmode":
             self.modes.discard(arguments[1])
-        elif arguments[0] == "--output" and arguments[2] == "--off":
-            self.enabled = None
         elif arguments[0] == "--output":
-            mode = arguments[3]
-            size = mode.removeprefix("control-tv-").split("-")[0]
-            width, height = (int(value) for value in size.split("x"))
-            if arguments[4] == "--pos":
-                x, y = (int(value) for value in arguments[5].split("x"))
-            else:
-                x, y = _PLACES[arguments[4]]
-            self.enabled = (arguments[1], width, height, x, y)
+            self._outputs(arguments)
         return subprocess.CompletedProcess(argv, 0, out, "")
+
+    def _outputs(self, arguments: tuple[str, ...]) -> None:
+        """Every `--output NAME ...` group of one command."""
+        starts = [index for index, value in enumerate(arguments) if value == "--output"]
+        for start, end in zip(starts, [*starts[1:], len(arguments)], strict=True):
+            name, *rest = arguments[start + 1 : end]
+            if rest == ["--off"]:
+                self.enabled = None
+            elif rest[0] == "--pos":  # a screen of the desktop moved
+                x, y = (int(value) for value in rest[1].split("x"))
+                self.places[name] = (x, y)
+            else:
+                size = rest[1].removeprefix("control-tv-").split("-")[0]
+                width, height = (int(value) for value in size.split("x"))
+                if rest[2] == "--pos":
+                    x, y = (int(value) for value in rest[3].split("x"))
+                else:
+                    x, y = _PLACES[rest[2]]
+                self.enabled = (name, width, height, x, y)
 
     def _query(self) -> str:
         lines = [

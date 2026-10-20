@@ -68,6 +68,8 @@ class Position(StrEnum):
 class _Extension:
     output: str
     mode: str
+    # The desktop's screens moved to make room on the left or above, at their former places.
+    moved: tuple[tuple[str, int, int], ...] = ()
 
 
 class XrandrVirtualMonitor:
@@ -140,11 +142,10 @@ class XrandrVirtualMonitor:
             try:
                 self._xrandr("--newmode", mode, *self._modeline(width, height, refresh))
                 self._xrandr("--addmode", free, mode)
-                placement = (
-                    ("--pos", f"{x}x{y}")
-                    if x is not None and y is not None
-                    else (f"--{position.value}", primary)
-                )
+                if x is not None and y is not None:
+                    placement, extension = self._place(extension, x, y)
+                else:
+                    placement = (f"--{position.value}", primary)
                 self._xrandr("--output", free, "--mode", mode, *placement)
                 output = self._accepted(free, width, height)
             except BaseException:
@@ -163,7 +164,32 @@ class XrandrVirtualMonitor:
             self._xrandr("--output", extension.output, "--off", cleanup=True)
             self._xrandr("--delmode", extension.output, extension.mode, cleanup=True)
             self._xrandr("--rmmode", extension.mode, cleanup=True)
+            self._put_back(extension, cleanup=True)
             self._extension = None
+
+    def _place(self, extension: _Extension, x: int, y: int) -> tuple[tuple[str, ...], _Extension]:
+        """The arguments placing the TV at desktop coordinates `x`, `y`. X has no negative
+        coordinates: a TV on the left of or above the desktop moves the desktop's screens by as
+        much, in the same command, and they go back when the TV is removed."""
+        shift_x, shift_y = max(0, -x), max(0, -y)
+        arguments: list[str] = ["--pos", f"{x + shift_x}x{y + shift_y}"]
+        if shift_x == 0 and shift_y == 0:
+            return tuple(arguments), extension
+        moved = tuple(
+            (monitor.name, monitor.x, monitor.y)
+            for monitor in parse_monitors(self._xrandr("--listmonitors"))
+            if monitor.name != extension.output
+        )
+        for name, old_x, old_y in moved:
+            arguments += ["--output", name, "--pos", f"{old_x + shift_x}x{old_y + shift_y}"]
+        return tuple(arguments), _Extension(extension.output, extension.mode, moved)
+
+    def _put_back(self, extension: _Extension, *, cleanup: bool) -> None:
+        if extension.moved:
+            arguments: list[str] = []
+            for name, x, y in extension.moved:
+                arguments += ["--output", name, "--pos", f"{x}x{y}"]
+            self._xrandr(*arguments, cleanup=cleanup)
 
     def _accepted(self, output: str, width: int, height: int) -> X11Output:
         """The new screen once the desktop lists it; GNOME may refuse a mode silently."""
@@ -179,6 +205,8 @@ class XrandrVirtualMonitor:
 
     def _forget(self, extension: _Extension) -> None:
         """Best-effort undo of a partial or leftover extension (each step may already be gone)."""
+        with contextlib.suppress(StreamCleanupError):
+            self._put_back(extension, cleanup=True)
         for arguments in (
             ("--output", extension.output, "--off"),
             ("--delmode", extension.output, extension.mode),

@@ -225,17 +225,56 @@ def test_extend_accepts_exact_desktop_coordinates() -> None:
     xrandr = FakeXrandr()
     extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
 
-    output = extension.create(1280, 720, consent=True, refresh=60, x=640, y=-720)
+    output = extension.create(1280, 720, consent=True, refresh=60, x=2000, y=300)
 
-    assert output == X11Output("HDMI-2", 1280, 720, 640, -720, False)
+    assert output == X11Output("HDMI-2", 1280, 720, 2000, 300, False)
+    assert ("--output", "HDMI-2", "--mode", "control-tv-1280x720-60", "--pos", "2000x300") in (
+        xrandr.calls
+    )
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}  # nothing else moved
+
+
+def test_a_tv_above_or_left_moves_the_desktop_in_the_same_command_and_back() -> None:
+    xrandr = FakeXrandr()
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+
+    output = extension.create(1280, 720, consent=True, x=640, y=-720)
+
+    # X has no negative coordinates: the TV goes to y=0 and the desktop moves down by 720.
+    assert output == X11Output("HDMI-2", 1280, 720, 640, 0, False)
     assert (
-        "--output",
-        "HDMI-2",
-        "--mode",
-        "control-tv-1280x720-60",
-        "--pos",
-        "640x-720",
-    ) in xrandr.calls
+        "--output", "HDMI-2", "--mode", "control-tv-1280x720-60", "--pos", "640x0",
+        "--output", "eDP-1", "--pos", "0x720",
+        "--output", "HDMI-1", "--pos", "1920x720",
+    ) in xrandr.calls  # fmt: skip
+    assert xrandr.places == {"eDP-1": (0, 720), "HDMI-1": (1920, 720)}
+
+    extension.remove()
+
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+    assert xrandr.enabled is None and xrandr.modes == set()
+
+
+@pytest.mark.parametrize("place", [(1, None), (True, 0), (0, 40000)])
+def test_invalid_coordinates_change_nothing(place: tuple[object, object]) -> None:
+    xrandr = FakeXrandr()
+    with pytest.raises(InvalidStreamConfiguration, match="coordinates are invalid"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait).create(
+            1280,
+            720,
+            consent=True,
+            x=place[0],
+            y=place[1],  # type: ignore[arg-type]
+        )
+    assert xrandr.calls == []
+
+
+def test_a_tv_on_the_left_that_the_desktop_refuses_puts_everything_back() -> None:
+    xrandr = FakeXrandr(accept=False)
+    with pytest.raises(StreamStartError, match="did not accept"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait).create(1920, 1080, consent=True, x=-1920, y=0)
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+    assert xrandr.enabled is None and xrandr.modes == set()
 
 
 def test_extend_needs_consent_and_a_supported_screen_and_changes_nothing_otherwise() -> None:
