@@ -59,6 +59,7 @@ class SharedTv:
         self.state = state or TvState(media_session_id=1, current_item_id=1)
         self.deliveries: list[Delivery] = []
         self.lock = threading.RLock()
+        self._app_session_counter = 1
 
     def link(self, controller: str) -> TvLink:
         return TvLink(self, controller)
@@ -98,13 +99,21 @@ class SharedTv:
                 device_id=self.device_id,
                 connection=tv.connection,
                 observed_at=OBSERVED_AT,
-                receiver=ReceiverStatus(volume_level=tv.volume, muted=tv.muted),
+                receiver=ReceiverStatus(
+                    app_id=tv.app_id,
+                    app_session_id=tv.app_session_id,
+                    volume_level=tv.volume,
+                    muted=tv.muted,
+                ),
                 media=media,
             )
 
     def new_session(self, url: str) -> None:
         """A LOAD: a new media session (and item) playing `url` from the start."""
         tv = self.state
+        self._app_session_counter += 1
+        tv.app_id = "CC1AD845"
+        tv.app_session_id = f"receiver-session-{self._app_session_counter}"
         tv.content_id = url
         tv.media_session_id = (tv.media_session_id or 0) + 1
         tv.current_item_id = (tv.current_item_id or 0) + 1
@@ -161,6 +170,16 @@ class TvLink:
         self._send_session(
             device_id, "stop", media_session_id, (), self._playback(PlaybackState.IDLE)
         )
+
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> None:
+        def close() -> None:
+            if self.tv.state.app_session_id != receiver_session_id:
+                return
+            self.tv.state.app_id = None
+            self.tv.state.app_session_id = None
+            self.tv.state.has_media = False
+
+        self._send(device_id, "close_app", (receiver_session_id,), close)
 
     def seek(
         self,

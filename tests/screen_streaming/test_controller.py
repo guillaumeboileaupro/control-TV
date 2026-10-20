@@ -120,7 +120,7 @@ def test_duplicate_runs_until_stopped_then_everything_is_released(tmp_path: Path
 
     assert controller.stop().state is StreamState.STOPPING
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
-    assert rig.transport.attempted() == ["load_media", "stop"]
+    assert rig.transport.attempted() == ["load_media", "stop", "close_app"]
     session = rig.sessions[0]
     assert session.publisher.unreleased == () and rig.runner.group.releases == 1
     controller.stop()  # idempotent
@@ -232,7 +232,7 @@ def test_the_session_bound_ends_the_stream(tmp_path: Path) -> None:
     )
     controller.start(DUPLICATE)
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
-    assert rig.transport.attempted() == ["load_media", "stop"]
+    assert rig.transport.attempted() == ["load_media", "stop", "close_app"]
 
 
 def test_a_stop_before_the_session_started_starts_nothing(tmp_path: Path) -> None:

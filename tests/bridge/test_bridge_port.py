@@ -58,6 +58,9 @@ class StubControl:
     def stop(self, device_id: DeviceId) -> CommandResult:
         raise _unexpected("stop")
 
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> CommandResult:
+        raise _unexpected("close_app")
+
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
         raise _unexpected("seek")
 
