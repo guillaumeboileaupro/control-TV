@@ -18,6 +18,8 @@ from control_tv.screen_streaming import (
     StreamStartError,
     d1,
 )
+from control_tv.screen_streaming.h264_encoder import LiveEncoderSettings
+from control_tv.screen_streaming.model import SyntheticVideoSource
 from control_tv.screen_streaming.virtual_display import VIRTUAL_MONITOR, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output, parse_monitors
 from control_tv.screencast.ffmpeg import encoder_arguments, live_hls_command
@@ -152,8 +154,39 @@ def test_the_live_encoder_grabs_the_capture_region(tmp_path: Path) -> None:
 
     stream = live.start(CapturedVideo(handle), EncodingProfile(1280, 720, 30))
 
-    assert runner.argv[0][runner.argv[0].index("-i") + 1] == ":0+0,0"
+    argv = runner.argv[0]
+    assert argv[argv.index("-i") + 1] == ":0+0,0"
+    # The system sound goes with a captured screen, in the same segments.
+    assert argv[argv.index("pulse") + 3 : argv.index("pulse") + 5] == ("-i", "@DEFAULT_MONITOR@")
+    assert argv[argv.index("1:a:0") - 1 : argv.index("1:a:0") + 3] == (
+        "-map",
+        "1:a:0",
+        "-c:a",
+        "aac",
+    )
     live.stop(stream)
+
+
+def test_the_synthetic_picture_has_no_sound_and_sound_can_be_turned_off(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live.stop(live.start(SyntheticVideoSource(), EncodingProfile(1280, 720, 30)))
+    assert "pulse" not in runner.argv[0]
+
+    silent = FakeRunner()
+    capture = X11Capture(X11, FakeXrandr())
+    (tmp_path / "quiet").mkdir()
+    quiet = encoder(
+        tmp_path / "quiet",
+        silent,
+        settings=LiveEncoderSettings(stop_grace_seconds=0.05, system_audio=None),
+    )
+    quiet._capture_region = capture.region
+    stream = quiet.start(
+        CapturedVideo(capture.start(DisplaySelection("eDP-1"))), EncodingProfile(1280, 720, 30)
+    )
+    assert "pulse" not in silent.argv[0]
+    quiet.stop(stream)
 
 
 # D2: the virtual monitor ----------------------------------------------------------------
