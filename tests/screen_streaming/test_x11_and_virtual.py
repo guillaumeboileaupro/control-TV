@@ -221,6 +221,23 @@ def test_extend_enables_a_forced_output_at_the_chosen_place_and_removes_it() -> 
     ]
 
 
+def test_extend_accepts_exact_desktop_coordinates() -> None:
+    xrandr = FakeXrandr()
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+
+    output = extension.create(1280, 720, consent=True, refresh=60, x=640, y=-720)
+
+    assert output == X11Output("HDMI-2", 1280, 720, 640, -720, False)
+    assert (
+        "--output",
+        "HDMI-2",
+        "--mode",
+        "control-tv-1280x720-60",
+        "--pos",
+        "640x-720",
+    ) in xrandr.calls
+
+
 def test_extend_needs_consent_and_a_supported_screen_and_changes_nothing_otherwise() -> None:
     xrandr = FakeXrandr()
     extension = XrandrVirtualMonitor(X11, xrandr, no_wait)

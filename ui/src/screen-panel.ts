@@ -9,11 +9,11 @@ import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
 import {
-  POSITIONS,
   RATES,
   REFRESH_RATES,
   SIZES,
   askConsent,
+  arrangementScreens,
   cancelConsent,
   choose,
   consentedStart,
@@ -22,10 +22,11 @@ import {
   finishScreen,
   follows,
   initialScreenState,
+  moveExtension,
   parseListing,
+  previewScreens,
   startStop,
   withScreens,
-  type Placement,
   type Rate,
   type RefreshRate,
   type ScreenMode,
@@ -39,6 +40,7 @@ const FOLLOW_INTERVAL_MS = 2000;
 export interface ScreenPanelElements {
   panel: HTMLElement;
   mode: HTMLElement;
+  preview: Element;
   screenField: HTMLElement;
   screen: HTMLSelectElement;
   size: HTMLSelectElement;
@@ -46,7 +48,6 @@ export interface ScreenPanelElements {
   // The extension menu: refresh rate and the arrangement of the TV's screen around the main one.
   extension: HTMLElement;
   refresh: HTMLSelectElement;
-  layout: HTMLElement;
   ask: HTMLButtonElement;
   consent: HTMLElement;
   consentText: HTMLElement;
@@ -82,10 +83,6 @@ function isRate(value: number): value is Rate {
 
 function isRefresh(value: number): value is RefreshRate {
   return (REFRESH_RATES as readonly number[]).includes(value);
-}
-
-function isPlacement(value: string | undefined): value is Placement {
-  return (POSITIONS as readonly (string | undefined)[]).includes(value);
 }
 
 export function createScreenPanel(
@@ -148,6 +145,94 @@ export function createScreenPanel(
     }
     el.screenField.hidden = state.choice.mode !== "duplicate";
     const screens = state.availability.kind === "available" ? state.availability.screens : [];
+    const preview = previewScreens(arrangementScreens(state));
+    el.preview.replaceChildren(
+      ...preview.flatMap((screen, index) => {
+        const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        group.classList.add("display-preview-screen");
+        if (screen.name === state.choice.screen || screen.virtual === true) {
+          group.classList.add("is-selected");
+        }
+        group.setAttribute("role", "button");
+        group.setAttribute("tabindex", view.canChoose ? "0" : "-1");
+        group.setAttribute(
+          "aria-label",
+          screen.virtual === true
+            ? `TV display, screen ${index + 1}`
+            : `${screen.name}, screen ${index + 1}`,
+        );
+        group.setAttribute(
+          "aria-pressed",
+          String(screen.name === state.choice.screen || screen.virtual === true),
+        );
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", String(screen.previewX));
+        rect.setAttribute("y", String(screen.previewY));
+        rect.setAttribute("width", String(screen.previewWidth));
+        rect.setAttribute("height", String(screen.previewHeight));
+        rect.setAttribute("rx", "8");
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", String(screen.previewX + screen.previewWidth / 2));
+        label.setAttribute("y", String(screen.previewY + screen.previewHeight / 2));
+        label.textContent = String(index + 1);
+        const select = (): void => {
+          if (screen.virtual !== true) {
+            update(choose(state, { screen: screen.name }));
+          }
+        };
+        group.addEventListener("click", select);
+        group.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+          }
+        });
+        if (screen.virtual === true && state.choice.x !== null && state.choice.y !== null) {
+          group.classList.add("is-draggable");
+          group.addEventListener("pointerdown", (event) => {
+            if (!view.canChoose) {
+              return;
+            }
+            const startClientX = event.clientX;
+            const startClientY = event.clientY;
+            const startX = state.choice.x ?? 0;
+            const startY = state.choice.y ?? 0;
+            const scale = screen.previewWidth / screen.width;
+            group.setPointerCapture(event.pointerId);
+            const moving = (move: PointerEvent): void => {
+              group.setAttribute(
+                "transform",
+                `translate(${move.clientX - startClientX} ${move.clientY - startClientY})`,
+              );
+            };
+            function cleanupDrag(): void {
+              group.removeEventListener("pointermove", moving);
+              group.removeEventListener("pointerup", finished);
+              group.removeEventListener("pointercancel", cancelled);
+            }
+            function finished(up: PointerEvent): void {
+              cleanupDrag();
+              update(
+                moveExtension(
+                  state,
+                  startX + (up.clientX - startClientX) / scale,
+                  startY + (up.clientY - startClientY) / scale,
+                ),
+              );
+            }
+            function cancelled(): void {
+              cleanupDrag();
+              group.removeAttribute("transform");
+            }
+            group.addEventListener("pointermove", moving);
+            group.addEventListener("pointerup", finished);
+            group.addEventListener("pointercancel", cancelled);
+          });
+        }
+        group.append(rect, label);
+        return [group];
+      }),
+    );
     const key = JSON.stringify(screens);
     if (el.screen.dataset["key"] !== key) {
       el.screen.dataset["key"] = key;
@@ -166,17 +251,10 @@ export function createScreenPanel(
       field.disabled = !view.canChoose;
     }
     el.extension.hidden = !view.extending;
-    for (const slot of el.layout.querySelectorAll<HTMLButtonElement>("[data-position]")) {
-      const chosen = slot.dataset["position"] === state.choice.position;
-      slot.setAttribute("aria-pressed", String(chosen));
-      slot.textContent = chosen ? "TV" : "";
-      setBusy(slot, !view.canChoose);
-    }
     // Starting is offered only from the choice; a running or failed stream offers Stop/Dismiss.
     el.ask.hidden = view.confirming || state.stream.state !== "idle";
     setBusy(el.ask, !view.canAsk);
-    el.ask.textContent =
-      state.choice.mode === "duplicate" ? "Duplicate on the TV" : "Extend to the TV";
+    el.ask.textContent = "Apply";
     el.consent.hidden = !view.confirming;
     el.consentText.textContent = view.consentText;
     el.stop.hidden = !view.canStop && state.stream.state !== "stopping";
@@ -228,12 +306,6 @@ export function createScreenPanel(
       update(choose(state, { refresh }));
     }
   });
-  for (const slot of el.layout.querySelectorAll<HTMLButtonElement>("[data-position]")) {
-    const position = slot.dataset["position"];
-    if (isPlacement(position)) {
-      slot.addEventListener("click", () => update(choose(state, { position })));
-    }
-  }
   el.ask.addEventListener("click", () => {
     update(askConsent(state, ports.selectedTv() !== null));
     if (state.confirming) {

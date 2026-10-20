@@ -56,7 +56,7 @@ class FakeXrandr:
             out = LISTING
             if self.enabled is not None and self.accept:
                 name, width, height, x, y = self.enabled
-                out += f" 2: +{name} {width}/508x{height}/286+{x}+{y}  {name}\n"
+                out += f" 2: +{name} {width}/508x{height}/286{x:+d}{y:+d}  {name}\n"
         elif arguments[0] == "--query":
             out = self._query()
         elif arguments[0] == "--newmode":
@@ -69,7 +69,11 @@ class FakeXrandr:
             mode = arguments[3]
             size = mode.removeprefix("control-tv-").split("-")[0]
             width, height = (int(value) for value in size.split("x"))
-            self.enabled = (arguments[1], width, height, *_PLACES[arguments[4]])
+            if arguments[4] == "--pos":
+                x, y = (int(value) for value in arguments[5].split("x"))
+            else:
+                x, y = _PLACES[arguments[4]]
+            self.enabled = (arguments[1], width, height, x, y)
         return subprocess.CompletedProcess(argv, 0, out, "")
 
     def _query(self) -> str:

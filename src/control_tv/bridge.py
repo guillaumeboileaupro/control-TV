@@ -446,6 +446,8 @@ def _handle_list_screens(control: TvControl, params: JsonObject) -> JsonObject:
                 "name": output.name,
                 "width": output.width,
                 "height": output.height,
+                "x": output.x,
+                "y": output.y,
                 "primary": output.primary,
             }
             for output in controller.screens()
@@ -500,6 +502,8 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         consent,
         refresh,
         _positions()[position],
+        _strict_int(params, "x") if "x" in params else None,
+        _strict_int(params, "y") if "y" in params else None,
     )
     return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
 

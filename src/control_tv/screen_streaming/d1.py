@@ -188,6 +188,8 @@ class Picture:
     consent: bool = False  # the owner's explicit agreement to change the display (EXTEND)
     refresh: int = 60  # the extended screen's refresh rate (EXTEND)
     position: Position = Position.RIGHT  # where the extended screen sits (EXTEND)
+    x: int | None = None
+    y: int | None = None
 
 
 def assemble(
@@ -225,6 +227,8 @@ def assemble(
                 consent=chosen.consent,
                 refresh=chosen.refresh,
                 position=chosen.position,
+                x=chosen.x,
+                y=chosen.y,
             )
             screen = output.name
         elif chosen.screen is None:

@@ -102,6 +102,8 @@ class XrandrVirtualMonitor:
         consent: bool,
         refresh: int = 60,
         position: Position = Position.RIGHT,
+        x: int | None = None,
+        y: int | None = None,
     ) -> X11Output:
         """Extend the desktop onto a free output (`width` x `height` at `refresh` Hz, placed at
         `position` of the primary screen); `consent` is the owner's explicit agreement."""
@@ -113,6 +115,12 @@ class XrandrVirtualMonitor:
             raise InvalidStreamConfiguration("the extended screen refreshes at 60 or 50 Hz")
         if type(position) is not Position:
             raise InvalidStreamConfiguration("the extended screen is left, right, above or below")
+        if (x is None) != (y is None) or any(
+            isinstance(value, bool) or not isinstance(value, int) or not -32768 <= value <= 32767
+            for value in (x, y)
+            if value is not None
+        ):
+            raise InvalidStreamConfiguration("the extended screen coordinates are invalid")
         mode = f"{MODE_PREFIX}{width}x{height}-{refresh}"
         with self._lock:
             if self._extension is not None:
@@ -132,7 +140,12 @@ class XrandrVirtualMonitor:
             try:
                 self._xrandr("--newmode", mode, *self._modeline(width, height, refresh))
                 self._xrandr("--addmode", free, mode)
-                self._xrandr("--output", free, "--mode", mode, f"--{position.value}", primary)
+                placement = (
+                    ("--pos", f"{x}x{y}")
+                    if x is not None and y is not None
+                    else (f"--{position.value}", primary)
+                )
+                self._xrandr("--output", free, "--mode", mode, *placement)
                 output = self._accepted(free, width, height)
             except BaseException:
                 self._forget(extension)

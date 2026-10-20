@@ -463,7 +463,7 @@
               data-screen-mode="duplicate"
               aria-pressed="true"
             >
-              Duplicate a screen
+              Clone
             </button>
             <button
               class="btn btn-small"
@@ -471,9 +471,25 @@
               data-screen-mode="extend"
               aria-pressed="false"
             >
-              Extend the desktop
+              Join displays
+            </button>
+            <button
+              class="btn btn-small"
+              type="button"
+              disabled
+              aria-disabled="true"
+              title="ControlTV never disables the computer's main display"
+            >
+              Single display — unavailable
             </button>
           </div>
+          <svg
+            id="screen-preview"
+            class="display-preview"
+            viewBox="0 0 600 260"
+            role="group"
+            aria-label="Current display arrangement"
+          ></svg>
           <div class="screen-options">
             <label id="screen-field" class="screen-option">
               <span>Screen</span>
@@ -506,41 +522,27 @@
                 <option value="50">50 Hz</option>
               </select>
             </label>
-            <span id="screen-layout-title" class="layout-title">Arrangement</span>
-            <div
-              id="screen-layout"
-              class="screen-layout"
-              role="group"
-              aria-labelledby="screen-layout-title"
-            >
-              <button
-                class="layout-slot layout-above"
-                type="button"
-                data-position="above"
-                aria-label="TV above the main screen"
-              ></button>
-              <button
-                class="layout-slot layout-left"
-                type="button"
-                data-position="left"
-                aria-label="TV left of the main screen"
-              ></button>
-              <div class="layout-main">Main screen</div>
-              <button
-                class="layout-slot layout-right"
-                type="button"
-                data-position="right"
-                aria-label="TV right of the main screen"
-              ></button>
-              <button
-                class="layout-slot layout-below"
-                type="button"
-                data-position="below"
-                aria-label="TV below the main screen"
-              ></button>
-            </div>
+            <dl class="display-capabilities" aria-label="Display settings availability">
+              <div>
+                <dt>Orientation</dt>
+                <dd>Managed by the system</dd>
+              </div>
+              <div>
+                <dt>Scale</dt>
+                <dd>Managed by the system</dd>
+              </div>
+              <div>
+                <dt>Main display</dt>
+                <dd>Protected — unchanged by ControlTV</dd>
+              </div>
+              <div>
+                <dt>Activation</dt>
+                <dd>Active only while streaming</dd>
+              </div>
+            </dl>
+            <p class="note">Drag the TV display in the preview to arrange it freely.</p>
           </div>
-          <button id="screen-ask" class="btn btn-primary" type="button">Duplicate on the TV</button>
+          <button id="screen-ask" class="btn btn-primary" type="button">Apply</button>
           <div
             id="screen-consent"
             class="screen-consent"
@@ -550,9 +552,7 @@
           >
             <p id="screen-consent-text"></p>
             <div class="screen-actions">
-              <button id="screen-confirm" class="btn btn-primary" type="button">
-                Show on the TV
-              </button>
+              <button id="screen-confirm" class="btn btn-primary" type="button">Apply</button>
               <button id="screen-cancel" class="btn" type="button">Cancel</button>
             </div>
           </div>

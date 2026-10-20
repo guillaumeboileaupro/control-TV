@@ -1180,6 +1180,56 @@ h2 {
   background: var(--accent-tint);
 }
 
+.display-preview {
+  width: 100%;
+  min-height: 160px;
+  max-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.display-preview-screen {
+  cursor: pointer;
+  outline: none;
+}
+
+.display-preview-screen.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.display-preview-screen.is-draggable:active {
+  cursor: grabbing;
+}
+
+.display-preview-screen rect {
+  fill: var(--surface-3);
+  stroke: var(--line);
+  stroke-width: 3px;
+}
+
+.display-preview-screen text {
+  fill: var(--text);
+  font-size: 36px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.display-preview-screen:hover rect,
+.display-preview-screen:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
+.display-preview-screen.is-selected rect {
+  fill: var(--accent-tint);
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
 .screen-option {
   display: flex;
   flex: 1 1 10rem;
@@ -1221,71 +1271,33 @@ h2 {
   flex: none;
 }
 
-.layout-title {
-  color: var(--muted);
-  font-size: 0.9375rem;
-}
-
-.screen-extension[hidden] {
-  display: none;
-}
-
-/* The arrangement: the main screen in the middle, one slot on each side for the TV. */
-.screen-layout {
+.display-capabilities {
   display: grid;
-  grid-template-areas:
-    ". above ."
-    "left main right"
-    ". below .";
-  grid-template-columns: 1fr 1.6fr 1fr;
-  grid-template-rows: 44px 64px 44px;
-  gap: 6px;
-  max-width: 320px;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 8px;
+  margin: 0;
 }
 
-.layout-main {
-  display: flex;
-  grid-area: main;
-  align-items: center;
-  justify-content: center;
+.display-capabilities div {
+  padding: 8px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-small);
-  background: var(--surface-3);
+  background: var(--surface-2);
+}
+
+.display-capabilities dt {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.display-capabilities dd {
+  margin: 2px 0 0;
   color: var(--muted);
   font-size: 0.875rem;
 }
 
-.layout-slot {
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-small);
-  background: transparent;
-  color: var(--accent-text);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.layout-slot:hover {
-  background: var(--surface-2);
-}
-
-.layout-slot[aria-pressed="true"] {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-}
-
-.layout-above {
-  grid-area: above;
-}
-
-.layout-left {
-  grid-area: left;
-}
-
-.layout-right {
-  grid-area: right;
-}
-
-.layout-below {
-  grid-area: below;
+.screen-extension[hidden] {
+  display: none;
 }
 
 .screen-consent[hidden] {

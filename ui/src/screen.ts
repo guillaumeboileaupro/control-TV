@@ -33,7 +33,17 @@ export interface ScreenOutput {
   name: string;
   width: number;
   height: number;
+  x: number;
+  y: number;
   primary: boolean;
+  virtual?: boolean;
+}
+
+export interface PreviewScreen extends ScreenOutput {
+  previewX: number;
+  previewY: number;
+  previewWidth: number;
+  previewHeight: number;
 }
 
 export interface StreamStatus {
@@ -50,6 +60,8 @@ export interface ScreenChoice {
   fps: Rate;
   refresh: RefreshRate;
   position: Placement;
+  x: number | null;
+  y: number | null;
 }
 
 // What `bridge_list_screens` reports: the screens to duplicate, and the free video output the
@@ -87,6 +99,8 @@ export function initialScreenState(): ScreenPanelState {
       fps: 30,
       refresh: 60,
       position: "right",
+      x: null,
+      y: null,
     },
     confirming: false,
     pending: false,
@@ -116,13 +130,43 @@ export function parseListing(value: JsonValue): Listing | null {
     if (!isJsonObject(entry)) {
       return null;
     }
-    const { name, width, height, primary } = entry;
-    if (typeof name !== "string" || typeof width !== "number" || typeof height !== "number") {
+    const { name, width, height, x, y, primary } = entry;
+    if (
+      typeof name !== "string" ||
+      typeof width !== "number" ||
+      typeof height !== "number" ||
+      typeof x !== "number" ||
+      typeof y !== "number" ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      !Number.isInteger(x) ||
+      !Number.isInteger(y) ||
+      width <= 0 ||
+      height <= 0
+    ) {
       return null;
     }
-    screens.push({ name, width, height, primary: primary === true });
+    screens.push({ name, width, height, x, y, primary: primary === true });
   }
   return { screens, extensionOutput: typeof output === "string" ? output : null };
+}
+
+export function previewScreens(screens: readonly ScreenOutput[]): PreviewScreen[] {
+  if (screens.length === 0) {
+    return [];
+  }
+  const left = Math.min(...screens.map((screen) => screen.x));
+  const top = Math.min(...screens.map((screen) => screen.y));
+  const right = Math.max(...screens.map((screen) => screen.x + screen.width));
+  const bottom = Math.max(...screens.map((screen) => screen.y + screen.height));
+  const scale = Math.min(560 / (right - left), 220 / (bottom - top));
+  return screens.map((screen) => ({
+    ...screen,
+    previewX: 20 + (screen.x - left) * scale,
+    previewY: 20 + (screen.y - top) * scale,
+    previewWidth: screen.width * scale,
+    previewHeight: screen.height * scale,
+  }));
 }
 
 // The stream state an answer of the screen stream commands reports; `null` otherwise.
@@ -147,11 +191,68 @@ export function withScreens(state: ScreenPanelState, listing: Listing | null): S
   const { screens } = listing;
   const kept = screens.some((screen) => screen.name === state.choice.screen);
   const screen = kept ? state.choice.screen : (screens[0]?.name ?? null);
+  const primary = screens.find((candidate) => candidate.primary) ?? screens[0];
+  const placed =
+    state.choice.x === null && primary !== undefined
+      ? { x: primary.x + primary.width, y: primary.y }
+      : { x: state.choice.x, y: state.choice.y };
   return {
     ...state,
     availability: { kind: "available", ...listing },
-    choice: { ...state.choice, screen },
+    choice: { ...state.choice, screen, ...placed },
   };
+}
+
+export function arrangementScreens(state: ScreenPanelState): ScreenOutput[] {
+  if (state.availability.kind !== "available") {
+    return [];
+  }
+  const screens = [...state.availability.screens];
+  if (
+    state.choice.mode === "extend" &&
+    state.availability.extensionOutput !== null &&
+    state.choice.x !== null &&
+    state.choice.y !== null
+  ) {
+    screens.push({
+      name: state.availability.extensionOutput,
+      ...PIXELS[state.choice.size],
+      x: state.choice.x,
+      y: state.choice.y,
+      primary: false,
+      virtual: true,
+    });
+  }
+  return screens;
+}
+
+export function moveExtension(state: ScreenPanelState, x: number, y: number): ScreenPanelState {
+  if (!describeScreen(state, true).canChoose || state.choice.mode !== "extend") {
+    return state;
+  }
+  const size = PIXELS[state.choice.size];
+  const screens = state.availability.kind === "available" ? state.availability.screens : [];
+  const xGuides = screens.flatMap((screen) => [
+    screen.x,
+    screen.x + screen.width,
+    screen.x - size.width,
+    screen.x + screen.width - size.width,
+  ]);
+  const yGuides = screens.flatMap((screen) => [
+    screen.y,
+    screen.y + screen.height,
+    screen.y - size.height,
+    screen.y + screen.height - size.height,
+  ]);
+  const snap = (value: number, guides: readonly number[]): number => {
+    const nearest = guides.reduce<number | null>(
+      (best, guide) =>
+        best === null || Math.abs(guide - value) < Math.abs(best - value) ? guide : best,
+      null,
+    );
+    return nearest !== null && Math.abs(nearest - value) <= 48 ? nearest : Math.round(value);
+  };
+  return choose(state, { x: snap(x, xGuides), y: snap(y, yGuides) });
 }
 
 export function choose(state: ScreenPanelState, choice: Partial<ScreenChoice>): ScreenPanelState {
@@ -197,19 +298,12 @@ const STATUS_TEXT: Record<StreamStateName, string> = {
   failed: "The stream stopped.",
 };
 
-const PLACES: Record<Placement, string> = {
-  left: "to the left of",
-  right: "to the right of",
-  above: "above",
-  below: "below",
-};
-
 function consentText(choice: ScreenChoice): string {
   const { width, height } = PIXELS[choice.size];
   const what =
     choice.mode === "duplicate"
       ? `Everything on the screen ${choice.screen ?? ""} will be visible on the TV.`
-      : `The TV becomes a second screen ${PLACES[choice.position]} your main screen ` +
+      : `The TV becomes a second screen at desktop coordinates ${choice.x ?? 0}, ${choice.y ?? 0} ` +
         `(${width}×${height}, ${choice.refresh} Hz) until the stream stops; what you move onto it ` +
         "is visible on the TV, and your main screen is restored afterwards.";
   return (
@@ -275,6 +369,8 @@ export interface ScreenInvocation {
     consent: true;
     refresh: RefreshRate;
     position: Placement;
+    x?: number;
+    y?: number;
   };
 }
 
@@ -312,6 +408,9 @@ export function consentedStart(
         consent: true,
         refresh: state.choice.refresh,
         position: state.choice.position,
+        ...(state.choice.mode === "extend" && state.choice.x !== null && state.choice.y !== null
+          ? { x: state.choice.x, y: state.choice.y }
+          : {}),
       },
     },
   };

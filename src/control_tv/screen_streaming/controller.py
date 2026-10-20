@@ -65,6 +65,8 @@ class ScreenRequest:
     consent: bool
     refresh: int = 60  # the extended screen (EXTEND)
     position: Position = Position.RIGHT  # the extended screen (EXTEND)
+    x: int | None = None
+    y: int | None = None
 
     def checked(self) -> ScreenRequest:
         if self.consent is not True:
@@ -85,6 +87,12 @@ class ScreenRequest:
             raise InvalidStreamConfiguration("the extended screen refreshes at 60 or 50 Hz")
         if type(self.position) is not Position:
             raise InvalidStreamConfiguration("the extended screen is left, right, above or below")
+        if (self.x is None) != (self.y is None) or any(
+            isinstance(value, bool) or not isinstance(value, int) or not -32768 <= value <= 32767
+            for value in (self.x, self.y)
+            if value is not None
+        ):
+            raise InvalidStreamConfiguration("the extended screen coordinates are invalid")
         return self
 
 
@@ -213,6 +221,8 @@ class ScreenStreamController:
                     consent=request.consent,
                     refresh=request.refresh,
                     position=request.position,
+                    x=request.x,
+                    y=request.y,
                 ),
                 capture=self._capture(),
             )

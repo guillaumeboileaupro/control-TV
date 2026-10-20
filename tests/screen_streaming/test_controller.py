@@ -319,8 +319,15 @@ def stream(method: str, **params: JsonValue) -> JsonObject:
 def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
     assert answered("list_screens") == {
         "screens": [
-            {"name": "eDP-1", "width": 1920, "height": 1080, "primary": True},
-            {"name": "HDMI-1", "width": 2561, "height": 1441, "primary": False},
+            {"name": "eDP-1", "width": 1920, "height": 1080, "x": 0, "y": 0, "primary": True},
+            {
+                "name": "HDMI-1",
+                "width": 2561,
+                "height": 1441,
+                "x": 1920,
+                "y": 0,
+                "primary": False,
+            },
         ],
         "extension": {
             "output": "HDMI-2",
@@ -367,6 +374,8 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
         ({"position": "behind"}, "position must be left, right, above or below"),
         ({"refresh": "60"}, "refresh must be an integer"),
         ({"mode": "extend", "refresh": 30}, "60 or 50 Hz"),
+        ({"mode": "extend", "x": True, "y": 0}, "x must be an integer"),
+        ({"mode": "extend", "x": 0}, "coordinates are invalid"),
     ],
 )
 def test_the_bridge_refuses_a_malformed_or_unconsented_request(
