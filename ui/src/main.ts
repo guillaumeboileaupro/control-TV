@@ -839,7 +839,10 @@ function start(elements: Elements): void {
   screenPanel = createScreenPanel(elements.screen, {
     call: (command, args) => invoke<JsonValue>(command, args),
     selectedTv: () => state.selected?.id ?? null,
-    timers: { set: (callback, delayMs) => window.setTimeout(callback, delayMs) },
+    timers: {
+      set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clear: (handle) => window.clearTimeout(handle),
+    },
   });
 
   render();
@@ -853,6 +856,25 @@ window.addEventListener("DOMContentLoaded", () => {
       panel: byId("screen-panel"),
       mode: byId("screen-mode"),
       preview: byId("screen-preview"),
+      display: {
+        scene: byId("display-scene"),
+        arrangement: byId("display-arrangement"),
+        settings: byId("display-settings"),
+        title: byId("display-title"),
+        enabled: byId<HTMLInputElement>("display-enabled"),
+        primary: byId<HTMLInputElement>("display-primary"),
+        resolution: byId<HTMLSelectElement>("display-resolution"),
+        rate: byId<HTMLSelectElement>("display-rate"),
+        rotation: byId<HTMLSelectElement>("display-rotation"),
+        scale: byId<HTMLSelectElement>("display-scale"),
+        apply: byId<HTMLButtonElement>("display-apply"),
+        cancel: byId<HTMLButtonElement>("display-cancel"),
+        keep: byId("display-keep"),
+        keepText: byId("display-keep-text"),
+        keepButton: byId<HTMLButtonElement>("display-keep-button"),
+        revertButton: byId<HTMLButtonElement>("display-revert"),
+        message: byId("display-message"),
+      },
       screenField: byId("screen-field"),
       screen: byId<HTMLSelectElement>("screen-select"),
       size: byId<HTMLSelectElement>("screen-size"),

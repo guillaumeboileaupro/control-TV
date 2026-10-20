@@ -226,6 +226,29 @@ export function arrangementScreens(state: ScreenPanelState): ScreenOutput[] {
   return screens;
 }
 
+// The TV's screen-to-be while the extension is chosen but not started: the display manager shows
+// it at the chosen position, at the stream's size (null otherwise).
+export function pendingExtension(
+  state: ScreenPanelState,
+): { name: string; width: number; height: number; x: number; y: number } | null {
+  if (
+    state.choice.mode !== "extend" ||
+    state.stream.state !== "idle" ||
+    state.availability.kind !== "available" ||
+    state.availability.extensionOutput === null ||
+    state.choice.x === null ||
+    state.choice.y === null
+  ) {
+    return null;
+  }
+  return {
+    name: state.availability.extensionOutput,
+    ...PIXELS[state.choice.size],
+    x: state.choice.x,
+    y: state.choice.y,
+  };
+}
+
 export function moveExtension(state: ScreenPanelState, x: number, y: number): ScreenPanelState {
   if (!describeScreen(state, true).canChoose || state.choice.mode !== "extend") {
     return state;

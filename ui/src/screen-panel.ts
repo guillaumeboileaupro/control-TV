@@ -5,10 +5,12 @@
 // It is shown only where this computer's screen can be captured (an X11 desktop): elsewhere
 // (Android, Wayland) the listing fails and the panel stays hidden.
 
+import { createDisplayPanel, type DisplayPanelElements } from "./display-panel.ts";
 import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
 import {
+  pendingExtension,
   RATES,
   REFRESH_RATES,
   SIZES,
@@ -41,6 +43,8 @@ export interface ScreenPanelElements {
   panel: HTMLElement;
   mode: HTMLElement;
   preview: Element;
+  // The display manager shown while extending (see display-panel.ts).
+  display: DisplayPanelElements;
   screenField: HTMLElement;
   screen: HTMLSelectElement;
   size: HTMLSelectElement;
@@ -66,6 +70,7 @@ export interface ScreenPanelPorts {
   selectedTv(): string | null;
   timers: {
     set(callback: () => void, delayMs: number): number;
+    clear(handle: number): void;
   };
 }
 
@@ -91,12 +96,27 @@ export function createScreenPanel(
 ): { refresh(): void; render(): void } {
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
+  const displays = createDisplayPanel(el.display, {
+    call: ports.call,
+    timers: ports.timers,
+    pendingTv: () => pendingExtension(state),
+    placeTv: (x, y) => update(moveExtension(state, x, y)),
+  });
 
   function update(next: ScreenPanelState): void {
+    const before = state;
     state = next;
     render();
     if (follows(state) && followTimer === null) {
       followTimer = ports.timers.set(poll, FOLLOW_INTERVAL_MS);
+    }
+    // The screens change when an extension starts or stops, or when extending is chosen.
+    const extending = state.choice.mode === "extend";
+    if (
+      extending &&
+      (before.stream.state !== state.stream.state || before.choice.mode !== state.choice.mode)
+    ) {
+      displays.refresh();
     }
   }
 
@@ -254,7 +274,11 @@ export function createScreenPanel(
     // Starting is offered only from the choice; a running or failed stream offers Stop/Dismiss.
     el.ask.hidden = view.confirming || state.stream.state !== "idle";
     setBusy(el.ask, !view.canAsk);
-    el.ask.textContent = "Apply";
+    el.ask.textContent =
+      state.choice.mode === "duplicate" ? "Duplicate on the TV" : "Extend to the TV";
+    // The preview picks the screen to duplicate; the display manager replaces it when extending.
+    el.preview.toggleAttribute("hidden", state.choice.mode === "extend");
+    displays.render();
     el.consent.hidden = !view.confirming;
     el.consentText.textContent = view.consentText;
     el.stop.hidden = !view.canStop && state.stream.state !== "stopping";
