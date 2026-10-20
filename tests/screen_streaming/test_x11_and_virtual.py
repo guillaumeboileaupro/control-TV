@@ -158,12 +158,11 @@ def test_the_live_encoder_grabs_the_capture_region(tmp_path: Path) -> None:
     assert argv[argv.index("-i") + 1] == ":0+0,0"
     # The system sound goes with a captured screen, in the same segments.
     assert argv[argv.index("pulse") + 3 : argv.index("pulse") + 5] == ("-i", "@DEFAULT_MONITOR@")
-    assert argv[argv.index("1:a:0") - 1 : argv.index("1:a:0") + 3] == (
-        "-map",
-        "1:a:0",
-        "-c:a",
-        "aac",
-    )
+    sound = argv[argv.index("1:a:0") - 1 : argv.index("1:a:0") + 5]
+    assert sound == ("-map", "1:a:0", "-af", "aresample=async=1000", "-c:a", "aac")
+    # The grab has its own queue, so reading the sound never makes it miss frames.
+    grab = argv.index("x11grab")
+    assert argv[grab + 1 : grab + 3] == ("-thread_queue_size", "1024")
     live.stop(stream)
 
 

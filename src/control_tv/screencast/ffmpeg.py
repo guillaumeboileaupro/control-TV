@@ -52,6 +52,10 @@ def source_arguments(source: LiveSource, profile: FrameFormat) -> tuple[str, ...
         return (
             "-f",
             "x11grab",
+            # A second live input (the system sound) shares FFmpeg's reading: without a queue the
+            # grab misses frames while the sound is read (31 of 600 lost in 20 s, measured).
+            "-thread_queue_size",
+            "1024",
             "-draw_mouse",
             "1",
             "-framerate",
@@ -181,6 +185,10 @@ def live_hls_command(
             "0:v:0",
             "-map",
             "1:a:0",
+            # The sound follows the grab's clock, so the TV's player (driven by the sound) never
+            # has to skip or repeat pictures.
+            "-af",
+            "aresample=async=1000",
             "-c:a",
             "aac",
             "-b:a",
