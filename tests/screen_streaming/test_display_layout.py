@@ -235,7 +235,7 @@ def test_a_failed_change_restores_the_previous_configuration(
     with pytest.raises(StreamStartError, match=message):
         displays.apply(joined(screens))
     assert not displays.awaiting_confirmation
-    assert screens.calls[-1][:2] == ("--output", "eDP-1")  # the restore
+    assert screens.calls[-2][:2] == ("--output", "eDP-1")  # restore, then verification read
     assert screens.settings["eDP-1"].enabled and not screens.settings["HDMI-1"].enabled
 
 
@@ -340,13 +340,32 @@ def test_a_failed_change_whose_restore_also_fails_says_so() -> None:
         manager(screens).apply(joined(screens))
 
 
-def test_a_restore_that_fails_when_the_change_expires_is_not_raised() -> None:
+def test_a_restore_that_fails_when_the_change_expires_stays_available_for_retry() -> None:
     screens = FakeScreens()
     displays = manager(screens)
     displays.apply(joined(screens))
     screens.refuse = 1
+
     FakeTimer.made[-1].fire()
-    assert displays.take_reverted_notice() and not displays.awaiting_confirmation
+
+    assert not displays.take_reverted_notice() and displays.awaiting_confirmation
+    assert screens.settings["HDMI-1"].enabled
+    displays.revert()
+    assert not displays.awaiting_confirmation and not screens.settings["HDMI-1"].enabled
+
+
+def test_a_restore_that_is_ignored_stays_available_for_retry() -> None:
+    screens = FakeScreens()
+    displays = manager(screens)
+    displays.apply(joined(screens))
+    screens.ignore = True
+
+    FakeTimer.made[-1].fire()
+
+    assert displays.awaiting_confirmation and screens.settings["HDMI-1"].enabled
+    screens.ignore = False
+    displays.close()
+    assert not displays.awaiting_confirmation and not screens.settings["HDMI-1"].enabled
 
 
 def test_a_change_the_screens_took_differently_is_restored() -> None:

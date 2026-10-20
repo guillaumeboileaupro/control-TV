@@ -17,7 +17,6 @@ width and height.
 
 from __future__ import annotations
 
-import contextlib
 import os
 import re
 import subprocess
@@ -293,9 +292,10 @@ class DisplayManager:
         """Restore the configuration before the last change (nothing to do when none waits)."""
         with self._lock:
             self._cancel_timer()
-            previous, self._previous = self._previous, None
+            previous = self._previous
             if previous is not None:
                 self._restore(previous)
+                self._previous = None
             return self.layout()
 
     def close(self) -> None:
@@ -314,12 +314,16 @@ class DisplayManager:
         with self._lock:
             if self._previous is None:
                 return
-            previous, self._previous = self._previous, None
+            previous = self._previous
             self._pending_timer = None
-            self._reverted_by_itself = True
-            # A restore that fails here has nowhere to report: the next read shows the state.
-            with contextlib.suppress(StreamCleanupError):
+            try:
                 self._restore(previous)
+            except StreamCleanupError:
+                # Keep the snapshot: an explicit Revert or close() can retry instead of losing
+                # the only route back to a usable desktop configuration.
+                return
+            self._previous = None
+            self._reverted_by_itself = True
 
     def _cancel_timer(self) -> None:
         if self._pending_timer is not None:
@@ -330,6 +334,8 @@ class DisplayManager:
         known = {display.name for display in self.layout()}
         kept = [setting for setting in settings if setting.name in known]
         self._xrandr(*xrandr_arguments(kept), cleanup=True)
+        if not _matches(self.layout(), kept):
+            raise StreamCleanupError("the previous screen configuration was not restored")
 
     def _xrandr(self, *arguments: str, cleanup: bool = False) -> str:
         error_type = StreamCleanupError if cleanup else StreamStartError
