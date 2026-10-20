@@ -44,7 +44,7 @@ from control_tv.screen_streaming.model import (
 )
 from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.service import StreamingSessionService, StreamRequest
-from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.screencast.capabilities import FfmpegCapabilityProbe
 from control_tv.screencast.model import EncoderPreference
@@ -186,6 +186,8 @@ class Picture:
     height: int = 1080
     fps: int = 30
     consent: bool = False  # the owner's explicit agreement to change the display (EXTEND)
+    refresh: int = 60  # the extended screen's refresh rate (EXTEND)
+    position: Position = Position.RIGHT  # where the extended screen sits (EXTEND)
 
 
 def assemble(
@@ -217,7 +219,13 @@ def assemble(
         capture = capture or X11Capture()
         if chosen.mode is Mode.EXTEND:
             used_virtual = virtual or XrandrVirtualMonitor()
-            output = used_virtual.create(chosen.width, chosen.height, consent=chosen.consent)
+            output = used_virtual.create(
+                chosen.width,
+                chosen.height,
+                consent=chosen.consent,
+                refresh=chosen.refresh,
+                position=chosen.position,
+            )
             screen = output.name
         elif chosen.screen is None:
             raise InvalidStreamConfiguration("choose the screen output to duplicate")
@@ -259,6 +267,14 @@ def tv_and_route(device_id: str) -> tuple[TvControl, str]:  # pragma: no cover -
     raise InvalidStreamConfiguration("that TV was not found on the home network")
 
 
+_POSITIONS = {
+    "left": Position.LEFT,
+    "right": Position.RIGHT,
+    "above": Position.ABOVE,
+    "below": Position.BELOW,
+}
+
+
 def _size(value: str) -> tuple[int, int]:
     width, separator, height = value.partition("x")
     if not separator or not width.isdigit() or not height.isdigit():
@@ -279,6 +295,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--size", type=_size, default=(1920, 1080), help="encoded WIDTHxHEIGHT")
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--refresh", type=int, default=60, help="extended screen: 60 or 50 Hz")
+    parser.add_argument(
+        "--position",
+        choices=sorted(_POSITIONS),
+        default="right",
+        help="extended screen: where it sits next to the primary screen",
+    )
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--encoder", choices=sorted(_ENCODERS), default="software")
     parser.add_argument(
@@ -308,6 +331,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             height,
             arguments.fps,
             consent=arguments.yes_change_display,
+            refresh=arguments.refresh,
+            position=_POSITIONS[arguments.position],
         )
         if arguments.no_tv:
             receiver: StreamReceiver = NoReceiver(lambda uri: print(f"playlist: {uri}", flush=True))
