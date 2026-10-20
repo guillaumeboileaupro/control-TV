@@ -772,6 +772,11 @@ exposure and no permanent server.
     (never the owner's desktop): H.264 High 1280x720 30 fps HLS served on loopback;
   - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
     before claiming Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
+    2026-10-19 hardware session (private record): the desktop shown on the TV, smooth once,
+    10.3 s latency measured; stalls reproduced when the receiver is loaded with too few segments;
+    1 s segments not played by the Freebox's Cast receiver; fixes on
+    `fix/screencast-d1-d2-hardware` (load after four 2 s segments, system sound) are
+    automation-validated only, the receiver ended the session in a state that showed nothing;
 - [ ] D2: extension (virtual monitor), guaranteed removal;
   - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
     added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
