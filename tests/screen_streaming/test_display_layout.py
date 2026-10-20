@@ -362,3 +362,140 @@ def test_a_change_the_screens_took_differently_is_restored() -> None:
     screens.apply = shifted  # type: ignore[method-assign]
     with pytest.raises(StreamStartError, match="did not take that configuration"):
         manager(screens).apply(joined(screens))
+
+
+# Bridge methods ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bridged(monkeypatch: pytest.MonkeyPatch) -> FakeScreens:
+    from control_tv import bridge
+
+    screens = FakeScreens()
+    monkeypatch.setattr(bridge, "_display_manager", manager(screens))
+    monkeypatch.setattr(bridge, "_screen_controller", None)
+    return screens
+
+
+def call(method: str, **params: object) -> dict[str, object]:
+    from control_tv import bridge
+
+    return bridge.dispatch(None, {"id": 1, "method": method, "params": params})  # type: ignore[arg-type,return-value]
+
+
+def as_json(settings: Sequence[OutputSetting]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": s.name,
+            "enabled": s.enabled,
+            "mode": s.mode,
+            "x": s.x,
+            "y": s.y,
+            "rotation": s.rotation.value,
+            "scale": s.scale,
+            "primary": s.primary,
+        }
+        for s in settings
+    ]
+
+
+def test_the_bridge_reads_applies_keeps_and_reverts_the_layout(bridged: FakeScreens) -> None:
+    read = call("get_display_layout")
+    assert read["ok"] is True
+    result = read["result"]
+    assert isinstance(result, dict) and result["awaitingConfirmation"] is False
+    laptop = result["displays"][0]
+    assert laptop["name"] == "eDP-1" and laptop["primary"] is True and laptop["mode"] == "0x48"
+    assert laptop["modes"][0] == {"id": "0x48", "width": 1920, "height": 1080, "rate": 60.0}
+
+    applied = call("apply_display_layout", displays=as_json(joined(bridged)))
+    assert applied["ok"] is True and applied["result"]["awaitingConfirmation"] is True  # type: ignore[index]
+    kept = call("confirm_display_layout")
+    assert kept["result"]["awaitingConfirmation"] is False  # type: ignore[index]
+
+    call(
+        "apply_display_layout",
+        displays=as_json(
+            [
+                OutputSetting("eDP-1", True, "0x48", 0, 0, primary=True),
+                OutputSetting("HDMI-1", False),
+                OutputSetting("DP-1", False),
+            ]
+        ),
+    )
+    reverted = call("revert_display_layout")
+    assert reverted["ok"] is True and bridged.settings["HDMI-1"].enabled
+
+
+@pytest.mark.parametrize(
+    ("displays", "message"),
+    [
+        ("all", "displays must be a list"),
+        (["eDP-1"], "each display must be an object"),
+        ([{"name": "eDP-1"}], "a name and enabled"),
+        ([{"name": "eDP-1", "enabled": True, "mode": 1, "primary": True}], "needs a mode"),
+        (
+            [{"name": "eDP-1", "enabled": True, "mode": "0x48", "primary": True, "rotation": "up"}],
+            "rotation must be",
+        ),
+        (
+            [
+                {
+                    "name": "eDP-1",
+                    "enabled": True,
+                    "mode": "0x48",
+                    "primary": True,
+                    "rotation": "normal",
+                    "scale": "1",
+                }
+            ],
+            "scale must be",
+        ),
+        (
+            [
+                {
+                    "name": "eDP-1",
+                    "enabled": True,
+                    "mode": "0x48",
+                    "primary": True,
+                    "rotation": "normal",
+                    "scale": 1,
+                    "x": 0,
+                    "y": 0,
+                }
+            ],
+            "every screen exactly once",
+        ),
+    ],
+)
+def test_the_bridge_refuses_a_malformed_layout(
+    bridged: FakeScreens, displays: object, message: str
+) -> None:
+    answer = call("apply_display_layout", displays=displays)
+    assert answer["ok"] is False
+    assert message in answer["error"]["message"]  # type: ignore[index]
+    assert answer["error"]["code"] == "invalid_argument"  # type: ignore[index]
+
+
+def test_a_refused_change_is_reported_as_unsupported(bridged: FakeScreens) -> None:
+    bridged.refuse = 1
+    answer = call("apply_display_layout", displays=as_json(joined(bridged)))
+    assert answer["error"]["code"] == "unsupported_operation"  # type: ignore[index]
+
+
+def test_the_bridge_reverts_an_unkept_change_when_it_exits(bridged: FakeScreens) -> None:
+    import io
+
+    from control_tv import bridge
+
+    call("apply_display_layout", displays=as_json(joined(bridged)))
+    bridge.run(None, stdin=io.StringIO(""), stdout=io.StringIO())  # type: ignore[arg-type]
+    assert not bridged.settings["HDMI-1"].enabled
+
+
+def test_the_bridge_creates_one_display_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    from control_tv import bridge
+
+    monkeypatch.setattr(bridge, "_display_manager", None)
+    first = bridge._displays()
+    assert bridge._displays() is first

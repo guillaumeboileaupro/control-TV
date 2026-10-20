@@ -101,7 +101,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, TextIO
 
 import control_tv
@@ -131,6 +131,7 @@ Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
     from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
+    from control_tv.screen_streaming.display_layout import Display, DisplayManager, OutputSetting
     from control_tv.screen_streaming.virtual_display import Position
 INTERNAL_ERROR_CODE = "internal_error"
 
@@ -399,9 +400,84 @@ def _screen() -> ScreenStreamController:
 
 
 def close_screen_stream() -> None:
-    """Stop the screen stream, if one was ever started (the bridge is exiting)."""
-    if _screen_controller is not None:
-        _screen_controller.close()
+    """Stop the screen stream, if one was ever started, and revert a screen configuration that
+    was not kept (the bridge is exiting). Both are attempted."""
+    try:
+        if _screen_controller is not None:
+            _screen_controller.close()
+    finally:
+        if _display_manager is not None:
+            _display_manager.close()
+
+
+_display_manager: DisplayManager | None = None
+
+
+def _displays() -> DisplayManager:
+    global _display_manager
+    if _display_manager is None:
+        from control_tv.screen_streaming.display_layout import DisplayManager
+
+        _display_manager = DisplayManager()
+    return _display_manager
+
+
+def _layout_to_json(manager: DisplayManager, displays: Sequence[Display]) -> JsonObject:
+    shown: list[JsonValue] = []
+    for display in displays:
+        setting = display.setting
+        modes: list[JsonValue] = [
+            {"id": mode.id, "width": mode.width, "height": mode.height, "rate": mode.rate}
+            for mode in display.modes
+        ]
+        shown.append(
+            {
+                "name": display.name,
+                "connected": display.connected,
+                "enabled": setting.enabled,
+                "mode": setting.mode,
+                "x": setting.x,
+                "y": setting.y,
+                "rotation": setting.rotation.value,
+                "scale": setting.scale,
+                "primary": setting.primary,
+                "modes": modes,
+            }
+        )
+    return {
+        "displays": shown,
+        "awaitingConfirmation": manager.awaiting_confirmation,
+        "revertedByItself": manager.take_reverted_notice(),
+    }
+
+
+def _setting_from_json(value: JsonValue) -> OutputSetting:
+    from control_tv.screen_streaming.display_layout import OutputSetting, Rotation
+
+    if not isinstance(value, dict):
+        raise InvalidArgumentError("each display must be an object")
+    name, enabled, mode = value.get("name"), value.get("enabled"), value.get("mode")
+    rotation, scale, primary = value.get("rotation"), value.get("scale"), value.get("primary")
+    if not isinstance(name, str) or not isinstance(enabled, bool):
+        raise InvalidArgumentError("a display needs a name and enabled true or false")
+    if not enabled:
+        return OutputSetting(name, False)
+    if not isinstance(mode, str) or not isinstance(primary, bool):
+        raise InvalidArgumentError("a display that is on needs a mode and primary true or false")
+    if rotation not in ("normal", "left", "right", "inverted"):
+        raise InvalidArgumentError("rotation must be normal, left, right or inverted")
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise InvalidArgumentError("scale must be a number")
+    return OutputSetting(
+        name,
+        True,
+        mode,
+        _strict_int(value, "x"),
+        _strict_int(value, "y"),
+        Rotation(rotation),
+        float(scale),
+        primary,
+    )
 
 
 def _screen_call(call: Callable[[], JsonObject]) -> JsonObject:
@@ -513,6 +589,31 @@ def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonOb
     return {"stream": _screen_status_to_json(_screen().stop())}
 
 
+def _handle_get_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().layout()))
+
+
+def _handle_apply_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    displays = params.get("displays")
+    if not isinstance(displays, list):
+        raise InvalidArgumentError("displays must be a list")
+    settings = [_setting_from_json(value) for value in displays]
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().apply(settings)))
+
+
+def _handle_confirm_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    _displays().confirm()
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().layout()))
+
+
+def _handle_revert_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().revert()))
+
+
 def _handle_get_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
     return {"stream": _screen_status_to_json(_screen().status())}
@@ -539,6 +640,10 @@ _HANDLERS: dict[str, Handler] = {
     "start_screen_stream": _handle_start_screen_stream,
     "stop_screen_stream": _handle_stop_screen_stream,
     "get_screen_stream": _handle_get_screen_stream,
+    "get_display_layout": _handle_get_display_layout,
+    "apply_display_layout": _handle_apply_display_layout,
+    "confirm_display_layout": _handle_confirm_display_layout,
+    "revert_display_layout": _handle_revert_display_layout,
 }
 
 
