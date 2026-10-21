@@ -139,7 +139,7 @@ impl SessionController {
                 Err(error) => Err(error),
             };
             let cleanup = source.stop().await;
-            result.and(cleanup)
+            combine_media_and_cleanup(result, cleanup)
         }));
         Ok(())
     }
@@ -208,6 +208,19 @@ impl SessionController {
             EngineState::Failed
         };
         result
+    }
+}
+
+fn combine_media_and_cleanup(
+    media: Result<(), EngineError>,
+    cleanup: Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    match (media, cleanup) {
+        (Ok(()), cleanup) => cleanup,
+        (Err(media), Ok(())) => Err(media),
+        (Err(media), Err(cleanup)) => Err(EngineError::Cleanup(format!(
+            "{media}; additional cleanup failure: {cleanup}"
+        ))),
     }
 }
 
@@ -280,6 +293,7 @@ mod tests {
     struct FakeSource {
         keep_open: bool,
         fail_start: bool,
+        fail_stop: bool,
         stopped: Arc<AtomicBool>,
         sender: Option<mpsc::Sender<Result<MediaFrame, EngineError>>>,
     }
@@ -303,7 +317,11 @@ mod tests {
 
         async fn stop(&mut self) -> Result<(), EngineError> {
             self.stopped.store(true, Ordering::SeqCst);
-            Ok(())
+            if self.fail_stop {
+                Err(EngineError::Cleanup("synthetic stop failure".into()))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -352,6 +370,7 @@ mod tests {
                 Box::new(FakeSource {
                     keep_open: false,
                     fail_start: false,
+                    fail_stop: false,
                     stopped: Arc::clone(&stopped),
                     sender: None,
                 }),
@@ -385,6 +404,7 @@ mod tests {
                 Box::new(FakeSource {
                     keep_open: true,
                     fail_start: false,
+                    fail_stop: false,
                     stopped: Arc::clone(&stopped),
                     sender: None,
                 }),
@@ -411,6 +431,7 @@ mod tests {
                 Box::new(FakeSource {
                     keep_open: false,
                     fail_start: true,
+                    fail_stop: false,
                     stopped: Arc::clone(&stopped),
                     sender: None,
                 }),
@@ -428,6 +449,41 @@ mod tests {
         .await
         .expect("start failure reported");
         assert!(matches!(result, Err(EngineError::MediaSource(_))));
+        assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_start_failure_does_not_mask_a_cleanup_failure() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport: Arc<dyn MediaTransport> = Arc::new(FakeTransport::default());
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: false,
+                    fail_start: true,
+                    fail_stop: true,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                transport,
+            )
+            .expect("start task");
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("combined failure reported")
+        .expect_err("start and cleanup must fail");
+        assert!(matches!(result, EngineError::Cleanup(_)));
+        let message = result.to_string();
+        assert!(message.contains("synthetic start failure"));
+        assert!(message.contains("synthetic stop failure"));
         assert!(stopped.load(Ordering::SeqCst));
     }
 
