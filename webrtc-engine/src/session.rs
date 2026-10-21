@@ -6,15 +6,25 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
 #[async_trait]
 pub trait MediaSource: Send {
-    async fn start(&mut self) -> Result<(), EngineError>;
-    async fn next_video_chunk(&mut self) -> Result<Option<Bytes>, EngineError>;
-    async fn next_audio_chunk(&mut self) -> Result<Option<Bytes>, EngineError>;
+    async fn start(&mut self) -> Result<MediaStreams, EngineError>;
     async fn stop(&mut self) -> Result<(), EngineError>;
+}
+
+#[derive(Debug)]
+pub struct MediaFrame {
+    pub data: Bytes,
+    pub duration: Duration,
+    pub keyframe: bool,
+}
+
+pub struct MediaStreams {
+    pub video: mpsc::Receiver<Result<MediaFrame, EngineError>>,
+    pub audio: Option<mpsc::Receiver<Result<MediaFrame, EngineError>>>,
 }
 
 pub trait Clock: Send + Sync {
@@ -35,6 +45,7 @@ pub struct SessionController {
     deadline: Option<Instant>,
     diagnostics: Arc<Mutex<Diagnostics>>,
     media_task: Option<JoinHandle<Result<(), EngineError>>>,
+    media_stop: Option<oneshot::Sender<()>>,
 }
 
 impl Default for SessionController {
@@ -46,6 +57,7 @@ impl Default for SessionController {
             deadline: None,
             diagnostics: Arc::new(Mutex::new(Diagnostics::default())),
             media_task: None,
+            media_stop: None,
         }
     }
 }
@@ -116,9 +128,14 @@ impl SessionController {
         }
         let diagnostics = Arc::clone(&self.diagnostics);
         let deadline = self.deadline.ok_or(EngineError::NoActiveSession)?;
+        let (stop_tx, stop_rx) = oneshot::channel();
+        self.media_stop = Some(stop_tx);
         self.media_task = Some(tokio::spawn(async move {
-            source.start().await?;
-            let result = pump_media(&mut *source, transport.as_ref(), diagnostics, deadline).await;
+            let streams = source.start().await?;
+            let result = tokio::select! {
+                result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
+                _ = stop_rx => Ok(()),
+            };
             let cleanup = source.stop().await;
             result.and(cleanup)
         }));
@@ -134,11 +151,18 @@ impl SessionController {
             return Ok(());
         }
         self.state = EngineState::Stopping;
-        if let Some(task) = self.media_task.take() {
-            task.abort();
-            let _ = task.await;
+        if let Some(stop) = self.media_stop.take() {
+            let _ = stop.send(());
         }
-        let result = transport.close().await;
+        let mut media_result = Ok(());
+        if let Some(task) = self.media_task.take() {
+            media_result = match task.await {
+                Ok(result) => result,
+                Err(error) => Err(EngineError::Cleanup(error.to_string())),
+            };
+        }
+        let transport_result = transport.close().await;
+        let result = media_result.and(transport_result);
         self.id = None;
         self.token = None;
         self.deadline = None;
@@ -152,32 +176,54 @@ impl SessionController {
 }
 
 async fn pump_media(
-    source: &mut dyn MediaSource,
+    streams: MediaStreams,
+    transport: &dyn MediaTransport,
+    diagnostics: Arc<Mutex<Diagnostics>>,
+    deadline: Instant,
+) -> Result<(), EngineError> {
+    let video = pump_video(streams.video, transport, Arc::clone(&diagnostics), deadline);
+    let audio = pump_audio(streams.audio, transport, diagnostics, deadline);
+    tokio::try_join!(video, audio).map(|_| ())
+}
+
+async fn pump_video(
+    mut frames: mpsc::Receiver<Result<MediaFrame, EngineError>>,
     transport: &dyn MediaTransport,
     diagnostics: Arc<Mutex<Diagnostics>>,
     deadline: Instant,
 ) -> Result<(), EngineError> {
     while Instant::now() < deadline {
-        match source.next_video_chunk().await? {
-            Some(chunk) => {
-                let bytes = chunk.len() as u64;
-                transport
-                    .send_video(chunk, Duration::from_millis(33))
-                    .await?;
-                let mut values = diagnostics.lock().await;
-                values.captured_frames += 1;
-                values.encoded_frames += 1;
-                values.sent_video_bytes += bytes;
-            }
-            None => break,
-        }
-        if let Some(chunk) = source.next_audio_chunk().await? {
-            let bytes = chunk.len() as u64;
-            transport
-                .send_audio(chunk, Duration::from_millis(20))
-                .await?;
-            diagnostics.lock().await.sent_audio_bytes += bytes;
-        }
+        let Some(frame) = frames.recv().await else {
+            break;
+        };
+        let frame = frame?;
+        let bytes = frame.data.len() as u64;
+        transport.send_video(frame.data, frame.duration).await?;
+        let mut values = diagnostics.lock().await;
+        values.captured_frames += 1;
+        values.encoded_frames += 1;
+        values.sent_video_bytes += bytes;
+    }
+    Ok(())
+}
+
+async fn pump_audio(
+    frames: Option<mpsc::Receiver<Result<MediaFrame, EngineError>>>,
+    transport: &dyn MediaTransport,
+    diagnostics: Arc<Mutex<Diagnostics>>,
+    deadline: Instant,
+) -> Result<(), EngineError> {
+    let Some(mut frames) = frames else {
+        return Ok(());
+    };
+    while Instant::now() < deadline {
+        let Some(frame) = frames.recv().await else {
+            break;
+        };
+        let frame = frame?;
+        let bytes = frame.data.len() as u64;
+        transport.send_audio(frame.data, frame.duration).await?;
+        diagnostics.lock().await.sent_audio_bytes += bytes;
     }
     Ok(())
 }

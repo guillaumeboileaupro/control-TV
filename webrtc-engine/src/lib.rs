@@ -15,6 +15,6 @@ pub use model::{
     AudioConfig, CaptureConfig, Diagnostics, EngineError, EngineState, SessionConfig,
     SessionDescription, SessionId, SessionToken, TransportMode, VideoConfig,
 };
-pub use session::{Clock, MediaSource, SessionController, SystemClock};
+pub use session::{Clock, MediaFrame, MediaSource, MediaStreams, SessionController, SystemClock};
 pub use signaling::{PairingEndpoint, PairingServer};
 pub use transport::{MediaTransport, WebRtcTransport};

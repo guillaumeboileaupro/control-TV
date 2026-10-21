@@ -1,9 +1,18 @@
-use crate::{CaptureConfig, EngineError, MediaSource};
+use crate::{CaptureConfig, EngineError, MediaFrame, MediaSource, MediaStreams};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, ChildStdout, Command};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+const READ_BUFFER: usize = 64 * 1024;
+const VIDEO_QUEUE: usize = 2;
+const AUDIO_QUEUE: usize = 16;
+const MAX_H264_ACCESS_UNIT: usize = 8 * 1024 * 1024;
+const MAX_OGG_BUFFER: usize = 1024 * 1024;
 
 /// Starts a child process without involving a shell, so display and device names are never
 /// interpreted as command syntax.
@@ -49,6 +58,8 @@ impl ProcessRunner {
             "0".into(),
             "-b:v".into(),
             format!("{}k", config.video.bitrate_kbps),
+            "-bsf:v".into(),
+            "h264_metadata=aud=insert".into(),
             "-f".into(),
             "h264".into(),
             "pipe:1".into(),
@@ -108,8 +119,7 @@ pub struct FfmpegMediaSource {
     config: CaptureConfig,
     video_child: Option<Child>,
     audio_child: Option<Child>,
-    video: Option<ChildStdout>,
-    audio: Option<ChildStdout>,
+    readers: Vec<JoinHandle<()>>,
 }
 
 impl FfmpegMediaSource {
@@ -119,8 +129,7 @@ impl FfmpegMediaSource {
             config,
             video_child: None,
             audio_child: None,
-            video: None,
-            audio: None,
+            readers: Vec::new(),
         }
     }
 
@@ -142,7 +151,7 @@ impl FfmpegMediaSource {
 
 #[async_trait]
 impl MediaSource for FfmpegMediaSource {
-    async fn start(&mut self) -> Result<(), EngineError> {
+    async fn start(&mut self) -> Result<MediaStreams, EngineError> {
         if self.video_child.is_some() {
             return Err(EngineError::MediaSource("source already started".into()));
         }
@@ -150,14 +159,21 @@ impl MediaSource for FfmpegMediaSource {
             .runner
             .spawn(&ProcessRunner::video_arguments(&self.config))?;
         self.video_child = Some(video_child);
-        self.video = Some(video);
+        let (video_tx, video_rx) = mpsc::channel(VIDEO_QUEUE);
+        let frame_duration = Duration::from_secs_f64(1.0 / f64::from(self.config.video.fps));
+        self.readers
+            .push(tokio::spawn(read_h264(video, video_tx, frame_duration)));
+        let mut audio_rx = None;
         if self.config.audio.enabled {
             let args = ProcessRunner::audio_arguments(&self.config)
                 .ok_or_else(|| EngineError::MediaSource("audio device missing".into()))?;
             match self.runner.spawn(&args) {
                 Ok((child, stdout)) => {
                     self.audio_child = Some(child);
-                    self.audio = Some(stdout);
+                    let (audio_tx, receiver) = mpsc::channel(AUDIO_QUEUE);
+                    self.readers
+                        .push(tokio::spawn(read_ogg_opus(stdout, audio_tx)));
+                    audio_rx = Some(receiver);
                 }
                 Err(error) => {
                     self.stop().await?;
@@ -165,40 +181,263 @@ impl MediaSource for FfmpegMediaSource {
                 }
             }
         }
-        Ok(())
-    }
-
-    async fn next_video_chunk(&mut self) -> Result<Option<Bytes>, EngineError> {
-        read_chunk(&mut self.video).await
-    }
-
-    async fn next_audio_chunk(&mut self) -> Result<Option<Bytes>, EngineError> {
-        read_chunk(&mut self.audio).await
+        Ok(MediaStreams {
+            video: video_rx,
+            audio: audio_rx,
+        })
     }
 
     async fn stop(&mut self) -> Result<(), EngineError> {
-        self.video.take();
-        self.audio.take();
+        for reader in self.readers.drain(..) {
+            reader.abort();
+            let _ = reader.await;
+        }
         let video_result = Self::stop_child(&mut self.video_child).await;
         let audio_result = Self::stop_child(&mut self.audio_child).await;
         video_result.and(audio_result)
     }
 }
 
-async fn read_chunk(reader: &mut Option<ChildStdout>) -> Result<Option<Bytes>, EngineError> {
-    let Some(reader) = reader else {
-        return Ok(None);
-    };
-    let mut buffer = vec![0_u8; 64 * 1024];
-    let count = reader
-        .read(&mut buffer)
-        .await
-        .map_err(|error| EngineError::MediaSource(error.to_string()))?;
-    if count == 0 {
-        return Ok(None);
+async fn read_h264(
+    mut reader: ChildStdout,
+    sender: mpsc::Sender<Result<MediaFrame, EngineError>>,
+    duration: Duration,
+) {
+    let mut parser = AnnexBAccessUnits::default();
+    let mut chunk = vec![0_u8; READ_BUFFER];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => {
+                if let Some(frame) = parser.finish(duration) {
+                    let _ = sender.try_send(Ok(frame));
+                }
+                break;
+            }
+            Ok(count) => {
+                let frames = match parser.push(&chunk[..count], duration) {
+                    Ok(frames) => frames,
+                    Err(error) => {
+                        let _ = sender.send(Err(error)).await;
+                        return;
+                    }
+                };
+                for frame in frames {
+                    // Interactive video prefers dropping an obsolete complete frame to building lag.
+                    let _ = sender.try_send(Ok(frame));
+                }
+            }
+            Err(error) => {
+                let _ = sender
+                    .send(Err(EngineError::MediaSource(error.to_string())))
+                    .await;
+                break;
+            }
+        }
     }
-    buffer.truncate(count);
-    Ok(Some(Bytes::from(buffer)))
+}
+
+async fn read_ogg_opus(
+    mut reader: ChildStdout,
+    sender: mpsc::Sender<Result<MediaFrame, EngineError>>,
+) {
+    let mut parser = OggOpusPackets::default();
+    let mut chunk = vec![0_u8; READ_BUFFER];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(count) => match parser.push(&chunk[..count]) {
+                Ok(packets) => {
+                    for frame in packets {
+                        // Audio is never discarded: bounded send applies backpressure to its reader.
+                        if sender.send(Ok(frame)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
+                }
+            },
+            Err(error) => {
+                let _ = sender
+                    .send(Err(EngineError::MediaSource(error.to_string())))
+                    .await;
+                break;
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct AnnexBAccessUnits {
+    buffer: Vec<u8>,
+    started: bool,
+}
+
+impl AnnexBAccessUnits {
+    fn push(&mut self, bytes: &[u8], duration: Duration) -> Result<Vec<MediaFrame>, EngineError> {
+        self.buffer.extend_from_slice(bytes);
+        if self.buffer.len() > MAX_H264_ACCESS_UNIT {
+            return Err(EngineError::MediaSource(
+                "H.264 access unit exceeds safety limit".into(),
+            ));
+        }
+        let mut frames = Vec::new();
+        loop {
+            let starts = nal_starts(&self.buffer);
+            let auds: Vec<usize> = starts
+                .into_iter()
+                .filter(|&offset| nal_type(&self.buffer, offset) == Some(9))
+                .collect();
+            if !self.started {
+                let Some(&first) = auds.first() else { break };
+                self.buffer.drain(..first);
+                self.started = true;
+                continue;
+            }
+            let Some(&next) = auds.iter().find(|&&offset| offset > 0) else {
+                break;
+            };
+            let data: Vec<u8> = self.buffer.drain(..next).collect();
+            frames.push(video_frame(data, duration));
+        }
+        Ok(frames)
+    }
+
+    fn finish(&mut self, duration: Duration) -> Option<MediaFrame> {
+        if !self.started || self.buffer.is_empty() {
+            return None;
+        }
+        Some(video_frame(std::mem::take(&mut self.buffer), duration))
+    }
+}
+
+fn video_frame(data: Vec<u8>, duration: Duration) -> MediaFrame {
+    let keyframe = nal_starts(&data)
+        .into_iter()
+        .any(|offset| nal_type(&data, offset) == Some(5));
+    MediaFrame {
+        data: Bytes::from(data),
+        duration,
+        keyframe,
+    }
+}
+
+fn nal_starts(data: &[u8]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut index = 0;
+    while index + 3 < data.len() {
+        if data[index..].starts_with(&[0, 0, 1]) || data[index..].starts_with(&[0, 0, 0, 1]) {
+            starts.push(index);
+            index += if data[index..].starts_with(&[0, 0, 1]) {
+                3
+            } else {
+                4
+            };
+        } else {
+            index += 1;
+        }
+    }
+    starts
+}
+
+fn nal_type(data: &[u8], start: usize) -> Option<u8> {
+    let prefix = if data.get(start..)?.starts_with(&[0, 0, 1]) {
+        3
+    } else {
+        4
+    };
+    data.get(start + prefix).map(|byte| byte & 0x1f)
+}
+
+#[derive(Default)]
+struct OggOpusPackets {
+    buffer: Vec<u8>,
+    packet: Vec<u8>,
+}
+
+impl OggOpusPackets {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<MediaFrame>, EngineError> {
+        self.buffer.extend_from_slice(bytes);
+        if self.buffer.len() > MAX_OGG_BUFFER {
+            return Err(EngineError::MediaSource(
+                "Ogg page exceeds safety limit".into(),
+            ));
+        }
+        let mut frames = Vec::new();
+        loop {
+            if self.buffer.len() < 27 {
+                break;
+            }
+            if &self.buffer[..4] != b"OggS" {
+                return Err(EngineError::MediaSource(
+                    "invalid Ogg capture stream".into(),
+                ));
+            }
+            let segments = usize::from(self.buffer[26]);
+            if self.buffer.len() < 27 + segments {
+                break;
+            }
+            let sizes = self.buffer[27..27 + segments].to_vec();
+            let body_size: usize = sizes.iter().map(|value| usize::from(*value)).sum();
+            let page_size = 27 + segments + body_size;
+            if self.buffer.len() < page_size {
+                break;
+            }
+            let page: Vec<u8> = self.buffer.drain(..page_size).collect();
+            let mut offset = 27 + segments;
+            for size in sizes {
+                let end = offset + usize::from(size);
+                self.packet.extend_from_slice(&page[offset..end]);
+                offset = end;
+                if size < 255 {
+                    let packet = std::mem::take(&mut self.packet);
+                    if !packet.starts_with(b"OpusHead") && !packet.starts_with(b"OpusTags") {
+                        frames.push(MediaFrame {
+                            duration: opus_duration(&packet)?,
+                            data: Bytes::from(packet),
+                            keyframe: false,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(frames)
+    }
+}
+
+fn opus_duration(packet: &[u8]) -> Result<Duration, EngineError> {
+    let toc = *packet
+        .first()
+        .ok_or_else(|| EngineError::MediaSource("empty Opus packet".into()))?;
+    let config = toc >> 3;
+    let samples_per_frame = if config >= 16 {
+        120_u32 << (config & 3)
+    } else if config >= 12 {
+        480_u32 << (config & 1)
+    } else if config & 3 == 3 {
+        2_880
+    } else {
+        480_u32 << (config & 3)
+    };
+    let frames = match toc & 3 {
+        0 => 1,
+        1 | 2 => 2,
+        _ => u32::from(
+            *packet
+                .get(1)
+                .ok_or_else(|| EngineError::MediaSource("truncated Opus packet".into()))?
+                & 0x3f,
+        ),
+    };
+    let samples = samples_per_frame * frames;
+    if samples == 0 || samples > 5_760 {
+        return Err(EngineError::MediaSource(
+            "invalid Opus packet duration".into(),
+        ));
+    }
+    Ok(Duration::from_secs_f64(f64::from(samples) / 48_000.0))
 }
 
 #[cfg(test)]
@@ -232,6 +471,9 @@ mod tests {
         assert!(args.contains(&"1920x1080".into()));
         assert!(args.contains(&":7.0+12,34".into()));
         assert!(args.windows(2).any(|item| item == ["-bf", "0"]));
+        assert!(args
+            .windows(2)
+            .any(|item| item == ["-bsf:v", "h264_metadata=aud=insert"]));
     }
 
     #[test]
@@ -241,5 +483,84 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|item| item == ["-application", "lowdelay"]));
+    }
+
+    #[test]
+    fn annex_b_chunks_are_assembled_at_aud_boundaries() {
+        let first = [0, 0, 0, 1, 0x09, 0x10, 0, 0, 1, 0x65, 1, 2];
+        let second = [0, 0, 1, 0x09, 0x10, 0, 0, 1, 0x41, 3, 4];
+        let third = [0, 0, 1, 0x09, 0x10, 0, 0, 1, 0x41, 5, 6];
+        let mut parser = AnnexBAccessUnits::default();
+        assert!(parser
+            .push(&first[..7], Duration::from_millis(40))
+            .expect("partial access unit")
+            .is_empty());
+        let frames = parser
+            .push(
+                &[&first[7..], &second, &third[..3]].concat(),
+                Duration::from_millis(40),
+            )
+            .expect("complete first access unit");
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].keyframe);
+        let frames = parser
+            .push(&third[3..], Duration::from_millis(40))
+            .expect("complete second access unit");
+        assert_eq!(frames.len(), 1);
+        assert!(!frames[0].keyframe);
+        assert_eq!(
+            parser
+                .finish(Duration::from_millis(40))
+                .expect("last frame")
+                .data
+                .as_ref(),
+            third
+        );
+    }
+
+    fn ogg_page(packets: &[&[u8]]) -> Vec<u8> {
+        let mut page = b"OggS\0".to_vec();
+        page.resize(26, 0);
+        page.push(u8::try_from(packets.len()).expect("segments"));
+        page.extend(
+            packets
+                .iter()
+                .map(|packet| u8::try_from(packet.len()).expect("packet size")),
+        );
+        for packet in packets {
+            page.extend_from_slice(packet);
+        }
+        page
+    }
+
+    #[test]
+    fn ogg_pages_yield_only_complete_opus_packets_with_timestamps() {
+        let mut parser = OggOpusPackets::default();
+        let page = ogg_page(&[b"OpusHead", b"OpusTags", &[0x98, 1, 2], &[0x98, 3, 4]]);
+        assert!(parser.push(&page[..10]).expect("prefix").is_empty());
+        let packets = parser.push(&page[10..]).expect("page");
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].data.as_ref(), &[0x98, 1, 2]);
+        assert_eq!(packets[0].duration, Duration::from_millis(20));
+    }
+
+    #[test]
+    fn malformed_media_is_rejected_without_unbounded_scanning() {
+        let mut parser = OggOpusPackets::default();
+        assert!(matches!(
+            parser.push(&[0; 27]),
+            Err(EngineError::MediaSource(_))
+        ));
+        assert!(opus_duration(&[]).is_err());
+        assert!(opus_duration(&[0x03]).is_err());
+        assert!(parser.push(&vec![0; MAX_OGG_BUFFER + 1]).is_err());
+
+        let mut h264 = AnnexBAccessUnits::default();
+        assert!(h264
+            .push(
+                &vec![1; MAX_H264_ACCESS_UNIT + 1],
+                Duration::from_millis(40)
+            )
+            .is_err());
     }
 }
