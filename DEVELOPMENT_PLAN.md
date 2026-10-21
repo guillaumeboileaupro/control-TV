@@ -8,6 +8,8 @@ Les sorties FFmpeg sont découpées en unités d'accès H.264 délimitées par A
 
 L'arrêt demandé pendant l'attente du récepteur ou la négociation annule désormais la tâche correspondante avant de fermer le transport. Une fin prématurée du flux FFmpeg fait passer la session en échec, libère ses identifiants et ferme le pair WebRTC au prochain relevé d'état ; l'erreur structurée est exposée à l'hôte Tauri au lieu de laisser un faux état « streaming ».
 
+Le test d'intégration WebRTC local transmet désormais simultanément plusieurs unités H.264 et plusieurs paquets Opus et vérifie leur réception RTP chiffrée sur les deux pistes. Le nettoyage détecte aussi un FFmpeg déjà terminé et le récolte sans traiter son arrêt préalable comme une erreur ; l'attente de récolte reste bornée à cinq secondes.
+
 Restent requis avant validation produit : relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.
 
 ## Goal

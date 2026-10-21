@@ -22,6 +22,8 @@
 
 **Robustesse logicielle :** Stop annule l'attente ou la négociation avant fermeture du transport ; une fin FFmpeg prématurée devient un état d'échec explicite et déclenche le nettoyage lors du relevé d'état. Restent ouverts les scénarios de perte réseau prolongée et la reconnexion bornée.
 
+**Pipeline simulé :** un pair WebRTC local reçoit simultanément cinq paquets RTP H.264 et cinq paquets RTP Opus après négociation ICE/DTLS/SRTP ; ce test prouve le transport concurrent et chiffré, pas le décodage Android matériel, la synchronisation audible/visible ni la stabilité sur plusieurs minutes.
+
 ---
 
 ## État des travaux — 2026-10-19

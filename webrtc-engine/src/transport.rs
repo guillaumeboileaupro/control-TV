@@ -150,7 +150,7 @@ impl MediaTransport for WebRtcTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::oneshot;
+    use tokio::sync::mpsc;
     use tokio::time::timeout;
     use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 
@@ -171,21 +171,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_peer_negotiates_and_receives_encrypted_h264_rtp() {
+    async fn real_peer_receives_continuous_encrypted_h264_and_opus_rtp() {
         let sender = WebRtcTransport::new().await.expect("sender");
         let receiver = receiving_peer().await;
-        let (packet_tx, packet_rx) = oneshot::channel();
-        let packet_tx = Arc::new(std::sync::Mutex::new(Some(packet_tx)));
+        let (packet_tx, mut packet_rx) = mpsc::channel(32);
         receiver.on_track(Box::new(move |track, _, _| {
-            let packet_tx = Arc::clone(&packet_tx);
+            let packet_tx = packet_tx.clone();
             Box::pin(async move {
-                if track.codec().capability.mime_type == MIME_TYPE_H264 {
-                    if let Ok((packet, _)) = track.read_rtp().await {
-                        if let Some(sender) = packet_tx.lock().expect("packet sender").take() {
-                            let _ = sender.send(packet.payload.to_vec());
+                let media = track.codec().capability.mime_type;
+                tokio::spawn(async move {
+                    for _ in 0..5 {
+                        if let Ok((packet, _)) = track.read_rtp().await {
+                            if !packet.payload.is_empty() {
+                                let _ = packet_tx.send(media.clone()).await;
+                            }
                         }
                     }
-                }
+                });
             })
         }));
 
@@ -220,16 +222,41 @@ mod tests {
         .await
         .expect("peers connected");
 
-        let annex_b = Bytes::from_static(&[0, 0, 0, 1, 0x65, 0x88, 0x84, 0x21]);
-        sender
-            .send_video(annex_b, Duration::from_millis(33))
-            .await
-            .expect("send video");
-        let payload = timeout(Duration::from_secs(5), packet_rx)
-            .await
-            .expect("RTP timeout")
-            .expect("RTP channel");
-        assert!(!payload.is_empty());
+        let video = async {
+            for sequence in 0..10_u8 {
+                let annex_b = Bytes::from(vec![0, 0, 0, 1, 0x65, 0x88, 0x84, sequence]);
+                sender
+                    .send_video(annex_b, Duration::from_millis(33))
+                    .await
+                    .expect("send video");
+            }
+        };
+        let audio = async {
+            for _ in 0..10 {
+                sender
+                    .send_audio(
+                        Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
+                        Duration::from_millis(20),
+                    )
+                    .await
+                    .expect("send audio");
+            }
+        };
+        tokio::join!(video, audio);
+        let mut video_packets = 0;
+        let mut audio_packets = 0;
+        timeout(Duration::from_secs(5), async {
+            while video_packets < 5 || audio_packets < 5 {
+                match packet_rx.recv().await.as_deref() {
+                    Some(MIME_TYPE_H264) => video_packets += 1,
+                    Some(MIME_TYPE_OPUS) => audio_packets += 1,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("concurrent RTP timeout");
+        assert_eq!((video_packets, audio_packets), (5, 5));
         sender.close().await.expect("close sender");
         receiver.close().await.expect("close receiver");
     }

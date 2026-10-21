@@ -137,15 +137,26 @@ impl FfmpegMediaSource {
         let Some(mut process) = child.take() else {
             return Ok(());
         };
-        process
+        if process
+            .try_wait()
+            .map_err(|error| EngineError::Cleanup(error.to_string()))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let kill = process
             .kill()
             .await
-            .map_err(|error| EngineError::Cleanup(error.to_string()))?;
-        process
-            .wait()
+            .map_err(|error| EngineError::Cleanup(error.to_string()));
+        let wait = tokio::time::timeout(Duration::from_secs(5), process.wait())
             .await
-            .map_err(|error| EngineError::Cleanup(error.to_string()))?;
-        Ok(())
+            .map_err(|_| EngineError::Cleanup("timed out while reaping media process".into()))
+            .and_then(|result| {
+                result
+                    .map(|_| ())
+                    .map_err(|error| EngineError::Cleanup(error.to_string()))
+            });
+        kill.and(wait)
     }
 }
 
@@ -562,5 +573,20 @@ mod tests {
                 Duration::from_millis(40)
             )
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn cleanup_reaps_a_process_that_already_exited() {
+        let mut child = Some(
+            Command::new("sh")
+                .args(["-c", "exit 0"])
+                .spawn()
+                .expect("short-lived child"),
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        FfmpegMediaSource::stop_child(&mut child)
+            .await
+            .expect("reap child");
+        assert!(child.is_none());
     }
 }
