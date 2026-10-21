@@ -1,39 +1,19 @@
-"""The apps installed on a Google TV, listed over its network debugging (ADB).
+"""TV applications reached through the owner's existing ADB server.
 
-The TV's remote channel cannot list the apps, and its app links are unreliable for many apps.
-The only way found to list and open the apps really installed is the TV's own debugging
-service, which the owner turns on in the TV's developer options. Supported: TVs whose "USB
-debugging" also accepts connections on the local network, port 5555 (the classic ADB
-connection). Not supported yet: TVs (Android 13 and later) that only offer "Wireless
-debugging", which pairs with a code on a changing port over TLS; the pinned `adb-shell` does
-not speak that protocol. The first connection makes the TV ask whether to allow control-TV's
-key; the owner accepts on the TV. This module sends only three fixed commands, built from a
-checked package name where one is needed: the list of launchable apps and the app in front
-(both read-only), and one launch event for an app the person chose. It never installs, removes
-or changes anything.
-
-Rules this adapter keeps:
-
-- The key that identifies control-TV to the TV lives in the same private directory as the
-  remote channel's credentials (0700), its private half 0600.
-- One short connection per listing or launch, always closed; a launch is sent once.
-- Only the apps the TV's home screen can launch (the Leanback launcher activities) are
-  listed, by package name, sorted, without duplicates.
-- Error messages never contain a TV address.
+Platform tools own pairing keys, TLS and mDNS. This adapter never picks the first connected
+device: it resolves the selected TV's current address to exactly one ADB serial per operation.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import ipaddress
-import os
 import re
+import shutil
+import subprocess
 import time
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypeVar
 
 from control_tv.domain import (
     AppLaunch,
@@ -47,38 +27,25 @@ from control_tv.domain import (
     UnsupportedOperationError,
 )
 
-T = TypeVar("T")
-
-ADB_PORT = 5555
-KEY_FILE = "adbkey"
-DEFAULT_CONNECT_TIMEOUT = 5.0
-# How long the owner has to accept control-TV's key on the TV the first time.
-DEFAULT_AUTH_TIMEOUT = 30.0
-DEFAULT_READ_TIMEOUT = 10.0
-# The activities the TV's home screen can launch: one line per activity, `package/activity`.
-LAUNCHER_QUERY = (
-    "cmd package query-activities --brief "
-    "-a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER"
-)
-# Opens the app's home-screen activity, as the home screen does: one event, nothing else.
-LAUNCH_COMMAND = "monkey -p {package} -c android.intent.category.LEANBACK_LAUNCHER 1"
-# Which activity is in front (read-only).
-FRONT_QUERY = "dumpsys activity activities"
+DEFAULT_TIMEOUT = 10.0
 DEFAULT_FRONT_READS = 4
-# Everything a launch does once connected (the launch event and the reads of the app in front)
-# shares this one budget, so that connect + allow + launch stays within the caller's bound.
-DEFAULT_LAUNCH_BUDGET = 15.0
 DEFAULT_FRONT_INTERVAL = 0.75
-_FRONT = re.compile(
-    r"(?:topResumedActivity|mResumedActivity|ResumedActivity)[:=]\s*ActivityRecord\{\S+ \S+ "
-    r"([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/"
+DEFAULT_LAUNCH_BUDGET = 15.0
+LAUNCHER_QUERY = (
+    "cmd package query-activities --brief -a android.intent.action.MAIN "
+    "-c android.intent.category.LEANBACK_LAUNCHER"
 )
-# An Android package name: dot-separated segments of letters, digits and underscores, the first
-# starting with a letter. Anything else is refused before a command is built from it.
+LAUNCH_COMMAND = "monkey -p {package} -c android.intent.category.LEANBACK_LAUNCHER 1"
+FRONT_QUERY = "dumpsys activity activities"
 PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 _COMPONENT = re.compile(r"^([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/[A-Za-z0-9_.$]+$")
+_FRONT = re.compile(
+    r"(?:topResumedActivity|mResumedActivity|ResumedActivity)[:=]\s*"
+    r"ActivityRecord\{\S+ \S+ ([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)/"
+)
+_ENDPOINT = re.compile(r"^(\[[0-9A-Fa-f:]+\]|[^:\s]+):(\d{1,5})$")
+_PAIRING_CODE = re.compile(r"\d{6}")
 
-# Display names control-TV knows for common packages; every other app shows its package name.
 KNOWN_NAMES = {
     "com.google.android.youtube.tv": "YouTube",
     "com.google.android.youtube.tvkids": "YouTube Kids",
@@ -102,7 +69,6 @@ KNOWN_NAMES = {
     "com.molotov.app": "Molotov",
     "com.apple.atve.androidtv.appletv": "Apple TV",
     "com.mubi": "MUBI",
-    # Names checked against each package's own Google Play listing (2026-10-17).
     "com.cbs.ca": "Paramount+",
     "com.google.android.videos": "Google TV",
     "com.wbd.stream": "HBO Max",
@@ -114,64 +80,75 @@ KNOWN_NAMES = {
 }
 
 
-class AdbDevice(Protocol):
-    """The part of adb-shell's `AdbDeviceTcp` this module uses."""
-
-    def connect(self, rsa_keys: list[object], auth_timeout_s: float) -> bool: ...
-
-    def shell(self, command: str, read_timeout_s: float) -> object: ...
-
-    def close(self) -> None: ...
+@dataclass(frozen=True, slots=True)
+class AdbDevice:
+    serial: str
+    state: str
 
 
-@dataclass(frozen=True)
-class AdbErrors:
-    """adb-shell's exception classes, loaded with the optional library."""
-
-    device_auth: type[Exception]
-    adb_timeout: type[Exception]
-    tcp_timeout: type[Exception]
-    adb_connection: type[Exception]
-    invalid_response: type[Exception]
+@dataclass(frozen=True, slots=True)
+class MdnsService:
+    serial: str
+    kind: str
+    endpoint: str
 
 
-# The signer is opaque here: adb-shell builds it from the key file and uses it itself.
-DeviceFactory = Callable[[str, int, float], AdbDevice]
-SignerFactory = Callable[[str], object]
-KeyGenerator = Callable[[str], None]
+Completed = subprocess.CompletedProcess[str]
+Runner = Callable[[Sequence[str], str | None, float], Completed]
+
+
+def _run_adb(command: Sequence[str], stdin: str | None, timeout: float) -> Completed:
+    return subprocess.run(
+        command, input=stdin, text=True, capture_output=True, check=False, timeout=timeout
+    )
 
 
 def parse_launcher_apps(output: str) -> tuple[TvApp, ...]:
-    """The launchable apps in the output of `LAUNCHER_QUERY`, sorted by package, unique."""
-    packages = set()
-    for line in output.splitlines():
-        match = _COMPONENT.match(line.strip())
-        if match:
-            packages.add(match.group(1))
+    packages = {
+        m.group(1)
+        for line in output.splitlines()
+        if (m := _COMPONENT.match(line.strip())) is not None
+    }
     return tuple(TvApp(package=p, name=KNOWN_NAMES.get(p)) for p in sorted(packages))
 
 
 def checked_package(package: object) -> str:
-    """A well-formed Android package name, never a free command or a shell fragment."""
     if not isinstance(package, str) or len(package) > 255 or not PACKAGE_NAME.fullmatch(package):
         raise InvalidArgumentError("not an Android package name")
     return package
 
 
 def parse_front_app(output: object) -> str | None:
-    """The package of the activity the TV reports in front, or None when it does not say."""
     if not isinstance(output, str):
         return None
     match = _FRONT.search(output)
     return match.group(1) if match else None
 
 
+def parse_devices(output: str) -> tuple[AdbDevice, ...]:
+    found = []
+    for raw in output.splitlines():
+        fields = raw.strip().split()
+        if len(fields) >= 2 and not raw.startswith(("List of devices", "*")):
+            found.append(AdbDevice(fields[0], fields[1]))
+    return tuple(found)
+
+
+def parse_mdns_services(output: str) -> tuple[MdnsService, ...]:
+    found = []
+    for raw in output.splitlines():
+        fields = raw.split()
+        if len(fields) < 3 or not fields[-2].startswith("_adb-tls-"):
+            continue
+        kind, endpoint = fields[-2].rstrip("."), fields[-1]
+        if _ENDPOINT.fullmatch(endpoint):
+            instance = fields[-3].rstrip(".")
+            found.append(MdnsService(f"{instance}.{kind}", kind, endpoint))
+    return tuple(found)
+
+
 def apps_installed() -> bool:
-    """Whether this build embeds the library that lists apps; checked without importing it."""
-    try:
-        return importlib.util.find_spec("adb_shell") is not None
-    except (ImportError, ValueError):
-        return False
+    return shutil.which("adb") is not None
 
 
 def _checked_host(host: str) -> str:
@@ -181,165 +158,172 @@ def _checked_host(host: str) -> str:
         raise InvalidArgumentError("the TV address is not an IP address") from None
 
 
-def _library() -> AdbErrors:
+def _endpoint_host(endpoint: str) -> str | None:
+    match = _ENDPOINT.fullmatch(endpoint)
+    if match is None:
+        return None
     try:
-        import adb_shell.exceptions as exceptions
-    except ImportError:
-        raise UnsupportedOperationError(
-            "listing the TV's apps is not installed (control-tv[tvremote])"
-        ) from None
-    return AdbErrors(
-        device_auth=exceptions.DeviceAuthError,
-        adb_timeout=exceptions.AdbTimeoutError,
-        tcp_timeout=exceptions.TcpTimeoutException,
-        adb_connection=exceptions.AdbConnectionError,
-        invalid_response=exceptions.InvalidResponseError,
-    )
-
-
-def _default_device(host: str, port: int, timeout: float) -> AdbDevice:
-    from adb_shell.adb_device import AdbDeviceTcp
-
-    device: AdbDevice = AdbDeviceTcp(host, port, default_transport_timeout_s=timeout)
-    return device
-
-
-def _default_signer(key_path: str) -> object:
-    from adb_shell.auth.sign_cryptography import CryptographySigner
-
-    return CryptographySigner(key_path)
-
-
-def _default_keygen(key_path: str) -> None:
-    from adb_shell.auth.keygen import keygen
-
-    keygen(key_path)
+        return str(ipaddress.ip_address(match.group(1).strip("[]")))
+    except ValueError:
+        return None
 
 
 class AdbAppInventory:
-    """Lists a TV's launchable apps over its network debugging, one short connection each."""
+    """Lists and opens apps through one unambiguous device of the local ADB server."""
 
     def __init__(
         self,
-        credentials_dir: Path,
+        credentials_dir: Path | None = None,
         *,
-        port: int = ADB_PORT,
-        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
-        auth_timeout: float = DEFAULT_AUTH_TIMEOUT,
-        read_timeout: float = DEFAULT_READ_TIMEOUT,
-        device_factory: DeviceFactory = _default_device,
-        signer_factory: SignerFactory = _default_signer,
-        keygen: KeyGenerator = _default_keygen,
+        adb: str = "adb",
+        timeout: float = DEFAULT_TIMEOUT,
+        run: Runner = _run_adb,
         front_reads: int = DEFAULT_FRONT_READS,
         front_interval: float = DEFAULT_FRONT_INTERVAL,
         sleep: Callable[[float], None] = time.sleep,
         launch_budget: float = DEFAULT_LAUNCH_BUDGET,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._dir = Path(credentials_dir)
-        self._port = port
-        self._connect_timeout = connect_timeout
-        self._auth_timeout = auth_timeout
-        self._read_timeout = read_timeout
-        self._device_factory = device_factory
-        self._signer_factory = signer_factory
-        self._keygen = keygen
-        self._front_reads = max(1, front_reads)
-        self._front_interval = front_interval
-        self._sleep = sleep
-        self._launch_budget = launch_budget
-        self._clock = clock
+        del credentials_dir  # Platform tools own and preserve ~/.android/adbkey.
+        self._adb, self._timeout, self._run = adb, timeout, run
+        self._front_reads, self._front_interval = max(1, front_reads), front_interval
+        self._sleep, self._launch_budget, self._clock = sleep, launch_budget, clock
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
-        """The TV's launchable apps. Raises a control error with a plain reason otherwise."""
-
-        def query(device: AdbDevice) -> tuple[TvApp, ...]:
-            output = device.shell(LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
-            if not isinstance(output, str):
-                raise DeviceUnavailableError("the TV returned no list of apps")
-            return parse_launcher_apps(output)
-
-        return self._session(host, query)
+        return parse_launcher_apps(self._shell(self._resolve(host), LAUNCHER_QUERY).stdout)
 
     def launch_app(self, host: str, package: str) -> AppLaunch:
-        """Open the app's home-screen activity once, then read which app the TV has in front.
-
-        The launch is one `monkey` event for the Leanback launcher activity of `package`, the
-        way the TV's own home screen opens it. The TV says when it has no such activity, and
-        then nothing was opened. The app in front is read (read-only) a few times; the launch
-        and those reads share one budget (`launch_budget`), and whatever the TV reported last
-        is returned when it runs out.
-        """
-        package = checked_package(package)
-
-        def launch(device: AdbDevice) -> AppLaunch:
-            deadline = self._clock() + self._launch_budget
-
-            def budget() -> float:
-                return min(self._read_timeout, deadline - self._clock())
-
-            output = device.shell(
-                LAUNCH_COMMAND.format(package=package), read_timeout_s=max(budget(), 0.1)
-            )
-            if isinstance(output, str) and "No activities found" in output:
-                raise CommandRejectedError("the TV has no home-screen activity for this app")
-            front: str | None = None
-            for attempt in range(self._front_reads):
-                if attempt:
-                    if budget() <= self._front_interval:
-                        break  # the launch was sent; what the TV said last is the answer
-                    self._sleep(self._front_interval)
-                if budget() <= 0:
+        package, serial = checked_package(package), self._resolve(host)
+        deadline = self._clock() + self._launch_budget
+        output = self._shell(serial, LAUNCH_COMMAND.format(package=package)).stdout
+        if "No activities found" in output or "monkey aborted" in output:
+            raise CommandRejectedError("the TV has no home-screen activity for this app")
+        front = None
+        for attempt in range(self._front_reads):
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                break
+            if attempt:
+                if remaining <= self._front_interval:
                     break
-                front = parse_front_app(device.shell(FRONT_QUERY, read_timeout_s=budget()))
-                if front == package:
-                    break
-            return AppLaunch(package=package, front_app=front)
+                self._sleep(self._front_interval)
+            front = parse_front_app(self._shell(serial, FRONT_QUERY, timeout=remaining).stdout)
+            if front == package:
+                break
+        return AppLaunch(package=package, front_app=front)
 
-        return self._session(host, launch)
-
-    def _session(self, host: str, action: Callable[[AdbDevice], T]) -> T:
-        """One short connection: connect (the owner may have to allow control-TV), act, close."""
+    def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
+        """Pair once without putting the temporary code in argv, logs or retained state."""
         host = _checked_host(host)
-        errors = _library()
-        signer = self._signer_factory(str(self._key()))
-        device = self._device_factory(host, self._port, self._connect_timeout)
-        allow = "allow control-TV on the TV when it asks, then try again"
-        try:
-            try:
-                # A TV that asks the owner to allow the key waits up to `auth_timeout`; no
-                # answer in time is the owner not having allowed it (yet), not a dead TV. Once
-                # the socket is open, adb-shell reports a slow answer as TcpTimeoutException.
-                if not device.connect(rsa_keys=[signer], auth_timeout_s=self._auth_timeout):
-                    raise PairingRequiredError(allow)
-            except (errors.device_auth, errors.adb_timeout, errors.tcp_timeout):
-                raise PairingRequiredError(allow) from None
-            return action(device)
-        except ConnectionRefusedError:
-            # Nothing listens on the port: the classic network debugging is off.
-            raise DebuggingOffError(
-                "the TV accepts no debugging connection on port 5555: turn on USB debugging "
-                "in the TV's developer options; a TV that only offers Wireless debugging (with "
-                "a pairing code) is not supported yet"
-            ) from None
-        except (errors.adb_timeout, errors.tcp_timeout):
-            # Connected and allowed, then a command was slow: for a launch it may have run.
-            raise OperationTimeoutError("the TV did not answer in time") from None
-        except (errors.adb_connection, errors.invalid_response, OSError):
-            raise DeviceUnavailableError(
-                "the TV's debugging service could not be reached"
-            ) from None
-        finally:
-            with suppress(OSError):
-                device.close()
+        endpoint = self._checked_endpoint(pairing_endpoint, expected_host=host)
+        if not isinstance(code, str) or _PAIRING_CODE.fullmatch(code) is None:
+            raise InvalidArgumentError("the Wireless debugging pairing code must have 6 digits")
+        result = self._command(["pair", endpoint], stdin=f"{code}\n")
+        if result.returncode != 0 or "Successfully paired" not in result.stdout:
+            raise CommandRejectedError(
+                "the TV refused or expired the Wireless debugging pairing code"
+            )
+        self._resolve(host)  # Finds the separate connect port advertised after pairing.
 
-    def _key(self) -> Path:
-        """control-TV's ADB key, created once in the private directory."""
-        self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(self._dir, 0o700)
-        key = self._dir / KEY_FILE
-        public = self._dir / (KEY_FILE + ".pub")
-        if not (key.is_file() and public.is_file()):
-            self._keygen(str(key))
-        os.chmod(key, 0o600)
-        return key
+    def _resolve(self, host: str) -> str:
+        host = _checked_host(host)
+        devices = parse_devices(self._required(["devices", "-l"]).stdout)
+        services = parse_mdns_services(self._required(["mdns", "services"]).stdout)
+        serials = self._matching_serials(host, devices, services)
+        if len(serials) == 1:
+            return serials[0]
+        if len(serials) > 1:
+            raise DeviceUnavailableError(
+                "more than one ADB connection matches the selected TV; "
+                "disconnect the stale connection and refresh"
+            )
+        connect = [
+            s
+            for s in services
+            if s.kind == "_adb-tls-connect._tcp" and _endpoint_host(s.endpoint) == host
+        ]
+        if len(connect) > 1:
+            raise DeviceUnavailableError(
+                "more than one Wireless debugging service matches the selected TV"
+            )
+        if len(connect) == 1:
+            result = self._command(["connect", connect[0].endpoint])
+            if result.returncode == 0 and "failed" not in result.stdout.lower():
+                devices = parse_devices(self._required(["devices", "-l"]).stdout)
+                serials = self._matching_serials(host, devices, services)
+                if len(serials) == 1:
+                    return serials[0]
+        if any(
+            s.kind == "_adb-tls-pairing._tcp" and _endpoint_host(s.endpoint) == host
+            for s in services
+        ):
+            raise PairingRequiredError(
+                "this TV offers Wireless debugging but is not connected; pair it in control-TV"
+            )
+        raise DebuggingOffError(
+            "no ADB connection or Wireless debugging service matches the "
+            "selected TV; turn on Wireless debugging (or classic network "
+            "debugging) and refresh"
+        )
+
+    @staticmethod
+    def _matching_serials(
+        host: str, devices: tuple[AdbDevice, ...], services: tuple[MdnsService, ...]
+    ) -> list[str]:
+        connected = {d.serial for d in devices if d.state == "device"}
+        return sorted(
+            serial
+            for serial in connected
+            if _endpoint_host(serial) == host
+            or any(
+                s.kind == "_adb-tls-connect._tcp"
+                and _endpoint_host(s.endpoint) == host
+                and serial in {s.serial, s.serial + "."}
+                for s in services
+            )
+        )
+
+    def _shell(self, serial: str, command: str, *, timeout: float | None = None) -> Completed:
+        result = self._command(["-s", serial, "shell", command], timeout=timeout)
+        if result.returncode:
+            detail = (result.stderr or result.stdout).lower()
+            if "unauthorized" in detail:
+                raise PairingRequiredError("the selected TV has not authorized this ADB server")
+            if any(word in detail for word in ("not found", "offline", "closed")):
+                raise DeviceUnavailableError("the selected TV's ADB connection was lost")
+            if "permission denied" in detail:
+                raise CommandRejectedError("the TV refused the ADB operation")
+            raise DeviceUnavailableError("the selected TV did not accept the ADB operation")
+        return result
+
+    def _required(self, arguments: Sequence[str]) -> Completed:
+        result = self._command(arguments)
+        if result.returncode:
+            raise DeviceUnavailableError("the local ADB server could not list its devices")
+        return result
+
+    def _command(
+        self, arguments: Sequence[str], *, stdin: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        try:
+            return self._run(
+                [self._adb, *arguments], stdin, min(timeout or self._timeout, self._timeout)
+            )
+        except FileNotFoundError:
+            raise UnsupportedOperationError(
+                "Android platform tools (adb) are not installed"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise OperationTimeoutError("ADB did not answer in time") from None
+        except OSError:
+            raise DeviceUnavailableError("the local ADB server could not be reached") from None
+
+    @staticmethod
+    def _checked_endpoint(endpoint: str, *, expected_host: str) -> str:
+        if not isinstance(endpoint, str) or _ENDPOINT.fullmatch(endpoint) is None:
+            raise InvalidArgumentError("the pairing address must be an IP address and port")
+        if _endpoint_host(endpoint) != expected_host:
+            raise InvalidArgumentError("the pairing address is not the selected TV")
+        if not 0 < int(endpoint.rsplit(":", 1)[1]) < 65536:
+            raise InvalidArgumentError("the pairing port is out of range")
+        return endpoint

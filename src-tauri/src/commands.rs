@@ -261,6 +261,10 @@ pub(crate) fn app_request(device_id: &str, package: &str) -> Value {
     json!({ "deviceId": device_id, "package": package })
 }
 
+pub(crate) fn app_pairing_request(device_id: &str, pairing_endpoint: &str, code: &str) -> Value {
+    json!({ "deviceId": device_id, "pairingEndpoint": pairing_endpoint, "code": code })
+}
+
 /// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
 /// no retry, no state of its own, and the answer is data.
 pub(crate) async fn send_remote(
@@ -367,6 +371,22 @@ pub(crate) async fn bridge_launch_tv_app(
         state.inner().clone(),
         "launch_tv_app",
         app_request(&device_id, &package),
+        APPS_TIMEOUT,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_pair_tv_apps(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    pairing_endpoint: String,
+    code: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "pair_tv_apps",
+        app_pairing_request(&device_id, &pairing_endpoint, &code),
         APPS_TIMEOUT,
     )
     .await

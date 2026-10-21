@@ -151,6 +151,18 @@ class TvChannels:
             front_app=front,
         )
 
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        """Pair the selected TV's Wireless debugging service using its temporary code."""
+        if not isinstance(pairing_endpoint, str) or not isinstance(code, str):
+            raise InvalidArgumentError("the pairing address and code must be text")
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot pair with the TV's debugging service",
+                device_id=device_id,
+            )
+        self._apps.pair(host, pairing_endpoint, code)
+
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
         if self._remote is None:
             raise UnsupportedOperationError(

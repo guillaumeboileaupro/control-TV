@@ -31,6 +31,11 @@ export interface RemotePanelElements {
   remoteText: HTMLInputElement;
   remoteTextSend: HTMLButtonElement;
   remoteAppsList: HTMLButtonElement;
+  remoteAppsPairing: HTMLElement;
+  remoteAppsPairingForm: HTMLFormElement;
+  remoteAppsPairingEndpoint: HTMLInputElement;
+  remoteAppsPairingCode: HTMLInputElement;
+  remoteAppsPair: HTMLButtonElement;
   remoteAppsFilter: HTMLInputElement;
   remoteApps: HTMLElement;
   remoteReadout: HTMLElement;
@@ -61,6 +66,14 @@ export function createRemotePanel(
   }
   el.remoteRead.addEventListener("click", () => actions.run({ kind: "status" }));
   el.remoteAppsList.addEventListener("click", () => actions.run({ kind: "list_apps" }));
+  el.remoteAppsPairingForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    actions.run({
+      kind: "pair_apps",
+      pairingEndpoint: el.remoteAppsPairingEndpoint.value,
+      code: el.remoteAppsPairingCode.value,
+    });
+  });
   el.remoteAppsFilter.addEventListener("input", () =>
     actions.filterApps(el.remoteAppsFilter.value),
   );
@@ -101,6 +114,10 @@ export function createRemotePanel(
     setBusy(el.remoteTextSend, !remote.keysEnabled);
     el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
     renderApps(state, remote);
+    el.remoteAppsPairing.hidden = !remote.appsPairingNeeded;
+    setBusy(el.remoteAppsPair, remote.busy);
+    el.remoteAppsPairingEndpoint.disabled = remote.busy;
+    el.remoteAppsPairingCode.disabled = remote.busy;
     el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
 
     el.remotePairing.hidden = remote.pairing === null;

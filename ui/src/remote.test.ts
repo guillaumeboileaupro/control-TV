@@ -133,6 +133,16 @@ describe("requests", () => {
       command: "bridge_finish_remote_pairing",
       args: { deviceId: "a", code: "A1B2C3" },
     });
+    assert.deepEqual(
+      remoteInvocation({
+        ...base,
+        action: { kind: "pair_apps", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      }),
+      {
+        command: "bridge_pair_tv_apps",
+        args: { deviceId: "a", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      },
+    );
   });
 
   test("one request at a time, shared with every other request of the app", () => {
@@ -582,10 +592,10 @@ describe("the TV's apps", () => {
     assert.equal(setAppFilter(byName, "net"), byName);
   });
 
-  test("debugging off explains how to turn it on, and does not touch the remote's pairing", () => {
+  test("debugging off explains Wireless debugging and does not touch remote pairing", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("debugging_off"));
 
-    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+    assert.match(describeRemote(state).outcome?.text ?? "", /Wireless debugging/);
     assert.equal(state.remote.pairing, "not_tried");
   });
 
@@ -601,15 +611,33 @@ describe("the TV's apps", () => {
     }
   });
 
-  test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
+  test("ADB pairing is offered separately from remote pairing", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("pairing_required"));
 
     assert.equal(
       describeRemote(state).outcome?.text,
-      "Allow control-TV on the TV when it asks about debugging, then try again.",
+      "Allow this computer if the TV shows an authorization prompt. For Wireless debugging, open the pairing-code screen and enter its pairing address and temporary code here.",
     );
+    assert.equal(describeRemote(state).appsPairingNeeded, true);
     assert.equal(state.remote.pairing, "not_tried");
     assert.equal(describeRemote(state).keysEnabled, true);
+  });
+
+  test("Wireless debugging pairing validates, sends once and clears the temporary state", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const invalid = startRemote(needed, {
+      kind: "pair_apps",
+      pairingEndpoint: "192.0.2.10:40000",
+      code: "12ab56",
+    });
+    assert.equal(invalid.request, null);
+    const paired = run(
+      needed,
+      { kind: "pair_apps", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      { ok: true, result: { pairing: "paired" } },
+    );
+    assert.equal(paired.request.action.kind, "pair_apps");
+    assert.equal(paired.state.remote.appsPairingNeeded, false);
   });
 
   test("apps are listed and opened even while the remote still needs pairing", () => {
@@ -678,7 +706,7 @@ describe("the TV's apps", () => {
   test("opening while the TV's debugging is off explains how to turn it on", () => {
     const { state } = run(withTv(), open, failure("debugging_off"));
 
-    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+    assert.match(describeRemote(state).outcome?.text ?? "", /Wireless debugging/);
   });
 
   test("another TV starts without the previous TV's apps", () => {

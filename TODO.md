@@ -44,6 +44,16 @@ la surveillance complémentaire du publisher D1.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
 
+- [x] **ADB sans fil Ubuntu (2026-10-21, validation automatisée)** : serveur ADB existant,
+  appareils TCP et TLS, services mDNS, ports dynamiques, reconnexion, refus des correspondances
+  absentes/ambiguës et ciblage explicite par `adb -s`. L'interface propose l'association par
+  adresse/port et code temporaire, sans conserver le code.
+- [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
+  application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
+  la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.
+- [ ] **Android** : définir un chemin TLS sans serveur permanent dans l'application ; le serveur
+  ADB platform-tools utilisé ici est disponible sur Ubuntu seulement.
+
 - [x] **Codex — diagnostic sans supposition :** le paquet installé est `control-tv` 0.1.0 amd64, mais son binaire du 15 octobre (`84186c3ea194052587595fa59accf96c012256fc5fc508d3b0661d4ec7140a53`) diffère du binaire extrait sans installation du `.deb` final du 17 octobre (`f4678ae03c13999a180b48442056359ab087b7c989fe34a1b22ed5ddb6e5149f`). La capture utilisait donc un ancien bundle, antérieur à #71. Le bundle frontend reconstruit contient l'identifiant Apple TV, son SVG et l'appel `appLogo`; la CSP reste validée par la recette statique.
 - [x] **Codex — correspondances :** le backend n'émet le libellé « Apple TV » que pour l'identifiant exact `com.apple.atve.androidtv.appletv`, ce qui établit l'identifiant reçu dans la capture sans nouvelle connexion TV. Il correspond exactement à `ui/src/app-logos.ts`; aucun alias ou logo approximatif n'a été ajouté. L'identifiant exact de chaque tuile est désormais conservé dans son infobulle et son nom accessible.
 - [x] **Codex — UI :** noms connus lisibles, identifiant technique accessible dans l'infobulle et aux technologies d'assistance ; fallback technique inconnu limité à trois lignes, police compacte et césure sans débordement ; logos officiels et fallback par initiale inchangés. Validation matérielle avant/après toujours ouverte.

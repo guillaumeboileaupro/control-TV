@@ -6,7 +6,7 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libayatana-appindicator3-1"],
+        "depends": ["libayatana-appindicator3-1", "adb"],
         "files": {
           "/usr/share/doc/control-tv/copyright": "../LICENSE",
           "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses"

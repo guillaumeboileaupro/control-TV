@@ -407,6 +407,35 @@
                 aria-label="Find an app"
                 hidden
               />
+              <div id="remote-apps-pairing" class="remote-pairing" hidden>
+                <p id="remote-apps-pairing-hint">
+                  On the TV, open Wireless debugging › Pair device with pairing code. Enter the
+                  pairing IP address and port shown there; this is not the connection port.
+                </p>
+                <form id="remote-apps-pairing-form" class="remote-pair-form">
+                  <label for="remote-apps-pairing-endpoint">Pairing address</label>
+                  <input
+                    id="remote-apps-pairing-endpoint"
+                    class="field"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    placeholder="192.0.2.10:40000"
+                    aria-describedby="remote-apps-pairing-hint"
+                  />
+                  <label for="remote-apps-pairing-code">Temporary 6-digit code</label>
+                  <input
+                    id="remote-apps-pairing-code"
+                    class="field remote-code"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    pattern="[0-9]{6}"
+                  />
+                  <button id="remote-apps-pair" class="btn btn-primary" type="submit">
+                    Pair Wireless debugging
+                  </button>
+                </form>
+              </div>
               <ul id="remote-apps" class="app-grid" aria-label="Apps installed on the TV"></ul>
             </div>
 
