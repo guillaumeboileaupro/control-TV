@@ -115,6 +115,17 @@ def test_dynamic_connect_port_is_reconnected_then_used() -> None:
     assert ("adb", "connect", f"{HOST}:37123") in [call[0] for call in runner.calls]
 
 
+def test_classic_tcp_device_is_reconnected_after_a_fresh_adb_server() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TCP)]
+    answers[("connect", f"{HOST}:5555")] = [done(f"connected to {HOST}:5555")]
+    runner = FakeRunner(answers)
+
+    inventory(runner).list_apps(HOST)
+
+    assert [call[0] for call in runner.calls].count(("adb", "connect", f"{HOST}:5555")) == 1
+
+
 def test_multiple_devices_never_select_the_first_or_wrong_host() -> None:
     devices = "List of devices attached\n192.0.2.99:5555 device\n" + DEVICES_TLS.split("\n", 1)[1]
     answers = listing_answers(devices)
@@ -146,7 +157,11 @@ def test_pairing_service_is_not_misreported_as_debugging_off() -> None:
 
 def test_no_matching_service_explains_wireless_debugging() -> None:
     runner = FakeRunner(
-        {("devices", "-l"): [done("List of devices attached\n")], ("mdns", "services"): [done("")]}
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done("")],
+            ("connect", f"{HOST}:5555"): [done("failed to connect", code=1)],
+        }
     )
     with pytest.raises(DebuggingOffError, match="Wireless debugging"):
         inventory(runner).list_apps(HOST)
@@ -154,13 +169,14 @@ def test_no_matching_service_explains_wireless_debugging() -> None:
 
 def test_pairing_code_uses_stdin_and_is_never_an_argument() -> None:
     answers: Answers = {
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
         ("pair", f"{HOST}:40211"): [done("Successfully paired")],
         ("devices", "-l"): [done(DEVICES_TLS)],
         ("mdns", "services"): [done(MDNS_TLS)],
     }
     runner = FakeRunner(answers)
     inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
-    pair_call = runner.calls[0]
+    pair_call = runner.calls[1]
     assert pair_call[0] == ("adb", "pair", f"{HOST}:40211")
     assert pair_call[1] == "123456\n"
 
@@ -174,10 +190,22 @@ def test_invalid_or_expired_pairing_is_rejected(code: str) -> None:
 
 
 def test_refused_pairing_does_not_retain_or_echo_code() -> None:
-    runner = FakeRunner({("pair", f"{HOST}:40211"): [done("", "failed", 1)]})
+    runner = FakeRunner(
+        {
+            ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+            ("pair", f"{HOST}:40211"): [done("", "failed", 1)],
+        }
+    )
     with pytest.raises(CommandRejectedError) as error:
         inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
     assert "123456" not in str(error.value)
+
+
+def test_old_adb_explains_that_wireless_pairing_is_unavailable() -> None:
+    runner = FakeRunner({("help",): [done("adb connect HOST[:PORT]")]})
+    with pytest.raises(UnsupportedOperationError, match=r"does not support.*pairing"):
+        inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+    assert all("pair" not in call[0][1:] for call in runner.calls)
 
 
 def test_pairing_cannot_target_another_device() -> None:

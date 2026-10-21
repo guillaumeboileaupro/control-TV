@@ -201,7 +201,7 @@ export function remoteAvailable(state: AppState): boolean {
 // The TV's apps go through its debugging, a separate service: every TV (a Cast video device), not
 // a group or a speaker, whatever discovery saw of its remote channel.
 export function appsAvailable(state: AppState): boolean {
-  return state.selected !== null && state.selected.kind === "cast";
+  return state.tvAppsAvailable && state.selected !== null && state.selected.kind === "cast";
 }
 
 function isAppAction(action: RemoteAction): boolean {
@@ -717,9 +717,9 @@ export function describeRemote(state: AppState): RemoteDescription {
     pendingKey: pending !== null && pending.action.kind === "key" ? pending.action.key : null,
     sendingText: pending !== null && pending.action.kind === "text",
     apps: filteredApps(remote.apps, remote.appFilter),
-    appsEnabled: !busy,
+    appsEnabled: appsAvailable(state) && !busy,
     listingApps: pending !== null && pending.action.kind === "list_apps",
-    launchEnabled: !busy,
+    launchEnabled: appsAvailable(state) && !busy,
     pendingApp:
       pending !== null && pending.action.kind === "launch_app" ? pending.action.package : null,
     appsPairingNeeded: remote.appsPairingNeeded,

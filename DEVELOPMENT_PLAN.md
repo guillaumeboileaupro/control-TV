@@ -1246,6 +1246,14 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
   absence/ambiguïté, association acceptée/refusée/expirée, perte de connexion, liste et lancement.
   La preuve matérielle antérieure de lecture ADB est conservée ; la recette complète depuis
   l'interface et l'observation physique d'un lancement restent NOT RUN sur cette branche.
+- [x] **Correctifs de revue #99 (automatisés)** : reconnexion unique d'une cible TCP classique
+  sur 5555 après redémarrage du serveur, sans remplacer les ports TLS/mDNS dynamiques ; préflight
+  de la capacité `adb pair` ; propagation de `tvApps` jusqu'à l'UI, qui ne propose plus les
+  contrôles sur une plateforme sans ADB. Aucun appareil n'a été contacté.
+- [ ] **Dépendance de packaging #99** : l'`adb` de base Ubuntu 22.04 ne garantit pas l'association
+  sans fil introduite dans des Platform Tools plus récents. Le code échoue maintenant
+  explicitement, mais la fourniture vérifiée d'un ADB moderne sur installation propre reste à
+  décider et auditer (version, provenance, checksum, licence et mises à jour).
 - [ ] **Portée Android de 2E** : l'APK n'embarque plus `adb-shell` et ne peut pas exécuter le
   serveur platform-tools ; concevoir un transport TLS Android compatible avec l'absence de
   serveur permanent avant de déclarer la parité Ubuntu/Android.

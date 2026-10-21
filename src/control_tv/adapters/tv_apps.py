@@ -218,6 +218,14 @@ class AdbAppInventory:
         endpoint = self._checked_endpoint(pairing_endpoint, expected_host=host)
         if not isinstance(code, str) or _PAIRING_CODE.fullmatch(code) is None:
             raise InvalidArgumentError("the Wireless debugging pairing code must have 6 digits")
+        help_result = self._command(["help"])
+        if help_result.returncode != 0 or not re.search(
+            r"(?m)^\s*adb pair\b|^\s*pair\s+HOST", help_result.stdout + help_result.stderr
+        ):
+            raise UnsupportedOperationError(
+                "this adb does not support Wireless debugging pairing; "
+                "install current Android SDK Platform Tools"
+            )
         result = self._command(["pair", endpoint], stdin=f"{code}\n")
         if result.returncode != 0 or "Successfully paired" not in result.stdout:
             raise CommandRejectedError(
@@ -260,6 +268,16 @@ class AdbAppInventory:
             raise PairingRequiredError(
                 "this TV offers Wireless debugging but is not connected; pair it in control-TV"
             )
+        # Classic network debugging does not advertise mDNS. A fresh/restarted ADB server has
+        # forgotten it, so make one bounded connection attempt on its conventional port. Never
+        # apply this fallback to a host that advertised a TLS service with a dynamic port.
+        classic_endpoint = f"{host}:5555"
+        result = self._command(["connect", classic_endpoint])
+        if result.returncode == 0 and "failed" not in result.stdout.lower():
+            devices = parse_devices(self._required(["devices", "-l"]).stdout)
+            serials = self._matching_serials(host, devices, services)
+            if len(serials) == 1:
+                return serials[0]
         raise DebuggingOffError(
             "no ADB connection or Wireless debugging service matches the "
             "selected TV; turn on Wireless debugging (or classic network "

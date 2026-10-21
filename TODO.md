@@ -47,7 +47,14 @@ la surveillance complémentaire du publisher D1.
 - [x] **ADB sans fil Ubuntu (2026-10-21, validation automatisée)** : serveur ADB existant,
   appareils TCP et TLS, services mDNS, ports dynamiques, reconnexion, refus des correspondances
   absentes/ambiguës et ciblage explicite par `adb -s`. L'interface propose l'association par
-  adresse/port et code temporaire, sans conserver le code.
+  adresse/port et code temporaire, sans conserver le code. Correctifs de revue : une cible TCP
+  classique oubliée après redémarrage du serveur reçoit une seule reconnexion bornée sur 5555 ;
+  `adb pair` est vérifié avant usage ; l'UI masque les applications quand le bridge annonce
+  `tvApps: false` (notamment Android).
+- [ ] **Packaging ADB moderne** : le paquet `adb` d'Ubuntu 22.04 assure le chemin TCP classique,
+  mais pas nécessairement `adb pair`. Choisir et auditer une distribution des Platform Tools
+  récents (binaire embarqué et licence, ou prérequis système explicite) avant de déclarer
+  l'association sans fil fonctionnelle sur une installation propre.
 - [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
   application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
   la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.

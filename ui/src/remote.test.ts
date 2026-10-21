@@ -39,8 +39,15 @@ const TV: Device = { ...DEVICE, androidTvRemote: true };
 
 function withTv(device: Device = TV): AppState {
   const ready = readyWith(statusOf());
-  return { ...ready, selected: device, devices: [device] };
+  return { ...ready, tvAppsAvailable: true, selected: device, devices: [device] };
 }
+
+test("TV app controls stay hidden when this host has no adb capability", () => {
+  const state = { ...withTv(), tvAppsAvailable: false };
+  assert.equal(describeRemote(state).visible, true); // the TV remote itself remains available
+  assert.equal(describeRemote(state).appsEnabled, false);
+  assert.equal(startRemote(state, { kind: "list_apps" }).request, null);
+});
 
 function run(
   state: AppState,
