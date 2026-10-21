@@ -14,6 +14,8 @@ Corrections issues de la revue indépendante : même un démarrage média partie
 
 Restent requis avant validation produit : relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.
 
+La revue indépendante finale du SHA `acefef9` est `APPROVED` sans constat P0 à P3. Elle couvre le code et les preuves automatisées, pas l'installation de l'APK, le décodage Android matériel, la synchronisation audio/vidéo ni l'endurance réelle, qui restent `NOT RUN`.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

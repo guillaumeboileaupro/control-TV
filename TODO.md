@@ -24,7 +24,7 @@
 
 **Pipeline simulé :** un pair WebRTC local reçoit simultanément cinq paquets RTP H.264 et cinq paquets RTP Opus après négociation ICE/DTLS/SRTP ; ce test prouve le transport concurrent et chiffré, pas le décodage Android matériel, la synchronisation audible/visible ni la stabilité sur plusieurs minutes.
 
-**Revue indépendante du 2026-10-21 :** les blocages sur le nettoyage après échec partiel, la conservation conjointe des erreurs média/nettoyage, l'échéance d'une piste silencieuse, la réponse Android après ICE complet et la documentation obsolète ont été corrigés après les verdicts `CHANGES REQUESTED`. Une nouvelle revue du SHA corrigé reste nécessaire. Les écarts fonctionnels UI/capacités, perte réseau/reconnexion et D2 restent ouverts.
+**Revue indépendante du 2026-10-21 :** les blocages sur le nettoyage après échec partiel, la conservation conjointe des erreurs média/nettoyage, l'échéance d'une piste silencieuse, la réponse Android après ICE complet et la documentation obsolète ont été corrigés après les verdicts `CHANGES REQUESTED`. La revue finale du SHA `acefef9` est `APPROVED`, sans P0/P1/P2/P3 nouveau ; elle reste strictement logicielle. Les écarts fonctionnels UI/capacités, perte réseau/reconnexion et D2 restent ouverts.
 
 ---
 
