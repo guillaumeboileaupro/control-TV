@@ -15,13 +15,15 @@ Le chemin faible latence complète, sans remplacer, `ControlService` et le repli
 
 ## Protocole local
 
-Le récepteur se connecte à `adresse:port`, envoie une ligne JSON `token`, reçoit l'offre SDP, puis renvoie une ligne contenant le refus explicite ou la réponse SDP. Le serveur disparaît après cet échange. Le média est chiffré par DTLS-SRTP. La signalisation TCP n'est pas chiffrée : le jeton protège contre une connexion arbitraire mais pas contre un attaquant capable d'écouter le LAN ; ajouter TLS ou une preuve de possession challenge/réponse est bloquant avant publication.
+Chaque session crée un certificat TLS éphémère. Le récepteur se connecte à `adresse:port`, vérifie son empreinte SHA-256 saisie avec les paramètres de session, puis envoie dans ce canal chiffré une ligne JSON contenant le jeton. Il reçoit l'offre SDP et renvoie, après rassemblement ICE complet, une ligne contenant le refus explicite ou la réponse SDP finale. Le certificat épinglé authentifie l'émetteur ; le jeton unique authentifie le récepteur et n'apparaît ni dans `Debug` ni dans les erreurs. Le serveur disparaît après cet échange, ce qui interdit sa réutilisation. Le média est ensuite chiffré par DTLS-SRTP.
+
+Une première connexion invalide consomme encore cette écoute à usage unique : l'utilisateur doit relancer la session. La reprise bornée après perte du réseau reste à implémenter ; aucun rejeu automatique de commande ou de secret n'est effectué.
 
 ## Validation automatisée et limites
 
-Le test d'intégration Rust crée deux pairs réels, négocie ICE/SDP/DTLS/SRTP sur la machine, transmet une unité H.264 Annex-B et vérifie la réception RTP. Les tests de signalisation utilisent uniquement la boucle locale. L'APK est compilé mais jamais installé.
+Le test d'intégration Rust crée deux pairs réels, négocie ICE/SDP/DTLS/SRTP sur la machine, transmet simultanément plusieurs unités H.264 Annex-B et plusieurs paquets Opus, puis vérifie cinq paquets RTP reçus sur chaque piste. Les tests de signalisation TLS, d'empreinte invalide et d'anti-rejeu utilisent uniquement la boucle locale. Les sorties FFmpeg sont découpées en unités d'accès H.264 délimitées par AUD et en paquets Opus extraits de pages Ogg ; les files sont bornées, la vidéo obsolète peut être abandonnée et l'audio applique une contre-pression. L'APK est compilé mais jamais installé.
 
-La capture réelle Ubuntu, le décodage matériel Android TV, l'audio/vidéo synchronisé, D2, la reprise réseau et la latence physique restent `NOT RUN`. Le flux FFmpeg doit encore être découpé en access units H.264 et paquets Opus au lieu de transmettre des blocs de pipe arbitraires ; il ne constitue donc pas encore une recette média Ubuntu→TV valide.
+La capture réelle Ubuntu, le décodage matériel Android TV, l'audio/vidéo synchronisé, la stabilité sur plusieurs minutes, D2, la reprise réseau et la latence physique restent `NOT RUN`. Le test local prouve le transport concurrent et chiffré, pas la recette média Ubuntu→TV ni le rendu matériel.
 
 ## Recette matérielle à autoriser
 

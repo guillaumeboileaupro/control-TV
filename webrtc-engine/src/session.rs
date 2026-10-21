@@ -131,10 +131,12 @@ impl SessionController {
         let (stop_tx, stop_rx) = oneshot::channel();
         self.media_stop = Some(stop_tx);
         self.media_task = Some(tokio::spawn(async move {
-            let streams = source.start().await?;
-            let result = tokio::select! {
-                result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
-                _ = stop_rx => Ok(()),
+            let result = match source.start().await {
+                Ok(streams) => tokio::select! {
+                    result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
+                    _ = stop_rx => Ok(()),
+                },
+                Err(error) => Err(error),
             };
             let cleanup = source.stop().await;
             result.and(cleanup)
@@ -226,8 +228,12 @@ async fn pump_video(
     diagnostics: Arc<Mutex<Diagnostics>>,
     deadline: Instant,
 ) -> Result<(), EngineError> {
-    while Instant::now() < deadline {
-        let Some(frame) = frames.recv().await else {
+    loop {
+        let frame = tokio::select! {
+            frame = frames.recv() => frame,
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => None,
+        };
+        let Some(frame) = frame else {
             break;
         };
         let frame = frame?;
@@ -250,8 +256,12 @@ async fn pump_audio(
     let Some(mut frames) = frames else {
         return Ok(());
     };
-    while Instant::now() < deadline {
-        let Some(frame) = frames.recv().await else {
+    loop {
+        let frame = tokio::select! {
+            frame = frames.recv() => frame,
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => None,
+        };
+        let Some(frame) = frame else {
             break;
         };
         let frame = frame?;
@@ -269,6 +279,7 @@ mod tests {
 
     struct FakeSource {
         keep_open: bool,
+        fail_start: bool,
         stopped: Arc<AtomicBool>,
         sender: Option<mpsc::Sender<Result<MediaFrame, EngineError>>>,
     }
@@ -277,6 +288,10 @@ mod tests {
     impl MediaSource for FakeSource {
         async fn start(&mut self) -> Result<MediaStreams, EngineError> {
             let (sender, receiver) = mpsc::channel(1);
+            if self.fail_start {
+                self.sender = Some(sender);
+                return Err(EngineError::MediaSource("synthetic start failure".into()));
+            }
             if self.keep_open {
                 self.sender = Some(sender);
             }
@@ -336,6 +351,7 @@ mod tests {
             .start_media(
                 Box::new(FakeSource {
                     keep_open: false,
+                    fail_start: false,
                     stopped: Arc::clone(&stopped),
                     sender: None,
                 }),
@@ -368,6 +384,7 @@ mod tests {
             .start_media(
                 Box::new(FakeSource {
                     keep_open: true,
+                    fail_start: false,
                     stopped: Arc::clone(&stopped),
                     sender: None,
                 }),
@@ -381,5 +398,52 @@ mod tests {
         assert_eq!(controller.state(), EngineState::Idle);
         assert!(stopped.load(Ordering::SeqCst));
         assert!(transport.closed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_partial_start_failure_still_cleans_the_source() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: false,
+                    fail_start: true,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                media_transport,
+            )
+            .expect("start task");
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("start failure reported");
+        assert!(matches!(result, Err(EngineError::MediaSource(_))));
+        assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_silent_open_track_stops_at_the_session_deadline() {
+        let (_sender, receiver) = mpsc::channel(1);
+        let transport = FakeTransport::default();
+        let result = pump_video(
+            receiver,
+            &transport,
+            Arc::new(Mutex::new(Diagnostics::default())),
+            Instant::now() + Duration::from_millis(10),
+        );
+        tokio::time::timeout(Duration::from_secs(1), result)
+            .await
+            .expect("deadline")
+            .expect("silent track stops cleanly");
     }
 }

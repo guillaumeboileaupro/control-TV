@@ -159,7 +159,7 @@ pub(crate) async fn start_webrtc_stream(
     *state
         .negotiation
         .lock()
-        .expect("negotiation task lock poisoned") = Some(task);
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
 
     Ok(StartReply {
         session_id,
@@ -177,7 +177,7 @@ pub(crate) async fn stop_webrtc_stream(
     if let Some(task) = state
         .negotiation
         .lock()
-        .expect("negotiation task lock poisoned")
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
     {
         task.abort();

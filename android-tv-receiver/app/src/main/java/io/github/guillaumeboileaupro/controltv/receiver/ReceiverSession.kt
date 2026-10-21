@@ -38,6 +38,8 @@ internal class ReceiverSession(
     private val factory: PeerConnectionFactory
     private var peer: PeerConnection? = null
     private var socket: Socket? = null
+    private var answerWriter: BufferedWriter? = null
+    private val answerGate = IceCompleteAnswerGate()
     private val closed = AtomicBoolean(false)
 
     init {
@@ -77,16 +79,18 @@ internal class ReceiverSession(
                 it.startHandshake()
             }
             val writer = BufferedWriter(OutputStreamWriter(connection.getOutputStream(), Charsets.UTF_8))
+            answerWriter = writer
             val reader = BufferedReader(InputStreamReader(connection.getInputStream(), Charsets.UTF_8))
             writer.write(PairingProtocol.hello(target)); writer.newLine(); writer.flush()
             val remoteOffer = PairingProtocol.offer(reader.readLine() ?: error("Sender closed signaling"))
             onState("Négociation…")
             val currentPeer = createPeer()
             peer = currentPeer
-            currentPeer.setRemoteDescription(observer {
-                currentPeer.createAnswer(observer { answer ->
-                    currentPeer.setLocalDescription(observer {
-                        writer.write(PairingProtocol.answer(answer.description, true)); writer.newLine(); writer.flush()
+            currentPeer.setRemoteDescription(settingObserver {
+                currentPeer.createAnswer(creationObserver { answer ->
+                    currentPeer.setLocalDescription(settingObserver {
+                        answerGate.markLocalDescriptionSet()
+                        sendLocalAnswer()
                     }, answer)
                 }, MediaConstraints())
             }, SessionDescription(SessionDescription.Type.OFFER, remoteOffer))
@@ -110,7 +114,12 @@ internal class ReceiverSession(
             }
             override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
             override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
-            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
+                if (state == PeerConnection.IceGatheringState.COMPLETE) {
+                    answerGate.markIceComplete()
+                    sendLocalAnswer()
+                }
+            }
             override fun onIceCandidate(candidate: IceCandidate) = Unit
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
             override fun onAddStream(stream: MediaStream) = Unit
@@ -124,16 +133,37 @@ internal class ReceiverSession(
         }
     ))
 
-    private fun observer(onSuccess: (SessionDescription) -> Unit = {}): SdpObserver = object : SdpObserver {
+    private fun creationObserver(onSuccess: (SessionDescription) -> Unit): SdpObserver = object : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = onSuccess(description)
-        override fun onSetSuccess() = onSuccess(SessionDescription(SessionDescription.Type.ANSWER, ""))
+        override fun onSetSuccess() = Unit
         override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
         override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+    }
+
+    private fun settingObserver(onSuccess: () -> Unit): SdpObserver = object : SdpObserver {
+        override fun onCreateSuccess(description: SessionDescription) = Unit
+        override fun onSetSuccess() = onSuccess()
+        override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
+        override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+    }
+
+    @Synchronized
+    private fun sendLocalAnswer() {
+        val answer = answerGate.take(peer?.localDescription?.description) ?: return
+        val writer = answerWriter
+        if (writer == null) return
+        runCatching {
+            writer.write(PairingProtocol.answer(answer, true)); writer.newLine(); writer.flush()
+        }.onFailure {
+            onState("Erreur : envoi de la réponse impossible")
+            close()
+        }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         socket?.close(); socket = null
+        answerWriter = null
         peer?.close(); peer?.dispose(); peer = null
         renderer.release()
         factory.dispose()

@@ -31,3 +31,18 @@ internal object PairingProtocol {
         .toString()
 }
 
+internal class IceCompleteAnswerGate {
+    private var localDescriptionSet = false
+    private var iceComplete = false
+    private var consumed = false
+
+    @Synchronized fun markLocalDescriptionSet() { localDescriptionSet = true }
+    @Synchronized fun markIceComplete() { iceComplete = true }
+
+    @Synchronized fun take(answer: String?): String? {
+        if (!localDescriptionSet || !iceComplete || consumed || answer.isNullOrBlank()) return null
+        consumed = true
+        return answer
+    }
+}
+

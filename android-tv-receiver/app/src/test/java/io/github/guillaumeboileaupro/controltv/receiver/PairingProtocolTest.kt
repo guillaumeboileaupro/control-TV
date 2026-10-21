@@ -33,5 +33,20 @@ class PairingProtocolTest {
         assertTrue(PairingProtocol.answer("ignored", false).contains("\"accepted\":false"))
         assertFalse(PairingProtocol.answer("secret", false).contains("secret"))
     }
+
+    @Test fun sendsTheFinalAnswerOnlyAfterLocalSdpAndIceCompletion() {
+        val localFirst = IceCompleteAnswerGate()
+        localFirst.markLocalDescriptionSet()
+        assertEquals(null, localFirst.take("v=0\r\na=early"))
+        localFirst.markIceComplete()
+        assertEquals("v=0\r\na=final", localFirst.take("v=0\r\na=final"))
+        assertEquals(null, localFirst.take("v=0\r\na=replay"))
+
+        val iceFirst = IceCompleteAnswerGate()
+        iceFirst.markIceComplete()
+        assertEquals(null, iceFirst.take("v=0\r\na=early"))
+        iceFirst.markLocalDescriptionSet()
+        assertEquals("v=0\r\na=final", iceFirst.take("v=0\r\na=final"))
+    }
 }
 
