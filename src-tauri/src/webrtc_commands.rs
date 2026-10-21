@@ -4,7 +4,7 @@ use control_tv_webrtc::{
 };
 use serde::Serialize;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::Mutex;
 
@@ -12,12 +12,16 @@ const MAXIMUM_SESSION: Duration = Duration::from_secs(60 * 60);
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Default)]
-pub(crate) struct WebRtcState(Arc<Mutex<ActiveState>>);
+pub(crate) struct WebRtcState {
+    active: Arc<Mutex<ActiveState>>,
+    negotiation: Arc<StdMutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+}
 
 #[derive(Default)]
 struct ActiveState {
     controller: SessionController,
     transport: Option<Arc<WebRtcTransport>>,
+    last_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -35,6 +39,7 @@ pub(crate) struct StartReply {
 pub(crate) struct StatusReply {
     state: EngineState,
     diagnostics: control_tv_webrtc::Diagnostics,
+    error: Option<String>,
 }
 
 #[tauri::command]
@@ -91,12 +96,13 @@ pub(crate) async fn start_webrtc_stream(
     let (server, endpoint) = PairingServer::bind(bind_address)
         .await
         .map_err(|error| error.to_string())?;
-    let mut active = state.0.lock().await;
+    let mut active = state.active.lock().await;
     active
         .controller
         .prepare(&config, &SystemClock)
         .await
         .map_err(|error| error.to_string())?;
+    active.last_error = None;
     let session_id = active
         .controller
         .session_id()
@@ -112,14 +118,14 @@ pub(crate) async fn start_webrtc_stream(
     drop(active);
 
     let state_handle = state.inner().clone();
-    tauri::async_runtime::spawn(async move {
+    let task = tauri::async_runtime::spawn(async move {
         let answer = server
             .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
             .await;
-        let mut active = state_handle.0.lock().await;
+        let mut active = state_handle.active.lock().await;
         match answer {
             Ok(answer) => {
-                if active
+                if let Err(error) = active
                     .controller
                     .negotiate(
                         token.expose_for_pairing(),
@@ -128,8 +134,8 @@ pub(crate) async fn start_webrtc_stream(
                         NEGOTIATION_TIMEOUT,
                     )
                     .await
-                    .is_err()
                 {
+                    active.last_error = Some(error.to_string());
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
                     return;
@@ -137,21 +143,23 @@ pub(crate) async fn start_webrtc_stream(
                 let source = Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
                 let media_transport: Arc<dyn MediaTransport> =
                     Arc::clone(&transport) as Arc<dyn MediaTransport>;
-                if active
-                    .controller
-                    .start_media(source, media_transport)
-                    .is_err()
-                {
+                if let Err(error) = active.controller.start_media(source, media_transport) {
+                    active.last_error = Some(error.to_string());
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
                 }
             }
-            Err(_) => {
+            Err(error) => {
+                active.last_error = Some(error.to_string());
                 let _ = active.controller.stop(transport.as_ref()).await;
                 active.transport = None;
             }
         }
     });
+    *state
+        .negotiation
+        .lock()
+        .expect("negotiation task lock poisoned") = Some(task);
 
     Ok(StartReply {
         session_id,
@@ -166,17 +174,25 @@ pub(crate) async fn start_webrtc_stream(
 pub(crate) async fn stop_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
 ) -> Result<StatusReply, String> {
-    let mut active = state.0.lock().await;
+    if let Some(task) = state
+        .negotiation
+        .lock()
+        .expect("negotiation task lock poisoned")
+        .take()
+    {
+        task.abort();
+    }
+    let mut active = state.active.lock().await;
     if let Some(transport) = active.transport.take() {
-        active
-            .controller
-            .stop(transport.as_ref())
-            .await
-            .map_err(|error| error.to_string())?;
+        let result = active.controller.stop(transport.as_ref()).await;
+        if let Err(error) = result {
+            active.last_error = Some(error.to_string());
+        }
     }
     Ok(StatusReply {
         state: active.controller.state(),
         diagnostics: active.controller.diagnostics().await,
+        error: active.last_error.clone(),
     })
 }
 
@@ -184,9 +200,20 @@ pub(crate) async fn stop_webrtc_stream(
 pub(crate) async fn get_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
 ) -> Result<StatusReply, String> {
-    let active = state.0.lock().await;
+    let mut active = state.active.lock().await;
+    if let Some(result) = active.controller.poll_media().await {
+        if let Err(error) = result {
+            active.last_error = Some(error.to_string());
+        }
+        if let Some(transport) = active.transport.take() {
+            if let Err(error) = transport.close().await {
+                active.last_error = Some(error.to_string());
+            }
+        }
+    }
     Ok(StatusReply {
         state: active.controller.state(),
         diagnostics: active.controller.diagnostics().await,
+        error: active.last_error.clone(),
     })
 }

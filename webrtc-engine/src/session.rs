@@ -146,6 +146,40 @@ impl SessionController {
         self.diagnostics.lock().await.clone()
     }
 
+    pub async fn poll_media(&mut self) -> Option<Result<(), EngineError>> {
+        if !self
+            .media_task
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            return None;
+        }
+        self.media_stop.take();
+        let result = match self.media_task.take().expect("finished media task").await {
+            Ok(Ok(()))
+                if self
+                    .deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline) =>
+            {
+                Ok(())
+            }
+            Ok(Ok(())) => Err(EngineError::MediaSource(
+                "media pipeline ended unexpectedly".into(),
+            )),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(EngineError::Cleanup(error.to_string())),
+        };
+        self.state = if result.is_ok() {
+            EngineState::Idle
+        } else {
+            EngineState::Failed
+        };
+        self.id = None;
+        self.token = None;
+        self.deadline = None;
+        Some(result)
+    }
+
     pub async fn stop(&mut self, transport: &dyn MediaTransport) -> Result<(), EngineError> {
         if self.state == EngineState::Idle {
             return Ok(());
@@ -226,4 +260,126 @@ async fn pump_audio(
         diagnostics.lock().await.sent_audio_bytes += bytes;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct FakeSource {
+        keep_open: bool,
+        stopped: Arc<AtomicBool>,
+        sender: Option<mpsc::Sender<Result<MediaFrame, EngineError>>>,
+    }
+
+    #[async_trait]
+    impl MediaSource for FakeSource {
+        async fn start(&mut self) -> Result<MediaStreams, EngineError> {
+            let (sender, receiver) = mpsc::channel(1);
+            if self.keep_open {
+                self.sender = Some(sender);
+            }
+            Ok(MediaStreams {
+                video: receiver,
+                audio: None,
+            })
+        }
+
+        async fn stop(&mut self) -> Result<(), EngineError> {
+            self.stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeTransport {
+        closed: AtomicBool,
+    }
+
+    #[async_trait]
+    impl MediaTransport for FakeTransport {
+        async fn create_offer(&self) -> Result<SessionDescription, EngineError> {
+            unreachable!()
+        }
+        async fn accept_answer(&self, _answer: SessionDescription) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn send_video(&self, _data: Bytes, _duration: Duration) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn send_audio(&self, _data: Bytes, _duration: Duration) -> Result<(), EngineError> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<(), EngineError> {
+            self.closed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn streaming_controller() -> SessionController {
+        SessionController {
+            state: EngineState::Streaming,
+            id: Some(SessionId::generate()),
+            token: Some(SessionToken::generate()),
+            deadline: Some(Instant::now() + Duration::from_secs(60)),
+            ..SessionController::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unexpected_media_eof_marks_the_session_failed() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport: Arc<dyn MediaTransport> = Arc::new(FakeTransport::default());
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: false,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                transport,
+            )
+            .expect("start media");
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pipeline completion");
+        assert!(matches!(result, Err(EngineError::MediaSource(_))));
+        assert_eq!(controller.state(), EngineState::Failed);
+        assert!(controller.session_id().is_none());
+        assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_media_cooperatively_and_closes_transport() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: true,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                media_transport,
+            )
+            .expect("start media");
+        controller
+            .stop(transport.as_ref())
+            .await
+            .expect("stop session");
+        assert_eq!(controller.state(), EngineState::Idle);
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(transport.closed.load(Ordering::SeqCst));
+    }
 }

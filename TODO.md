@@ -20,6 +20,8 @@
 
 **État logiciel du 2026-10-21 (branche `feat/rust-webrtc-streaming`) :** moteur Rust, capture/encodage FFmpeg X11 + PulseAudio, transport H.264/Opus WebRTC, signalisation locale TLS authentifiée à usage unique, commandes Tauri dédiées et récepteur Android TV compilable sont implémentés. Le certificat éphémère de chaque session est épinglé par empreinte SHA-256 côté Android ; le jeton client reste dans le canal chiffré et l'écoute disparaît après un échange. Les sorties FFmpeg sont maintenant découpées en unités d'accès H.264 (AUD, images clés) et paquets Opus Ogg horodatés, avec files bornées, vidéo obsolète éliminée sans accumuler de latence, audio soumis à contre-pression et pompage concurrent. L'arrêt média coopératif garantit le nettoyage de FFmpeg. Un test d'intégration local a réellement négocié ICE/DTLS/SRTP et reçu du RTP H.264. L'interface graphique Auto/WebRTC/HLS, la découverte de capacité du récepteur, les scénarios réseau/reconnexion, D2 complet et toute recette matérielle restent ouverts ; aucun objectif de latence n'est déclaré atteint.
 
+**Robustesse logicielle :** Stop annule l'attente ou la négociation avant fermeture du transport ; une fin FFmpeg prématurée devient un état d'échec explicite et déclenche le nettoyage lors du relevé d'état. Restent ouverts les scénarios de perte réseau prolongée et la reconnexion bornée.
+
 ---
 
 ## État des travaux — 2026-10-19
