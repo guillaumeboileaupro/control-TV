@@ -1,5 +1,11 @@
 # Development plan
 
+## Rust/WebRTC — état logiciel au 2026-10-21
+
+La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
+
+Restent requis avant validation produit : relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, découper les sorties FFmpeg en unités H.264/Opus complètes et concurrentes, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

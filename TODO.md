@@ -6,7 +6,7 @@
 
 **Architecture décidée :** conserver l'interface Tauri 2 et le `ControlService` Python/PyChromecast pour découverte et commandes ; créer un **moteur émetteur Rust** pour sessions, capture D1/D2, audio, encodage et transport WebRTC (RTP/RTCP/ICE) ; installer avec accord du propriétaire une **application réceptrice Android TV** avec décodage matériel et rendu plein écran (Kotlin autorisé pour l'intégration Android). Ne pas prétendre que le récepteur Cast/HLS natif sait recevoir WebRTC. Conserver HLS en repli temporaire, avec modes WebRTC / HLS / Auto sélectionnés selon les capacités réellement vérifiées. Aucun serveur permanent ni exposition Internet ; réseau local, authentification et consentement explicite.
 
-- [ ] **Conception :** documenter les ports typés source D1/D2, capture audio/vidéo, encodeur, transport, récepteur, négociation, capacités et cycle de vie ; comparer les bibliothèques Rust WebRTC et les chemins d'encodage/décodage Android, mesurer les contraintes réelles avant choix.
+- [x] **Conception :** ports typés, cycle de vie et choix `webrtc-rs` 0.14 / libwebrtc Android documentés dans `docs/WEBRTC_STREAMING.md` ; les mesures matérielles restent séparées.
 - [ ] **Émetteur Rust :** prototype isolé D1, capture écran + audio système, H.264 temps réel avec accélération matérielle si disponible et repli explicite ; contrôle des buffers, horodatage A/V, arrêt propre, reconnexion bornée et absence de rejeu des commandes TV.
 - [ ] **Récepteur Android TV :** APK installable avec consentement, signalisation WebRTC locale, décodage matériel, audio synchronisé, affichage plein écran, diagnostics et fermeture/nettoyage sûrs ; vérifier la compatibilité sur les **deux appareils Android TV**.
 - [ ] **D2 :** brancher le même moteur Rust sur l'écran étendu et le gestionnaire d'affichage de #98 ; conserver et restaurer exactement la configuration d'écrans après arrêt/erreur.
@@ -17,6 +17,8 @@
 - [ ] **Mise à jour documentaire après preuves :** réconcilier TODO, DEVELOPMENT_PLAN, checklist et README, distinguer simulation/CI/matériel. Aucun délai ou budget horaire dans TODO.
 
 **État initial :** chantier décidé mais **non implémenté ni validé** en Rust/WebRTC ; D1 HLS a montré 9–11 s sur matériel dans #97 ; la fluidité D2 et le parcours complet depuis la fenêtre restent à valider. Les valeurs WebRTC annoncées sont des objectifs, pas des résultats.
+
+**État logiciel du 2026-10-21 (branche `feat/rust-webrtc-streaming`) :** moteur Rust, capture/encodage FFmpeg X11 + PulseAudio, transport H.264/Opus WebRTC, signalisation locale authentifiée à usage unique, commandes Tauri dédiées et récepteur Android TV compilable sont implémentés. Un test d'intégration local a réellement négocié ICE/DTLS/SRTP et reçu du RTP H.264. L'interface graphique Auto/WebRTC/HLS, la découverte de capacité du récepteur, le découpage audio/vidéo, les scénarios réseau/reconnexion, D2 complet et toute recette matérielle restent ouverts ; aucun objectif de latence n'est déclaré atteint.
 
 ---
 

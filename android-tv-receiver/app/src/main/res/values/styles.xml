@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.ControlTVReceiver" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#8AB4F8</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:navigationBarColor">#000000</item>
+    </style>
+</resources>
+
