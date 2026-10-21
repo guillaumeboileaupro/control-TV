@@ -22,7 +22,12 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.MessageDigest
+import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.X509TrustManager
 
 internal class ReceiverSession(
     context: Context,
@@ -54,10 +59,22 @@ internal class ReceiverSession(
     private fun pair(target: PairingTarget) {
         try {
             onState("Connexion…")
-            val connection = Socket().also {
-                it.connect(InetSocketAddress(target.host, target.port), 5_000)
+            val plain = Socket().also { it.connect(InetSocketAddress(target.host, target.port), 5_000) }
+            val context = SSLContext.getInstance("TLS").apply {
+                init(null, arrayOf(PinnedCertificateTrustManager(target.certificateSha256)), null)
+            }
+            val connection = (context.socketFactory.createSocket(
+                plain,
+                target.host,
+                target.port,
+                true,
+            ) as SSLSocket).also {
+                it.enabledProtocols = it.supportedProtocols.filter { protocol ->
+                    protocol == "TLSv1.3" || protocol == "TLSv1.2"
+                }.toTypedArray()
                 it.soTimeout = 10_000
                 socket = it
+                it.startHandshake()
             }
             val writer = BufferedWriter(OutputStreamWriter(connection.getOutputStream(), Charsets.UTF_8))
             val reader = BufferedReader(InputStreamReader(connection.getInputStream(), Charsets.UTF_8))
@@ -122,5 +139,25 @@ internal class ReceiverSession(
         factory.dispose()
         egl.release()
     }
+}
+
+private class PinnedCertificateTrustManager(expectedFingerprint: String) : X509TrustManager {
+    private val expected = expectedFingerprint.replace(":", "").uppercase()
+
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+        throw java.security.cert.CertificateException("Client certificates are not accepted")
+
+    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+        val certificate = chain?.singleOrNull()
+            ?: throw java.security.cert.CertificateException("Expected one session certificate")
+        val actual = MessageDigest.getInstance("SHA-256")
+            .digest(certificate.encoded)
+            .joinToString("") { byte -> "%02X".format(byte) }
+        if (!MessageDigest.isEqual(actual.toByteArray(), expected.toByteArray())) {
+            throw java.security.cert.CertificateException("Session certificate does not match")
+        }
+    }
+
+    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
 }
 

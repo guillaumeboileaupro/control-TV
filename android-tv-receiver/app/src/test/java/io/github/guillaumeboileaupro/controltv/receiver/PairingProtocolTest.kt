@@ -8,18 +8,23 @@ import org.junit.Test
 
 class PairingProtocolTest {
     private val token = "A".repeat(48)
+    private val fingerprint = List(32) { "AB" }.joinToString(":")
 
     @Test fun validatesPairingTargets() {
-        assertEquals(9999, PairingTarget("192.0.2.1", 9999, token).port)
-        assertThrows(IllegalArgumentException::class.java) { PairingTarget("", 9999, token) }
-        assertThrows(IllegalArgumentException::class.java) { PairingTarget("host", 0, token) }
-        assertThrows(IllegalArgumentException::class.java) { PairingTarget("host", 9999, "short") }
+        assertEquals(9999, PairingTarget("192.0.2.1", 9999, token, fingerprint).port)
+        assertThrows(IllegalArgumentException::class.java) { PairingTarget("", 9999, token, fingerprint) }
+        assertThrows(IllegalArgumentException::class.java) { PairingTarget("host", 0, token, fingerprint) }
+        assertThrows(IllegalArgumentException::class.java) { PairingTarget("host", 9999, "short", fingerprint) }
+        assertThrows(IllegalArgumentException::class.java) { PairingTarget("host", 9999, token, "invalid") }
     }
 
     @Test fun encodesAuthenticationWithoutLoggingOrEchoingOtherFields() {
-        val hello = PairingProtocol.hello(PairingTarget("host", 9999, token))
+        val target = PairingTarget("host", 9999, token, fingerprint)
+        val hello = PairingProtocol.hello(target)
         assertTrue(hello.contains(token))
         assertFalse(hello.contains("host"))
+        assertFalse(target.toString().contains(token))
+        assertFalse(target.toString().contains(fingerprint))
     }
 
     @Test fun requiresAnSdpOfferAndMakesRefusalExplicit() {

@@ -21,11 +21,19 @@ class MainActivity : AppCompatActivity() {
         val host = field("Adresse Ubuntu")
         val port = field("Port")
         val token = field("Code de session")
+        val certificate = field("Empreinte TLS SHA-256")
         status = TextView(this).apply { text = "Prêt"; textSize = 18f; gravity = Gravity.CENTER }
         val accept = Button(this).apply {
             text = "Accepter cette session"
             setOnClickListener {
-                runCatching { PairingTarget(host.text.toString().trim(), port.text.toString().toInt(), token.text.toString().trim()) }
+                runCatching {
+                    PairingTarget(
+                        host.text.toString().trim(),
+                        port.text.toString().toInt(),
+                        token.text.toString().trim(),
+                        certificate.text.toString().trim(),
+                    )
+                }
                     .onSuccess { target ->
                         isEnabled = false
                         session = ReceiverSession(this@MainActivity, renderer) { message -> runOnUiThread { status.text = message } }
@@ -38,7 +46,8 @@ class MainActivity : AppCompatActivity() {
         form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             setPadding(64, 32, 64, 32)
-            addView(host); addView(port); addView(token); addView(accept); addView(refuse); addView(status)
+            addView(host); addView(port); addView(token); addView(certificate)
+            addView(accept); addView(refuse); addView(status)
         }
         renderer = SurfaceViewRenderer(this).apply { visibility = View.VISIBLE }
         val root = LinearLayout(this).apply {

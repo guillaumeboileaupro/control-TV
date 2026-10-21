@@ -26,6 +26,7 @@ pub(crate) struct StartReply {
     session_id: String,
     pairing_address: String,
     pairing_token: String,
+    pairing_certificate_sha256: String,
     state: EngineState,
 }
 
@@ -156,6 +157,7 @@ pub(crate) async fn start_webrtc_stream(
         session_id,
         pairing_address: endpoint.address.to_string(),
         pairing_token,
+        pairing_certificate_sha256: endpoint.certificate_sha256,
         state: EngineState::AwaitingReceiver,
     })
 }

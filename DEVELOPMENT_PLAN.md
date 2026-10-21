@@ -4,9 +4,9 @@
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
 
-Les sorties FFmpeg sont découpées en unités d'accès H.264 délimitées par AUD et en paquets Opus extraits des pages Ogg, avec durées RTP calculées, files bornées, politique explicite de perte vidéo, contre-pression audio et envoi audio/vidéo concurrent. Les parseurs refusent les unités anormalement grandes et l'arrêt coopératif attend le nettoyage des processus FFmpeg.
+Les sorties FFmpeg sont découpées en unités d'accès H.264 délimitées par AUD et en paquets Opus extraits des pages Ogg, avec durées RTP calculées, files bornées, politique explicite de perte vidéo, contre-pression audio et envoi audio/vidéo concurrent. Les parseurs refusent les unités anormalement grandes et l'arrêt coopératif attend le nettoyage des processus FFmpeg. La signalisation est protégée par TLS 1.2/1.3 avec un certificat éphémère par session dont l'empreinte SHA-256 est épinglée par le récepteur Android ; le jeton client unique n'est transmis qu'après validation du certificat, et le serveur disparaît après l'unique échange pour empêcher le rejeu.
 
-Restent requis avant validation produit : chiffrer et authentifier le canal de signalisation TCP (le jeton seul ne protège pas sa confidentialité), relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.
+Restent requis avant validation produit : relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.
 
 ## Goal
 
