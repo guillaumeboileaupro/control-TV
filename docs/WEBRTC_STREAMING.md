@@ -25,6 +25,8 @@ La commande Tauri acquiert ce bail avant de créer le moteur, utilise séparéme
 
 Un verrou de cycle de vie commun empêche `start`, `stop` et le traitement d'une fin de média de se dépasser pendant la transaction. Si la libération échoue au niveau du bridge, le diagnostic conserve à la fois la cause WebRTC et cette panne ; une réponse Python qui contient déjà les deux n'est pas répétée.
 
+La carte « Screen to TV » conserve le choix d'équipement global et ajoute un sélecteur natif Auto/WebRTC/HLS. Elle relit les capacités avant le démarrage ; Auto préfère uniquement un WebRTC confirmé et revient sinon à HLS, alors qu'un choix WebRTC explicite échoue sans repli. Le suivi affiche le transport réellement utilisé. Les identifiants éphémères présents dans la réponse interne ne sont jamais affichés ni écrits dans les journaux de l'interface.
+
 Pour D1/D2, le contrôleur Python existant acquiert un bail avant le démarrage Rust. Le bail contient uniquement la route locale, le display X11 et la géométrie de la source ; aucun secret de session. En D2, il possède l'instance du gestionnaire d'extension existant jusqu'à la libération et restaure le bureau sur arrêt ou fermeture du bridge. FFmpeg capture la taille réelle de cette source puis la met explicitement à l'échelle vers la résolution vidéo demandée.
 
 Une première connexion invalide consomme encore cette écoute à usage unique : l'utilisateur doit relancer la session. La reprise bornée après perte du réseau reste à implémenter ; aucun rejeu automatique de commande ou de secret n'est effectué.

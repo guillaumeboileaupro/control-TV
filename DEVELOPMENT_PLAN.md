@@ -26,6 +26,8 @@ La commande Tauri WebRTC consomme maintenant ce bail de bout en bout : la géom�
 
 Les opérations de cycle de vie Tauri sont sérialisées sur une même exclusion mutuelle, du début de la préparation à la publication de la session. Les diagnostics de nettoyage sont combinés à la cause primaire, y compris lorsque le bridge de restauration lui-même ne répond pas.
 
+La carte existante offre désormais Auto/WebRTC/HLS sans ajouter de second sélecteur de TV. Elle interroge les capacités du seul équipement sélectionné avant chaque démarrage : Auto choisit WebRTC confirmé puis HLS, tandis que WebRTC explicite refuse tout repli. Le suivi et l'arrêt utilisent le transport effectivement lancé. Tests TypeScript et build uniquement ; parcours visuel et matériel encore requis.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

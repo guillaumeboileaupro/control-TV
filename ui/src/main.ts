@@ -877,6 +877,7 @@ window.addEventListener("DOMContentLoaded", () => {
       },
       screenField: byId("screen-field"),
       screen: byId<HTMLSelectElement>("screen-select"),
+      transport: byId<HTMLSelectElement>("screen-transport"),
       size: byId<HTMLSelectElement>("screen-size"),
       fps: byId<HTMLSelectElement>("screen-fps"),
       extension: byId("screen-extension"),

@@ -36,6 +36,8 @@
 
 Le cycle de vie Tauri sérialise maintenant démarrage, arrêt et lecture terminale afin qu'un arrêt concurrent ne puisse pas être dépassé par une publication tardive. Tous les chemins conservent la cause WebRTC initiale et une éventuelle panne du RPC de restauration, sans dupliquer un diagnostic déjà combiné par Python.
 
+**Sélecteur graphique (2026-10-22) :** la carte « Screen to TV » existante propose Auto, WebRTC et HLS. Auto lit les capacités réelles du téléviseur sélectionné et préfère WebRTC uniquement lorsque le récepteur exact est confirmé, sinon HLS ; WebRTC explicite échoue sans repli silencieux. L'état indique le transport effectivement utilisé et les secrets de pairage ne sont ni rendus ni journalisés par l'interface. Validation automatisée uniquement.
+
 ---
 
 ## État des travaux — 2026-10-19
