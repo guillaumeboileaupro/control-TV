@@ -92,11 +92,13 @@ class Rig:
         return session
 
     def controller(self, **options: object) -> ScreenStreamController:
+        connect = options.pop("connect", self.connect)
+        extension = options.pop("extension", lambda: XrandrVirtualMonitor(X11, self.xrandr))
         return ScreenStreamController(
-            connect=self.connect,
+            connect=connect,  # type: ignore[arg-type]
             capture=self.capture,
             build=self.build,
-            extension=lambda: XrandrVirtualMonitor(X11, self.xrandr),
+            extension=extension,  # type: ignore[arg-type]
             sleep=lambda seconds: time.sleep(0.01),
             **options,  # type: ignore[arg-type]
         )
@@ -187,6 +189,76 @@ def test_webrtc_extension_is_restored_on_release_and_bridge_close(tmp_path: Path
     controller.close()
     assert rig.xrandr.enabled is None
     assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_extension_cleanup_failure_is_retained_and_retryable(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+
+    class FlakyExtension(XrandrVirtualMonitor):
+        attempts = 0
+
+        def remove(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise StreamCleanupError("stuck")
+            super().remove()
+
+    extension = FlakyExtension(X11, rig.xrandr)
+    controller = rig.controller(extension=lambda: extension)
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1280, 720, 30, True, 60, Position.RIGHT
+    )
+    controller.prepare_webrtc_capture(request)
+
+    failed = controller.release_webrtc_capture("the Rust engine stopped")
+    assert failed.state is StreamState.FAILED
+    assert failed.error == (
+        "the Rust engine stopped; the extended screen was not restored: stuck"
+    )
+    assert rig.xrandr.enabled is not None
+
+    assert controller.release_webrtc_capture().state is StreamState.IDLE
+    assert extension.attempts == 2
+    assert rig.xrandr.enabled is None
+
+
+def test_close_cancels_a_concurrent_webrtc_preparation(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    entered = threading.Event()
+    proceed = threading.Event()
+
+    def blocked_connect(device_id: str) -> tuple[TvControl, str]:
+        entered.set()
+        assert proceed.wait(5)
+        return rig.connect(device_id)
+
+    controller = rig.controller(connect=blocked_connect)
+    outcome: list[BaseException] = []
+
+    def prepare() -> None:
+        try:
+            controller.prepare_webrtc_capture(DUPLICATE)
+        except BaseException as caught:
+            outcome.append(caught)
+
+    preparing = threading.Thread(target=prepare)
+    preparing.start()
+    assert entered.wait(5)
+    closing = threading.Thread(target=controller.close)
+    closing.start()
+    proceed.set()
+    preparing.join(5)
+    closing.join(5)
+
+    assert not preparing.is_alive() and not closing.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], InvalidStreamConfiguration)
+    assert str(outcome[0]) == "WebRTC preparation was cancelled"
+    assert controller.status().state is StreamState.IDLE
+    controller.prepare_webrtc_capture(DUPLICATE)
+    controller.close()
 
 
 def test_webrtc_preparation_fails_closed_without_the_exact_receiver(tmp_path: Path) -> None:

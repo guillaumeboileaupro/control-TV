@@ -19,6 +19,8 @@ Chaque session crée un certificat TLS éphémère. Le récepteur se connecte à
 
 La détection de capacité réutilise le `TvControl` et l'inventaire d'applications existants, sur le seul identifiant sélectionné. La disponibilité Cast confirme le chemin HLS ; seul le paquet exact `io.github.guillaumeboileaupro.controltv.receiver`, effectivement listé par la TV, confirme l'installation et l'accessibilité WebRTC. Un inventaire ADB inaccessible reste « capacité non confirmée », jamais « application absente » ni compatibilité supposée.
 
+Le bail D1/D2 appartient au contrôleur Python existant. Sa préparation est annulable : une fermeture invalide sa génération, attend la fin bornée de l'acquisition et empêche toute publication tardive. Une extension dont la restauration échoue reste suivie afin que l'arrêt puisse être retenté ; le diagnostic conserve simultanément une erreur du moteur et une erreur de restauration.
+
 Pour D1/D2, le contrôleur Python existant acquiert un bail avant le démarrage Rust. Le bail contient uniquement la route locale, le display X11 et la géométrie de la source ; aucun secret de session. En D2, il possède l'instance du gestionnaire d'extension existant jusqu'à la libération et restaure le bureau sur arrêt ou fermeture du bridge. FFmpeg capture la taille réelle de cette source puis la met explicitement à l'échelle vers la résolution vidéo demandée.
 
 Une première connexion invalide consomme encore cette écoute à usage unique : l'utilisateur doit relancer la session. La reprise bornée après perte du réseau reste à implémenter ; aucun rejeu automatique de commande ou de secret n'est effectué.

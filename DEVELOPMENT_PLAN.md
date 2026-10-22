@@ -20,6 +20,8 @@ Le 2026-10-22, la première tranche d'intégration détecte les capacités du r�
 
 Le contrôleur Python unique possède aussi désormais le bail de capture WebRTC. Il valide la requête et le récepteur, résout l'écran D1 ou crée l'extension D2 avec le gestionnaire existant, fournit au shell la route et la géométrie, puis restaure D2 lors de la libération ou de la fermeture du bridge. La source X11 et la résolution encodée sont distinctes dans le moteur Rust afin qu'une duplication 2560×1440 puisse être encodée, par exemple, en 1920×1080 sans rogner l'écran. Tests automatisés uniquement ; aucune commande X11 réelle ni TV.
 
+La préparation du bail est désormais transactionnelle face à une fermeture concurrente : une génération annulée ne peut plus publier tardivement une extension, et la fermeture attend son nettoyage avec une borne. Une restauration D2 en échec reste suivie et retentable ; si le moteur et la restauration échouent ensemble, les deux causes sont conservées. L'orchestration Tauri doit encore consommer ce bail de bout en bout.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

@@ -30,6 +30,8 @@
 
 **Bail de capture WebRTC (2026-10-22) :** le contrôleur D1/D2 Python existant prépare désormais une géométrie X11 pour le moteur Rust, après revalidation du paquet récepteur exact. En duplication il réserve l'écran sélectionné ; en extension il utilise le `XrandrVirtualMonitor` existant et le libère sur arrêt ou fermeture du bridge. Le moteur Rust distingue maintenant la taille de la source de la taille encodée et applique une mise à l'échelle explicite. L'orchestration Tauri et le sélecteur graphique restent ouverts.
 
+**Robustesse du bail (2026-10-22) :** une fermeture concurrente annule maintenant une préparation WebRTC avant publication du bail et attend son nettoyage borné. Une restauration D2 échouée conserve la ressource pour une nouvelle tentative, et le diagnostic réunit l'erreur moteur et l'erreur de restauration au lieu d'en masquer une. Tests automatisés sur fakes uniquement ; l'orchestration Tauri complète reste ouverte.
+
 ---
 
 ## État des travaux — 2026-10-19
