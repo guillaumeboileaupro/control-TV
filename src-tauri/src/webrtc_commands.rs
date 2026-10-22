@@ -92,16 +92,25 @@ async fn release_capture(bridge: SharedBridgeState, error: Option<String>) -> Op
     }
 }
 
-async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
-    if let Some(cleanup) = release_capture(bridge, Some(detail)).await {
-        state.active.lock().await.last_error = Some(cleanup);
+fn combine_failure(primary: Option<&str>, cleanup: Option<String>) -> Option<String> {
+    match (primary, cleanup) {
+        (None, cleanup) => cleanup,
+        (Some(primary), None) => Some(primary.to_owned()),
+        (Some(primary), Some(cleanup)) if cleanup.contains(primary) => Some(cleanup),
+        (Some(primary), Some(cleanup)) => {
+            Some(format!("{primary}; capture cleanup failed: {cleanup}"))
+        }
     }
 }
 
+async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
+    let cleanup = release_capture(bridge, Some(detail.clone())).await;
+    state.active.lock().await.last_error = combine_failure(Some(&detail), cleanup);
+}
+
 async fn release_start_failure(bridge: SharedBridgeState, detail: String) -> String {
-    release_capture(bridge, Some(detail.clone()))
-        .await
-        .unwrap_or(detail)
+    let cleanup = release_capture(bridge, Some(detail.clone())).await;
+    combine_failure(Some(&detail), cleanup).expect("a primary failure is always preserved")
 }
 
 #[derive(Serialize)]
@@ -335,6 +344,26 @@ mod tests {
         drop(first);
         assert!(state.operation.try_lock().is_ok());
     }
+
+    #[test]
+    fn cleanup_diagnostics_preserve_the_primary_without_duplication() {
+        assert_eq!(
+            combine_failure(Some("offer failed"), Some("bridge timeout".into())).as_deref(),
+            Some("offer failed; capture cleanup failed: bridge timeout")
+        );
+        assert_eq!(
+            combine_failure(
+                Some("engine failed"),
+                Some("engine failed; the extended screen was not restored: stuck".into()),
+            )
+            .as_deref(),
+            Some("engine failed; the extended screen was not restored: stuck")
+        );
+        assert_eq!(
+            combine_failure(Some("engine failed"), None).as_deref(),
+            Some("engine failed")
+        );
+    }
 }
 
 #[tauri::command]
@@ -362,7 +391,7 @@ pub(crate) async fn stop_webrtc_stream(
     drop(active);
     let cleanup_error = release_capture(bridge.inner().clone(), engine_error.clone()).await;
     let active = state.active.lock().await;
-    let error = cleanup_error.or(engine_error);
+    let error = combine_failure(engine_error.as_deref(), cleanup_error);
     Ok(StatusReply {
         state: active.controller.state(),
         diagnostics: active.controller.diagnostics().await,
@@ -390,7 +419,7 @@ pub(crate) async fn get_webrtc_stream(
         drop(active);
         let cleanup_error = release_capture(bridge.inner().clone(), error).await;
         active = state.active.lock().await;
-        active.last_error = cleanup_error.or_else(|| active.last_error.clone());
+        active.last_error = combine_failure(active.last_error.as_deref(), cleanup_error);
     }
     Ok(StatusReply {
         state: active.controller.state(),
