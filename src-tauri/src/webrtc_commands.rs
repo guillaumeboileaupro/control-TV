@@ -2,11 +2,15 @@ use control_tv_webrtc::{
     AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingServer,
     ProcessRunner, SessionConfig, SessionController, SystemClock, VideoConfig, WebRtcTransport,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+use crate::bridge::SharedBridgeState;
+use crate::commands::{screen_stream_request, send_screen, Placement};
 
 const MAXIMUM_SESSION: Duration = Duration::from_secs(60 * 60);
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -22,6 +26,56 @@ struct ActiveState {
     controller: SessionController,
     transport: Option<Arc<WebRtcTransport>>,
     last_error: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureLease {
+    bind_address: String,
+    display: String,
+    offset_x: u32,
+    offset_y: u32,
+    source_width: u32,
+    source_height: u32,
+}
+
+#[derive(Deserialize)]
+struct PrepareReply {
+    capture: CaptureLease,
+}
+
+fn capture_config(
+    lease: CaptureLease,
+    width: u32,
+    height: u32,
+    fps: u32,
+    audio_device: Option<String>,
+) -> CaptureConfig {
+    CaptureConfig {
+        display: lease.display,
+        offset_x: lease.offset_x,
+        offset_y: lease.offset_y,
+        source_width: lease.source_width,
+        source_height: lease.source_height,
+        video: VideoConfig {
+            width,
+            height,
+            fps,
+            bitrate_kbps: 4_000,
+        },
+        audio: AudioConfig {
+            enabled: audio_device.is_some(),
+            device: audio_device,
+            bitrate_kbps: 128,
+        },
+    }
+}
+
+async fn release_capture(bridge: SharedBridgeState, error: Option<String>) -> Option<String> {
+    send_screen(bridge, "release_webrtc_capture", json!({ "error": error }))
+        .await
+        .err()
+        .map(|failure| failure.message)
 }
 
 #[derive(Serialize)]
@@ -46,64 +100,92 @@ pub(crate) struct StatusReply {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
-    bind_address: String,
-    display: String,
-    offset_x: u32,
-    offset_y: u32,
+    bridge: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    mode: String,
+    screen: Option<String>,
     width: u32,
     height: u32,
     fps: u32,
     audio_device: Option<String>,
     consent: bool,
+    refresh: Option<u32>,
+    position: Option<String>,
 ) -> Result<StartReply, String> {
     if !consent {
         return Err("explicit screen-sharing consent is required".into());
     }
-    let bind_address: IpAddr = bind_address
-        .parse()
-        .map_err(|_| "invalid bind address".to_owned())?;
-    let capture = CaptureConfig {
-        display,
-        offset_x,
-        offset_y,
-        source_width: width,
-        source_height: height,
-        video: VideoConfig {
-            width,
-            height,
-            fps,
-            bitrate_kbps: 4_000,
-        },
-        audio: AudioConfig {
-            enabled: audio_device.is_some(),
-            device: audio_device,
-            bitrate_kbps: 128,
-        },
+    let placement = Placement {
+        refresh: refresh.unwrap_or(60),
+        position: position.as_deref().unwrap_or("right"),
     };
+    let request = screen_stream_request(
+        &device_id,
+        &mode,
+        screen.as_deref(),
+        (width, height),
+        fps,
+        consent,
+        &placement,
+    );
+    let prepared = send_screen(bridge.inner().clone(), "prepare_webrtc_capture", request)
+        .await
+        .map_err(|failure| failure.message)?;
+    let prepared: PrepareReply = match serde_json::from_value(prepared) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let detail = format!("the capture service returned an invalid WebRTC lease: {error}");
+            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+            return Err(detail);
+        }
+    };
+    let lease = prepared.capture;
+    let bind_address: IpAddr = match lease.bind_address.parse() {
+        Ok(address) => address,
+        Err(_) => {
+            let detail = "the capture service returned an invalid bind address".to_owned();
+            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+            return Err(detail);
+        }
+    };
+    let capture = capture_config(lease, width, height, fps, audio_device);
     let config = SessionConfig {
         bind_address,
         capture: capture.clone(),
         maximum_duration: MAXIMUM_SESSION,
         negotiation_timeout: NEGOTIATION_TIMEOUT,
     };
-    let transport = Arc::new(
-        WebRtcTransport::new()
-            .await
-            .map_err(|error| error.to_string())?,
-    );
-    let offer = transport
-        .create_offer()
-        .await
-        .map_err(|error| error.to_string())?;
-    let (server, endpoint) = PairingServer::bind(bind_address)
-        .await
-        .map_err(|error| error.to_string())?;
+    let transport = match WebRtcTransport::new().await {
+        Ok(transport) => Arc::new(transport),
+        Err(error) => {
+            let detail = error.to_string();
+            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+            return Err(detail);
+        }
+    };
+    let offer = match transport.create_offer().await {
+        Ok(offer) => offer,
+        Err(error) => {
+            let detail = error.to_string();
+            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+            return Err(detail);
+        }
+    };
+    let (server, endpoint) = match PairingServer::bind(bind_address).await {
+        Ok(pairing) => pairing,
+        Err(error) => {
+            let detail = error.to_string();
+            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+            return Err(detail);
+        }
+    };
     let mut active = state.active.lock().await;
-    active
-        .controller
-        .prepare(&config, &SystemClock)
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Err(error) = active.controller.prepare(&config, &SystemClock).await {
+        let detail = error.to_string();
+        drop(active);
+        let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
+        return Err(detail);
+    }
     active.last_error = None;
     let session_id = active
         .controller
@@ -120,6 +202,7 @@ pub(crate) async fn start_webrtc_stream(
     drop(active);
 
     let state_handle = state.inner().clone();
+    let bridge_handle = bridge.inner().clone();
     let task = tauri::async_runtime::spawn(async move {
         let answer = server
             .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
@@ -137,24 +220,47 @@ pub(crate) async fn start_webrtc_stream(
                     )
                     .await
                 {
-                    active.last_error = Some(error.to_string());
+                    let detail = error.to_string();
+                    active.last_error = Some(detail.clone());
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
+                    drop(active);
+                    let _ = release_capture(bridge_handle, Some(detail)).await;
                     return;
                 }
                 let source = Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
                 let media_transport: Arc<dyn MediaTransport> =
                     Arc::clone(&transport) as Arc<dyn MediaTransport>;
                 if let Err(error) = active.controller.start_media(source, media_transport) {
-                    active.last_error = Some(error.to_string());
+                    let detail = error.to_string();
+                    active.last_error = Some(detail.clone());
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
+                    drop(active);
+                    let _ = release_capture(bridge_handle, Some(detail)).await;
+                } else {
+                    drop(active);
+                    if let Err(failure) =
+                        send_screen(bridge_handle.clone(), "activate_webrtc_capture", json!({}))
+                            .await
+                    {
+                        let mut active = state_handle.active.lock().await;
+                        active.last_error = Some(failure.message.clone());
+                        if let Some(transport) = active.transport.take() {
+                            let _ = active.controller.stop(transport.as_ref()).await;
+                        }
+                        drop(active);
+                        let _ = release_capture(bridge_handle, Some(failure.message)).await;
+                    }
                 }
             }
             Err(error) => {
-                active.last_error = Some(error.to_string());
+                let detail = error.to_string();
+                active.last_error = Some(detail.clone());
                 let _ = active.controller.stop(transport.as_ref()).await;
                 active.transport = None;
+                drop(active);
+                let _ = release_capture(bridge_handle, Some(detail)).await;
             }
         }
     });
@@ -172,9 +278,39 @@ pub(crate) async fn start_webrtc_stream(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_uses_the_leased_source_geometry_and_requested_encoding_size() {
+        let capture = capture_config(
+            CaptureLease {
+                bind_address: "127.0.0.1".into(),
+                display: ":7".into(),
+                offset_x: 1920,
+                offset_y: 24,
+                source_width: 2560,
+                source_height: 1440,
+            },
+            1920,
+            1080,
+            30,
+            Some("pulse.monitor".into()),
+        );
+
+        assert_eq!(capture.display, ":7");
+        assert_eq!((capture.offset_x, capture.offset_y), (1920, 24));
+        assert_eq!((capture.source_width, capture.source_height), (2560, 1440));
+        assert_eq!((capture.video.width, capture.video.height), (1920, 1080));
+        assert!(capture.audio.enabled);
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn stop_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
+    bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
     if let Some(task) = state
         .negotiation
@@ -191,16 +327,21 @@ pub(crate) async fn stop_webrtc_stream(
             active.last_error = Some(error.to_string());
         }
     }
+    drop(active);
+    let cleanup_error = release_capture(bridge.inner().clone(), None).await;
+    let active = state.active.lock().await;
+    let error = active.last_error.clone().or(cleanup_error);
     Ok(StatusReply {
         state: active.controller.state(),
         diagnostics: active.controller.diagnostics().await,
-        error: active.last_error.clone(),
+        error,
     })
 }
 
 #[tauri::command]
 pub(crate) async fn get_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
+    bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
     let mut active = state.active.lock().await;
     if let Some(result) = active.controller.poll_media().await {
@@ -211,6 +352,13 @@ pub(crate) async fn get_webrtc_stream(
             if let Err(error) = transport.close().await {
                 active.last_error = Some(error.to_string());
             }
+        }
+        let error = active.last_error.clone();
+        drop(active);
+        let cleanup_error = release_capture(bridge.inner().clone(), error).await;
+        active = state.active.lock().await;
+        if active.last_error.is_none() {
+            active.last_error = cleanup_error;
         }
     }
     Ok(StatusReply {

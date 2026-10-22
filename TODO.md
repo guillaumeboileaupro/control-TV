@@ -28,9 +28,11 @@
 
 **Détection logicielle du récepteur (2026-10-22) :** le pont expose maintenant les capacités du seul équipement sélectionné. Une lecture d'état Cast réussie confirme équipement joignable et repli HLS ; l'inventaire d'applications existant confirme séparément l'installation et l'accessibilité du paquet exact `ControlTV Receiver`. Paquet absent, inventaire ADB inaccessible et équipement indisponible restent trois états distincts ; aucune compatibilité WebRTC n'est déduite du seul type Android TV. Le raccordement de cette capacité au sélecteur AUTO/WEBRTC/HLS reste ouvert.
 
-**Bail de capture WebRTC (2026-10-22) :** le contrôleur D1/D2 Python existant prépare désormais une géométrie X11 pour le moteur Rust, après revalidation du paquet récepteur exact. En duplication il réserve l'écran sélectionné ; en extension il utilise le `XrandrVirtualMonitor` existant et le libère sur arrêt ou fermeture du bridge. Le moteur Rust distingue maintenant la taille de la source de la taille encodée et applique une mise à l'échelle explicite. L'orchestration Tauri et le sélecteur graphique restent ouverts.
+**Bail de capture WebRTC (2026-10-22) :** le contrôleur D1/D2 Python existant prépare désormais une géométrie X11 pour le moteur Rust, après revalidation du paquet récepteur exact. En duplication il réserve l'écran sélectionné ; en extension il utilise le `XrandrVirtualMonitor` existant et le libère sur arrêt ou fermeture du bridge. Le moteur Rust distingue maintenant la taille de la source de la taille encodée et applique une mise à l'échelle explicite. Le sélecteur graphique reste ouvert.
 
 **Robustesse du bail (2026-10-22) :** une fermeture concurrente annule maintenant une préparation WebRTC avant publication du bail et attend son nettoyage borné. Une restauration D2 échouée conserve la ressource pour une nouvelle tentative, et le diagnostic réunit l'erreur moteur et l'erreur de restauration au lieu d'en masquer une. Tests automatisés sur fakes uniquement ; l'orchestration Tauri complète reste ouverte.
+
+**Transaction Tauri/Rust (2026-10-22) :** la commande de démarrage WebRTC acquiert désormais elle-même le bail Python autoritatif, consomme sa géométrie source réelle, active le bail seulement après négociation et démarrage média, puis le libère sur erreur, fin de média ou arrêt. La commande ne reçoit plus de coordonnées X11 fournies par l'interface. Le choix AUTO/HLS et le sélecteur graphique restent ouverts.
 
 ---
 
