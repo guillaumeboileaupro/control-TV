@@ -88,6 +88,7 @@ pub fn run() {
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
             commands::bridge_list_screens,
+            commands::bridge_get_screen_receiver_capabilities,
             commands::bridge_start_screen_stream,
             commands::bridge_stop_screen_stream,
             commands::bridge_get_screen_stream,

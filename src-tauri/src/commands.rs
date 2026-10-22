@@ -422,6 +422,22 @@ pub(crate) async fn bridge_list_screens(
     send_screen(state.inner().clone(), "list_screens", json!({})).await
 }
 
+/// Read-only capabilities of the selected TV for AUTO/WebRTC/HLS selection. The Python control
+/// layer owns device selection and distinguishes an absent receiver from an inaccessible app
+/// inventory; the shell does not infer capabilities from the device model.
+#[tauri::command]
+pub(crate) async fn bridge_get_screen_receiver_capabilities(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_screen(
+        state.inner().clone(),
+        "get_screen_receiver_capabilities",
+        json!({ "deviceId": device_id }),
+    )
+    .await
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn bridge_start_screen_stream(

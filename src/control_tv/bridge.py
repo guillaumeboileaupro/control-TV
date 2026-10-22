@@ -89,6 +89,10 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              Answers {"result": {"package", "deviceId", "confirmation",
                              "detail", "frontApp"}}: `confirmed` only when the TV then reports
                              that app in front, `not_checked` when it does not say.
+- `get_screen_receiver_capabilities` -> the selected TV's reachability, HLS availability and
+                             exact ControlTV Receiver installation/access state. A failed app
+                             inventory is returned as an explicit capability state and never
+                             guessed as "not installed". Read-only.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -377,6 +381,58 @@ def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
+_WEBRTC_RECEIVER_PACKAGE = "io.github.guillaumeboileaupro.controltv.receiver"
+
+
+def _handle_get_screen_receiver_capabilities(
+    control: TvControl, params: JsonObject
+) -> JsonObject:
+    """Probe only the selected device through existing control-layer reads.
+
+    A successful Cast status proves that the selected equipment is reachable and can use the
+    existing HLS path. The ADB inventory separately proves whether the exact receiver package is
+    installed and accessible; inability to read that inventory stays distinct from absence.
+    """
+    device_id = _device_id_param(params)
+    try:
+        control.get_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": False,
+                "hlsAvailable": False,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    try:
+        apps = control.list_tv_apps(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    installed = any(app.package == _WEBRTC_RECEIVER_PACKAGE for app in apps)
+    return {
+        "capabilities": {
+            "deviceAvailable": True,
+            "hlsAvailable": True,
+            "receiverAppInstalled": installed,
+            "receiverAccessible": installed,
+            "webrtcConfirmed": installed,
+            "reason": None if installed else "receiver_not_installed",
+        }
+    }
+
+
 def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     package = params.get("package")
@@ -635,6 +691,7 @@ _HANDLERS: dict[str, Handler] = {
     "press_remote_key": _handle_press_remote_key,
     "type_remote_text": _handle_type_remote_text,
     "list_tv_apps": _handle_list_tv_apps,
+    "get_screen_receiver_capabilities": _handle_get_screen_receiver_capabilities,
     "launch_tv_app": _handle_launch_tv_app,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,

@@ -17,6 +17,8 @@ Le chemin faible latence complète, sans remplacer, `ControlService` et le repli
 
 Chaque session crée un certificat TLS éphémère. Le récepteur se connecte à `adresse:port`, vérifie son empreinte SHA-256 saisie avec les paramètres de session, puis envoie dans ce canal chiffré une ligne JSON contenant le jeton. Il reçoit l'offre SDP et renvoie, après rassemblement ICE complet, une ligne contenant le refus explicite ou la réponse SDP finale. Le certificat épinglé authentifie l'émetteur ; le jeton unique authentifie le récepteur et n'apparaît ni dans `Debug` ni dans les erreurs. Le serveur disparaît après cet échange, ce qui interdit sa réutilisation. Le média est ensuite chiffré par DTLS-SRTP.
 
+La détection de capacité réutilise le `TvControl` et l'inventaire d'applications existants, sur le seul identifiant sélectionné. La disponibilité Cast confirme le chemin HLS ; seul le paquet exact `io.github.guillaumeboileaupro.controltv.receiver`, effectivement listé par la TV, confirme l'installation et l'accessibilité WebRTC. Un inventaire ADB inaccessible reste « capacité non confirmée », jamais « application absente » ni compatibilité supposée.
+
 Une première connexion invalide consomme encore cette écoute à usage unique : l'utilisateur doit relancer la session. La reprise bornée après perte du réseau reste à implémenter ; aucun rejeu automatique de commande ou de secret n'est effectué.
 
 ## Validation automatisée et limites

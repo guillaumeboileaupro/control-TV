@@ -26,6 +26,8 @@
 
 **Revue indépendante du 2026-10-21 :** les blocages sur le nettoyage après échec partiel, la conservation conjointe des erreurs média/nettoyage, l'échéance d'une piste silencieuse, la réponse Android après ICE complet et la documentation obsolète ont été corrigés après les verdicts `CHANGES REQUESTED`. La revue finale du SHA `acefef9` est `APPROVED`, sans P0/P1/P2/P3 nouveau ; elle reste strictement logicielle. Les écarts fonctionnels UI/capacités, perte réseau/reconnexion et D2 restent ouverts.
 
+**Détection logicielle du récepteur (2026-10-22) :** le pont expose maintenant les capacités du seul équipement sélectionné. Une lecture d'état Cast réussie confirme équipement joignable et repli HLS ; l'inventaire d'applications existant confirme séparément l'installation et l'accessibilité du paquet exact `ControlTV Receiver`. Paquet absent, inventaire ADB inaccessible et équipement indisponible restent trois états distincts ; aucune compatibilité WebRTC n'est déduite du seul type Android TV. Le raccordement de cette capacité au sélecteur AUTO/WEBRTC/HLS reste ouvert.
+
 ---
 
 ## État des travaux — 2026-10-19
