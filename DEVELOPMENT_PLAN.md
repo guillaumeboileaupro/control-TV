@@ -24,6 +24,8 @@ La préparation du bail est désormais transactionnelle face à une fermeture co
 
 La commande Tauri WebRTC consomme maintenant ce bail de bout en bout : la géométrie source vient exclusivement du contrôleur Python, l'activation suit la négociation et le démarrage média, et tous les chemins d'arrêt ou d'échec demandent sa libération. Le choix AUTO/WebRTC/HLS et son raccordement à la carte graphique restent à terminer.
 
+Les opérations de cycle de vie Tauri sont sérialisées sur une même exclusion mutuelle, du début de la préparation à la publication de la session. Les diagnostics de nettoyage sont combinés à la cause primaire, y compris lorsque le bridge de restauration lui-même ne répond pas.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

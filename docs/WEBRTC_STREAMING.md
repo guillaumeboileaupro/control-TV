@@ -23,6 +23,8 @@ Le bail D1/D2 appartient au contrôleur Python existant. Sa préparation est ann
 
 La commande Tauri acquiert ce bail avant de créer le moteur, utilise séparément sa taille source et la taille d'encodage demandée, puis ne l'active qu'après la négociation et le démarrage média. Toute erreur de préparation du moteur, négociation, activation, fin de média ou arrêt déclenche sa libération. Les coordonnées X11 ne sont donc jamais acceptées depuis l'interface.
 
+Un verrou de cycle de vie commun empêche `start`, `stop` et le traitement d'une fin de média de se dépasser pendant la transaction. Si la libération échoue au niveau du bridge, le diagnostic conserve à la fois la cause WebRTC et cette panne ; une réponse Python qui contient déjà les deux n'est pas répétée.
+
 Pour D1/D2, le contrôleur Python existant acquiert un bail avant le démarrage Rust. Le bail contient uniquement la route locale, le display X11 et la géométrie de la source ; aucun secret de session. En D2, il possède l'instance du gestionnaire d'extension existant jusqu'à la libération et restaure le bureau sur arrêt ou fermeture du bridge. FFmpeg capture la taille réelle de cette source puis la met explicitement à l'échelle vers la résolution vidéo demandée.
 
 Une première connexion invalide consomme encore cette écoute à usage unique : l'utilisateur doit relancer la session. La reprise bornée après perte du réseau reste à implémenter ; aucun rejeu automatique de commande ou de secret n'est effectué.

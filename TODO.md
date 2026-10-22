@@ -34,6 +34,8 @@
 
 **Transaction Tauri/Rust (2026-10-22) :** la commande de démarrage WebRTC acquiert désormais elle-même le bail Python autoritatif, consomme sa géométrie source réelle, active le bail seulement après négociation et démarrage média, puis le libère sur erreur, fin de média ou arrêt. La commande ne reçoit plus de coordonnées X11 fournies par l'interface. Le choix AUTO/HLS et le sélecteur graphique restent ouverts.
 
+Le cycle de vie Tauri sérialise maintenant démarrage, arrêt et lecture terminale afin qu'un arrêt concurrent ne puisse pas être dépassé par une publication tardive. Tous les chemins conservent la cause WebRTC initiale et une éventuelle panne du RPC de restauration, sans dupliquer un diagnostic déjà combiné par Python.
+
 ---
 
 ## État des travaux — 2026-10-19
