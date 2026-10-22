@@ -66,6 +66,8 @@ pub(crate) async fn start_webrtc_stream(
         display,
         offset_x,
         offset_y,
+        source_width: width,
+        source_height: height,
         video: VideoConfig {
             width,
             height,

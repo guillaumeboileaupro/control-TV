@@ -40,10 +40,12 @@ impl ProcessRunner {
             "-framerate".into(),
             config.video.fps.to_string(),
             "-video_size".into(),
-            format!("{}x{}", config.video.width, config.video.height),
+            format!("{}x{}", config.source_width, config.source_height),
             "-i".into(),
             format!("{}+{},{}", config.display, config.offset_x, config.offset_y),
             "-an".into(),
+            "-vf".into(),
+            format!("scale={}:{}", config.video.width, config.video.height),
             "-c:v".into(),
             "libx264".into(),
             "-preset".into(),
@@ -461,6 +463,8 @@ mod tests {
             display: ":7.0".into(),
             offset_x: 12,
             offset_y: 34,
+            source_width: 2560,
+            source_height: 1440,
             video: VideoConfig {
                 width: 1920,
                 height: 1080,
@@ -479,7 +483,8 @@ mod tests {
     fn video_command_is_low_latency_and_scoped_to_selected_geometry() {
         let args = ProcessRunner::video_arguments(&capture());
         assert!(args.windows(2).any(|item| item == ["-tune", "zerolatency"]));
-        assert!(args.contains(&"1920x1080".into()));
+        assert!(args.contains(&"2560x1440".into()));
+        assert!(args.contains(&"scale=1920:1080".into()));
         assert!(args.contains(&":7.0+12,34".into()));
         assert!(args.windows(2).any(|item| item == ["-bf", "0"]));
         assert!(args

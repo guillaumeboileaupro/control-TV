@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from control_tv import bridge
+from control_tv.domain import TvApp
 from control_tv.json_types import JsonObject, JsonValue, as_object
 from control_tv.ports import TvControl
 from control_tv.screen_streaming import (
@@ -100,6 +101,11 @@ class Rig:
             **options,  # type: ignore[arg-type]
         )
 
+    def install_receiver(self) -> None:
+        self.control.list_tv_apps = lambda device_id: [  # type: ignore[method-assign]
+            TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+        ]
+
 
 def wait_for(controller: ScreenStreamController, *states: StreamState) -> StreamState:
     deadline = time.monotonic() + 10
@@ -143,6 +149,56 @@ def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
     controller.close()
 
     assert rig.xrandr.enabled is None and controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_duplicate_uses_the_existing_capture_and_releases_its_lease(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    controller = rig.controller()
+
+    lease = controller.prepare_webrtc_capture(DUPLICATE)
+
+    assert lease.bind_address == "127.0.0.1"
+    assert (lease.display, lease.offset_x, lease.offset_y) == (":0", 0, 0)
+    assert (lease.source_width, lease.source_height) == (1920, 1080)
+    assert controller.activate_webrtc_capture().state is StreamState.RUNNING
+    assert controller.release_webrtc_capture().state is StreamState.IDLE
+    controller.prepare_webrtc_capture(DUPLICATE)  # a second session can acquire it
+    controller.close()
+    assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_extension_is_restored_on_release_and_bridge_close(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    controller = rig.controller()
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1280, 720, 30, True, 60, Position.RIGHT
+    )
+
+    lease = controller.prepare_webrtc_capture(request)
+    assert (lease.offset_x, lease.offset_y, lease.source_width, lease.source_height) == (
+        1920,
+        0,
+        1280,
+        720,
+    )
+    assert rig.xrandr.enabled is not None
+    controller.close()
+    assert rig.xrandr.enabled is None
+    assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_preparation_fails_closed_without_the_exact_receiver(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.control.list_tv_apps = lambda device_id: [TvApp("example.other", None)]  # type: ignore[method-assign]
+    controller = rig.controller()
+
+    with pytest.raises(InvalidStreamConfiguration, match="not installed or accessible"):
+        controller.prepare_webrtc_capture(DUPLICATE)
+
+    assert controller.status().state is StreamState.FAILED
+    assert rig.xrandr.enabled is None
 
 
 @pytest.mark.parametrize(
@@ -361,6 +417,32 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
     }
     assert stream("stop_screen_stream")["state"] == "stopping"
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
+
+
+def test_the_bridge_acquires_activates_and_releases_one_webrtc_capture(screen: Rig) -> None:
+    screen.install_receiver()
+    request: dict[str, JsonValue] = {
+        "deviceId": str(DEVICE_ID),
+        "mode": "duplicate",
+        "screen": "eDP-1",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "consent": True,
+    }
+
+    assert answered("prepare_webrtc_capture", **request) == {
+        "capture": {
+            "bindAddress": "127.0.0.1",
+            "display": ":0",
+            "offsetX": 0,
+            "offsetY": 0,
+            "sourceWidth": 1920,
+            "sourceHeight": 1080,
+        }
+    }
+    assert stream("activate_webrtc_capture")["state"] == "running"
+    assert stream("release_webrtc_capture")["state"] == "idle"
 
 
 @pytest.mark.parametrize(

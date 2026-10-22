@@ -440,6 +440,56 @@ pub(crate) async fn bridge_get_screen_receiver_capabilities(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
+pub(crate) async fn bridge_prepare_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    mode: String,
+    screen: Option<String>,
+    width: u32,
+    height: u32,
+    fps: u32,
+    consent: bool,
+    refresh: Option<u32>,
+    position: Option<String>,
+) -> Result<Value, BridgeFailure> {
+    let placement = Placement {
+        refresh: refresh.unwrap_or(60),
+        position: position.as_deref().unwrap_or("right"),
+    };
+    let params = screen_stream_request(
+        &device_id,
+        &mode,
+        screen.as_deref(),
+        (width, height),
+        fps,
+        consent,
+        &placement,
+    );
+    send_screen(state.inner().clone(), "prepare_webrtc_capture", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_activate_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "activate_webrtc_capture", json!({})).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_release_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+    error: Option<String>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(
+        state.inner().clone(),
+        "release_webrtc_capture",
+        json!({ "error": error }),
+    )
+    .await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn bridge_start_screen_stream(
     state: tauri::State<'_, SharedBridgeState>,
     device_id: String,

@@ -134,7 +134,11 @@ from control_tv.trace_files import AcceptanceTracing
 Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
-    from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
+    from control_tv.screen_streaming.controller import (
+        ScreenRequest,
+        ScreenStatus,
+        ScreenStreamController,
+    )
     from control_tv.screen_streaming.display_layout import Display, DisplayManager, OutputSetting
     from control_tv.screen_streaming.virtual_display import Position
 INTERNAL_ERROR_CODE = "internal_error"
@@ -381,9 +385,6 @@ def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
-_WEBRTC_RECEIVER_PACKAGE = "io.github.guillaumeboileaupro.controltv.receiver"
-
-
 def _handle_get_screen_receiver_capabilities(
     control: TvControl, params: JsonObject
 ) -> JsonObject:
@@ -420,7 +421,9 @@ def _handle_get_screen_receiver_capabilities(
                 "reason": error.code.value,
             }
         }
-    installed = any(app.package == _WEBRTC_RECEIVER_PACKAGE for app in apps)
+    from control_tv.screen_streaming.controller import WEBRTC_RECEIVER_PACKAGE
+
+    installed = any(app.package == WEBRTC_RECEIVER_PACKAGE for app in apps)
     return {
         "capabilities": {
             "deviceAvailable": True,
@@ -608,8 +611,7 @@ def _positions() -> dict[str, Position]:
     }
 
 
-def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
+def _screen_request(params: JsonObject) -> ScreenRequest:
     from control_tv.screen_streaming.controller import ScreenRequest
     from control_tv.screen_streaming.d1 import Mode
 
@@ -624,7 +626,7 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
     if not isinstance(position, str) or position not in _positions():
         raise InvalidArgumentError("position must be left, right, above or below")
     refresh = _strict_int(params, "refresh") if "refresh" in params else 60
-    request = ScreenRequest(
+    return ScreenRequest(
         str(_device_id_param(params)),
         Mode(mode),
         screen,
@@ -637,7 +639,48 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         _strict_int(params, "x") if "x" in params else None,
         _strict_int(params, "y") if "y" in params else None,
     )
+
+
+def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    request = _screen_request(params)
     return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
+
+
+def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+
+    def prepare() -> JsonObject:
+        lease = _screen().prepare_webrtc_capture(_screen_request(params))
+        return {
+            "capture": {
+                "bindAddress": lease.bind_address,
+                "display": lease.display,
+                "offsetX": lease.offset_x,
+                "offsetY": lease.offset_y,
+                "sourceWidth": lease.source_width,
+                "sourceHeight": lease.source_height,
+            }
+        }
+
+    return _screen_call(prepare)
+
+
+def _handle_activate_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().activate_webrtc_capture())}
+    )
+
+
+def _handle_release_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    error = params.get("error")
+    if error is not None and not isinstance(error, str):
+        raise InvalidArgumentError("error must be a string or null")
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().release_webrtc_capture(error))}
+    )
 
 
 def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
@@ -695,6 +738,9 @@ _HANDLERS: dict[str, Handler] = {
     "launch_tv_app": _handle_launch_tv_app,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,
+    "prepare_webrtc_capture": _handle_prepare_webrtc_capture,
+    "activate_webrtc_capture": _handle_activate_webrtc_capture,
+    "release_webrtc_capture": _handle_release_webrtc_capture,
     "stop_screen_stream": _handle_stop_screen_stream,
     "get_screen_stream": _handle_get_screen_stream,
     "get_display_layout": _handle_get_display_layout,

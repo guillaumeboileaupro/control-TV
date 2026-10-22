@@ -79,6 +79,8 @@ pub struct CaptureConfig {
     pub display: String,
     pub offset_x: u32,
     pub offset_y: u32,
+    pub source_width: u32,
+    pub source_height: u32,
     pub video: VideoConfig,
     pub audio: AudioConfig,
 }
@@ -96,7 +98,9 @@ impl SessionConfig {
         if self.bind_address.is_unspecified() {
             return Err(EngineError::UnsafeBindAddress);
         }
-        if self.capture.video.width == 0
+        if self.capture.source_width == 0
+            || self.capture.source_height == 0
+            || self.capture.video.width == 0
             || self.capture.video.height == 0
             || !(1..=120).contains(&self.capture.video.fps)
             || self.maximum_duration.is_zero()
@@ -169,6 +173,8 @@ mod tests {
                 display: ":0.0".into(),
                 offset_x: 0,
                 offset_y: 0,
+                source_width: 1920,
+                source_height: 1080,
                 video: VideoConfig {
                     width: 1280,
                     height: 720,
