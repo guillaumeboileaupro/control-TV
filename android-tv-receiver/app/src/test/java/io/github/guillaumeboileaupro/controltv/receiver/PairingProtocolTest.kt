@@ -27,6 +27,18 @@ class PairingProtocolTest {
         assertFalse(target.toString().contains(fingerprint))
     }
 
+    @Test fun parsesTheCompactSecureRemoteHandoff() {
+        val compactFingerprint = fingerprint.replace(":", "")
+        val target = PairingProtocol.handoff("ctv1|192.0.2.1|9999|$token|$compactFingerprint")
+        assertEquals("192.0.2.1", target.host)
+        assertEquals(9999, target.port)
+        assertEquals(token, target.token)
+        assertEquals(fingerprint, target.certificateSha256)
+        assertThrows(IllegalArgumentException::class.java) {
+            PairingProtocol.handoff("ctv1|host|9999|$token|short")
+        }
+    }
+
     @Test fun requiresAnSdpOfferAndMakesRefusalExplicit() {
         assertEquals("v=0\r\ns=test", PairingProtocol.offer("{\"offer\":\"v=0\\r\\ns=test\"}"))
         assertThrows(IllegalArgumentException::class.java) { PairingProtocol.offer("{\"offer\":\"bad\"}") }

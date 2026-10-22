@@ -3,17 +3,20 @@ use control_tv_webrtc::{
     ProcessRunner, SessionConfig, SessionController, SystemClock, VideoConfig, WebRtcTransport,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::net::IpAddr;
+use serde_json::{json, Value};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-use crate::bridge::SharedBridgeState;
-use crate::commands::{screen_stream_request, send_screen, Placement};
+use crate::bridge::{call_bridge, SharedBridgeState};
+use crate::commands::{
+    screen_stream_request, send_screen, Placement, APPS_TIMEOUT, REMOTE_TIMEOUT,
+};
 
 const MAXIMUM_SESSION: Duration = Duration::from_secs(60 * 60);
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
+const RECEIVER_PACKAGE: &str = "io.github.guillaumeboileaupro.controltv.receiver";
 
 #[derive(Clone, Default)]
 pub(crate) struct WebRtcState {
@@ -113,13 +116,55 @@ async fn release_start_failure(bridge: SharedBridgeState, detail: String) -> Str
     combine_failure(Some(&detail), cleanup).expect("a primary failure is always preserved")
 }
 
+async fn handoff_receiver(
+    bridge: SharedBridgeState,
+    device_id: &str,
+    address: SocketAddr,
+    token: &str,
+    certificate_sha256: &str,
+) -> Result<(), String> {
+    call_bridge(
+        bridge.clone(),
+        "launch_tv_app",
+        json!({ "deviceId": device_id, "package": RECEIVER_PACKAGE }),
+        APPS_TIMEOUT,
+    )
+    .await
+    .map_err(|failure| failure.message)?;
+    let payload = pairing_payload(address, token, certificate_sha256);
+    let reply = call_bridge(
+        bridge,
+        "type_remote_text",
+        json!({ "deviceId": device_id, "text": payload }),
+        REMOTE_TIMEOUT,
+    )
+    .await
+    .map_err(|failure| failure.message)?;
+    let field_reported = reply
+        .get("result")
+        .and_then(Value::as_object)
+        .and_then(|result| result.get("fieldReported"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !field_reported {
+        return Err("the receiver did not expose its secure pairing field".into());
+    }
+    Ok(())
+}
+
+fn pairing_payload(address: SocketAddr, token: &str, certificate_sha256: &str) -> String {
+    format!(
+        "ctv1|{}|{}|{}|{}",
+        address.ip(),
+        address.port(),
+        token,
+        certificate_sha256.replace(':', "")
+    )
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartReply {
-    session_id: String,
-    pairing_address: String,
-    pairing_token: String,
-    pairing_certificate_sha256: String,
     state: EngineState,
 }
 
@@ -217,11 +262,6 @@ pub(crate) async fn start_webrtc_stream(
         return Err(release_start_failure(bridge.inner().clone(), detail).await);
     }
     active.last_error = None;
-    let session_id = active
-        .controller
-        .session_id()
-        .expect("prepared session id")
-        .to_string();
     let token = active
         .controller
         .pairing_token()
@@ -230,6 +270,23 @@ pub(crate) async fn start_webrtc_stream(
     let pairing_token = token.expose_for_pairing().to_owned();
     active.transport = Some(Arc::clone(&transport));
     drop(active);
+
+    if let Err(detail) = handoff_receiver(
+        bridge.inner().clone(),
+        &device_id,
+        endpoint.address,
+        &pairing_token,
+        &endpoint.certificate_sha256,
+    )
+    .await
+    {
+        let mut active = state.active.lock().await;
+        let _ = active.controller.stop(transport.as_ref()).await;
+        active.transport = None;
+        active.last_error = Some(detail.clone());
+        drop(active);
+        return Err(release_start_failure(bridge.inner().clone(), detail).await);
+    }
 
     let state_handle = state.inner().clone();
     let bridge_handle = bridge.inner().clone();
@@ -300,10 +357,6 @@ pub(crate) async fn start_webrtc_stream(
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
 
     Ok(StartReply {
-        session_id,
-        pairing_address: endpoint.address.to_string(),
-        pairing_token,
-        pairing_certificate_sha256: endpoint.certificate_sha256,
         state: EngineState::AwaitingReceiver,
     })
 }
@@ -363,6 +416,30 @@ mod tests {
             combine_failure(Some("engine failed"), None).as_deref(),
             Some("engine failed")
         );
+    }
+
+    #[test]
+    fn pairing_handoff_is_compact_and_never_returned_to_the_window() {
+        let token = "A".repeat(48);
+        let certificate = (0..32)
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        let payload = pairing_payload(
+            "192.0.2.10:43210".parse().expect("socket address"),
+            &token,
+            &certificate,
+        );
+        assert_eq!(payload.split('|').count(), 5);
+        assert!(payload.len() <= 256);
+
+        let reply = serde_json::to_value(StartReply {
+            state: EngineState::AwaitingReceiver,
+        })
+        .expect("serialize start reply");
+        let encoded = reply.to_string();
+        assert!(!encoded.contains(&token));
+        assert!(!encoded.contains("pairing"));
     }
 }
 
