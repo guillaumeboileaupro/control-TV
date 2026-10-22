@@ -390,7 +390,9 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
 
     A successful Cast status proves that the selected equipment is reachable and can use the
     existing HLS path. The ADB inventory separately proves whether the exact receiver package is
-    installed and accessible; inability to read that inventory stays distinct from absence.
+    installed and accessible; inability to read that inventory stays distinct from absence. A
+    WebRTC confirmation additionally requires the already-paired Android Remote channel used for
+    the one-time secret handoff.
     """
     device_id = _device_id_param(params)
     try:
@@ -402,6 +404,7 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
                 "hlsAvailable": False,
                 "receiverAppInstalled": None,
                 "receiverAccessible": False,
+                "remoteAccessible": False,
                 "webrtcConfirmed": False,
                 "reason": error.code.value,
             }
@@ -415,6 +418,7 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
                 "hlsAvailable": True,
                 "receiverAppInstalled": None,
                 "receiverAccessible": False,
+                "remoteAccessible": False,
                 "webrtcConfirmed": False,
                 "reason": error.code.value,
             }
@@ -422,14 +426,41 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
     from control_tv.screen_streaming.controller import WEBRTC_RECEIVER_PACKAGE
 
     installed = any(app.package == WEBRTC_RECEIVER_PACKAGE for app in apps)
+    if not installed:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": False,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": "receiver_not_installed",
+            }
+        }
+    try:
+        control.get_remote_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": True,
+                "receiverAccessible": True,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
     return {
         "capabilities": {
             "deviceAvailable": True,
             "hlsAvailable": True,
-            "receiverAppInstalled": installed,
-            "receiverAccessible": installed,
-            "webrtcConfirmed": installed,
-            "reason": None if installed else "receiver_not_installed",
+            "receiverAppInstalled": True,
+            "receiverAccessible": True,
+            "remoteAccessible": True,
+            "webrtcConfirmed": True,
+            "reason": None,
         }
     }
 

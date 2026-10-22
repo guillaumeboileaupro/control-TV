@@ -130,6 +130,10 @@ class ReachableStub(StubControl):
             observed_at=OBSERVED_AT,
         )
 
+    def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
+        self.calls.append(("get_remote_status", device_id))
+        return RemoteObservation(is_on=True, volume=None, current_app=None)
+
 
 def capabilities(control: StubControl) -> JsonObject:
     response = dispatch(
@@ -153,10 +157,15 @@ def test_screen_capabilities_confirm_only_the_exact_receiver_package() -> None:
         "hlsAvailable": True,
         "receiverAppInstalled": True,
         "receiverAccessible": True,
+        "remoteAccessible": True,
         "webrtcConfirmed": True,
         "reason": None,
     }
-    assert stub.calls == [("get_status", str(DEVICE_ID)), ("list_tv_apps", str(DEVICE_ID))]
+    assert stub.calls == [
+        ("get_status", str(DEVICE_ID)),
+        ("list_tv_apps", str(DEVICE_ID)),
+        ("get_remote_status", str(DEVICE_ID)),
+    ]
 
 
 def test_screen_capabilities_distinguish_absent_and_inaccessible_receiver() -> None:
@@ -175,6 +184,7 @@ def test_screen_capabilities_distinguish_absent_and_inaccessible_receiver() -> N
         "hlsAvailable": True,
         "receiverAppInstalled": None,
         "receiverAccessible": False,
+        "remoteAccessible": False,
         "webrtcConfirmed": False,
         "reason": "debugging_off",
     }
@@ -187,7 +197,28 @@ def test_screen_capabilities_stop_after_the_selected_device_is_unavailable() -> 
         "hlsAvailable": False,
         "receiverAppInstalled": None,
         "receiverAccessible": False,
+        "remoteAccessible": False,
         "webrtcConfirmed": False,
         "reason": "device_not_found",
     }
     assert stub.calls == [("get_status", str(DEVICE_ID))]
+
+
+def test_screen_capabilities_require_the_remote_handoff_channel() -> None:
+    class RemoteUnavailableStub(ReachableStub):
+        def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
+            self.calls.append(("get_remote_status", device_id))
+            raise DebuggingOffError("remote pairing is unavailable", device_id=str(device_id))
+
+    receiver = TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+    stub = RemoteUnavailableStub(apps=(receiver,))
+
+    assert capabilities(stub) == {
+        "deviceAvailable": True,
+        "hlsAvailable": True,
+        "receiverAppInstalled": True,
+        "receiverAccessible": True,
+        "remoteAccessible": False,
+        "webrtcConfirmed": False,
+        "reason": "debugging_off",
+    }

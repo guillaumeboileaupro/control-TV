@@ -182,6 +182,7 @@ describe("the stream", () => {
       capabilities: {
         deviceAvailable: true,
         hlsAvailable: true,
+        remoteAccessible: true,
         webrtcConfirmed: true,
         reason: null,
       },

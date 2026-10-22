@@ -382,10 +382,10 @@ def test_text_goes_once_to_the_discovered_tv_and_is_never_confirmed_by_it() -> N
     assert result.detail == "sent to the TV's active text field; check the TV"
 
 
-def test_text_sent_without_an_active_field_reported_says_so() -> None:
+def test_text_is_not_sent_without_an_active_field_reported() -> None:
     result = discovered(FakeRemote(field_reported=False)).type_remote_text(DEVICE_ID, "abc")
 
-    assert result.detail == "sent, but the TV did not report an active text field; check the TV"
+    assert result.detail == "not sent because the TV did not report an active text field"
     assert result.field_reported is False
 
 

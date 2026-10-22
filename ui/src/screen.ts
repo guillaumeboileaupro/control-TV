@@ -460,6 +460,7 @@ export function consentedStart(
 export interface ReceiverCapabilities {
   deviceAvailable: boolean;
   hlsAvailable: boolean;
+  remoteAccessible: boolean;
   webrtcConfirmed: boolean;
   reason: string | null;
 }
@@ -469,16 +470,17 @@ export function parseReceiverCapabilities(value: JsonValue): ReceiverCapabilitie
   if (!isJsonObject(capabilities)) {
     return null;
   }
-  const { deviceAvailable, hlsAvailable, webrtcConfirmed, reason } = capabilities;
+  const { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason } = capabilities;
   if (
     typeof deviceAvailable !== "boolean" ||
     typeof hlsAvailable !== "boolean" ||
+    typeof remoteAccessible !== "boolean" ||
     typeof webrtcConfirmed !== "boolean" ||
     (reason !== null && typeof reason !== "string")
   ) {
     return null;
   }
-  return { deviceAvailable, hlsAvailable, webrtcConfirmed, reason };
+  return { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason };
 }
 
 export function selectTransport(

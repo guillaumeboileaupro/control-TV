@@ -533,12 +533,10 @@ def test_text_is_sent_once_to_the_active_field(channel: TvRemoteChannel, tv: Fak
     assert tv.log == [("connect",), ("text", "11"), ("disconnect",)]
 
 
-def test_text_without_a_reported_field_is_still_sent_once_and_says_so(
-    channel: TvRemoteChannel, tv: FakeTv
-) -> None:
+def test_text_without_a_reported_field_is_not_sent(channel: TvRemoteChannel, tv: FakeTv) -> None:
     entry = channel.type_text(HOST, "abc")
 
-    assert tv.texts == ["abc"]
+    assert tv.texts == []
     assert entry.field_reported is False
 
 

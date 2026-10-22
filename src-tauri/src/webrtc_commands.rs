@@ -123,7 +123,7 @@ async fn handoff_receiver(
     token: &str,
     certificate_sha256: &str,
 ) -> Result<(), String> {
-    call_bridge(
+    let launch = call_bridge(
         bridge.clone(),
         "launch_tv_app",
         json!({ "deviceId": device_id, "package": RECEIVER_PACKAGE }),
@@ -131,6 +131,7 @@ async fn handoff_receiver(
     )
     .await
     .map_err(|failure| failure.message)?;
+    verify_receiver_launch(&launch)?;
     let payload = pairing_payload(address, token, certificate_sha256);
     let reply = call_bridge(
         bridge,
@@ -148,6 +149,21 @@ async fn handoff_receiver(
         .unwrap_or(false);
     if !field_reported {
         return Err("the receiver did not expose its secure pairing field".into());
+    }
+    Ok(())
+}
+
+fn verify_receiver_launch(launch: &Value) -> Result<(), String> {
+    let launch_result = launch.get("result").and_then(Value::as_object);
+    let confirmed = launch_result
+        .and_then(|result| result.get("confirmation"))
+        .and_then(Value::as_str)
+        == Some("confirmed");
+    let front_app = launch_result
+        .and_then(|result| result.get("frontApp"))
+        .and_then(Value::as_str);
+    if !confirmed || front_app != Some(RECEIVER_PACKAGE) {
+        return Err("the TV did not confirm the ControlTV receiver in front".into());
     }
     Ok(())
 }
@@ -281,8 +297,15 @@ pub(crate) async fn start_webrtc_stream(
     .await
     {
         let mut active = state.active.lock().await;
-        let _ = active.controller.stop(transport.as_ref()).await;
+        let cleanup = active
+            .controller
+            .stop(transport.as_ref())
+            .await
+            .err()
+            .map(|error| format!("engine cleanup failed: {error}"));
         active.transport = None;
+        let detail =
+            combine_failure(Some(&detail), cleanup).expect("a primary failure is always preserved");
         active.last_error = Some(detail.clone());
         drop(active);
         return Err(release_start_failure(bridge.inner().clone(), detail).await);
@@ -440,6 +463,26 @@ mod tests {
         let encoded = reply.to_string();
         assert!(!encoded.contains(&token));
         assert!(!encoded.contains("pairing"));
+    }
+
+    #[test]
+    fn pairing_handoff_requires_the_exact_confirmed_front_app() {
+        let confirmed = json!({"result": {
+            "confirmation": "confirmed",
+            "frontApp": RECEIVER_PACKAGE,
+        }});
+        assert!(verify_receiver_launch(&confirmed).is_ok());
+
+        for launch in [
+            json!({"result": {"confirmation": "unconfirmed", "frontApp": RECEIVER_PACKAGE}}),
+            json!({"result": {"confirmation": "confirmed", "frontApp": "example.other"}}),
+            json!({"result": {}}),
+        ] {
+            assert_eq!(
+                verify_receiver_launch(&launch),
+                Err("the TV did not confirm the ControlTV receiver in front".into())
+            );
+        }
     }
 }
 
