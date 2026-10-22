@@ -553,6 +553,7 @@ def test_malformed_text_is_refused_before_anything_is_sent(
 
 
 def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.field_counter = 1
     tv.send_error = ConnectionClosed("lost while sending secret-123")
 
     with pytest.raises(DeviceUnavailableError) as excinfo:
