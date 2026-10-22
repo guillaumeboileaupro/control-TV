@@ -213,9 +213,7 @@ def test_webrtc_extension_cleanup_failure_is_retained_and_retryable(tmp_path: Pa
 
     failed = controller.release_webrtc_capture("the Rust engine stopped")
     assert failed.state is StreamState.FAILED
-    assert failed.error == (
-        "the Rust engine stopped; the extended screen was not restored: stuck"
-    )
+    assert failed.error == ("the Rust engine stopped; the extended screen was not restored: stuck")
     assert rig.xrandr.enabled is not None
 
     assert controller.release_webrtc_capture().state is StreamState.IDLE

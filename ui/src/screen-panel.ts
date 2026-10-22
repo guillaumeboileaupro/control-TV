@@ -31,6 +31,7 @@ import {
   previewScreens,
   startStop,
   selectTransport,
+  shouldApplyPoll,
   withScreens,
   type Rate,
   type RefreshRate,
@@ -105,6 +106,7 @@ export function createScreenPanel(
 ): { refresh(): void; render(): void } {
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
+  let operation = 0;
   const displays = createDisplayPanel(el.display, {
     call: ports.call,
     timers: ports.timers,
@@ -148,12 +150,17 @@ export function createScreenPanel(
       }
       return;
     }
+    const generation = operation;
+    const transport = state.transportUsed;
     const reply = await answer(
-      state.transportUsed === "webrtc" ? "get_webrtc_stream" : "bridge_get_screen_stream",
+      transport === "webrtc" ? "get_webrtc_stream" : "bridge_get_screen_stream",
       {},
     );
+    if (!shouldApplyPoll(generation, operation, state.pending, transport, state.transportUsed)) {
+      return;
+    }
     update(
-      state.transportUsed === "webrtc"
+      transport === "webrtc"
         ? finishWebRtc(state, reply)
         : reply.ok
           ? finishPoll(state, reply.result)
@@ -312,9 +319,13 @@ export function createScreenPanel(
     const next = consentedStart(state, ports.selectedTv());
     update(next.state);
     if (next.request !== null) {
+      const generation = ++operation;
       const capabilitiesReply = await answer("bridge_get_screen_receiver_capabilities", {
         deviceId: next.request.args.deviceId,
       });
+      if (generation !== operation) {
+        return;
+      }
       if (!capabilitiesReply.ok) {
         update(finishScreen(state, capabilitiesReply));
         return;
@@ -341,6 +352,9 @@ export function createScreenPanel(
         used === "webrtc" ? "start_webrtc_stream" : next.request.command,
         used === "webrtc" ? { ...next.request.args, audioDevice: null } : { ...next.request.args },
       );
+      if (generation !== operation) {
+        return;
+      }
       update(used === "webrtc" ? finishWebRtc(state, reply) : finishScreen(state, reply));
     }
   }
@@ -349,8 +363,12 @@ export function createScreenPanel(
     const next = startStop(state);
     update(next.state);
     if (next.send) {
+      const generation = ++operation;
       const webrtc = state.transportUsed === "webrtc";
       const reply = await answer(webrtc ? "stop_webrtc_stream" : "bridge_stop_screen_stream", {});
+      if (generation !== operation) {
+        return;
+      }
       update(webrtc ? finishWebRtc(state, reply) : finishScreen(state, reply));
     }
   }

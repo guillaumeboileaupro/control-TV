@@ -23,6 +23,7 @@ import {
   parseStream,
   previewScreens,
   selectTransport,
+  shouldApplyPoll,
   startStop,
   withScreens,
   type ScreenPanelState,
@@ -206,6 +207,12 @@ describe("the stream", () => {
     assert.equal(describeScreen(starting, true).statusText, "Starting the WebRTC stream…");
     const idle = finishWebRtc(starting, { ok: true, result: { state: "idle", error: null } });
     assert.equal(idle.transportUsed, null);
+  });
+
+  test("a poll started before Stop can never replace the stop result", () => {
+    assert.equal(shouldApplyPoll(4, 5, false, "webrtc", null), false);
+    assert.equal(shouldApplyPoll(5, 5, true, "webrtc", "webrtc"), false);
+    assert.equal(shouldApplyPoll(5, 5, false, "webrtc", "webrtc"), true);
   });
 
   test("a started stream is followed until it is idle again", () => {

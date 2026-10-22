@@ -385,9 +385,7 @@ def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
-def _handle_get_screen_receiver_capabilities(
-    control: TvControl, params: JsonObject
-) -> JsonObject:
+def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObject) -> JsonObject:
     """Probe only the selected device through existing control-layer reads.
 
     A successful Cast status proves that the selected equipment is reachable and can use the

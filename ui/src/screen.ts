@@ -494,6 +494,18 @@ export function selectTransport(
   return capabilities.webrtcConfirmed ? "webrtc" : capabilities.hlsAvailable ? "hls" : null;
 }
 
+export function shouldApplyPoll(
+  requestedGeneration: number,
+  currentGeneration: number,
+  pending: boolean,
+  requestedTransport: ActiveTransport | null,
+  currentTransport: ActiveTransport | null,
+): boolean {
+  return (
+    requestedGeneration === currentGeneration && !pending && requestedTransport === currentTransport
+  );
+}
+
 const WEBRTC_STATES: Record<string, StreamStateName> = {
   idle: "idle",
   awaiting_receiver: "starting",
