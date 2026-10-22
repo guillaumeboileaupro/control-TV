@@ -44,6 +44,16 @@ struct PrepareReply {
     capture: CaptureLease,
 }
 
+#[derive(Deserialize)]
+struct ReleaseStatus {
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseReply {
+    stream: ReleaseStatus,
+}
+
 fn capture_config(
     lease: CaptureLease,
     width: u32,
@@ -72,10 +82,23 @@ fn capture_config(
 }
 
 async fn release_capture(bridge: SharedBridgeState, error: Option<String>) -> Option<String> {
-    send_screen(bridge, "release_webrtc_capture", json!({ "error": error }))
-        .await
-        .err()
-        .map(|failure| failure.message)
+    match send_screen(bridge, "release_webrtc_capture", json!({ "error": error })).await {
+        Ok(value) => serde_json::from_value::<ReleaseReply>(value).map_or_else(
+            |parse| Some(format!("invalid capture cleanup response: {parse}")),
+            |reply| reply.stream.error,
+        ),
+        Err(failure) => Some(failure.message),
+    }
+}
+
+async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
+    if let Some(cleanup) = release_capture(bridge, Some(detail.clone())).await {
+        state.active.lock().await.last_error = Some(if cleanup == detail {
+            detail
+        } else {
+            format!("{detail}; capture cleanup failed: {cleanup}")
+        });
+    }
 }
 
 #[derive(Serialize)]
@@ -225,7 +248,7 @@ pub(crate) async fn start_webrtc_stream(
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
                     drop(active);
-                    let _ = release_capture(bridge_handle, Some(detail)).await;
+                    release_after_failure(&state_handle, bridge_handle, detail).await;
                     return;
                 }
                 let source = Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
@@ -237,7 +260,7 @@ pub(crate) async fn start_webrtc_stream(
                     let _ = active.controller.stop(transport.as_ref()).await;
                     active.transport = None;
                     drop(active);
-                    let _ = release_capture(bridge_handle, Some(detail)).await;
+                    release_after_failure(&state_handle, bridge_handle, detail).await;
                 } else {
                     drop(active);
                     if let Err(failure) =
@@ -250,7 +273,7 @@ pub(crate) async fn start_webrtc_stream(
                             let _ = active.controller.stop(transport.as_ref()).await;
                         }
                         drop(active);
-                        let _ = release_capture(bridge_handle, Some(failure.message)).await;
+                        release_after_failure(&state_handle, bridge_handle, failure.message).await;
                     }
                 }
             }
@@ -260,7 +283,7 @@ pub(crate) async fn start_webrtc_stream(
                 let _ = active.controller.stop(transport.as_ref()).await;
                 active.transport = None;
                 drop(active);
-                let _ = release_capture(bridge_handle, Some(detail)).await;
+                release_after_failure(&state_handle, bridge_handle, detail).await;
             }
         }
     });
