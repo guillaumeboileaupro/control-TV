@@ -19,6 +19,7 @@ const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct WebRtcState {
     active: Arc<Mutex<ActiveState>>,
     negotiation: Arc<StdMutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    operation: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -92,13 +93,15 @@ async fn release_capture(bridge: SharedBridgeState, error: Option<String>) -> Op
 }
 
 async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
-    if let Some(cleanup) = release_capture(bridge, Some(detail.clone())).await {
-        state.active.lock().await.last_error = Some(if cleanup == detail {
-            detail
-        } else {
-            format!("{detail}; capture cleanup failed: {cleanup}")
-        });
+    if let Some(cleanup) = release_capture(bridge, Some(detail)).await {
+        state.active.lock().await.last_error = Some(cleanup);
     }
+}
+
+async fn release_start_failure(bridge: SharedBridgeState, detail: String) -> String {
+    release_capture(bridge, Some(detail.clone()))
+        .await
+        .unwrap_or(detail)
 }
 
 #[derive(Serialize)]
@@ -138,6 +141,7 @@ pub(crate) async fn start_webrtc_stream(
     if !consent {
         return Err("explicit screen-sharing consent is required".into());
     }
+    let _operation = state.operation.lock().await;
     let placement = Placement {
         refresh: refresh.unwrap_or(60),
         position: position.as_deref().unwrap_or("right"),
@@ -158,8 +162,7 @@ pub(crate) async fn start_webrtc_stream(
         Ok(prepared) => prepared,
         Err(error) => {
             let detail = format!("the capture service returned an invalid WebRTC lease: {error}");
-            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-            return Err(detail);
+            return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
     let lease = prepared.capture;
@@ -167,8 +170,7 @@ pub(crate) async fn start_webrtc_stream(
         Ok(address) => address,
         Err(_) => {
             let detail = "the capture service returned an invalid bind address".to_owned();
-            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-            return Err(detail);
+            return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
     let capture = capture_config(lease, width, height, fps, audio_device);
@@ -182,32 +184,28 @@ pub(crate) async fn start_webrtc_stream(
         Ok(transport) => Arc::new(transport),
         Err(error) => {
             let detail = error.to_string();
-            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-            return Err(detail);
+            return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
     let offer = match transport.create_offer().await {
         Ok(offer) => offer,
         Err(error) => {
             let detail = error.to_string();
-            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-            return Err(detail);
+            return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
     let (server, endpoint) = match PairingServer::bind(bind_address).await {
         Ok(pairing) => pairing,
         Err(error) => {
             let detail = error.to_string();
-            let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-            return Err(detail);
+            return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
     let mut active = state.active.lock().await;
     if let Err(error) = active.controller.prepare(&config, &SystemClock).await {
         let detail = error.to_string();
         drop(active);
-        let _ = release_capture(bridge.inner().clone(), Some(detail.clone())).await;
-        return Err(detail);
+        return Err(release_start_failure(bridge.inner().clone(), detail).await);
     }
     active.last_error = None;
     let session_id = active
@@ -328,6 +326,15 @@ mod tests {
         assert_eq!((capture.video.width, capture.video.height), (1920, 1080));
         assert!(capture.audio.enabled);
     }
+
+    #[tokio::test]
+    async fn lifecycle_operations_are_serialized_across_start_stop_and_status() {
+        let state = WebRtcState::default();
+        let first = state.operation.lock().await;
+        assert!(state.operation.try_lock().is_err());
+        drop(first);
+        assert!(state.operation.try_lock().is_ok());
+    }
 }
 
 #[tauri::command]
@@ -335,6 +342,7 @@ pub(crate) async fn stop_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
     bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
+    let _operation = state.operation.lock().await;
     if let Some(task) = state
         .negotiation
         .lock()
@@ -350,10 +358,11 @@ pub(crate) async fn stop_webrtc_stream(
             active.last_error = Some(error.to_string());
         }
     }
+    let engine_error = active.last_error.clone();
     drop(active);
-    let cleanup_error = release_capture(bridge.inner().clone(), None).await;
+    let cleanup_error = release_capture(bridge.inner().clone(), engine_error.clone()).await;
     let active = state.active.lock().await;
-    let error = active.last_error.clone().or(cleanup_error);
+    let error = cleanup_error.or(engine_error);
     Ok(StatusReply {
         state: active.controller.state(),
         diagnostics: active.controller.diagnostics().await,
@@ -366,6 +375,7 @@ pub(crate) async fn get_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
     bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
+    let _operation = state.operation.lock().await;
     let mut active = state.active.lock().await;
     if let Some(result) = active.controller.poll_media().await {
         if let Err(error) = result {
@@ -380,9 +390,7 @@ pub(crate) async fn get_webrtc_stream(
         drop(active);
         let cleanup_error = release_capture(bridge.inner().clone(), error).await;
         active = state.active.lock().await;
-        if active.last_error.is_none() {
-            active.last_error = cleanup_error;
-        }
+        active.last_error = cleanup_error.or_else(|| active.last_error.clone());
     }
     Ok(StatusReply {
         state: active.controller.state(),
