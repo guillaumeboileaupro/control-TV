@@ -39,6 +39,12 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 **Statuts d'intégration :** #82, #90, #91, #92 et #93 sont fusionnées ; #95 reste ouverte pour
 la surveillance complémentaire du publisher D1.
 
+**Sécurité des dépendances (2026-10-23, branche `fix/deps-audit-certifi-vite`) :** la CI de
+`main` (`f0dba1d`) et des PR ouvertes échouait sur deux nouveaux avis : `certifi`
+PYSEC-2026-4320 (racines emSign compromises) et `vite` GHSA-587h-7wmj-h5pm (élevé, via
+`launch-editor`). Lockfiles mis à jour (`certifi` 2026.10.19, `vite` 8.3.4) ; audits Python et npm,
+contrôles Python et UI réussis localement. Validation automatisée uniquement.
+
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
 ---
