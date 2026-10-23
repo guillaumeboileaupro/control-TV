@@ -1,5 +1,9 @@
 # Development plan
 
+Security maintenance (2026-10-23): the Tauri lockfile pins Tokio 1.53.3, the minimal patched
+release for RUSTSEC-2026-0386 on the existing 1.53 LTS line. No audit waiver was added; validation
+is automated only and does not imply any TV or Android hardware result.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.
