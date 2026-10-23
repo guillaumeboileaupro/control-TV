@@ -80,6 +80,13 @@ Security status at this head: npm and Python audits report no unwaived vulnerabi
 
 Release evidence for `d95fc7b`: CI run `38723748264` produced artifact `control-tv-linux-release` (artifact id `11967735137`). Static inspection without installation verified `control-tv_0.1.0_amd64.deb` as Debian package format 2.0, architecture `amd64`, version 0.1.0, 24,078,972 bytes (67,461 KiB installed size), with the Tauri executable, desktop entry, icons, dependency notices and a bundled x86-64 Python bridge (CPython 3.12.15, PyInstaller 6.22.3, `libpython3.12.so.1.0`). Its declared dependencies are GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator; the AppIndicator dependency is duplicated in the metadata, a non-blocking cleanup item. Both supplied SHA-256 checks passed. The 444 packaged files contain 374 license/notice files and 65 bridge files; no source tree, tests, caches, `node_modules` or compiler intermediates were found. Local `release-deb` is not rerun because the installed global uv 0.11.26 does not recognize release Python 3.12.15; by owner decision the successful locked CI packaging/install/purge is accepted as packaging validation without changing global uv. **The artifact was not installed locally and is not validated on real TV hardware.**
 
+The Ubuntu release overlay now declares `ffmpeg` and `x11-xserver-utils` explicitly, in addition
+to the existing AppIndicator dependency. These packages provide the runtime encoder and X11
+display commands used by D0-D2; static acceptance tests pin both dependency names and the Linux CI
+installation step verifies that the installed `.deb` resolves them before purging the package.
+This is packaging and CI validation only: no package was installed and no screen capture or TV
+operation was performed while preparing this change.
+
 
 ## Phase 0 - Repository and development discipline
 
