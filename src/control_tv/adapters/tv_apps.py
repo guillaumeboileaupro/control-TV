@@ -31,6 +31,8 @@ DEFAULT_TIMEOUT = 10.0
 DEFAULT_FRONT_READS = 4
 DEFAULT_FRONT_INTERVAL = 0.75
 DEFAULT_LAUNCH_BUDGET = 15.0
+DEFAULT_PAIR_CONNECT_ATTEMPTS = 4
+DEFAULT_PAIR_CONNECT_INTERVAL = 0.5
 LAUNCHER_QUERY = (
     "cmd package query-activities --brief -a android.intent.action.MAIN "
     "-c android.intent.category.LEANBACK_LAUNCHER"
@@ -45,6 +47,8 @@ _FRONT = re.compile(
 )
 _ENDPOINT = re.compile(r"^(\[[0-9A-Fa-f:]+\]|[^:\s]+):(\d{1,5})$")
 _PAIRING_CODE = re.compile(r"\d{6}")
+_ADB_VERSION = re.compile(r"(?m)^Version (\d+)\.(\d+)\.(\d+)(?:[-\s]|$)")
+MIN_WIRELESS_PAIRING_VERSION = (30, 0, 0)
 
 KNOWN_NAMES = {
     "com.google.android.youtube.tv": "YouTube",
@@ -183,11 +187,17 @@ class AdbAppInventory:
         sleep: Callable[[float], None] = time.sleep,
         launch_budget: float = DEFAULT_LAUNCH_BUDGET,
         clock: Callable[[], float] = time.monotonic,
+        pair_connect_attempts: int = DEFAULT_PAIR_CONNECT_ATTEMPTS,
+        pair_connect_interval: float = DEFAULT_PAIR_CONNECT_INTERVAL,
+        pairing_wait_cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
         del credentials_dir  # Platform tools own and preserve ~/.android/adbkey.
         self._adb, self._timeout, self._run = adb, timeout, run
         self._front_reads, self._front_interval = max(1, front_reads), front_interval
         self._sleep, self._launch_budget, self._clock = sleep, launch_budget, clock
+        self._pair_connect_attempts = max(1, pair_connect_attempts)
+        self._pair_connect_interval = max(0.0, pair_connect_interval)
+        self._pairing_wait_cancelled = pairing_wait_cancelled
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         return parse_launcher_apps(self._shell(self._resolve(host), LAUNCHER_QUERY).stdout)
@@ -218,6 +228,7 @@ class AdbAppInventory:
         endpoint = self._checked_endpoint(pairing_endpoint, expected_host=host)
         if not isinstance(code, str) or _PAIRING_CODE.fullmatch(code) is None:
             raise InvalidArgumentError("the Wireless debugging pairing code must have 6 digits")
+        self._require_wireless_pairing_version()
         help_result = self._command(["help"])
         if help_result.returncode != 0 or not re.search(
             r"(?m)^\s*adb pair\b|^\s*pair\s+HOST", help_result.stdout + help_result.stderr
@@ -231,12 +242,54 @@ class AdbAppInventory:
             raise CommandRejectedError(
                 "the TV refused or expired the Wireless debugging pairing code"
             )
-        self._resolve(host)  # Finds the separate connect port advertised after pairing.
+        # Pairing and the separate connect service are asynchronous on Android. Never replay the
+        # one-time pairing operation: wait a small, bounded number of times for the connection
+        # service instead.
+        last_error: DebuggingOffError | PairingRequiredError | UnsupportedOperationError | None = (
+            None
+        )
+        for attempt in range(self._pair_connect_attempts):
+            if self._pairing_wait_cancelled():
+                raise OperationTimeoutError(
+                    "Wireless debugging paired, but waiting for its connection was cancelled"
+                )
+            try:
+                self._resolve(host)
+                return
+            except (DebuggingOffError, PairingRequiredError, UnsupportedOperationError) as error:
+                last_error = error
+                if attempt + 1 < self._pair_connect_attempts:
+                    if self._pairing_wait_cancelled():
+                        raise OperationTimeoutError(
+                            "Wireless debugging paired, but waiting for its connection "
+                            "was cancelled"
+                        ) from error
+                    self._sleep(self._pair_connect_interval)
+        raise DeviceUnavailableError(
+            "Wireless debugging paired, but its connection service was not advertised in time"
+        ) from last_error
+
+    def _require_wireless_pairing_version(self) -> None:
+        result = self._command(["version"])
+        if result.returncode != 0:
+            raise UnsupportedOperationError("the installed adb executable is not functional")
+        match = _ADB_VERSION.search(result.stdout + "\n" + result.stderr)
+        if match is None:
+            raise UnsupportedOperationError(
+                "the installed adb version could not be verified for Wireless debugging"
+            )
+        version = tuple(int(part) for part in match.groups())
+        if version < MIN_WIRELESS_PAIRING_VERSION:
+            raise UnsupportedOperationError(
+                "Wireless debugging pairing requires Android SDK Platform Tools 30.0.0 or newer"
+            )
 
     def _resolve(self, host: str) -> str:
         host = _checked_host(host)
         devices = parse_devices(self._required(["devices", "-l"]).stdout)
-        services = parse_mdns_services(self._required(["mdns", "services"]).stdout)
+        services_result = self._command(["mdns", "services"])
+        mdns_available = services_result.returncode == 0
+        services = parse_mdns_services(services_result.stdout) if mdns_available else ()
         serials = self._matching_serials(host, devices, services)
         if len(serials) == 1:
             return serials[0]
@@ -278,6 +331,11 @@ class AdbAppInventory:
             serials = self._matching_serials(host, devices, services)
             if len(serials) == 1:
                 return serials[0]
+        if not mdns_available:
+            raise UnsupportedOperationError(
+                "this adb cannot discover Wireless debugging; install Android SDK "
+                "Platform Tools 30.0.0 or newer"
+            )
         raise DebuggingOffError(
             "no ADB connection or Wireless debugging service matches the "
             "selected TV; turn on Wireless debugging (or classic network "

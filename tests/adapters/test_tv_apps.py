@@ -39,6 +39,7 @@ MDNS_TLS = (
     f"adb-serial-ABC\t_adb-tls-connect._tcp.\t{HOST}:37123\n"
     f"adb-serial-ABC\t_adb-tls-pairing._tcp.\t{HOST}:40211\n"
 )
+ADB_VERSION = "Android Debug Bridge version 1.0.41\nVersion 30.0.0-0000000\n"
 QUERY_OUTPUT = """com.netflix.ninja/.MainActivity
 com.example.video/com.example.video.Main
 com.netflix.ninja/.OtherActivity
@@ -126,6 +127,44 @@ def test_classic_tcp_device_is_reconnected_after_a_fresh_adb_server() -> None:
     assert [call[0] for call in runner.calls].count(("adb", "connect", f"{HOST}:5555")) == 1
 
 
+def test_classic_tcp_still_works_when_adb_has_no_mdns_command() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("mdns", "services")] = [done("", "adb: unknown command mdns", 1)]
+    runner = FakeRunner(answers)
+
+    assert [app.package for app in inventory(runner).list_apps(HOST)] == [
+        "com.example.video",
+        "com.netflix.ninja",
+    ]
+
+
+def test_fresh_classic_tcp_reconnects_when_adb_has_no_mdns_command() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TCP)]
+    answers[("mdns", "services")] = [done("", "adb: unknown command mdns", 1)]
+    answers[("connect", f"{HOST}:5555")] = [done(f"connected to {HOST}:5555")]
+    runner = FakeRunner(answers)
+
+    inventory(runner).list_apps(HOST)
+
+    assert [call[0] for call in runner.calls].count(("adb", "connect", f"{HOST}:5555")) == 1
+
+
+def test_old_adb_without_classic_target_names_the_required_platform_tools() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done("", "adb: unknown command mdns", 1)],
+            ("connect", f"{HOST}:5555"): [done("failed to connect", code=1)],
+        }
+    )
+
+    with pytest.raises(UnsupportedOperationError, match=r"Platform Tools 30\.0\.0"):
+        inventory(runner).list_apps(HOST)
+
+    assert not any("shell" in call[0] for call in runner.calls)
+
+
 def test_multiple_devices_never_select_the_first_or_wrong_host() -> None:
     devices = "List of devices attached\n192.0.2.99:5555 device\n" + DEVICES_TLS.split("\n", 1)[1]
     answers = listing_answers(devices)
@@ -169,6 +208,7 @@ def test_no_matching_service_explains_wireless_debugging() -> None:
 
 def test_pairing_code_uses_stdin_and_is_never_an_argument() -> None:
     answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
         ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
         ("pair", f"{HOST}:40211"): [done("Successfully paired")],
         ("devices", "-l"): [done(DEVICES_TLS)],
@@ -176,9 +216,27 @@ def test_pairing_code_uses_stdin_and_is_never_an_argument() -> None:
     }
     runner = FakeRunner(answers)
     inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
-    pair_call = runner.calls[1]
+    pair_call = next(call for call in runner.calls if call[0][1] == "pair")
     assert pair_call[0] == ("adb", "pair", f"{HOST}:40211")
     assert pair_call[1] == "123456\n"
+
+
+def test_pairing_is_never_replayed_while_waiting_for_the_connect_service() -> None:
+    pairing_only = MDNS_TLS.replace("_adb-tls-connect", "_ignored")
+    answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done("List of devices attached\n"), done(DEVICES_TLS)],
+        ("mdns", "services"): [done(pairing_only), done(MDNS_TLS)],
+    }
+    runner = FakeRunner(answers)
+
+    inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands.count(("pair", f"{HOST}:40211")) == 1
+    assert commands.count(("mdns", "services")) == 2
 
 
 @pytest.mark.parametrize("code", ["", "12345", "abcdef", "1234567"])
@@ -192,6 +250,7 @@ def test_invalid_or_expired_pairing_is_rejected(code: str) -> None:
 def test_refused_pairing_does_not_retain_or_echo_code() -> None:
     runner = FakeRunner(
         {
+            ("version",): [done(ADB_VERSION)],
             ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
             ("pair", f"{HOST}:40211"): [done("", "failed", 1)],
         }
@@ -202,10 +261,97 @@ def test_refused_pairing_does_not_retain_or_echo_code() -> None:
 
 
 def test_old_adb_explains_that_wireless_pairing_is_unavailable() -> None:
-    runner = FakeRunner({("help",): [done("adb connect HOST[:PORT]")]})
+    runner = FakeRunner(
+        {
+            ("version",): [done(ADB_VERSION)],
+            ("help",): [done("adb connect HOST[:PORT]")],
+        }
+    )
     with pytest.raises(UnsupportedOperationError, match=r"does not support.*pairing"):
         inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
     assert all("pair" not in call[0][1:] for call in runner.calls)
+
+
+@pytest.mark.parametrize(
+    ("version_output", "returncode", "message"),
+    [
+        (
+            "Android Debug Bridge version 1.0.41\nVersion 29.0.6-debian\n",
+            0,
+            "30.0.0",
+        ),
+        ("Android Debug Bridge version unknown\n", 0, "could not be verified"),
+        ("", 2, "not functional"),
+    ],
+)
+def test_pairing_rejects_old_invalid_or_nonfunctional_adb_before_help_or_pair(
+    version_output: str, returncode: int, message: str
+) -> None:
+    runner = FakeRunner({("version",): [done(version_output, code=returncode)]})
+
+    with pytest.raises(UnsupportedOperationError, match=message):
+        inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+
+    assert [call[0][1:] for call in runner.calls] == [("version",)]
+
+
+def test_pairing_version_probe_timeout_never_reaches_help_or_pair() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def timeout(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        calls.append(tuple(command[1:]))
+        raise subprocess.TimeoutExpired(command, seconds)
+
+    with pytest.raises(OperationTimeoutError, match="ADB did not answer"):
+        AdbAppInventory(run=timeout).pair(HOST, f"{HOST}:40211", "123456")
+
+    assert calls == [("version",)]
+
+
+def test_missing_adb_executable_never_reaches_help_or_pair() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def missing(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, seconds
+        calls.append(tuple(command[1:]))
+        raise FileNotFoundError
+
+    with pytest.raises(UnsupportedOperationError, match="not installed"):
+        AdbAppInventory(run=missing).pair(HOST, f"{HOST}:40211", "123456")
+
+    assert calls == [("version",)]
+
+
+def test_post_pair_wait_can_be_cancelled_without_replaying_pair() -> None:
+    cancelled = [False]
+    answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done("List of devices attached\n")],
+        ("mdns", "services"): [done(MDNS_TLS.replace("_adb-tls-connect", "_ignored"))],
+    }
+    runner = FakeRunner(answers)
+
+    def cancel_during_wait(_: float) -> None:
+        cancelled[0] = True
+
+    apps = AdbAppInventory(
+        run=runner,
+        sleep=cancel_during_wait,
+        pairing_wait_cancelled=lambda: cancelled[0],
+    )
+    with pytest.raises(OperationTimeoutError, match=r"waiting.*cancelled"):
+        apps.pair(HOST, f"{HOST}:40211", "123456")
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands.count(("pair", f"{HOST}:40211")) == 1
+    assert commands.count(("mdns", "services")) == 1
 
 
 def test_pairing_cannot_target_another_device() -> None:

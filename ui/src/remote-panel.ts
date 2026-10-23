@@ -51,6 +51,37 @@ export interface RemotePanelActions {
   focusElsewhere(): void;
 }
 
+interface ValueField {
+  value: string;
+}
+
+// Consume the one-time code as the form is submitted so it cannot remain visible or readable in
+// the DOM while the asynchronous request is in flight or after it finishes.
+export function consumeAppsPairingCredentials(
+  endpointField: ValueField,
+  codeField: ValueField,
+): Extract<RemoteAction, { kind: "pair_apps" }> {
+  const action = {
+    kind: "pair_apps" as const,
+    pairingEndpoint: endpointField.value,
+    code: codeField.value,
+  };
+  codeField.value = "";
+  return action;
+}
+
+export function clearAppsPairingCodeWhenInactive(
+  codeField: ValueField,
+  pairingVisible: boolean,
+  selectedDeviceId: string | null,
+  previousDeviceId: string | null,
+): string | null {
+  if (!pairingVisible || selectedDeviceId !== previousDeviceId) {
+    codeField.value = "";
+  }
+  return selectedDeviceId;
+}
+
 export function createRemotePanel(
   el: RemotePanelElements,
   actions: RemotePanelActions,
@@ -58,6 +89,7 @@ export function createRemotePanel(
   // The feedback and the app list are redrawn only when what they show changed.
   let feedbackKey = "";
   let appsKey = "";
+  let pairingDeviceId: string | null = null;
 
   for (const button of el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
     button.addEventListener("click", () =>
@@ -68,11 +100,9 @@ export function createRemotePanel(
   el.remoteAppsList.addEventListener("click", () => actions.run({ kind: "list_apps" }));
   el.remoteAppsPairingForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    actions.run({
-      kind: "pair_apps",
-      pairingEndpoint: el.remoteAppsPairingEndpoint.value,
-      code: el.remoteAppsPairingCode.value,
-    });
+    actions.run(
+      consumeAppsPairingCredentials(el.remoteAppsPairingEndpoint, el.remoteAppsPairingCode),
+    );
   });
   el.remoteAppsFilter.addEventListener("input", () =>
     actions.filterApps(el.remoteAppsFilter.value),
@@ -94,6 +124,12 @@ export function createRemotePanel(
   // way; the pairing area only when the TV asked for it; the TV's last report; the outcome.
   function render(state: AppState): void {
     const remote = describeRemote(state);
+    pairingDeviceId = clearAppsPairingCodeWhenInactive(
+      el.remoteAppsPairingCode,
+      remote.appsPairingNeeded,
+      state.selected?.id ?? null,
+      pairingDeviceId,
+    );
     const active = document.activeElement;
     const hadFocus = active !== null && el.tvRemote.contains(active);
     el.tvRemote.hidden = !remote.visible;

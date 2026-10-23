@@ -51,10 +51,21 @@ la surveillance complémentaire du publisher D1.
   classique oubliée après redémarrage du serveur reçoit une seule reconnexion bornée sur 5555 ;
   `adb pair` est vérifié avant usage ; l'UI masque les applications quand le bridge annonce
   `tvApps: false` (notamment Android).
-- [ ] **Packaging ADB moderne** : le paquet `adb` d'Ubuntu 22.04 assure le chemin TCP classique,
-  mais pas nécessairement `adb pair`. Choisir et auditer une distribution des Platform Tools
-  récents (binaire embarqué et licence, ou prérequis système explicite) avant de déclarer
-  l'association sans fil fonctionnelle sur une installation propre.
+- [x] **Correctifs de revue ADB #99 (simulation)** : l'absence de `adb mdns` ne bloque plus une
+  cible TCP classique déjà connectée ou reconnectable sur 5555 ; après une association acceptée,
+  l'apparition du service de connexion est attendue de façon bornée et annulable sans rejouer
+  `adb pair` ; la version Platform Tools est analysée avant association (ancienne, invalide,
+  bloquée ou défaillante refusée) ; le code à usage unique est masqué, consommé à la soumission et
+  effacé si le formulaire ferme ou si la TV change. Aucun appareil n'a été contacté.
+- [x] **Politique de packaging ADB moderne (audit sans installation)** : conserver `adb` Jammy
+  pour TCP classique ; ne pas redistribuer l'archive Google tant que ses conditions SDK n'ont pas
+  reçu de validation juridique explicite ; traiter Platform Tools >= 30 comme prérequis externe
+  pour l'association TLS. La candidate 37.0.1 est épinglée par URL officielle versionnée, taille
+  et SHA-256 dans `packaging/adb-platform-tools.json`, avec procédure de licence et mise à jour
+  dans `docs/ADB_PLATFORM_TOOLS.md`. L'archive n'entre ni dans Git ni dans le `.deb`.
+- [ ] **Fourniture ADB moderne sur installation propre** : le paquet `adb` d'Ubuntu 22.04 ne
+  fournit pas `adb pair`. Tant qu'une source redistribuable validée ou une baseline système plus
+  récente n'est pas décidée, ne pas présenter l'association sans fil comme incluse dans le `.deb`.
 - [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
   application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
   la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.

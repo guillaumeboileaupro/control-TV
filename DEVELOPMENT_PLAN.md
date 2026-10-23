@@ -1250,10 +1250,25 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
   sur 5555 après redémarrage du serveur, sans remplacer les ports TLS/mDNS dynamiques ; préflight
   de la capacité `adb pair` ; propagation de `tvApps` jusqu'à l'UI, qui ne propose plus les
   contrôles sur une plateforme sans ADB. Aucun appareil n'a été contacté.
-- [ ] **Dépendance de packaging #99** : l'`adb` de base Ubuntu 22.04 ne garantit pas l'association
-  sans fil introduite dans des Platform Tools plus récents. Le code échoue maintenant
-  explicitement, mais la fourniture vérifiée d'un ADB moderne sur installation propre reste à
-  décider et auditer (version, provenance, checksum, licence et mises à jour).
+- [x] **Correctifs de robustesse et confidentialité #99 (simulés)** : un ADB sans commande mDNS
+  conserve le chemin TCP classique exact sur 5555 et indique Platform Tools 30.0.0 minimum si
+  seule l'association sans fil manque ; la sortie de `adb version` est analysée et les versions
+  anciennes, invalides, bloquées ou défaillantes sont refusées avant `help` et `pair` ; après
+  succès de `adb pair`, le service de connexion est attendu avec un nombre borné de lectures,
+  annulable sans répéter l'association ; le code temporaire est masqué puis retiré du DOM dès la
+  soumission, la fermeture du formulaire ou un changement de TV. Tests par doubles uniquement,
+  aucun ADB réel.
+- [x] **Décision et audit de packaging #99 (sans installation)** : l'`adb` Jammy reste la
+  dépendance du `.deb` pour TCP classique ; l'association TLS exige Platform Tools >= 30 externe.
+  L'archive Google n'est pas redistribuée sans validation juridique explicite de ses conditions
+  SDK. La candidate stable 37.0.1 est enregistrée comme référence non embarquée avec URL
+  versionnée `dl.google.com`, taille, SHA-256, NOTICE, termes SDK et politique de mise à jour dans
+  `packaging/adb-platform-tools.json` et `docs/ADB_PLATFORM_TOOLS.md`. Tests statiques : manifeste
+  cohérent, aucune archive ni ressource Tauri embarquée. Aucun binaire ADB installé ou exécuté.
+- [ ] **Fourniture ADB moderne sur installation propre** : décider entre une source réellement
+  redistribuable après audit juridique ou une baseline de distribution qui fournit Platform Tools
+  >= 30. Avant cela, le `.deb` garantit seulement TCP classique et ne doit pas annoncer
+  l'association sans fil comme incluse.
 - [ ] **Portée Android de 2E** : l'APK n'embarque plus `adb-shell` et ne peut pas exécuter le
   serveur platform-tools ; concevoir un transport TLS Android compatible avec l'absence de
   serveur permanent avant de déclarer la parité Ubuntu/Android.
