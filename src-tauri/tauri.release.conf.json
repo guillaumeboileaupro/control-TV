@@ -6,7 +6,12 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libayatana-appindicator3-1", "adb"],
+        "depends": [
+          "adb",
+          "ffmpeg",
+          "libayatana-appindicator3-1",
+          "x11-xserver-utils"
+        ],
         "files": {
           "/usr/share/doc/control-tv/copyright": "../LICENSE",
           "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses"

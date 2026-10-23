@@ -247,6 +247,12 @@ def test_the_release_overlay_ships_the_bridge_the_notices_and_the_project_licens
     overlay = json.loads((ROOT / "src-tauri" / "tauri.release.conf.json").read_text())
 
     assert overlay["bundle"]["resources"] == {"../dist/python-bridge/": "python-bridge/"}
+    assert overlay["bundle"]["linux"]["deb"]["depends"] == [
+        "adb",
+        "ffmpeg",
+        "libayatana-appindicator3-1",
+        "x11-xserver-utils",
+    ]
     assert overlay["bundle"]["linux"]["deb"]["files"] == {
         "/usr/share/doc/control-tv/copyright": "../LICENSE",
         "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses",
