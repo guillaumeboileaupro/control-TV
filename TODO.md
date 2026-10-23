@@ -222,6 +222,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 ## 1 ter. Qualité du code — terminé le 2026-10-13
 
 - [x] Compétence `code-solid` appliquée ; plus de `Any` ni de `unknown` dans le code (les tests peuvent en garder) ; mypy refuse désormais tout `Any` explicite hors tests.
+- [x] 2026-10-23 (branche `chore/graphify-agent-integration`) : Graphify intégré proprement à la configuration des agents (skill unique `.agents/skills/graphify` lié pour Claude, règles dans `AGENTS.md`, `/graphify-out/` et `/.worktrees/` ignorés et vérifiés par `agent_config.py check`).
+- [ ] Après accord du propriétaire, dans le checkout principal : retirer les copies non suivies `local-device-mcp-bridge` et `project-bootstrap-context` de `.agents/skills/` et `.claude/skills/` (identiques à `507e052`, archivées), et remplacer la copie locale `.claude/skills/graphify/` par le lien versionné lors de la mise à jour de `main`.
 
 ## 1 quater. Corrections de l'audit de `main` (2026-10-13)
 
