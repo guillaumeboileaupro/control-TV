@@ -222,15 +222,45 @@ describe("keys and what the TV reports", () => {
   test("a key whose effect the TV does not report asks the person to look", () => {
     const { state } = run(
       withTv(),
-      { kind: "key", key: "power" },
+      { kind: "key", key: "ok" },
       keyAnswer("not_checked", { isOn: null, volume: null }),
     );
 
     assert.equal(
       describeRemote(state).outcome?.text,
-      "Power was sent. The TV doesn't report what this key does: check the TV.",
+      "OK was sent. The TV doesn't report what this key does: check the TV.",
     );
     assert.equal(describeRemote(state).readout, "");
+  });
+
+  test("power is done only when the TV reports its new power state", () => {
+    const woke = run(
+      withTv(),
+      { kind: "key", key: "power" },
+      keyAnswer("confirmed", { isOn: true, volume: null }, "the TV reports it is on"),
+    ).state;
+    assert.deepEqual(describeRemote(woke).outcome, {
+      tone: "done",
+      text: "Power: the TV reports it is on.",
+      technical: null,
+    });
+    assert.equal(describeRemote(woke).readout, "");
+
+    const still = run(
+      withTv(),
+      { kind: "key", key: "power" },
+      keyAnswer(
+        "unconfirmed",
+        { isOn: false, volume: null },
+        "sent; the TV still reports it is off",
+      ),
+    ).state;
+    assert.equal(describeRemote(still).outcome?.tone, "sent");
+    assert.equal(
+      describeRemote(still).outcome?.text,
+      "Power was sent, but the TV didn't report the change.",
+    );
+    assert.equal(describeRemote(still).readout, "The TV reports it is off");
   });
 
   test("a key whose answer or connection is lost is uncertain and never resent", () => {
