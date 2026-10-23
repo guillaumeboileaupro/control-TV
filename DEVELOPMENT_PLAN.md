@@ -773,6 +773,14 @@ exposure and no permanent server.
     (never the owner's desktop): H.264 High 1280x720 30 fps HLS served on loopback;
   - [ ] owner-authorized hardware run of path A (`--device`, synthetic picture, then RD1–RD8)
     before claiming Ubuntu-to-Freebox duplication; HLS / Cast receiver trials belong to this D1 evidence;
+    2026-10-19 hardware session (private record): the desktop shown on the TV, smooth once,
+    10.3 s latency measured; stalls reproduced when the receiver is loaded with too few segments;
+    1 s segments not played by the Freebox's Cast receiver; fixes on
+    `fix/screencast-d1-d2-hardware` (load after four 2 s segments, system sound) are
+    automation-validated only, the receiver ended the session in a state that showed nothing;
+    2026-10-20 (hardware): smooth without sound; with sound the grab lost frames (31 of 600),
+    fixed (input queue, sound resampled to the grab's clock): smooth, sound present and in sync;
+    60 fps not played smoothly by the TV (no longer offered); latency 9–11 s (HLS floor);
 - [ ] D2: extension (virtual monitor), guaranteed removal;
   - [x] `XrandrVirtualMonitor`: a logical monitor `control-tv-virtual` (1280x720 or 1920x1080)
     added to the right of the screen (`xrandr --fb`, `--setmonitor ... none`), streamed by the
@@ -781,6 +789,18 @@ exposure and no permanent server.
     required; runtime only, no configuration file; automation-validated with a fake `xrandr`;
     on a private Xvfb only the refusals were seen (its screen cannot grow);
   - [ ] the virtual monitor seen on the owner's X11 desktop and on the TV (authorization);
+    2026-10-20: the `--setmonitor` monitor cannot work under GNOME (the enlarged framebuffer is
+    undone, the capture falls outside the screen: the reported crash); replaced on
+    `fix/screencast-d1-d2-hardware` by a mode on a free connector reported connected (root,
+    owner-run, once per boot), with size, refresh rate and side chosen in the card; seen on the
+    desktop and on the TV once (a window moved onto it); smoothness not yet checked;
+  - [x] display-manager implementation on PR #97: the Python `DisplayManager` reads the current
+    outputs and their actual modes from `xrandr --verbose`; applies every output in one command;
+    verifies the resulting topology; and keeps the previous snapshot until confirmation or a
+    successful rollback. The TypeScript panel provides numbered proportional screens, individual
+    selection, free drag with edge snapping, Join/Clone/Single, primary, resolution, refresh,
+    orientation and scale. Tauri only relays the typed bridge commands. Automated tests and CI
+    are green; the manager has not been exercised on the owner's real display configuration.
 - [ ] D3: UI actions Dupliquer / Étendre / Arrêter, output, resolution, fps, streaming indicator;
   - [x] "Screen to TV" card in the Ubuntu window (Duplicate a screen / Extend the desktop / Stop,
     screen, 1280x720 or 1920x1080, 25/30/60 fps, consent step, state and error text, Dismiss
@@ -797,6 +817,12 @@ exposure and no permanent server.
     the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
     the guard still catches a bundled icon catalogue);
   - [ ] the card used against the TV during the authorized run;
+  - [x] GNOME-inspired display-manager UI implemented on PR #97 with Apply, Cancel, Keep and
+    timed Revert. Only modes reported by X11 are offered; unsupported/disconnected outputs are
+    not presented as configurable. This is software/automated validation, not material proof;
+  - [ ] validate the display manager from the installed ControlTV application: Join, Clone and
+    Single; every offered resolution/rate/orientation/scale; primary selection; drag coordinates;
+    rejection rollback; D1/D2 streaming and restoration after Stop;
 - [ ] D4: security review and hardware checks RD1–RD8 (criteria proposed, to be adopted by the
   owner).
   - [x] software protections: the bridge refuses a start without explicit consent, keeps one
@@ -804,6 +830,9 @@ exposure and no permanent server.
     application quits (bridge exit); publication on one home-network IPv4 address with a random
     port and token, no logs, no address or token reported; commands and TV procedure in
     [`docs/SCREENCAST_TV_TEST_PROCEDURE.md`](docs/SCREENCAST_TV_TEST_PROCEDURE.md);
+  - [x] PR #97 closes only the Cast application session captured at start (no implicit
+    retargeting) and retains an unconfirmed display snapshot after a failed automatic rollback,
+    so Revert or application shutdown can retry; deterministic tests only;
   - [ ] RD1–RD8 on the TV (owner authorization; procedure above, not run).
 ## Mandatory build/temp cleanup
 

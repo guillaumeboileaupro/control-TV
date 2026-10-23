@@ -218,6 +218,7 @@ class PyChromecastTransport:
             receiver=ReceiverStatus(
                 app_id=receiver.app_id if receiver is not None else None,
                 app_name=receiver.display_name if receiver is not None else None,
+                app_session_id=receiver.session_id if receiver is not None else None,
                 volume_level=reported_volume_level(receiver_reply),
                 muted=reported_muted(receiver_reply),
                 standby=reported_standby(receiver_reply),
@@ -259,6 +260,26 @@ class PyChromecastTransport:
 
     def stop(self, device_id: DeviceId, media_session_id: int | None = None) -> None:
         self._media_session_command(device_id, "stop", TYPE_STOP, media_session_id)
+
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> None:
+        """Stop exactly the receiver-app session captured by the caller, never the cached current
+        application. A stale session id is safe: the receiver rejects it instead of retargeting."""
+        if not isinstance(receiver_session_id, str) or not receiver_session_id.strip():
+            raise InvalidArgumentError("receiver app session id is required", device_id=device_id)
+        cast_device = self._ready(device_id)
+        response = WaitResponse(self._request_timeout, "close receiver app")
+        message: dict[str, object] = {
+            MESSAGE_TYPE: "STOP",
+            "sessionId": receiver_session_id,
+        }
+        self._command(
+            device_id,
+            "close receiver app",
+            lambda: cast_device.socket_client.receiver_controller.send_message_nocheck(
+                message, callback_function=response.callback
+            ),
+        )
+        self._command(device_id, "close receiver app", response.wait_response)
 
     def seek(
         self,

@@ -28,7 +28,9 @@
     "src/interaction.ts",
     "src/interaction.test.ts",
     "src/screen.ts",
-    "src/screen.test.ts"
+    "src/screen.test.ts",
+    "src/display.ts",
+    "src/display.test.ts"
   ],
   "exclude": []
 }

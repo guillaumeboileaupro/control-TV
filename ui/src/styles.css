@@ -1207,6 +1207,56 @@ h2 {
   background: var(--accent-tint);
 }
 
+.display-preview {
+  width: 100%;
+  min-height: 160px;
+  max-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.display-preview-screen {
+  cursor: pointer;
+  outline: none;
+}
+
+.display-preview-screen.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.display-preview-screen.is-draggable:active {
+  cursor: grabbing;
+}
+
+.display-preview-screen rect {
+  fill: var(--surface-3);
+  stroke: var(--line);
+  stroke-width: 3px;
+}
+
+.display-preview-screen text {
+  fill: var(--text);
+  font-size: 36px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.display-preview-screen:hover rect,
+.display-preview-screen:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
+.display-preview-screen.is-selected rect {
+  fill: var(--accent-tint);
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
 .screen-option {
   display: flex;
   flex: 1 1 10rem;
@@ -1238,6 +1288,154 @@ h2 {
   cursor: not-allowed;
 }
 
+.screen-extension {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.screen-extension .screen-option {
+  flex: none;
+}
+
+.display-capabilities {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.display-capabilities div {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.display-capabilities dt {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.display-capabilities dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.screen-extension[hidden] {
+  display: none;
+}
+
 .screen-consent[hidden] {
   display: none;
+}
+
+/* The display manager: screens drawn to scale on a scene, numbered like Settings > Displays. */
+
+.display-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.display-scene {
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  touch-action: none;
+}
+
+.display-tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: grab;
+  user-select: none;
+}
+
+.display-tile.is-primary {
+  border-color: var(--muted);
+}
+
+.display-tile.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+.display-tile.is-pending {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.display-tile.is-dragging {
+  z-index: 1;
+  cursor: grabbing;
+  opacity: 0.85;
+}
+
+.display-number {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.display-name {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.display-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.display-settings[hidden] {
+  display: none;
+}
+
+.display-settings legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.display-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.display-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.display-preview[hidden],
+#display-arrangement [aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.display-preview[hidden] {
+  display: none;
+}
+
+#display-arrangement [aria-pressed="true"] {
+  background: var(--accent-tint);
 }

@@ -129,6 +129,19 @@ def test_receiver_reports_unknown_as_none_not_false() -> None:
     assert receiver.standby is None
 
 
+@pytest.mark.parametrize("session_id", [None, "receiver-session-1", " session "])
+def test_receiver_accepts_a_known_or_unknown_application_session(
+    session_id: str | None,
+) -> None:
+    assert ReceiverStatus(app_session_id=session_id).app_session_id == session_id
+
+
+@pytest.mark.parametrize("session_id", ["", "  ", True, 1, []])
+def test_receiver_rejects_an_invalid_application_session(session_id: object) -> None:
+    with pytest.raises(InvalidArgumentError, match="receiver app session id"):
+        ReceiverStatus(app_session_id=session_id)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "control_type",
     [

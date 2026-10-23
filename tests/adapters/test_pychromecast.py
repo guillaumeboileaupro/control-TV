@@ -64,6 +64,7 @@ class FakeReceiverController:
         self.error: Exception | None = None
         self.updates = 0
         self.launched: list[str] = []
+        self.messages: list[dict[str, object]] = []
         # The raw receiver status reply this receiver answers with; by default the same volume
         # and mute state as `FakeCast.status`, as a receiver's reply and its parsed status agree.
         self.reply: dict[str, object] = {"status": {"volume": {"level": 0.4, "muted": False}}}
@@ -84,6 +85,17 @@ class FakeReceiverController:
         callback = kwargs.get("callback_function")
         if callback is not None:
             callback(False, None)  # type: ignore[operator]
+
+    def send_message_nocheck(
+        self,
+        data: dict[str, object],
+        *,
+        callback_function: Callable[[bool, dict[str, object] | None], None],
+    ) -> None:
+        self.messages.append(data)
+        if self.error is not None:
+            raise self.error
+        callback_function(True, {"type": "RECEIVER_STATUS"})
 
 
 class ControlledMediaStatus(PyMediaStatus):
@@ -168,6 +180,7 @@ class FakeCast:
         self.status = SimpleNamespace(
             app_id="CC1AD845",
             display_name="Default Media Receiver",
+            session_id="receiver-session-1",
             volume_level=0.4,
             volume_muted=False,
             is_stand_by=False,
@@ -292,6 +305,7 @@ def test_status_is_fresh_receiver_and_media_snapshot() -> None:
 
     assert status.observed_at == NOW
     assert status.receiver is not None
+    assert status.receiver.app_session_id == "receiver-session-1"
     assert status.receiver.volume_level == 0.4
     assert status.media is not None
     assert status.media.playback_state is PlaybackState.PLAYING
@@ -456,6 +470,7 @@ def test_all_commands_use_bounded_library_calls() -> None:
     transport.play(DEVICE_ID, 41)
     transport.pause(DEVICE_ID, 41)
     transport.stop(DEVICE_ID, 41)
+    transport.close_app(DEVICE_ID, "receiver-session-1")
     transport.seek(DEVICE_ID, 25.0, 41)
     transport.set_volume(DEVICE_ID, 0.7)
     transport.set_muted(DEVICE_ID, True)
@@ -473,6 +488,20 @@ def test_all_commands_use_bounded_library_calls() -> None:
     assert [cast(dict[str, object], call[1][0])["mediaSessionId"] for call in calls[1:]] == [41] * 4
     assert cast_device.volume_calls == [(0.7, 4.0)]
     assert cast_device.mute_calls == [(True, 4.0)]
+    assert cast_device.receiver_controller.messages == [
+        {"type": "STOP", "sessionId": "receiver-session-1"}
+    ]
+
+
+@pytest.mark.parametrize("receiver_session_id", ["", "  ", True, 1, None])
+def test_close_app_rejects_invalid_receiver_session_ids(receiver_session_id: object) -> None:
+    cast_device = FakeCast()
+    transport, _ = make_transport(cast_device)
+
+    with pytest.raises(InvalidArgumentError, match="receiver app session id"):
+        transport.close_app(DEVICE_ID, receiver_session_id)  # type: ignore[arg-type]
+
+    assert cast_device.receiver_controller.messages == []
 
 
 def test_load_waits_for_delivery_acknowledgement() -> None:

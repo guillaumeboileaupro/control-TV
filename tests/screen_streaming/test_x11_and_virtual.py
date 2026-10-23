@@ -18,7 +18,9 @@ from control_tv.screen_streaming import (
     StreamStartError,
     d1,
 )
-from control_tv.screen_streaming.virtual_display import VIRTUAL_MONITOR, XrandrVirtualMonitor
+from control_tv.screen_streaming.h264_encoder import LiveEncoderSettings
+from control_tv.screen_streaming.model import SyntheticVideoSource
+from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output, parse_monitors
 from control_tv.screencast.ffmpeg import encoder_arguments, live_hls_command
 from control_tv.screencast.model import (
@@ -152,94 +154,217 @@ def test_the_live_encoder_grabs_the_capture_region(tmp_path: Path) -> None:
 
     stream = live.start(CapturedVideo(handle), EncodingProfile(1280, 720, 30))
 
-    assert runner.argv[0][runner.argv[0].index("-i") + 1] == ":0+0,0"
+    argv = runner.argv[0]
+    assert argv[argv.index("-i") + 1] == ":0+0,0"
+    # The system sound goes with a captured screen, in the same segments.
+    assert argv[argv.index("pulse") + 3 : argv.index("pulse") + 5] == ("-i", "@DEFAULT_MONITOR@")
+    sound = argv[argv.index("1:a:0") - 1 : argv.index("1:a:0") + 5]
+    assert sound == ("-map", "1:a:0", "-af", "aresample=async=1000", "-c:a", "aac")
+    # The grab has its own queue, so reading the sound never makes it miss frames.
+    grab = argv.index("x11grab")
+    assert argv[grab + 1 : grab + 3] == ("-thread_queue_size", "1024")
     live.stop(stream)
 
 
-# D2: the virtual monitor ----------------------------------------------------------------
+def test_the_synthetic_picture_has_no_sound_and_sound_can_be_turned_off(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    live = encoder(tmp_path, runner)
+    live.stop(live.start(SyntheticVideoSource(), EncodingProfile(1280, 720, 30)))
+    assert "pulse" not in runner.argv[0]
+
+    silent = FakeRunner()
+    capture = X11Capture(X11, FakeXrandr())
+    (tmp_path / "quiet").mkdir()
+    quiet = encoder(
+        tmp_path / "quiet",
+        silent,
+        settings=LiveEncoderSettings(stop_grace_seconds=0.05, system_audio=None),
+    )
+    quiet._capture_region = capture.region
+    stream = quiet.start(
+        CapturedVideo(capture.start(DisplaySelection("eDP-1"))), EncodingProfile(1280, 720, 30)
+    )
+    assert "pulse" not in silent.argv[0]
+    quiet.stop(stream)
 
 
-def test_extend_adds_a_virtual_monitor_to_the_right_and_removes_it() -> None:
+# D2: the extended screen ---------------------------------------------------------------
+
+
+def no_wait(seconds: float) -> None:
+    pass
+
+
+def test_extend_enables_a_forced_output_at_the_chosen_place_and_removes_it() -> None:
     xrandr = FakeXrandr()
-    virtual = XrandrVirtualMonitor(X11, xrandr)
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
 
-    output = virtual.create(1280, 720, consent=True)
+    output = extension.create(1280, 720, consent=True, refresh=50, position=Position.BELOW)
 
-    assert output == X11Output(VIRTUAL_MONITOR, 1280, 720, 3840, 0, False)
-    assert ("--fb", "5120x1080") in xrandr.calls
-    assert ("--setmonitor", VIRTUAL_MONITOR, "1280/338x720/190+3840+0", "none") in xrandr.calls
-    assert virtual.active and xrandr.virtual
+    assert output == X11Output("HDMI-2", 1280, 720, 0, 1080, False)
+    assert ("cvt", "1280", "720", "50") in xrandr.calls
+    mode = "control-tv-1280x720-50"
+    assert ("--addmode", "HDMI-2", mode) in xrandr.calls
+    assert ("--output", "HDMI-2", "--mode", mode, "--below", "eDP-1") in xrandr.calls
+    newmode = next(call for call in xrandr.calls if call[0] == "--newmode")
+    assert newmode[:3] == ("--newmode", mode, "173.00")
+    assert extension.active
 
-    virtual.remove()
-    virtual.remove()  # idempotent
+    extension.remove()
+    extension.remove()  # idempotent
 
-    assert not virtual.active and not xrandr.virtual
-    assert (xrandr.width, xrandr.height) == (3840, 1080)  # the original screen size
+    assert not extension.active and xrandr.enabled is None and xrandr.modes == set()
+    assert xrandr.calls[-3:] == [
+        ("--output", "HDMI-2", "--off"),
+        ("--delmode", "HDMI-2", mode),
+        ("--rmmode", mode),
+    ]
 
 
-def test_extend_needs_consent_and_a_supported_size_and_changes_nothing_otherwise() -> None:
+def test_extend_accepts_exact_desktop_coordinates() -> None:
     xrandr = FakeXrandr()
-    virtual = XrandrVirtualMonitor(X11, xrandr)
-    with pytest.raises(StreamStartError, match="explicit consent"):
-        virtual.create(1280, 720, consent=False)
-    with pytest.raises(InvalidStreamConfiguration, match="1280x720 or 1920x1080"):
-        virtual.create(1024, 768, consent=True)
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+
+    output = extension.create(1280, 720, consent=True, refresh=60, x=2000, y=300)
+
+    assert output == X11Output("HDMI-2", 1280, 720, 2000, 300, False)
+    assert ("--output", "HDMI-2", "--mode", "control-tv-1280x720-60", "--pos", "2000x300") in (
+        xrandr.calls
+    )
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}  # nothing else moved
+
+
+def test_a_tv_above_or_left_moves_the_desktop_in_the_same_command_and_back() -> None:
+    xrandr = FakeXrandr()
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+
+    output = extension.create(1280, 720, consent=True, x=640, y=-720)
+
+    # X has no negative coordinates: the TV goes to y=0 and the desktop moves down by 720.
+    assert output == X11Output("HDMI-2", 1280, 720, 640, 0, False)
+    assert (
+        "--output", "HDMI-2", "--mode", "control-tv-1280x720-60", "--pos", "640x0",
+        "--output", "eDP-1", "--pos", "0x720",
+        "--output", "HDMI-1", "--pos", "1920x720",
+    ) in xrandr.calls  # fmt: skip
+    assert xrandr.places == {"eDP-1": (0, 720), "HDMI-1": (1920, 720)}
+
+    extension.remove()
+
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+    assert xrandr.enabled is None and xrandr.modes == set()
+
+
+@pytest.mark.parametrize("place", [(1, None), (True, 0), (0, 40000)])
+def test_invalid_coordinates_change_nothing(place: tuple[object, object]) -> None:
+    xrandr = FakeXrandr()
+    with pytest.raises(InvalidStreamConfiguration, match="coordinates are invalid"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait).create(
+            1280,
+            720,
+            consent=True,
+            x=place[0],  # type: ignore[arg-type]
+            y=place[1],  # type: ignore[arg-type]
+        )
     assert xrandr.calls == []
 
 
-def test_a_failed_monitor_restores_the_screen_size() -> None:
-    xrandr = FakeXrandr(fail="--setmonitor")
-    with pytest.raises(StreamStartError, match="setmonitor failed"):
-        XrandrVirtualMonitor(X11, xrandr).create(1920, 1080, consent=True)
-    assert (xrandr.width, xrandr.height) == (3840, 1080) and not xrandr.virtual
+def test_a_tv_on_the_left_that_the_desktop_refuses_puts_everything_back() -> None:
+    xrandr = FakeXrandr(accept=False)
+    with pytest.raises(StreamStartError, match="did not accept"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait).create(1920, 1080, consent=True, x=-1920, y=0)
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+    assert xrandr.enabled is None and xrandr.modes == set()
 
 
-def test_a_leftover_virtual_monitor_is_removed_first_and_one_at_a_time() -> None:
-    xrandr = FakeXrandr(leftover=True)
-    virtual = XrandrVirtualMonitor(X11, xrandr)
-    virtual.create(1920, 1080, consent=True)
-    assert xrandr.calls.index(("--delmonitor", VIRTUAL_MONITOR)) < xrandr.calls.index(
-        ("--fb", "5760x1080")
-    )
-    with pytest.raises(StreamStartError, match="already exists"):
-        virtual.create(1920, 1080, consent=True)
-    virtual.remove()
-
-
-def test_a_screen_that_cannot_grow_or_be_read_is_refused() -> None:
+def test_extend_needs_consent_and_a_supported_screen_and_changes_nothing_otherwise() -> None:
     xrandr = FakeXrandr()
-    xrandr.width = 16000
-    with pytest.raises(StreamStartError, match="cannot grow"):
-        XrandrVirtualMonitor(X11, xrandr).create(1920, 1080, consent=True)
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+    with pytest.raises(StreamStartError, match="explicit consent"):
+        extension.create(1280, 720, consent=False)
+    with pytest.raises(InvalidStreamConfiguration, match="1280x720 or 1920x1080"):
+        extension.create(1024, 768, consent=True)
+    with pytest.raises(InvalidStreamConfiguration, match="60 or 50 Hz"):
+        extension.create(1920, 1080, consent=True, refresh=30)
+    with pytest.raises(InvalidStreamConfiguration, match="left, right, above or below"):
+        extension.create(1920, 1080, consent=True, position="right-of")  # type: ignore[arg-type]
+    assert xrandr.calls == []
 
-    def unreadable(
-        argv: Sequence[str], environ: Mapping[str, str]
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 0, "Monitors: 0\n", "")
 
-    with pytest.raises(StreamStartError, match="size cannot be read"):
-        XrandrVirtualMonitor(X11, unreadable).create(1920, 1080, consent=True)
+def test_without_a_forced_output_nothing_is_changed() -> None:
+    xrandr = FakeXrandr(forced=False)
+    with pytest.raises(StreamStartError, match="no free video output is enabled"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait).create(1920, 1080, consent=True)
+    assert xrandr.calls == [("--query",)]
 
-    def missing(
-        argv: Sequence[str], environ: Mapping[str, str]
-    ) -> subprocess.CompletedProcess[str]:
+
+def test_a_desktop_without_a_primary_screen_is_refused() -> None:
+    def bare(argv: Sequence[str], environ: Mapping[str, str]) -> Done:
+        return subprocess.CompletedProcess(argv, 0, "Screen 0: current 1 x 1\n", "")
+
+    with pytest.raises(StreamStartError, match="primary screen cannot be found"):
+        XrandrVirtualMonitor(X11, bare, no_wait).create(1920, 1080, consent=True)
+
+
+@pytest.mark.parametrize(
+    ("xrandr", "message"),
+    [
+        (FakeXrandr(fail="--output"), "xrandr --output failed"),
+        (FakeXrandr(fail="cvt"), "cvt gave no mode"),
+        (FakeXrandr(accept=False), "did not accept the extended screen"),
+    ],
+)
+def test_a_failed_extension_undoes_every_step(xrandr: FakeXrandr, message: str) -> None:
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+    with pytest.raises(StreamStartError, match=message):
+        extension.create(1920, 1080, consent=True)
+    assert not extension.active and xrandr.modes == set() and xrandr.enabled is None
+
+
+def test_cvt_that_cannot_run_starts_nothing() -> None:
+    xrandr = FakeXrandr()
+
+    def no_cvt(argv: Sequence[str], environ: Mapping[str, str]) -> Done:
+        if argv[0] == "cvt":
+            raise FileNotFoundError("cvt")
+        return xrandr(argv, environ)
+
+    with pytest.raises(StreamStartError, match="cvt failed: FileNotFoundError"):
+        XrandrVirtualMonitor(X11, no_cvt, no_wait).create(1920, 1080, consent=True)
+
+
+def test_a_leftover_mode_is_removed_first_and_one_extension_at_a_time() -> None:
+    mode = "control-tv-1920x1080-60"
+    xrandr = FakeXrandr(leftover=mode)
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+    extension.create(1920, 1080, consent=True, position=Position.LEFT)
+    assert xrandr.calls.index(("--rmmode", mode)) < next(
+        index for index, call in enumerate(xrandr.calls) if call[0] == "--newmode"
+    )
+    with pytest.raises(StreamStartError, match="already extended"):
+        extension.create(1920, 1080, consent=True)
+    extension.remove()
+
+
+def test_a_missing_xrandr_is_reported() -> None:
+    def missing(argv: Sequence[str], environ: Mapping[str, str]) -> Done:
         raise FileNotFoundError("xrandr")
 
     with pytest.raises(StreamStartError, match="FileNotFoundError"):
-        XrandrVirtualMonitor(X11, missing).create(1920, 1080, consent=True)
+        XrandrVirtualMonitor(X11, missing, no_wait).create(1920, 1080, consent=True)
 
 
-def test_a_removal_that_fails_keeps_the_monitor_for_a_retry() -> None:
+def test_a_removal_that_fails_keeps_the_extension_for_a_retry() -> None:
     xrandr = FakeXrandr()
-    virtual = XrandrVirtualMonitor(X11, xrandr)
-    virtual.create(1280, 720, consent=True)
-    xrandr.fail = "--delmonitor"
-    with pytest.raises(StreamCleanupError, match="delmonitor failed"):
-        virtual.remove()
-    assert virtual.active
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait)
+    extension.create(1280, 720, consent=True, position=Position.ABOVE)
+    xrandr.fail = "--delmode"
+    with pytest.raises(StreamCleanupError, match="delmode failed"):
+        extension.remove()
+    assert extension.active
     xrandr.fail = None
-    virtual.remove()
-    assert not virtual.active and not xrandr.virtual
+    extension.remove()
+    assert not extension.active and xrandr.modes == set()
 
 
 # The d1 session modes ------------------------------------------------------------------
@@ -280,18 +405,18 @@ def test_duplicate_streams_the_chosen_screen_and_forgets_the_capture(tmp_path: P
     assert duplicated.run(clock.time, clock.sleep) == "duration"
 
     assert duplicated.capture is not None and duplicated.capture._captures == {}
-    assert not xrandr.virtual and ("--fb", "5120x1080") not in xrandr.calls
+    assert xrandr.enabled is None and not any(call[0] == "--newmode" for call in xrandr.calls)
 
 
 def test_extend_streams_the_virtual_monitor_and_removes_it(tmp_path: Path) -> None:
     xrandr = FakeXrandr()
     extended = session(tmp_path, d1.Picture(d1.Mode.EXTEND, None, 1280, 720, consent=True), xrandr)
-    assert xrandr.virtual  # created before the session starts
+    assert xrandr.enabled is not None  # created before the session starts
     clock = Clock()
 
     assert extended.run(clock.time, clock.sleep) == "duration"
 
-    assert not xrandr.virtual and (xrandr.width, xrandr.height) == (3840, 1080)
+    assert xrandr.enabled is None and xrandr.modes == set()
 
 
 def test_duplicate_needs_a_screen_and_extend_needs_consent(tmp_path: Path) -> None:
@@ -300,7 +425,7 @@ def test_duplicate_needs_a_screen_and_extend_needs_consent(tmp_path: Path) -> No
         session(tmp_path, d1.Picture(d1.Mode.DUPLICATE, None), xrandr)
     with pytest.raises(StreamStartError, match="explicit consent"):
         session(tmp_path, d1.Picture(d1.Mode.EXTEND, None, 1280, 720), xrandr)
-    assert not xrandr.virtual
+    assert xrandr.enabled is None
 
 
 def test_a_failed_capture_removes_the_new_virtual_monitor(tmp_path: Path) -> None:
@@ -322,7 +447,7 @@ def test_a_failed_capture_removes_the_new_virtual_monitor(tmp_path: Path) -> Non
             capture=capture,
             virtual=XrandrVirtualMonitor(X11, xrandr),
         )
-    assert not xrandr.virtual and (xrandr.width, xrandr.height) == (3840, 1080)
+    assert xrandr.enabled is None and xrandr.modes == set()
 
 
 def test_a_failed_start_releases_the_capture_and_the_virtual_monitor(tmp_path: Path) -> None:
@@ -333,7 +458,7 @@ def test_a_failed_start_releases_the_capture_and_the_virtual_monitor(tmp_path: P
     with pytest.raises(StreamStartError, match="could not start"):
         extended.start()
 
-    assert not xrandr.virtual and extended.capture is not None
+    assert xrandr.enabled is None and extended.capture is not None
     assert extended.capture._captures == {}
 
 
@@ -341,14 +466,14 @@ def test_stop_attempts_every_step_and_raises_the_first_failure(tmp_path: Path) -
     xrandr = FakeXrandr()
     extended = session(tmp_path, d1.Picture(d1.Mode.EXTEND, None, 1280, 720, consent=True), xrandr)
     extended.start()
-    xrandr.fail = "--delmonitor"
-    with pytest.raises(StreamCleanupError, match="delmonitor failed"):
+    xrandr.fail = "--delmode"
+    with pytest.raises(StreamCleanupError, match="delmode failed"):
         extended.stop()
     assert extended.publisher.unreleased == () and extended.capture is not None
     assert extended.capture._captures == {}  # the earlier steps ran
     xrandr.fail = None
     extended.stop()
-    assert not xrandr.virtual
+    assert xrandr.enabled is None
 
 
 def test_the_command_lists_the_screens(

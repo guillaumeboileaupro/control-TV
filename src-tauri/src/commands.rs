@@ -372,8 +372,15 @@ pub(crate) async fn bridge_launch_tv_app(
     .await
 }
 
+/// Where and how "extend" places the TV's screen: its refresh rate and its side of the primary
+/// screen ("left", "right", "above" or "below"), as the window's extension menu chose them.
+pub(crate) struct Placement<'a> {
+    pub(crate) refresh: u32,
+    pub(crate) position: &'a str,
+}
+
 /// The request that starts streaming this computer's screen to the TV: "duplicate" one screen or
-/// "extend" onto a virtual monitor, at one of the offered sizes and rates. `consent` is the
+/// "extend" onto a second screen, at one of the offered sizes and rates. `consent` is the
 /// owner's explicit agreement given in the window; the bridge refuses without it.
 pub(crate) fn screen_stream_request(
     device_id: &str,
@@ -382,6 +389,7 @@ pub(crate) fn screen_stream_request(
     size: (u32, u32),
     fps: u32,
     consent: bool,
+    placement: &Placement<'_>,
 ) -> Value {
     json!({
         "deviceId": device_id,
@@ -391,6 +399,8 @@ pub(crate) fn screen_stream_request(
         "height": size.1,
         "fps": fps,
         "consent": consent,
+        "refresh": placement.refresh,
+        "position": placement.position,
     })
 }
 
@@ -423,7 +433,13 @@ pub(crate) async fn bridge_start_screen_stream(
     height: u32,
     fps: u32,
     consent: bool,
+    refresh: Option<u32>,
+    position: Option<String>,
 ) -> Result<Value, BridgeFailure> {
+    let placement = Placement {
+        refresh: refresh.unwrap_or(60),
+        position: position.as_deref().unwrap_or("right"),
+    };
     let params = screen_stream_request(
         &device_id,
         &mode,
@@ -431,6 +447,7 @@ pub(crate) async fn bridge_start_screen_stream(
         (width, height),
         fps,
         consent,
+        &placement,
     );
     send_screen(state.inner().clone(), "start_screen_stream", params).await
 }
@@ -440,6 +457,44 @@ pub(crate) async fn bridge_stop_screen_stream(
     state: tauri::State<'_, SharedBridgeState>,
 ) -> Result<Value, BridgeFailure> {
     send_screen(state.inner().clone(), "stop_screen_stream", json!({})).await
+}
+
+/// Read-only: the desktop's screens, their modes and how each is set.
+#[tauri::command]
+pub(crate) async fn bridge_get_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "get_display_layout", json!({})).await
+}
+
+/// The request that sets every screen: the window's display manager sends the whole layout.
+pub(crate) fn display_layout_request(displays: Value) -> Value {
+    json!({ "displays": displays })
+}
+
+/// Sets every screen; the bridge restores the previous configuration if this fails, and reverts
+/// it by itself unless it is kept (`bridge_confirm_display_layout`) in time.
+#[tauri::command]
+pub(crate) async fn bridge_apply_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+    displays: Value,
+) -> Result<Value, BridgeFailure> {
+    let params = display_layout_request(displays);
+    send_screen(state.inner().clone(), "apply_display_layout", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_confirm_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "confirm_display_layout", json!({})).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_revert_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "revert_display_layout", json!({})).await
 }
 
 /// Read-only: the screen stream's state (idle, starting, running, stopping or failed).
