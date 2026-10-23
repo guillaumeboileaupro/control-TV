@@ -134,6 +134,7 @@ Exit criteria:
 
 - [x] Tauri 2 shell scaffolded (`src-tauri/`, Rust) with a minimal frontend (`ui/`, vanilla TypeScript + Vite); no frontend framework or UI library is used yet, matching the size of a one-page skeleton.
   - Codex audit AUD-002 (2026-10-14, branch `fix/source-map-js-advisory`): `source-map-js` (transitive, Vite -> PostCSS, build/dev tooling only, not in the TV engine) moved from 1.2.1 to 1.2.2 for GHSA-68fv-2mgg-jv7q (high, event-loop DoS through indexed source-map offsets); lockfile-only change within PostCSS's `^1.2.1` range, same BSD-3-Clause license, no other package changed; `npm audit` now reports 0 vulnerabilities.
+  - Dependency advisories (2026-10-23, branch `fix/deps-audit-certifi-vite`): the npm and Python audit gates failed on `main` `f0dba1d` and on every open PR. `vite` (build/dev tooling only, not in the TV engine) moved from 8.3.1 to 8.3.4 for GHSA-587h-7wmj-h5pm (high) and two moderate `launch-editor` advisories; the lockfile change stays inside Vite's own tree (`rolldown` 1.2.15, `postcss` 8.5.31, `nanoid` 3.3.20, `@oxc-project/types` 0.155.0). `certifi` moved from 2026.7.22 to 2026.10.19 for PYSEC-2026-4320 (emSign roots with compromised intermediate keys) through `uv.lock` only. Both audits, `dev.py check`, `ui-check` and the UI build pass locally; automation-validated only.
 - [x] The shell owns no Cast/control logic: `src-tauri/src/lib.rs` only spawns the Python bridge as a long-lived child process (a debug build runs `python -m control_tv.bridge` from the repository `.venv`; since PR #26 a release build runs only the bundled frozen bridge, see Phase 7) and forwards line-delimited JSON requests/responses over its stdin/stdout, matched by request id. `ControlService` is not reimplemented in Rust or TypeScript.
 - [x] Nine bridge methods are exposed so far: three read-only (`ping`, `discover_devices`, `get_status`) and six commands (`play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`), each a plain forward to the same-named `ControlService` method; every other `TvControl` capability is added to the bridge and to a Tauri command as its own view needs it, not in advance.
 - [x] A failed bridge spawn does not crash the application: the Tauri command returns an explicit "Python control backend unavailable" error instead, surfaced as plain text in the UI.
@@ -761,7 +762,8 @@ exposure and no permanent server.
   - [x] composition root and command (`python3 -m control_tv.screen_streaming.d1`): the IPv4
     address this computer reaches the TV from (route lookup, no packet sent), one duration for
     the encoder and (15 s longer) the publication, the session stopped at that duration, on
-    Ctrl-C or as soon as FFmpeg ends by itself (contract gaps 1 and 3 handled there); `--no-tv`
+    Ctrl-C or as soon as FFmpeg or the HLS publisher ends by itself (contract gaps 1 and 3
+    handled there; publisher supervision completed by #95); `--no-tv`
     run on this machine with the real FFmpeg (libx264): H.264 High 1920x1080 30 fps HLS served on
     loopback, wrong token 404, port closed and output removed at the end;
   - [x] real X11 capture (`X11Capture`, `X11GrabSource`): an output read with

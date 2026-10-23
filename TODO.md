@@ -1,5 +1,25 @@
 # control-TV — TODO
 
+## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
+
+**Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
+
+**Architecture décidée :** conserver l'interface Tauri 2 et le `ControlService` Python/PyChromecast pour découverte et commandes ; créer un **moteur émetteur Rust** pour sessions, capture D1/D2, audio, encodage et transport WebRTC (RTP/RTCP/ICE) ; installer avec accord du propriétaire une **application réceptrice Android TV** avec décodage matériel et rendu plein écran (Kotlin autorisé pour l'intégration Android). Ne pas prétendre que le récepteur Cast/HLS natif sait recevoir WebRTC. Conserver HLS en repli temporaire, avec modes WebRTC / HLS / Auto sélectionnés selon les capacités réellement vérifiées. Aucun serveur permanent ni exposition Internet ; réseau local, authentification et consentement explicite.
+
+- [ ] **Conception :** documenter les ports typés source D1/D2, capture audio/vidéo, encodeur, transport, récepteur, négociation, capacités et cycle de vie ; comparer les bibliothèques Rust WebRTC et les chemins d'encodage/décodage Android, mesurer les contraintes réelles avant choix.
+- [ ] **Émetteur Rust :** prototype isolé D1, capture écran + audio système, H.264 temps réel avec accélération matérielle si disponible et repli explicite ; contrôle des buffers, horodatage A/V, arrêt propre, reconnexion bornée et absence de rejeu des commandes TV.
+- [ ] **Récepteur Android TV :** APK installable avec consentement, signalisation WebRTC locale, décodage matériel, audio synchronisé, affichage plein écran, diagnostics et fermeture/nettoyage sûrs ; vérifier la compatibilité sur les **deux appareils Android TV**.
+- [ ] **D2 :** brancher le même moteur Rust sur l'écran étendu et le gestionnaire d'affichage de #98 ; conserver et restaurer exactement la configuration d'écrans après arrêt/erreur.
+- [ ] **Intégration Tauri :** commandes D1/D2/Stop, états de session, choix Auto/WebRTC/HLS, erreurs et capacités explicites ; préserver les protections D4 (consentement, une session, durée bornée, LAN).
+- [ ] **Tests automatisés :** unitaires, intégration émetteur/récepteur simulé, pertes réseau, retard, dérive audio, changement de résolution, reconnexion, nettoyage, sécurité ; CI adaptée aux plateformes sans revendiquer de validation matérielle.
+- [ ] **Recette matérielle autorisée :** mesurer la latence bout-en-bout (médiane, p95, pire), FPS, pertes d'images, synchronisation audio, CPU/GPU, stabilité et reconnexion en D1 et D2 sur chacun des deux Android TV ; consigner les protocoles, builds et preuves. Critère < 500 ms uniquement si effectivement mesuré.
+- [ ] **PR et dépendances :** préserver les acquis #97 (capture, son, D1/D2) et #98 (gestionnaire d'affichage) ; #98 dépend de #97. Ne pas fusionner de code non revu : Codex implémente sur branche dédiée, revue indépendante, CI et autorisation du propriétaire avant fusion. Ne pas modifier les PR existantes sans revue de leur état.
+- [ ] **Mise à jour documentaire après preuves :** réconcilier TODO, DEVELOPMENT_PLAN, checklist et README, distinguer simulation/CI/matériel. Aucun délai ou budget horaire dans TODO.
+
+**État initial :** chantier décidé mais **non implémenté ni validé** en Rust/WebRTC ; D1 HLS a montré 9–11 s sur matériel dans #97 ; la fluidité D2 et le parcours complet depuis la fenêtre restent à valider. Les valeurs WebRTC annoncées sont des objectifs, pas des résultats.
+
+---
+
 ## État des travaux — 2026-10-19
 
 Ce fichier suit uniquement les tâches, leurs dépendances et les preuves d'exécution.
@@ -9,15 +29,21 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | Chantier | Travail logiciel livré | Reste à faire / preuve attendue |
 |---|---|---|
 | D0 — encodage H.264 | Socle et intégration automatisée (#79, #81, #91) ; flux H.264 logiciel réel exécuté via #92 | Validation VA-API/GPU autorisée et intégrité réelle selon protocole ; ne pas confondre avec la réception TV |
-| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) | Réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
+| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) ; surveillance complémentaire de l'arrêt spontané du publisher dans #95 | Revue et intégration de #95, puis réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
 | D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
 | D3 — interface | Carte « Screen to TV » (Dupliquer / Étendre / Arrêter, écran, résolution, FPS, consentement, états) et commandes Tauri, tests unitaires (PR D3/D4) | Utilisation de la carte avec la TV lors de la recette autorisée |
 | D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` | Vérification RD1–RD8 sur matériel, sans compter deux fois les essais D1 |
 | Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-**Statuts d'intégration :** #82, #90 et #91 fusionnées ; #92 (D1 capture, D2) et la PR D3/D4 empilée dessus encore ouvertes.
-Les éléments de #92 ne sont pas déclarés fusionnés avant leur intégration à `main`.
+**Statuts d'intégration :** #82, #90, #91, #92 et #93 sont fusionnées ; #95 reste ouverte pour
+la surveillance complémentaire du publisher D1.
+
+**Sécurité des dépendances (2026-10-23, branche `fix/deps-audit-certifi-vite`) :** la CI de
+`main` (`f0dba1d`) et des PR ouvertes échouait sur deux nouveaux avis : `certifi`
+PYSEC-2026-4320 (racines emSign compromises) et `vite` GHSA-587h-7wmj-h5pm (élevé, via
+`launch-editor`). Lockfiles mis à jour (`certifi` 2026.10.19, `vite` 8.3.4) ; audits Python et npm,
+contrôles Python et UI réussis localement. Validation automatisée uniquement.
 
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
@@ -149,11 +175,10 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
     Cast Streaming et Sunshine/Moonlight documentée sans revendiquer de compatibilité Freebox.
     Suites de revue : `close()` concurrent jamais perdu, nettoyage poursuivi malgré une interruption.
     Adaptateur d'encodage D0 → `ScreenEncoder` fusionné dans #86 : HLS synthétique en direct,
-    cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS et récepteur
-    Freebox non commencés.
-  - [ ] Choisir et implémenter un publisher/récepteur sur preuve matérielle autorisée, puis la
-    capture X11 consentie ; exécuter ici les essais de réception HLS/Cast. La duplication réelle
-    reste non validée.
+    cycle de vie et nettoyage testés sans capture, réseau ni TV ; publisher HLS, récepteur et
+    capture X11 fusionnés dans #92 ; surveillance complémentaire du publisher dans #95.
+  - [ ] Faire relire et intégrer #95, puis exécuter sur autorisation distincte les essais de
+    réception HLS/Cast. La duplication réelle reste non validée.
 - [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [x] **D3, carte « Screen to TV » (logiciel) :** Dupliquer / Étendre / Arrêter, choix de l'écran, résolution, FPS, étape de consentement, états et erreurs ; affichée seulement sous X11 ; tests unitaires ; contrôle visuel le 2026-10-19 sur Xvfb privé (application réelle sans TV, puis états consentement/flux/échec avec un shell fictif) et défauts corrigés ; jamais utilisée avec la TV. Budget du bundle JavaScript relevé de 64 à 72 Kio (62,0 → 69,0 ko, modules locaux seulement).
@@ -162,8 +187,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
 - [x] Le propriétaire a explicitement repriorisé D0 puis la préparation D1 avant la clôture de la recette ; les opérations matérielles restent soumises à des accords séparés.
 - **Dépendances et priorités actuelles :** D0, les contrats D1 et leur adaptateur sont dans
-  `main` (#81, #83, #86). Prochaine étape : publisher/récepteur D1 et preuve Freebox autorisée,
-  puis capture X11, D2, D3 et D4. La recette télécommande et le packaging (#84/#85) suivent leur
+  `main` (#81, #83, #86, #92). Prochaine étape : revue et intégration de #95, puis preuve Freebox
+  autorisée. La recette télécommande et le packaging (#84/#85) suivent leur
   chaîne matérielle séparée, sans être recomptés dans D4.
 - **Suivi :** les tâches et preuves figurent ici ; toute estimation de temps est réservée à la conversation.
 - **Autorisations nécessaires :** toute diffusion réelle vers la TV ; installation d'une application sur la TV (Moonlight, si cette voie est retenue) ; module noyau evdi ou modification de la configuration Xorg ; démon hôte (Sunshine) pendant la diffusion.
