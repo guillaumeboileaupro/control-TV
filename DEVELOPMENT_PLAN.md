@@ -30,6 +30,10 @@ Les opérations de cycle de vie Tauri sont sérialisées sur une même exclusion
 
 La carte existante offre désormais Auto/WebRTC/HLS sans ajouter de second sélecteur de TV. Elle interroge les capacités du seul équipement sélectionné avant chaque démarrage : Auto choisit WebRTC seulement lorsque le paquet exact et le canal Android Remote appairé sont accessibles, puis HLS, tandis que WebRTC explicite refuse tout repli. Le suivi et l'arrêt utilisent le transport effectivement lancé, et les réponses de polling obsolètes sont ignorées après toute nouvelle opération. Après lancement du paquet Android confirmé au premier plan par le gestionnaire d'applications existant, l'hôte remet automatiquement les paramètres éphémères au champ masqué du récepteur via Android Remote, canal déjà authentifié, uniquement si un champ actif est signalé et sans les inclure dans la commande ADB ni la réponse à la fenêtre. Le récepteur les valide puis efface aussitôt le champ. Tests Rust, TypeScript et JVM uniquement ; le focus automatique et le parcours matériel restent requis.
 
+PR #99 reconciliation (2026-10-23): wireless ADB/TLS safeguards are preserved on the reconciled
+D1/D2 base, and the Debian runtime dependency set is the union of ADB, FFmpeg, Ayatana AppIndicator
+and X11 utilities. Validation is automated only; existing ADB pairings and hardware were untouched.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.
@@ -110,7 +114,6 @@ Security status at this head: npm and Python audits report no unwaived vulnerabi
 
 Release evidence for `d95fc7b`: CI run `38723748264` produced artifact `control-tv-linux-release` (artifact id `11967735137`). Static inspection without installation verified `control-tv_0.1.0_amd64.deb` as Debian package format 2.0, architecture `amd64`, version 0.1.0, 24,078,972 bytes (67,461 KiB installed size), with the Tauri executable, desktop entry, icons, dependency notices and a bundled x86-64 Python bridge (CPython 3.12.15, PyInstaller 6.22.3, `libpython3.12.so.1.0`). Its declared dependencies are GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator; the AppIndicator dependency is duplicated in the metadata, a non-blocking cleanup item. Both supplied SHA-256 checks passed. The 444 packaged files contain 374 license/notice files and 65 bridge files; no source tree, tests, caches, `node_modules` or compiler intermediates were found. Local `release-deb` is not rerun because the installed global uv 0.11.26 does not recognize release Python 3.12.15; by owner decision the successful locked CI packaging/install/purge is accepted as packaging validation without changing global uv. **The artifact was not installed locally and is not validated on real TV hardware.**
 
-
 ## Phase 0 - Repository and development discipline
 
 Deliverables:
@@ -164,6 +167,7 @@ Exit criteria:
 
 - [x] Tauri 2 shell scaffolded (`src-tauri/`, Rust) with a minimal frontend (`ui/`, vanilla TypeScript + Vite); no frontend framework or UI library is used yet, matching the size of a one-page skeleton.
   - Codex audit AUD-002 (2026-10-14, branch `fix/source-map-js-advisory`): `source-map-js` (transitive, Vite -> PostCSS, build/dev tooling only, not in the TV engine) moved from 1.2.1 to 1.2.2 for GHSA-68fv-2mgg-jv7q (high, event-loop DoS through indexed source-map offsets); lockfile-only change within PostCSS's `^1.2.1` range, same BSD-3-Clause license, no other package changed; `npm audit` now reports 0 vulnerabilities.
+  - Dependency advisories (2026-10-23, branch `fix/deps-audit-certifi-vite`): the npm and Python audit gates failed on `main` `f0dba1d` and on every open PR. `vite` (build/dev tooling only, not in the TV engine) moved from 8.3.1 to 8.3.4 for GHSA-587h-7wmj-h5pm (high) and two moderate `launch-editor` advisories; the lockfile change stays inside Vite's own tree (`rolldown` 1.2.15, `postcss` 8.5.31, `nanoid` 3.3.20, `@oxc-project/types` 0.155.0). `certifi` moved from 2026.7.22 to 2026.10.19 for PYSEC-2026-4320 (emSign roots with compromised intermediate keys) through `uv.lock` only. Both audits, `dev.py check`, `ui-check` and the UI build pass locally; automation-validated only.
 - [x] The shell owns no Cast/control logic: `src-tauri/src/lib.rs` only spawns the Python bridge as a long-lived child process (a debug build runs `python -m control_tv.bridge` from the repository `.venv`; since PR #26 a release build runs only the bundled frozen bridge, see Phase 7) and forwards line-delimited JSON requests/responses over its stdin/stdout, matched by request id. `ControlService` is not reimplemented in Rust or TypeScript.
 - [x] Nine bridge methods are exposed so far: three read-only (`ping`, `discover_devices`, `get_status`) and six commands (`play`, `pause`, `stop`, `seek`, `set_volume`, `set_muted`), each a plain forward to the same-named `ControlService` method; every other `TvControl` capability is added to the bridge and to a Tauri command as its own view needs it, not in advance.
 - [x] A failed bridge spawn does not crash the application: the Tauri command returns an explicit "Python control backend unavailable" error instead, surfaced as plain text in the UI.
@@ -301,7 +305,7 @@ Exit criteria:
 ## Phase 4 - Lightweight Tauri UI
 
 Deliverables:
-- [ ] remote-first redesign (owner request, 2026-10-13, branch `feat/ui-redesign`): the TV's own remote leads (round navigation pad, TV volume rocker with Mute, Back and Home, power in the remote's header), the TV's apps as a grid of tiles (letter and stable colour per package, filter), the keyboard on demand, the Cast sound last; one light theme (owner choice), 48px minimum targets, WCAG AA text contrast, every icon-only key labelled; same element ids and state logic, so behaviour is unchanged. Checked on screenshots against a fake bridge (412px wide); not yet seen on the phone or on Ubuntu;
+- [ ] remote-first redesign (owner request, 2026-10-13, branch `feat/ui-redesign`): the TV's own remote leads (round navigation pad, TV volume rocker with Mute, Back and Home, power in the remote's header), the TV's apps as a grid of tiles (letter and stable colour per package, filter), the keyboard on demand, the Cast sound last; one light theme (owner choice), 48px minimum targets, WCAG AA text contrast, every icon-only key labelled; same element ids and state logic, so behaviour is unchanged. The directional pad was corrected in PR #94: symmetric non-overlapping key areas and explicit hover, pressed and keyboard-focus states, automation-validated only. Checked on screenshots against a fake bridge (412px wide); not yet seen on the phone or on Ubuntu;
 - [x] device discovery view (discovered devices are listed and selectable);
 - [x] device selection by stable id (UI state; kept across a rediscovery that reports the same id, dropped with a notice otherwise);
 - [x] current receiver/media state view for the selected device (read-only; implemented and automation-validated);
@@ -403,6 +407,8 @@ Exit criteria:
 Retained design (owner decision, 2026-10-03), merged with PR #26 into `main` (`eba73f5`). The `.deb` validated on 2026-09-25 (see the Tauri shell status) ran the bridge from the developer's `.venv`: it is **not** a validated distributable package; the release `.deb` below is.
 
 Release command: `python3 scripts/dev.py release-deb` runs `bridge-build`, the strict smoke (`build_bridge.py smoke --strict`, never the informative `bridge-smoke`) and `packaging/release_linux.py`; it leaves `dist/control-tv_<version>_amd64.deb`, `dist/python-bridge.inventory.tsv` and `dist/SHA256SUMS`.
+
+Runtime dependencies (PR #96, automation-validated only): the release `.deb` explicitly declares `ffmpeg` for capture/encoding and `x11-xserver-utils` for X11 output and virtual-monitor management, in addition to the existing desktop dependencies. The Linux release CI installs the package, verifies that both packages are installed, pings the frozen bridge, purges `control-tv` and verifies that its executable and library directory are gone. This does not constitute a local desktop launch, screen capture, GPU, network-stream or TV validation.
 
 Results (2026-10-04, Ubuntu 22.04; no Cast discovery, no hardware command; local runs on PR #26 commits, CI on PR #26 and on `main`):
 - **Frozen bridge:** `--onedir`, 42 MB, CPython **3.12.15** exactly (`packaging/release-python-version`; `bridge-build` creates the build environment on it and the build refuses any other interpreter), PyInstaller 6.22.3 and hooks-contrib 2026.8, all PyInstaller state under `packaging/.pyinstaller/`, never `--clean`, setuptools excluded. Its `ping` reports `controlTvVersion` **0.1.0**, and the smoke now fails on any other version.
@@ -1258,14 +1264,53 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Afficher un message clair lorsque la TV confirme une commande logique sans changement sonore.
 
 **2D — Alimentation**
-- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole). Touche Power du canal Android TV Remote **implémentée** (#40) ; la TV rapporte son état allumé/veille (`isOn`, lu `false` en veille le 2026-10-12, lecture seule) ; Power **non envoyé**, réveil depuis la veille **non essayé**.
+- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole). Touche Power du canal Android TV Remote **implémentée** (#40) ; depuis la PR #94, l'adaptateur lit l'état avant l'envoi, attend au plus 4 s un nouvel état rapporté et ne classe le résultat `confirmed` que si cet état change. Les états inchangé, absent ou non comparable restent `unconfirmed`; validation automatisée uniquement. La TV rapporte son état allumé/veille (`isOn`, lu `false` en veille le 2026-10-12, lecture seule) ; Power **non envoyé sur matériel**, réveil depuis la veille **non essayé**.
 - [ ] Tester veille depuis Ubuntu, puis Android ; confirmer l'effet sur TV réelle.
 - [ ] Tester réveil depuis Ubuntu, puis Android ; confirmer le retour du contrôle.
 - [ ] Tester TV éteinte, veille réseau, TV inaccessible et erreur/timeout.
 - [ ] Documenter les limitations et éviter d'afficher un succès non confirmé.
 
 **2E — APPLICATIONS INSTALLÉES SUR LA TV : découverte ET lancement (exigence propriétaire)**
-- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV). **Faisabilité (2026-10-12) :** la seule méthode d'énumération réelle identifiée est le débogage réseau ADB de la Google TV (`pm list packages` puis lancement par package), à activer par le propriétaire dans les options développeur ; il donne un accès complet à la TV depuis le réseau local (risque de sécurité) et ajoute une dépendance (client ADB ou bibliothèque Python). **Décision du propriétaire requise** ; sinon, alternative documentée : lancement par lien d'applications connues, présenté comme catalogue, jamais comme liste installée. Avancement 2E : **implémenté le 2026-10-13, 0 % confirmé sur TV** : liste par ADB (`adb-shell` 0.4.4, désactivé tant que le propriétaire n'active pas le débogage sur la TV et n'y autorise pas control-TV ; une seule requête en lecture), lancement par ADB (un événement `monkey` sur l'activité d'accueil du package, vérifié par l'application que la TV signale au premier plan ; les liens `market://` du canal télécommande ont été écartés après la revue Codex P1, car peu fiables), panneau « TV apps » avec filtre dans les deux interfaces. Noms affichés : connus de control-TV pour les applications courantes, sinon le package ; pas d'icônes (la TV ne les fournit pas par cette voie). **Limite (revue Codex P1, 2026-10-13) :** seules les TV dont le débogage USB accepte la connexion réseau classique sur le port 5555 sont prises en charge ; les TV (Android 13 et plus) qui n'offrent que le « Débogage sans fil » (code d'appairage, TLS) ne le sont pas encore (`adb-shell` ne parle pas ce protocole) ; à vérifier sur la TV du propriétaire.
+- [x] **Correction ADB sans fil Ubuntu (2026-10-21, automatisée seulement)** : le service utilise
+  le serveur `adb` existant au lieu d'ouvrir systématiquement `IP:5555` avec `adb-shell`. Il relie
+  la TV sélectionnée à un unique serial via l'adresse découverte, `adb devices -l` et les services
+  mDNS TLS, reconnecte le port dynamique annoncé, refuse tout appareil ambigu et cible chaque
+  commande avec `adb -s`. L'association intégrée distingue port d'association et port de
+  connexion ; le code temporaire passe par stdin, n'est ni journalisé ni conservé. Liste,
+  actualisation, recherche, tri, noms connus, logos locaux existants et lancement restent dans le
+  même `TvApps`/`ControlService`. Tests simulés : TCP, TLS, mDNS, reconnexion, multi-appareils,
+  absence/ambiguïté, association acceptée/refusée/expirée, perte de connexion, liste et lancement.
+  La preuve matérielle antérieure de lecture ADB est conservée ; la recette complète depuis
+  l'interface et l'observation physique d'un lancement restent NOT RUN sur cette branche.
+- [x] **Correctifs de revue #99 (automatisés)** : reconnexion unique d'une cible TCP classique
+  sur 5555 après redémarrage du serveur, sans remplacer les ports TLS/mDNS dynamiques ; préflight
+  de la capacité `adb pair` ; propagation de `tvApps` jusqu'à l'UI, qui ne propose plus les
+  contrôles sur une plateforme sans ADB. Aucun appareil n'a été contacté.
+- [x] **Correctifs de robustesse et confidentialité #99 (simulés)** : un ADB sans commande mDNS
+  conserve le chemin TCP classique exact sur 5555 et indique Platform Tools 30.0.0 minimum si
+  seule l'association sans fil manque ; la sortie de `adb version` est analysée et les versions
+  anciennes, invalides, bloquées ou défaillantes sont refusées avant `help` et `pair` ; après
+  succès de `adb pair`, le service de connexion est attendu avec un nombre borné de lectures,
+  sans répéter l'association ; une interruption est propagée et ne rejoue pas l'association. Un
+  service TLS annoncé qui échoue interdit le fallback classique 5555. Le code temporaire est
+  masqué puis retiré du DOM dès la soumission, la fermeture du formulaire ou un changement de TV.
+  Tests par doubles uniquement,
+  aucun ADB réel.
+- [x] **Décision et audit de packaging #99 (sans installation)** : l'`adb` Jammy reste la
+  dépendance du `.deb` pour TCP classique ; l'association TLS exige Platform Tools >= 30 externe.
+  L'archive Google n'est pas redistribuée sans validation juridique explicite de ses conditions
+  SDK. La candidate stable 37.0.1 est enregistrée comme référence non embarquée avec URL
+  versionnée `dl.google.com`, taille, SHA-256, NOTICE, termes SDK et politique de mise à jour dans
+  `packaging/adb-platform-tools.json` et `docs/ADB_PLATFORM_TOOLS.md`. Tests statiques : manifeste
+  cohérent, aucune archive ni ressource Tauri embarquée. Aucun binaire ADB installé ou exécuté.
+- [ ] **Fourniture ADB moderne sur installation propre** : décider entre une source réellement
+  redistribuable après audit juridique ou une baseline de distribution qui fournit Platform Tools
+  >= 30. Avant cela, le `.deb` garantit seulement TCP classique et ne doit pas annoncer
+  l'association sans fil comme incluse.
+- [ ] **Portée Android de 2E** : l'APK n'embarque plus `adb-shell` et ne peut pas exécuter le
+  serveur platform-tools ; concevoir un transport TLS Android compatible avec l'absence de
+  serveur permanent avant de déclarer la parité Ubuntu/Android.
+- [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV). **Faisabilité (2026-10-12) :** la seule méthode d'énumération réelle identifiée est le débogage réseau ADB de la Google TV (`pm list packages` puis lancement par package), à activer par le propriétaire dans les options développeur ; il donne un accès complet à la TV depuis le réseau local (risque de sécurité) et ajoute une dépendance (client ADB ou bibliothèque Python). **Décision du propriétaire requise** ; sinon, alternative documentée : lancement par lien d'applications connues, présenté comme catalogue, jamais comme liste installée. Avancement 2E : **implémenté le 2026-10-13, 0 % confirmé sur TV** : liste par ADB (`adb-shell` 0.4.4, désactivé tant que le propriétaire n'active pas le débogage sur la TV et n'y autorise pas control-TV ; une seule requête en lecture), lancement par ADB (un événement `monkey` sur l'activité d'accueil du package, vérifié par l'application que la TV signale au premier plan ; les liens `market://` du canal télécommande ont été écartés après la revue Codex P1, car peu fiables), panneau « TV apps » avec filtre dans les deux interfaces. Noms affichés : connus de control-TV pour les applications courantes, sinon le package ; pas d'icônes (la TV ne les fournit pas par cette voie). **Limite historique (revue Codex P1, 2026-10-13) :** seules les TV dont le débogage USB acceptait la connexion réseau classique sur le port 5555 étaient alors prises en charge, car `adb-shell` ne parle pas le protocole TLS du « Débogage sans fil ». **Mise à jour #99 :** le client Ubuntu prend désormais en charge l'appairage TLS avec code via un Android SDK Platform Tools externe >= 30 ; cette dépendance moderne n'est pas encore garantie par le paquet `.deb`, l'application Android ne fournit pas ce transport, et aucun chemin n'a été validé sur la TV du propriétaire.
 - [ ] Définir les permissions, appairages et restrictions nécessaires ; proposer une solution viable sans serveur permanent.
 - [ ] Récupérer identifiant/package, nom affiché, icône si disponible et statut lançable.
 - [ ] Afficher la liste dans **Ubuntu** avec recherche/tri et état de chargement/erreur.

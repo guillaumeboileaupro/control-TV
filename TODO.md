@@ -1,5 +1,9 @@
 # control-TV — TODO
 
+- [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
+  réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
+  `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.
+
 ## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
 
 **Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
@@ -54,13 +58,18 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92) ; surveillance de l'arrêt spontané du publisher (#95). **Recette 2026-10-19 (TV réelle)** : bureau affiché, image fluide au 1er essai, latence mesurée 10,3 s ; saccades reproduites quand le récepteur est chargé avant d'avoir assez de segments ; segments de 1 s non lus par le récepteur Cast de la Freebox. Branche `fix/screencast-d1-d2-hardware` : chargement après 4 segments de 2 s, son système (PulseAudio, AAC) et fermeture de la session Cast possédée — tests automatisés verts | **2026-10-20 (TV réelle)** : fluide, son présent et synchronisé ; latence mesurée 9–11 s (plancher HLS du récepteur par défaut). Réduction forte de la latence : autre chemin (recopie Cast ou récepteur dédié). Revalider sur TV les sessions successives et la fermeture du lecteur distant après le correctif #97 |
 | D2 — extension | **2026-10-20** : extension sur un connecteur libre forcé « connecté » ; essai réel : fenêtre déplacée sur l'écran étendu et visible sur la TV. PR #97 : topologie X11 réelle, modes relus via `xrandr --verbose`, coordonnées libres, orientation, échelle, écran principal, Joindre/Cloner/Écran unique, application atomique et restauration temporisée — tests automatisés uniquement pour le gestionnaire | Forçage du connecteur par l'utilisateur (`sudo`, une fois par démarrage) ou règle système durable à décider ; gestionnaire, fluidité et restauration à valider dans l'application installée ; aucune nouvelle preuve matérielle pour le gestionnaire |
 | D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
-| D3 — interface | Carte « Screen to TV » et gestionnaire inspiré de GNOME : écrans numérotés, sélection, glisser-déposer magnétique, réglages réellement annoncés par X11, Appliquer/Annuler/Garder/Rétablir ; relais Tauri et tests unitaires dans #97 | Utilisation du nouveau gestionnaire avec la TV et vérification visuelle/réelle de chaque mode |
-| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; #97 conserve le cliché précédent tant que la restauration n'a pas réussi et permet une nouvelle tentative | Vérification RD1–RD8 et de la fermeture distante sur matériel, sans compter deux fois les essais D1 |
-| Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
+| D3 — interface | Carte « Screen to TV » et gestionnaire inspiré de GNOME : Dupliquer / Étendre / Arrêter, écrans numérotés, sélection, glisser-déposer magnétique, réglages réellement annoncés par X11, Appliquer/Annuler/Garder/Rétablir ; relais Tauri et tests unitaires dans #97 | Utilisation du nouveau gestionnaire avec la TV et vérification visuelle/réelle de chaque mode |
+| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` ; #97 conserve le cliché précédent tant que la restauration n'a pas réussi et permet une nouvelle tentative | Vérification RD1–RD8 et de la fermeture distante sur matériel, sans compter deux fois les essais D1 |
+| Packaging | Provenance et automatisation (#84) ; dépendances Ubuntu complètes ; mécanisme de signature Android stable prêt | Propriétaire : créer et sauvegarder la clé Android, publier son empreinte, définir les deux secrets CI, puis identifier les artefacts de la première CI signée |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-**Statuts d'intégration :** #82, #90, #91, #92 et #93 sont fusionnées ; #95 reste ouverte pour
-la surveillance complémentaire du publisher D1.
+**Statuts d'intégration :** #82, #90, #91, #92, #93 et #95 sont fusionnées.
+
+**Sécurité des dépendances (2026-10-23, branche `fix/deps-audit-certifi-vite`) :** la CI de
+`main` (`f0dba1d`) et des PR ouvertes échouait sur deux nouveaux avis : `certifi`
+PYSEC-2026-4320 (racines emSign compromises) et `vite` GHSA-587h-7wmj-h5pm (élevé, via
+`launch-editor`). Lockfiles mis à jour (`certifi` 2026.10.19, `vite` 8.3.4) ; audits Python et npm,
+contrôles Python et UI réussis localement. Validation automatisée uniquement.
 
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
@@ -85,6 +94,35 @@ la surveillance complémentaire du publisher D1.
 - [x] CI (PR #89 fusionnée) : une PR ne lance que les builds de plateforme que ses fichiers peuvent affecter, calculés sur tous les chemins depuis la base de fusion (suppressions et deux côtés d'un renommage compris ; chemin inconnu = tous les builds) ; `main` lance toujours tout ; caches Rust par job et `Cargo.lock`, sans les paquets `.deb`/`.apk`.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
+
+- [x] **ADB sans fil Ubuntu (2026-10-21, validation automatisée)** : serveur ADB existant,
+  appareils TCP et TLS, services mDNS, ports dynamiques, reconnexion, refus des correspondances
+  absentes/ambiguës et ciblage explicite par `adb -s`. L'interface propose l'association par
+  adresse/port et code temporaire, sans conserver le code. Correctifs de revue : une cible TCP
+  classique oubliée après redémarrage du serveur reçoit une seule reconnexion bornée sur 5555 ;
+  `adb pair` est vérifié avant usage ; l'UI masque les applications quand le bridge annonce
+  `tvApps: false` (notamment Android).
+- [x] **Correctifs de revue ADB #99 (simulation)** : l'absence de `adb mdns` ne bloque plus une
+  cible TCP classique déjà connectée ou reconnectable sur 5555 ; après une association acceptée,
+  l'apparition du service de connexion est attendue de façon bornée sans rejouer
+  `adb pair` ; la version Platform Tools est analysée avant association (ancienne, invalide,
+  bloquée ou défaillante refusée) ; le code à usage unique est masqué, consommé à la soumission et
+  effacé si le formulaire ferme ou si la TV change. Un service TLS annoncé qui refuse la connexion
+  n'est jamais remplacé par une tentative non-TLS sur 5555. Aucun appareil n'a été contacté.
+- [x] **Politique de packaging ADB moderne (audit sans installation)** : conserver `adb` Jammy
+  pour TCP classique ; ne pas redistribuer l'archive Google tant que ses conditions SDK n'ont pas
+  reçu de validation juridique explicite ; traiter Platform Tools >= 30 comme prérequis externe
+  pour l'association TLS. La candidate 37.0.1 est épinglée par URL officielle versionnée, taille
+  et SHA-256 dans `packaging/adb-platform-tools.json`, avec procédure de licence et mise à jour
+  dans `docs/ADB_PLATFORM_TOOLS.md`. L'archive n'entre ni dans Git ni dans le `.deb`.
+- [ ] **Fourniture ADB moderne sur installation propre** : le paquet `adb` d'Ubuntu 22.04 ne
+  fournit pas `adb pair`. Tant qu'une source redistribuable validée ou une baseline système plus
+  récente n'est pas décidée, ne pas présenter l'association sans fil comme incluse dans le `.deb`.
+- [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
+  application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
+  la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.
+- [ ] **Android** : définir un chemin TLS sans serveur permanent dans l'application ; le serveur
+  ADB platform-tools utilisé ici est disponible sur Ubuntu seulement.
 
 - [x] **Codex — diagnostic sans supposition :** le paquet installé est `control-tv` 0.1.0 amd64, mais son binaire du 15 octobre (`84186c3ea194052587595fa59accf96c012256fc5fc508d3b0661d4ec7140a53`) diffère du binaire extrait sans installation du `.deb` final du 17 octobre (`f4678ae03c13999a180b48442056359ab087b7c989fe34a1b22ed5ddb6e5149f`). La capture utilisait donc un ancien bundle, antérieur à #71. Le bundle frontend reconstruit contient l'identifiant Apple TV, son SVG et l'appel `appLogo`; la CSP reste validée par la recette statique.
 - [x] **Codex — correspondances :** le backend n'émet le libellé « Apple TV » que pour l'identifiant exact `com.apple.atve.androidtv.appletv`, ce qui établit l'identifiant reçu dans la capture sans nouvelle connexion TV. Il correspond exactement à `ui/src/app-logos.ts`; aucun alias ou logo approximatif n'a été ajouté. L'identifiant exact de chaque tuile est désormais conservé dans son infobulle et son nom accessible.
@@ -150,6 +188,9 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 
 - [x] Identité du paquet Ubuntu : le runner exige un manifeste de provenance (commit, run CI, version, architecture, SHA-256 du `.deb`, de `usr/bin/control-tv` et du contenu complet via `md5sums`, pont Python compris — le binaire seul est reproductible), recalcule les empreintes et refuse une version 0.1.0 d'un autre build ; la CI publie `provenance.json`.
 - [x] Signature Android stable : prise en charge d'une clé de test `control-tv-test` (Gradle, CI par secrets, vérification contre un certificat épinglé, `apk-provenance.json`) — [`docs/ANDROID_TEST_SIGNING.md`](docs/ANDROID_TEST_SIGNING.md).
+- [x] Paquet Ubuntu : dépendances d'exécution déclarées pour FFmpeg et les commandes X11
+  (`ffmpeg`, `x11-xserver-utils`) ; la CI vérifie leur installation avec le `.deb`, puis la purge
+  complète de `control-tv`.
 - [ ] **Propriétaire** : créer la clé, la sauvegarder, définir les deux secrets et publier l'empreinte du certificat ; puis une dernière désinstallation sur chaque téléphone (les APK installés ont des signataires éphémères).
 - [x] Runner : les scénarios TV, téléphone, double télécommande et latence indiquent qu'aucun adaptateur automatique n'existe et renvoient au protocole manuel.
 - [x] Artefacts CI de `main` `de31c94` (run `39034444658`) téléchargés et identifiés dans `dist/acceptance-de31c94/` (ignoré par git) ; le binaire installé sur Ubuntu est ce build. APK : signataire éphémère, expire sur GitHub le 2026-10-24.
@@ -257,7 +298,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 | Fonction | Ubuntu | Android | Ce qui manque |
 |---|---|---|---|
 | Volume +/−, Mute (son réel) | ✅ validé le 2026-10-12 | codé, 0 % confirmé | installer l'APK de #41 |
-| Power (veille / réveil) | codé, 0 % confirmé | codé, 0 % confirmé | essai |
+| Power (veille / réveil) | codé ; depuis la PR du pavé, « confirmé » seulement si la TV rapporte son nouvel état d'alimentation (attente bornée à 4 s), testé en simulation ; 0 % sur TV | idem (même couche Python) | essai : réveil depuis la veille, mise en veille, délai réel du rapport d'état ; une TV en veille profonde (réseau coupé) reste injoignable par ce canal, le Wake-on-LAN n'est ni codé ni vérifié sur la Freebox |
+| Pavé directionnel (rendu) | corrigé le 2026-10-19 : symétrique, sans chevauchement, états survol/appui/focus ; vérifié sous WebKitGTK sur Xvfb privé avec données fictives | même interface | contrôle visuel dans l'application installée |
 | Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai, et mesure de la latence par touche (étapes K1–K3 de `docs/DUAL_CONTROLLER_VALIDATION.md`, vidéo) |
 | Clavier distant (texte, Backspace, Entrée) | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai : TV allumée, recherche YouTube ouverte |
 | Application active affichée | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai |
@@ -266,7 +308,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 - [ ] **Critère de latence des touches — ta décision :** proposé (non adopté) : délai envoi → effet médian ≤ 0,5 s et maximal ≤ 1,0 s, délai envoi → télécommande prête médian ≤ 1,0 s, sur Ubuntu et sur Android. Tant qu'il n'est pas adopté, K1 et K2 mesurent sans juger la latence.
 - [ ] **Téléphone :** le brancher en USB, accepter le débogage, et autoriser l'installation de l'APK de la CI. Si les signatures diffèrent, le widget actuel sera perdu.
-- [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. **Si ta TV ne propose que « Débogage sans fil » (avec un code d'appairage), la liste ne marchera pas encore** : c'est le premier point à vérifier demain. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
+- [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. Sur Ubuntu, le « Débogage sans fil » avec code d'appairage est désormais pris en charge par #99 lorsqu'un Android SDK Platform Tools externe >= 30 est disponible ; le paquet `.deb` ne garantit encore que l'ADB TCP classique, et l'application Android ne prend pas encore en charge ce transport TLS. Aucun de ces chemins n'a été validé sur la TV du propriétaire. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
 - [ ] Commandes concurrentes C1–C7 depuis Ubuntu et Android, avec autorisation.
 
 ## 4. Widget Android — PR #33 (fusionnée le 2026-10-13)
