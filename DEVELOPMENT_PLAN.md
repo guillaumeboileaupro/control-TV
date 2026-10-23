@@ -272,7 +272,7 @@ Exit criteria:
 ## Phase 4 - Lightweight Tauri UI
 
 Deliverables:
-- [ ] remote-first redesign (owner request, 2026-10-13, branch `feat/ui-redesign`): the TV's own remote leads (round navigation pad, TV volume rocker with Mute, Back and Home, power in the remote's header), the TV's apps as a grid of tiles (letter and stable colour per package, filter), the keyboard on demand, the Cast sound last; one light theme (owner choice), 48px minimum targets, WCAG AA text contrast, every icon-only key labelled; same element ids and state logic, so behaviour is unchanged. Checked on screenshots against a fake bridge (412px wide); not yet seen on the phone or on Ubuntu;
+- [ ] remote-first redesign (owner request, 2026-10-13, branch `feat/ui-redesign`): the TV's own remote leads (round navigation pad, TV volume rocker with Mute, Back and Home, power in the remote's header), the TV's apps as a grid of tiles (letter and stable colour per package, filter), the keyboard on demand, the Cast sound last; one light theme (owner choice), 48px minimum targets, WCAG AA text contrast, every icon-only key labelled; same element ids and state logic, so behaviour is unchanged. The directional pad was corrected in PR #94: symmetric non-overlapping key areas and explicit hover, pressed and keyboard-focus states, automation-validated only. Checked on screenshots against a fake bridge (412px wide); not yet seen on the phone or on Ubuntu;
 - [x] device discovery view (discovered devices are listed and selectable);
 - [x] device selection by stable id (UI state; kept across a rediscovery that reports the same id, dropped with a notice otherwise);
 - [x] current receiver/media state view for the selected device (read-only; implemented and automation-validated);
@@ -1200,7 +1200,7 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Afficher un message clair lorsque la TV confirme une commande logique sans changement sonore.
 
 **2D — Alimentation**
-- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole). Touche Power du canal Android TV Remote **implémentée** (#40) ; la TV rapporte son état allumé/veille (`isOn`, lu `false` en veille le 2026-10-12, lecture seule) ; Power **non envoyé**, réveil depuis la veille **non essayé**.
+- [ ] Étudier faisabilité de veille et réveil selon le modèle (Cast/HDMI-CEC/réseau/autre protocole). Touche Power du canal Android TV Remote **implémentée** (#40) ; depuis la PR #94, l'adaptateur lit l'état avant l'envoi, attend au plus 4 s un nouvel état rapporté et ne classe le résultat `confirmed` que si cet état change. Les états inchangé, absent ou non comparable restent `unconfirmed`; validation automatisée uniquement. La TV rapporte son état allumé/veille (`isOn`, lu `false` en veille le 2026-10-12, lecture seule) ; Power **non envoyé sur matériel**, réveil depuis la veille **non essayé**.
 - [ ] Tester veille depuis Ubuntu, puis Android ; confirmer l'effet sur TV réelle.
 - [ ] Tester réveil depuis Ubuntu, puis Android ; confirmer le retour du contrôle.
 - [ ] Tester TV éteinte, veille réseau, TV inaccessible et erreur/timeout.

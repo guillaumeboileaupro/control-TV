@@ -70,9 +70,9 @@ class KeyPress:
 class RemoteKeyResult:
     """A key that was sent, and whether the TV's own report shows its effect.
 
-    `CONFIRMED` means the TV reported the expected change of its audible volume or mute; it
-    is the TV's report, not a person hearing the sound. Keys whose effect the TV does not
-    report (power, navigation) are `NOT_CHECKED`.
+    `CONFIRMED` means the TV reported the expected change of its audible volume, mute or power
+    state; it is the TV's report, not a person hearing the sound or seeing the picture. Keys
+    whose effect the TV does not report (navigation) are `NOT_CHECKED`.
     """
 
     key: RemoteKey

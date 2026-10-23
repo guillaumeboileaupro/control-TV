@@ -373,7 +373,7 @@ function keyOutcome(key: RemoteKeyName, result: JsonObject): RemoteOutcome {
     case "unconfirmed":
       // Some TVs never report their volume on this channel (their sound is set by the TV
       // itself): only the person in front of the TV can tell whether it changed.
-      if (toReport(result["after"])?.volume == null) {
+      if (key !== "power" && toReport(result["after"])?.volume == null) {
         return {
           tone: "sent",
           text: `${label} was sent. This TV doesn't report its volume here: check the TV.`,
