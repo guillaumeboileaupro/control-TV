@@ -43,6 +43,8 @@ class FakeTv:
         self.is_on: bool | None = True
         self.volume: dict[str, Any] | None = {"level": 10, "max": 100, "muted": False}
         self.reports_volume_after_key = True
+        # Seconds after Power until the TV reports its new power state; None: never reports it.
+        self.power_report_delay: float | None = None
         self.paired_code = "A1B2C3"
         self.connect_error: Exception | None = None
         self.send_error: Exception | None = None
@@ -88,6 +90,12 @@ class FakeRemote:
             elif key_code == "KEYCODE_VOLUME_MUTE":
                 self.tv.volume["muted"] = not self.tv.volume["muted"]
             self.volume_info = dict(self.tv.volume)
+        if key_code == "KEYCODE_POWER" and self.tv.power_report_delay is not None:
+            asyncio.get_running_loop().call_later(self.tv.power_report_delay, self._power_toggled)
+
+    def _power_toggled(self) -> None:
+        self.tv.is_on = not self.tv.is_on
+        self.is_on = self.tv.is_on
 
     def send_text(self, text: str) -> None:
         self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
@@ -126,6 +134,7 @@ def channel(tmp_path: Path, tv: FakeTv) -> Iterator[TvRemoteChannel]:
         tmp_path / "remote",
         timeout=2.0,
         settle=0.2,
+        power_settle=0.5,
         remote_factory=factory,
         cert_generator=lambda name: (CERT_PEM, KEY_PEM),
     )
@@ -270,6 +279,28 @@ def test_a_tv_that_does_not_report_a_change_is_returned_unchanged_not_assumed(
     pressed = channel.press(HOST, RemoteKey.VOLUME_UP)
 
     assert pressed.after == pressed.before
+
+
+def test_power_waits_for_the_tv_to_report_its_new_power_state(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.is_on = False
+    tv.power_report_delay = 0.25  # later than the volume settle, within the power one
+
+    pressed = channel.press(HOST, RemoteKey.POWER)
+
+    assert (pressed.before.is_on, pressed.after.is_on) == (False, True)
+    assert [entry for entry in tv.log if entry[0] == "key"] == [("key", "KEYCODE_POWER")]
+
+
+def test_power_without_a_new_report_returns_what_the_tv_last_said(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.is_on = False
+
+    pressed = channel.press(HOST, RemoteKey.POWER)
+
+    assert (pressed.before.is_on, pressed.after.is_on) == (False, False)
 
 
 @pytest.mark.parametrize("key", [RemoteKey.POWER, RemoteKey.DPAD_CENTER, RemoteKey.HOME])

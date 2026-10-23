@@ -33,6 +33,8 @@ from control_tv.ports import TvApps, TvRemote
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
     """Whether the TV's own reports show the effect of the key that was sent."""
     key, before, after = press.key, press.before.volume, press.after.volume
+    if key is RemoteKey.POWER:
+        return _power_outcome(press.before.is_on, press.after.is_on)
     if key not in (RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE):
         return Confirmation.NOT_CHECKED, "sent; the TV does not report the effect of this key"
     if before is None or after is None:
@@ -49,6 +51,17 @@ def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
     if key is RemoteKey.VOLUME_DOWN and after.level < before.level:
         return Confirmation.CONFIRMED, f"the TV reports volume {level}"
     return Confirmation.UNCONFIRMED, f"sent; the TV still reports volume {level}"
+
+
+def _power_outcome(before: bool | None, after: bool | None) -> tuple[Confirmation, str]:
+    """Power toggles: confirmed only when the TV's own report changed. A TV in deep standby
+    does not answer at all (the connection fails before anything is sent)."""
+    if after is None:
+        return Confirmation.UNCONFIRMED, "sent; the TV did not report whether it is on"
+    now = "on" if after else "off"
+    if before is not None and after != before:
+        return Confirmation.CONFIRMED, f"the TV reports it is {now}"
+    return Confirmation.UNCONFIRMED, f"sent; the TV still reports it is {now}"
 
 
 class TvChannels:

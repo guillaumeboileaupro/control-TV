@@ -1,5 +1,25 @@
 # control-TV — TODO
 
+## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
+
+**Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
+
+**Architecture décidée :** conserver l'interface Tauri 2 et le `ControlService` Python/PyChromecast pour découverte et commandes ; créer un **moteur émetteur Rust** pour sessions, capture D1/D2, audio, encodage et transport WebRTC (RTP/RTCP/ICE) ; installer avec accord du propriétaire une **application réceptrice Android TV** avec décodage matériel et rendu plein écran (Kotlin autorisé pour l'intégration Android). Ne pas prétendre que le récepteur Cast/HLS natif sait recevoir WebRTC. Conserver HLS en repli temporaire, avec modes WebRTC / HLS / Auto sélectionnés selon les capacités réellement vérifiées. Aucun serveur permanent ni exposition Internet ; réseau local, authentification et consentement explicite.
+
+- [ ] **Conception :** documenter les ports typés source D1/D2, capture audio/vidéo, encodeur, transport, récepteur, négociation, capacités et cycle de vie ; comparer les bibliothèques Rust WebRTC et les chemins d'encodage/décodage Android, mesurer les contraintes réelles avant choix.
+- [ ] **Émetteur Rust :** prototype isolé D1, capture écran + audio système, H.264 temps réel avec accélération matérielle si disponible et repli explicite ; contrôle des buffers, horodatage A/V, arrêt propre, reconnexion bornée et absence de rejeu des commandes TV.
+- [ ] **Récepteur Android TV :** APK installable avec consentement, signalisation WebRTC locale, décodage matériel, audio synchronisé, affichage plein écran, diagnostics et fermeture/nettoyage sûrs ; vérifier la compatibilité sur les **deux appareils Android TV**.
+- [ ] **D2 :** brancher le même moteur Rust sur l'écran étendu et le gestionnaire d'affichage de #98 ; conserver et restaurer exactement la configuration d'écrans après arrêt/erreur.
+- [ ] **Intégration Tauri :** commandes D1/D2/Stop, états de session, choix Auto/WebRTC/HLS, erreurs et capacités explicites ; préserver les protections D4 (consentement, une session, durée bornée, LAN).
+- [ ] **Tests automatisés :** unitaires, intégration émetteur/récepteur simulé, pertes réseau, retard, dérive audio, changement de résolution, reconnexion, nettoyage, sécurité ; CI adaptée aux plateformes sans revendiquer de validation matérielle.
+- [ ] **Recette matérielle autorisée :** mesurer la latence bout-en-bout (médiane, p95, pire), FPS, pertes d'images, synchronisation audio, CPU/GPU, stabilité et reconnexion en D1 et D2 sur chacun des deux Android TV ; consigner les protocoles, builds et preuves. Critère < 500 ms uniquement si effectivement mesuré.
+- [ ] **PR et dépendances :** préserver les acquis #97 (capture, son, D1/D2) et #98 (gestionnaire d'affichage) ; #98 dépend de #97. Ne pas fusionner de code non revu : Codex implémente sur branche dédiée, revue indépendante, CI et autorisation du propriétaire avant fusion. Ne pas modifier les PR existantes sans revue de leur état.
+- [ ] **Mise à jour documentaire après preuves :** réconcilier TODO, DEVELOPMENT_PLAN, checklist et README, distinguer simulation/CI/matériel. Aucun délai ou budget horaire dans TODO.
+
+**État initial :** chantier décidé mais **non implémenté ni validé** en Rust/WebRTC ; D1 HLS a montré 9–11 s sur matériel dans #97 ; la fluidité D2 et le parcours complet depuis la fenêtre restent à valider. Les valeurs WebRTC annoncées sont des objectifs, pas des résultats.
+
+---
+
 ## État des travaux — 2026-10-19
 
 Ce fichier suit uniquement les tâches, leurs dépendances et les preuves d'exécution.
@@ -12,13 +32,18 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92) ; surveillance de l'arrêt spontané du publisher (#95). **Recette 2026-10-19 (TV réelle)** : bureau affiché, image fluide au 1er essai, latence mesurée 10,3 s ; saccades reproduites quand le récepteur est chargé avant d'avoir assez de segments ; segments de 1 s non lus par le récepteur Cast de la Freebox. Branche `fix/screencast-d1-d2-hardware` : chargement après 4 segments de 2 s, son système (PulseAudio, AAC) et fermeture de la session Cast possédée — tests automatisés verts | **2026-10-20 (TV réelle)** : fluide, son présent et synchronisé ; latence mesurée 9–11 s (plancher HLS du récepteur par défaut). Réduction forte de la latence : autre chemin (recopie Cast ou récepteur dédié). Revalider sur TV les sessions successives et la fermeture du lecteur distant après le correctif #97 |
 | D2 — extension | **2026-10-20** : extension sur un connecteur libre forcé « connecté » ; essai réel : fenêtre déplacée sur l'écran étendu et visible sur la TV. PR #97 : topologie X11 réelle, modes relus via `xrandr --verbose`, coordonnées libres, orientation, échelle, écran principal, Joindre/Cloner/Écran unique, application atomique et restauration temporisée — tests automatisés uniquement pour le gestionnaire | Forçage du connecteur par l'utilisateur (`sudo`, une fois par démarrage) ou règle système durable à décider ; gestionnaire, fluidité et restauration à valider dans l'application installée ; aucune nouvelle preuve matérielle pour le gestionnaire |
 | D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
-| D3 — interface | Carte « Screen to TV » et gestionnaire inspiré de GNOME : écrans numérotés, sélection, glisser-déposer magnétique, réglages réellement annoncés par X11, Appliquer/Annuler/Garder/Rétablir ; relais Tauri et tests unitaires dans #97 | Utilisation du nouveau gestionnaire avec la TV et vérification visuelle/réelle de chaque mode |
-| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; #97 conserve le cliché précédent tant que la restauration n'a pas réussi et permet une nouvelle tentative | Vérification RD1–RD8 et de la fermeture distante sur matériel, sans compter deux fois les essais D1 |
-| Packaging | Provenance et automatisation (#84) | Signature Android stable et artefacts identifiés |
+| D3 — interface | Carte « Screen to TV » et gestionnaire inspiré de GNOME : Dupliquer / Étendre / Arrêter, écrans numérotés, sélection, glisser-déposer magnétique, réglages réellement annoncés par X11, Appliquer/Annuler/Garder/Rétablir ; relais Tauri et tests unitaires dans #97 | Utilisation du nouveau gestionnaire avec la TV et vérification visuelle/réelle de chaque mode |
+| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` ; #97 conserve le cliché précédent tant que la restauration n'a pas réussi et permet une nouvelle tentative | Vérification RD1–RD8 et de la fermeture distante sur matériel, sans compter deux fois les essais D1 |
+| Packaging | Provenance et automatisation (#84) ; dépendances Ubuntu complètes ; mécanisme de signature Android stable prêt | Propriétaire : créer et sauvegarder la clé Android, publier son empreinte, définir les deux secrets CI, puis identifier les artefacts de la première CI signée |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
-**Statuts d'intégration :** #82, #90, #91, #92 et #93 sont fusionnées ; #95 reste ouverte pour
-la surveillance complémentaire du publisher D1.
+**Statuts d'intégration :** #82, #90, #91, #92, #93 et #95 sont fusionnées.
+
+**Sécurité des dépendances (2026-10-23, branche `fix/deps-audit-certifi-vite`) :** la CI de
+`main` (`f0dba1d`) et des PR ouvertes échouait sur deux nouveaux avis : `certifi`
+PYSEC-2026-4320 (racines emSign compromises) et `vite` GHSA-587h-7wmj-h5pm (élevé, via
+`launch-editor`). Lockfiles mis à jour (`certifi` 2026.10.19, `vite` 8.3.4) ; audits Python et npm,
+contrôles Python et UI réussis localement. Validation automatisée uniquement.
 
 **Ordre logiciel :** terminer D1, puis D2, D3 et D4 selon le plan imposé. Les essais sur TV auront lieu uniquement lorsque le propriétaire le décidera.
 
@@ -108,6 +133,9 @@ Plan détaillé, commandes et autorisations : [`docs/HARDWARE_ACCEPTANCE_PLAN.md
 
 - [x] Identité du paquet Ubuntu : le runner exige un manifeste de provenance (commit, run CI, version, architecture, SHA-256 du `.deb`, de `usr/bin/control-tv` et du contenu complet via `md5sums`, pont Python compris — le binaire seul est reproductible), recalcule les empreintes et refuse une version 0.1.0 d'un autre build ; la CI publie `provenance.json`.
 - [x] Signature Android stable : prise en charge d'une clé de test `control-tv-test` (Gradle, CI par secrets, vérification contre un certificat épinglé, `apk-provenance.json`) — [`docs/ANDROID_TEST_SIGNING.md`](docs/ANDROID_TEST_SIGNING.md).
+- [x] Paquet Ubuntu : dépendances d'exécution déclarées pour FFmpeg et les commandes X11
+  (`ffmpeg`, `x11-xserver-utils`) ; la CI vérifie leur installation avec le `.deb`, puis la purge
+  complète de `control-tv`.
 - [ ] **Propriétaire** : créer la clé, la sauvegarder, définir les deux secrets et publier l'empreinte du certificat ; puis une dernière désinstallation sur chaque téléphone (les APK installés ont des signataires éphémères).
 - [x] Runner : les scénarios TV, téléphone, double télécommande et latence indiquent qu'aucun adaptateur automatique n'existe et renvoient au protocole manuel.
 - [x] Artefacts CI de `main` `de31c94` (run `39034444658`) téléchargés et identifiés dans `dist/acceptance-de31c94/` (ignoré par git) ; le binaire installé sur Ubuntu est ce build. APK : signataire éphémère, expire sur GitHub le 2026-10-24.
@@ -215,7 +243,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 | Fonction | Ubuntu | Android | Ce qui manque |
 |---|---|---|---|
 | Volume +/−, Mute (son réel) | ✅ validé le 2026-10-12 | codé, 0 % confirmé | installer l'APK de #41 |
-| Power (veille / réveil) | codé, 0 % confirmé | codé, 0 % confirmé | essai |
+| Power (veille / réveil) | codé ; depuis la PR du pavé, « confirmé » seulement si la TV rapporte son nouvel état d'alimentation (attente bornée à 4 s), testé en simulation ; 0 % sur TV | idem (même couche Python) | essai : réveil depuis la veille, mise en veille, délai réel du rapport d'état ; une TV en veille profonde (réseau coupé) reste injoignable par ce canal, le Wake-on-LAN n'est ni codé ni vérifié sur la Freebox |
+| Pavé directionnel (rendu) | corrigé le 2026-10-19 : symétrique, sans chevauchement, états survol/appui/focus ; vérifié sous WebKitGTK sur Xvfb privé avec données fictives | même interface | contrôle visuel dans l'application installée |
 | Flèches, OK, Retour, Accueil | codé, 0 % confirmé | codé, 0 % confirmé | essai, et mesure de la latence par touche (étapes K1–K3 de `docs/DUAL_CONTROLLER_VALIDATION.md`, vidéo) |
 | Clavier distant (texte, Backspace, Entrée) | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai : TV allumée, recherche YouTube ouverte |
 | Application active affichée | codé (#42), 0 % confirmé | codé (#42), 0 % confirmé | essai |
