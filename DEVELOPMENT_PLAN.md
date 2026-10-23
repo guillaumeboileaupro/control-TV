@@ -80,7 +80,6 @@ Security status at this head: npm and Python audits report no unwaived vulnerabi
 
 Release evidence for `d95fc7b`: CI run `38723748264` produced artifact `control-tv-linux-release` (artifact id `11967735137`). Static inspection without installation verified `control-tv_0.1.0_amd64.deb` as Debian package format 2.0, architecture `amd64`, version 0.1.0, 24,078,972 bytes (67,461 KiB installed size), with the Tauri executable, desktop entry, icons, dependency notices and a bundled x86-64 Python bridge (CPython 3.12.15, PyInstaller 6.22.3, `libpython3.12.so.1.0`). Its declared dependencies are GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator; the AppIndicator dependency is duplicated in the metadata, a non-blocking cleanup item. Both supplied SHA-256 checks passed. The 444 packaged files contain 374 license/notice files and 65 bridge files; no source tree, tests, caches, `node_modules` or compiler intermediates were found. Local `release-deb` is not rerun because the installed global uv 0.11.26 does not recognize release Python 3.12.15; by owner decision the successful locked CI packaging/install/purge is accepted as packaging validation without changing global uv. **The artifact was not installed locally and is not validated on real TV hardware.**
 
-
 ## Phase 0 - Repository and development discipline
 
 Deliverables:
@@ -374,6 +373,8 @@ Exit criteria:
 Retained design (owner decision, 2026-10-03), merged with PR #26 into `main` (`eba73f5`). The `.deb` validated on 2026-09-25 (see the Tauri shell status) ran the bridge from the developer's `.venv`: it is **not** a validated distributable package; the release `.deb` below is.
 
 Release command: `python3 scripts/dev.py release-deb` runs `bridge-build`, the strict smoke (`build_bridge.py smoke --strict`, never the informative `bridge-smoke`) and `packaging/release_linux.py`; it leaves `dist/control-tv_<version>_amd64.deb`, `dist/python-bridge.inventory.tsv` and `dist/SHA256SUMS`.
+
+Runtime dependencies (PR #96, automation-validated only): the release `.deb` explicitly declares `ffmpeg` for capture/encoding and `x11-xserver-utils` for X11 output and virtual-monitor management, in addition to the existing desktop dependencies. The Linux release CI installs the package, verifies that both packages are installed, pings the frozen bridge, purges `control-tv` and verifies that its executable and library directory are gone. This does not constitute a local desktop launch, screen capture, GPU, network-stream or TV validation.
 
 Results (2026-10-04, Ubuntu 22.04; no Cast discovery, no hardware command; local runs on PR #26 commits, CI on PR #26 and on `main`):
 - **Frozen bridge:** `--onedir`, 42 MB, CPython **3.12.15** exactly (`packaging/release-python-version`; `bridge-build` creates the build environment on it and the build refuses any other interpreter), PyInstaller 6.22.3 and hooks-contrib 2026.8, all PyInstaller state under `packaging/.pyinstaller/`, never `--clean`, setuptools excluded. Its `ping` reports `controlTvVersion` **0.1.0**, and the smoke now fails on any other version.

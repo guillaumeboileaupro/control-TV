@@ -29,7 +29,12 @@ def deb_metadata(context: Context) -> Result:
         architecture = fields.get(" Architecture", fields.get("Architecture", "")).strip()
         package = fields.get(" Package", fields.get("Package", "")).strip()
         dependencies = fields.get(" Depends", fields.get("Depends", ""))
-        required = ("libwebkit2gtk-4.1-0", "libayatana-appindicator3-1")
+        required = (
+            "ffmpeg",
+            "libwebkit2gtk-4.1-0",
+            "libayatana-appindicator3-1",
+            "x11-xserver-utils",
+        )
         missing = [name for name in required if name not in dependencies]
         valid = architecture == "amd64" and package == "control-tv" and not missing
         reason = (
