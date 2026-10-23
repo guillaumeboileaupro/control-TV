@@ -1255,8 +1255,10 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
   seule l'association sans fil manque ; la sortie de `adb version` est analysée et les versions
   anciennes, invalides, bloquées ou défaillantes sont refusées avant `help` et `pair` ; après
   succès de `adb pair`, le service de connexion est attendu avec un nombre borné de lectures,
-  annulable sans répéter l'association ; le code temporaire est masqué puis retiré du DOM dès la
-  soumission, la fermeture du formulaire ou un changement de TV. Tests par doubles uniquement,
+  sans répéter l'association ; une interruption est propagée et ne rejoue pas l'association. Un
+  service TLS annoncé qui échoue interdit le fallback classique 5555. Le code temporaire est
+  masqué puis retiré du DOM dès la soumission, la fermeture du formulaire ou un changement de TV.
+  Tests par doubles uniquement,
   aucun ADB réel.
 - [x] **Décision et audit de packaging #99 (sans installation)** : l'`adb` Jammy reste la
   dépendance du `.deb` pour TCP classique ; l'association TLS exige Platform Tools >= 30 externe.

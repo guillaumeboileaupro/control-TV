@@ -53,10 +53,11 @@ la surveillance complémentaire du publisher D1.
   `tvApps: false` (notamment Android).
 - [x] **Correctifs de revue ADB #99 (simulation)** : l'absence de `adb mdns` ne bloque plus une
   cible TCP classique déjà connectée ou reconnectable sur 5555 ; après une association acceptée,
-  l'apparition du service de connexion est attendue de façon bornée et annulable sans rejouer
+  l'apparition du service de connexion est attendue de façon bornée sans rejouer
   `adb pair` ; la version Platform Tools est analysée avant association (ancienne, invalide,
   bloquée ou défaillante refusée) ; le code à usage unique est masqué, consommé à la soumission et
-  effacé si le formulaire ferme ou si la TV change. Aucun appareil n'a été contacté.
+  effacé si le formulaire ferme ou si la TV change. Un service TLS annoncé qui refuse la connexion
+  n'est jamais remplacé par une tentative non-TLS sur 5555. Aucun appareil n'a été contacté.
 - [x] **Politique de packaging ADB moderne (audit sans installation)** : conserver `adb` Jammy
   pour TCP classique ; ne pas redistribuer l'archive Google tant que ses conditions SDK n'ont pas
   reçu de validation juridique explicite ; traiter Platform Tools >= 30 comme prérequis externe

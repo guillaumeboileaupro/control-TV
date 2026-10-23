@@ -116,6 +116,27 @@ def test_dynamic_connect_port_is_reconnected_then_used() -> None:
     assert ("adb", "connect", f"{HOST}:37123") in [call[0] for call in runner.calls]
 
 
+def test_failed_tls_connect_never_downgrades_to_classic_port() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done(f"adb-serial-ABC\t_adb-tls-connect._tcp.\t{HOST}:37123\n")],
+            ("connect", f"{HOST}:37123"): [done("failed to connect", code=1)],
+        }
+    )
+
+    with pytest.raises(DeviceUnavailableError, match="TLS connection failed"):
+        inventory(runner).list_apps(HOST)
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands == [
+        ("devices", "-l"),
+        ("mdns", "services"),
+        ("connect", f"{HOST}:37123"),
+    ]
+    assert ("connect", f"{HOST}:5555") not in commands
+
+
 def test_classic_tcp_device_is_reconnected_after_a_fresh_adb_server() -> None:
     answers = listing_answers(devices=DEVICES_TCP, mdns="")
     answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TCP)]
@@ -327,8 +348,7 @@ def test_missing_adb_executable_never_reaches_help_or_pair() -> None:
     assert calls == [("version",)]
 
 
-def test_post_pair_wait_can_be_cancelled_without_replaying_pair() -> None:
-    cancelled = [False]
+def test_interrupted_post_pair_wait_never_replays_pair() -> None:
     answers: Answers = {
         ("version",): [done(ADB_VERSION)],
         ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
@@ -338,15 +358,14 @@ def test_post_pair_wait_can_be_cancelled_without_replaying_pair() -> None:
     }
     runner = FakeRunner(answers)
 
-    def cancel_during_wait(_: float) -> None:
-        cancelled[0] = True
+    def interrupt_wait(_: float) -> None:
+        raise KeyboardInterrupt
 
     apps = AdbAppInventory(
         run=runner,
-        sleep=cancel_during_wait,
-        pairing_wait_cancelled=lambda: cancelled[0],
+        sleep=interrupt_wait,
     )
-    with pytest.raises(OperationTimeoutError, match=r"waiting.*cancelled"):
+    with pytest.raises(KeyboardInterrupt):
         apps.pair(HOST, f"{HOST}:40211", "123456")
 
     commands = [call[0][1:] for call in runner.calls]

@@ -189,7 +189,6 @@ class AdbAppInventory:
         clock: Callable[[], float] = time.monotonic,
         pair_connect_attempts: int = DEFAULT_PAIR_CONNECT_ATTEMPTS,
         pair_connect_interval: float = DEFAULT_PAIR_CONNECT_INTERVAL,
-        pairing_wait_cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
         del credentials_dir  # Platform tools own and preserve ~/.android/adbkey.
         self._adb, self._timeout, self._run = adb, timeout, run
@@ -197,7 +196,6 @@ class AdbAppInventory:
         self._sleep, self._launch_budget, self._clock = sleep, launch_budget, clock
         self._pair_connect_attempts = max(1, pair_connect_attempts)
         self._pair_connect_interval = max(0.0, pair_connect_interval)
-        self._pairing_wait_cancelled = pairing_wait_cancelled
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         return parse_launcher_apps(self._shell(self._resolve(host), LAUNCHER_QUERY).stdout)
@@ -249,21 +247,12 @@ class AdbAppInventory:
             None
         )
         for attempt in range(self._pair_connect_attempts):
-            if self._pairing_wait_cancelled():
-                raise OperationTimeoutError(
-                    "Wireless debugging paired, but waiting for its connection was cancelled"
-                )
             try:
                 self._resolve(host)
                 return
             except (DebuggingOffError, PairingRequiredError, UnsupportedOperationError) as error:
                 last_error = error
                 if attempt + 1 < self._pair_connect_attempts:
-                    if self._pairing_wait_cancelled():
-                        raise OperationTimeoutError(
-                            "Wireless debugging paired, but waiting for its connection "
-                            "was cancelled"
-                        ) from error
                     self._sleep(self._pair_connect_interval)
         raise DeviceUnavailableError(
             "Wireless debugging paired, but its connection service was not advertised in time"
@@ -320,6 +309,12 @@ class AdbAppInventory:
         ):
             raise PairingRequiredError(
                 "this TV offers Wireless debugging but is not connected; pair it in control-TV"
+            )
+        if any(
+            s.kind.startswith("_adb-tls-") and _endpoint_host(s.endpoint) == host for s in services
+        ):
+            raise DeviceUnavailableError(
+                "the selected TV advertised Wireless debugging, but its TLS connection failed"
             )
         # Classic network debugging does not advertise mDNS. A fresh/restarted ADB server has
         # forgotten it, so make one bounded connection attempt on its conventional port. Never
