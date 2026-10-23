@@ -64,3 +64,9 @@ Thumbs.db
 !/.claude/skills/
 /CLAUDE.local.md
 /AGENTS.override.md
+
+# Local tool output and nested agent worktrees: Graphify's knowledge graph (one per checkout or
+# worktree, rebuilt with `graphify update .`) and worktrees created inside this checkout.
+# Worktrees beside the checkout are separate directories and need no rule.
+/graphify-out/
+/.worktrees/
