@@ -295,7 +295,8 @@ Exit criteria:
 - [x] Graphify structural check (2026-10-23): the remaining runtime cycles `model.ts` ↔
   `remote.ts` and `model.ts` ↔ `playback.ts` were removed without changing behaviour. Shared
   state shapes now live in the import-free `view-state.ts` leaf; `model.ts` owns `AppState`, and
-  feature reducers depend one-way on that model. A source-level regression test pins the boundary.
+  feature reducers depend one-way on that model. An AST-based regression test checks the complete
+  production module graph for direct and indirect cycles and pins the intended boundary.
 
 ## Phase 4b - Desktop native integration
 

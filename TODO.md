@@ -6,8 +6,9 @@
 
 - [x] **Frontière frontend vérifiée par Graphify :** les cycles réels `model.ts` ↔ `remote.ts`
   et `model.ts` ↔ `playback.ts` ont été supprimés en déplaçant uniquement leurs formes d'état
-  partagées dans le module feuille `view-state.ts`. Un test interdit désormais au modèle racine
-  de réimporter les réducteurs de fonctionnalités. Validation automatisée uniquement.
+  partagées dans le module feuille `view-state.ts`. Un test fondé sur l'AST TypeScript vérifie
+  désormais tout le graphe des modules de production, son absence de cycle, la frontière du
+  modèle racine et le caractère feuille de `view-state.ts`. Validation automatisée uniquement.
 
 **Architecture décidée :** conserver l'interface Tauri 2 et le `ControlService` Python/PyChromecast pour découverte et commandes ; créer un **moteur émetteur Rust** pour sessions, capture D1/D2, audio, encodage et transport WebRTC (RTP/RTCP/ICE) ; installer avec accord du propriétaire une **application réceptrice Android TV** avec décodage matériel et rendu plein écran (Kotlin autorisé pour l'intégration Android). Ne pas prétendre que le récepteur Cast/HLS natif sait recevoir WebRTC. Conserver HLS en repli temporaire, avec modes WebRTC / HLS / Auto sélectionnés selon les capacités réellement vérifiées. Aucun serveur permanent ni exposition Internet ; réseau local, authentification et consentement explicite.
 
