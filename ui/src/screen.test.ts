@@ -16,8 +16,10 @@ import {
   finishScreen,
   follows,
   initialScreenState,
-  parseScreens,
+  moveExtension,
+  parseListing,
   parseStream,
+  previewScreens,
   startStop,
   withScreens,
   type ScreenPanelState,
@@ -25,9 +27,10 @@ import {
 
 const LISTED: JsonValue = {
   screens: [
-    { name: "eDP-1", width: 1920, height: 1080, primary: true },
-    { name: "HDMI-1", width: 2560, height: 1440, primary: false },
+    { name: "eDP-1", width: 1920, height: 1080, x: 0, y: 0, primary: true },
+    { name: "HDMI-1", width: 2560, height: 1440, x: 1920, y: -180, primary: false },
   ],
+  extension: { output: "HDMI-2", sizes: [[1920, 1080]], refreshRates: [60, 50] },
 };
 
 function stream(state: string, error: string | null = null): JsonValue {
@@ -44,8 +47,13 @@ function stream(state: string, error: string | null = null): JsonValue {
   };
 }
 
+const LISTED_SCREENS = [
+  { name: "eDP-1", width: 1920, height: 1080, x: 0, y: 0, primary: true },
+  { name: "HDMI-1", width: 2560, height: 1440, x: 1920, y: -180, primary: false },
+];
+
 function available(): ScreenPanelState {
-  return withScreens(initialScreenState(), parseScreens(LISTED));
+  return withScreens(initialScreenState(), parseListing(LISTED));
 }
 
 function confirming(): ScreenPanelState {
@@ -62,20 +70,43 @@ describe("availability", () => {
   });
 
   test("an answer of another shape is not a list of screens", () => {
-    assert.equal(parseScreens(null), null);
-    assert.equal(parseScreens({ screens: "eDP-1" }), null);
-    assert.equal(parseScreens({ screens: [1] }), null);
-    assert.equal(parseScreens({ screens: [{ name: "eDP-1", width: "wide", height: 1 }] }), null);
+    assert.equal(parseListing(null), null);
+    assert.equal(parseListing({ screens: "eDP-1" }), null);
+    assert.equal(parseListing({ screens: [1] }), null);
+    assert.equal(parseListing({ screens: [{ name: "eDP-1", width: "wide", height: 1 }] }), null);
+    assert.equal(
+      parseListing({
+        screens: [{ name: "eDP-1", width: 0, height: 1080, x: 0, y: 0, primary: true }],
+      }),
+      null,
+    );
+    assert.equal(
+      parseListing({
+        screens: [{ name: "eDP-1", width: 1920, height: 1080, x: 0.5, y: 0, primary: true }],
+      }),
+      null,
+    );
   });
 
   test("a refreshed list keeps the chosen screen while it is still there", () => {
     const chosen = choose(available(), { screen: "HDMI-1" });
-    assert.equal(withScreens(chosen, parseScreens(LISTED)).choice.screen, "HDMI-1");
-    assert.equal(withScreens(chosen, []).choice.screen, null);
+    assert.equal(withScreens(chosen, parseListing(LISTED)).choice.screen, "HDMI-1");
+    assert.equal(withScreens(chosen, { screens: [], extensionOutput: null }).choice.screen, null);
+  });
+
+  test("the preview preserves real coordinates and resolution proportions", () => {
+    const preview = previewScreens(LISTED_SCREENS);
+    assert.equal(preview.length, 2);
+    assert.equal(
+      preview[1]?.previewX,
+      (preview[0]?.previewX ?? 0) + (preview[0]?.previewWidth ?? 0),
+    );
+    assert.equal((preview[1]?.previewWidth ?? 0) / (preview[1]?.previewHeight ?? 1), 2560 / 1440);
+    assert.ok((preview[1]?.previewY ?? 0) < (preview[0]?.previewY ?? 0));
   });
 
   test("with no screen to duplicate, extending is still offered", () => {
-    const none = withScreens(initialScreenState(), []);
+    const none = withScreens(initialScreenState(), { screens: [], extensionOutput: "HDMI-2" });
     const view = describeScreen(none, true);
     assert.equal(view.canAsk, false);
     assert.equal(view.statusText, "No screen can be duplicated: extend instead.");
@@ -98,12 +129,18 @@ describe("consent", () => {
     assert.match(duplicate.consentText, /screen eDP-1 will be visible on the TV/);
     assert.match(duplicate.consentText, /only on your home network/);
     assert.match(duplicate.consentText, /one hour, on Stop, or when you quit/);
-    const extend = describeScreen(askConsent(choose(available(), { mode: "extend" }), true), true);
-    assert.match(extend.consentText, /virtual monitor is added/);
+    const extend = describeScreen(
+      askConsent(choose(available(), { mode: "extend", position: "above", refresh: 50 }), true),
+      true,
+    );
+    assert.match(
+      extend.consentText,
+      /second screen at desktop coordinates 1920, 0 \(1920×1080, 50 Hz\)/,
+    );
   });
 
   test("a changed choice or a cancel withdraws the consent step", () => {
-    assert.equal(choose(confirming(), { fps: 60 }).confirming, false);
+    assert.equal(choose(confirming(), { fps: 25 }).confirming, false);
     assert.equal(cancelConsent(confirming()).confirming, false);
   });
 
@@ -120,6 +157,8 @@ describe("consent", () => {
         height: 720,
         fps: 25,
         consent: true,
+        refresh: 60,
+        position: "right",
       },
     });
     assert.equal(next.state.pending, true);
@@ -162,7 +201,7 @@ describe("the stream", () => {
     const failed = finishPoll(available(), stream("failed", "the stream ended by itself"));
     const view = describeScreen(failed, true);
     assert.equal(view.errorText, "The stream ended by itself.");
-    assert.equal(choose(failed, { fps: 60 }), failed);
+    assert.equal(choose(failed, { fps: 25 }), failed);
     assert.equal(view.stopLabel, "Dismiss");
     assert.equal(view.canAsk, false);
     assert.equal(startStop(failed).send, true);
@@ -188,5 +227,54 @@ describe("the stream", () => {
       error: null,
     });
     assert.equal(parseStream(null), null);
+  });
+});
+
+describe("the extension menu", () => {
+  test("extending is offered only with a free video output", () => {
+    const none = withScreens(initialScreenState(), {
+      screens: LISTED_SCREENS,
+      extensionOutput: null,
+    });
+    const extend = choose(none, { mode: "extend" });
+    const view = describeScreen(extend, true);
+    assert.equal(view.extending, true);
+    assert.equal(view.canExtend, false);
+    assert.equal(view.canAsk, false);
+    assert.match(view.statusText, /free video output enabled first/);
+    assert.equal(describeScreen(choose(available(), { mode: "extend" }), true).canExtend, true);
+  });
+
+  test("the chosen size, refresh rate and side are sent with the consent", () => {
+    const chosen = askConsent(
+      choose(available(), { mode: "extend", size: "1280x720", refresh: 50, position: "left" }),
+      true,
+    );
+    const request = consentedStart(chosen, "tv-1").request;
+    assert.equal(request?.args.width, 1280);
+    assert.equal(request?.args.refresh, 50);
+    assert.equal(request?.args.position, "left");
+    assert.equal(request?.args.x, 1920);
+    assert.equal(request?.args.y, 0);
+    const auto = consentedStart(askConsent(choose(available(), { mode: "extend" }), true), "tv-1");
+    assert.equal(auto.request?.args.width, 1920);
+    assert.equal(auto.request?.args.height, 1080);
+  });
+
+  test("dragging uses desktop coordinates and magnetically aligns nearby edges", () => {
+    const extend = choose(available(), { mode: "extend", size: "1280x720" });
+    const free = moveExtension(extend, 700, 250);
+    assert.equal(free.choice.x, 700);
+    assert.equal(free.choice.y, 250);
+    const snapped = moveExtension(extend, 1900, 30);
+    assert.equal(snapped.choice.x, 1920);
+    assert.equal(snapped.choice.y, 0);
+    const negative = moveExtension(extend, -1260, 370);
+    assert.equal(negative.choice.x, -1280);
+    assert.equal(negative.choice.y, 360);
+  });
+
+  test("an answer without an extension block reports no free output", () => {
+    assert.deepEqual(parseListing({ screens: [] }), { screens: [], extensionOutput: null });
   });
 });

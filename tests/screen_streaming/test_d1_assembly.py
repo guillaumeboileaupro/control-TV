@@ -247,7 +247,7 @@ def test_a_real_synthetic_session_serves_h264_hls_on_loopback(tmp_path: Path) ->
         ready.set()
 
     session = d1.assemble(
-        seconds=6, bind_address="127.0.0.1", receiver=d1.NoReceiver(show), device_id="no-tv"
+        seconds=12, bind_address="127.0.0.1", receiver=d1.NoReceiver(show), device_id="no-tv"
     )
     assert isinstance(session.encoder, D0LiveEncoder)
     ended: list[str] = []

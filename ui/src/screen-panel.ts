@@ -1,16 +1,21 @@
-// The "Screen to TV" panel: duplicate one screen or extend onto a virtual monitor, after an
-// explicit consent step, and stop. The panel owns its elements and its own small state (see
+// The "Screen to TV" panel: duplicate one screen or extend the desktop onto the TV (resolution,
+// refresh rate and where the TV's screen sits, chosen in the extension menu), after an explicit
+// consent step, and stop. The panel owns its elements and its own small state (see
 // screen.ts); every call goes through `call`, which `main.ts` maps onto the shell's commands.
 // It is shown only where this computer's screen can be captured (an X11 desktop): elsewhere
 // (Android, Wayland) the listing fails and the panel stays hidden.
 
+import { createDisplayPanel, type DisplayPanelElements } from "./display-panel.ts";
 import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
 import {
+  pendingExtension,
   RATES,
+  REFRESH_RATES,
   SIZES,
   askConsent,
+  arrangementScreens,
   cancelConsent,
   choose,
   consentedStart,
@@ -19,10 +24,13 @@ import {
   finishScreen,
   follows,
   initialScreenState,
-  parseScreens,
+  moveExtension,
+  parseListing,
+  previewScreens,
   startStop,
   withScreens,
   type Rate,
+  type RefreshRate,
   type ScreenMode,
   type ScreenPanelState,
   type SizeName,
@@ -34,10 +42,16 @@ const FOLLOW_INTERVAL_MS = 2000;
 export interface ScreenPanelElements {
   panel: HTMLElement;
   mode: HTMLElement;
+  preview: Element;
+  // The display manager shown while extending (see display-panel.ts).
+  display: DisplayPanelElements;
   screenField: HTMLElement;
   screen: HTMLSelectElement;
   size: HTMLSelectElement;
   fps: HTMLSelectElement;
+  // The extension menu: refresh rate and the arrangement of the TV's screen around the main one.
+  extension: HTMLElement;
+  refresh: HTMLSelectElement;
   ask: HTMLButtonElement;
   consent: HTMLElement;
   consentText: HTMLElement;
@@ -56,6 +70,7 @@ export interface ScreenPanelPorts {
   selectedTv(): string | null;
   timers: {
     set(callback: () => void, delayMs: number): number;
+    clear(handle: number): void;
   };
 }
 
@@ -71,18 +86,37 @@ function isRate(value: number): value is Rate {
   return (RATES as readonly number[]).includes(value);
 }
 
+function isRefresh(value: number): value is RefreshRate {
+  return (REFRESH_RATES as readonly number[]).includes(value);
+}
+
 export function createScreenPanel(
   el: ScreenPanelElements,
   ports: ScreenPanelPorts,
 ): { refresh(): void; render(): void } {
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
+  const displays = createDisplayPanel(el.display, {
+    call: ports.call,
+    timers: ports.timers,
+    pendingTv: () => pendingExtension(state),
+    placeTv: (x, y) => update(moveExtension(state, x, y)),
+  });
 
   function update(next: ScreenPanelState): void {
+    const before = state;
     state = next;
     render();
     if (follows(state) && followTimer === null) {
       followTimer = ports.timers.set(poll, FOLLOW_INTERVAL_MS);
+    }
+    // The screens change when an extension starts or stops, or when extending is chosen.
+    const extending = state.choice.mode === "extend";
+    if (
+      extending &&
+      (before.stream.state !== state.stream.state || before.choice.mode !== state.choice.mode)
+    ) {
+      displays.refresh();
     }
   }
 
@@ -111,7 +145,7 @@ export function createScreenPanel(
 
   async function refresh(): Promise<void> {
     const listed = await answer("bridge_list_screens", {});
-    let next = withScreens(state, listed.ok ? parseScreens(listed.result) : null);
+    let next = withScreens(state, listed.ok ? parseListing(listed.result) : null);
     if (next.availability.kind === "available") {
       const current = await answer("bridge_get_screen_stream", {});
       next = current.ok ? finishPoll(next, current.result) : next;
@@ -131,6 +165,94 @@ export function createScreenPanel(
     }
     el.screenField.hidden = state.choice.mode !== "duplicate";
     const screens = state.availability.kind === "available" ? state.availability.screens : [];
+    const preview = previewScreens(arrangementScreens(state));
+    el.preview.replaceChildren(
+      ...preview.flatMap((screen, index) => {
+        const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        group.classList.add("display-preview-screen");
+        if (screen.name === state.choice.screen || screen.virtual === true) {
+          group.classList.add("is-selected");
+        }
+        group.setAttribute("role", "button");
+        group.setAttribute("tabindex", view.canChoose ? "0" : "-1");
+        group.setAttribute(
+          "aria-label",
+          screen.virtual === true
+            ? `TV display, screen ${index + 1}`
+            : `${screen.name}, screen ${index + 1}`,
+        );
+        group.setAttribute(
+          "aria-pressed",
+          String(screen.name === state.choice.screen || screen.virtual === true),
+        );
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", String(screen.previewX));
+        rect.setAttribute("y", String(screen.previewY));
+        rect.setAttribute("width", String(screen.previewWidth));
+        rect.setAttribute("height", String(screen.previewHeight));
+        rect.setAttribute("rx", "8");
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", String(screen.previewX + screen.previewWidth / 2));
+        label.setAttribute("y", String(screen.previewY + screen.previewHeight / 2));
+        label.textContent = String(index + 1);
+        const select = (): void => {
+          if (screen.virtual !== true) {
+            update(choose(state, { screen: screen.name }));
+          }
+        };
+        group.addEventListener("click", select);
+        group.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+          }
+        });
+        if (screen.virtual === true && state.choice.x !== null && state.choice.y !== null) {
+          group.classList.add("is-draggable");
+          group.addEventListener("pointerdown", (event) => {
+            if (!view.canChoose) {
+              return;
+            }
+            const startClientX = event.clientX;
+            const startClientY = event.clientY;
+            const startX = state.choice.x ?? 0;
+            const startY = state.choice.y ?? 0;
+            const scale = screen.previewWidth / screen.width;
+            group.setPointerCapture(event.pointerId);
+            const moving = (move: PointerEvent): void => {
+              group.setAttribute(
+                "transform",
+                `translate(${move.clientX - startClientX} ${move.clientY - startClientY})`,
+              );
+            };
+            function cleanupDrag(): void {
+              group.removeEventListener("pointermove", moving);
+              group.removeEventListener("pointerup", finished);
+              group.removeEventListener("pointercancel", cancelled);
+            }
+            function finished(up: PointerEvent): void {
+              cleanupDrag();
+              update(
+                moveExtension(
+                  state,
+                  startX + (up.clientX - startClientX) / scale,
+                  startY + (up.clientY - startClientY) / scale,
+                ),
+              );
+            }
+            function cancelled(): void {
+              cleanupDrag();
+              group.removeAttribute("transform");
+            }
+            group.addEventListener("pointermove", moving);
+            group.addEventListener("pointerup", finished);
+            group.addEventListener("pointercancel", cancelled);
+          });
+        }
+        group.append(rect, label);
+        return [group];
+      }),
+    );
     const key = JSON.stringify(screens);
     if (el.screen.dataset["key"] !== key) {
       el.screen.dataset["key"] = key;
@@ -144,14 +266,19 @@ export function createScreenPanel(
     el.screen.value = state.choice.screen ?? "";
     el.size.value = state.choice.size;
     el.fps.value = String(state.choice.fps);
-    for (const field of [el.screen, el.size, el.fps]) {
+    el.refresh.value = String(state.choice.refresh);
+    for (const field of [el.screen, el.size, el.fps, el.refresh]) {
       field.disabled = !view.canChoose;
     }
+    el.extension.hidden = !view.extending;
     // Starting is offered only from the choice; a running or failed stream offers Stop/Dismiss.
     el.ask.hidden = view.confirming || state.stream.state !== "idle";
     setBusy(el.ask, !view.canAsk);
     el.ask.textContent =
       state.choice.mode === "duplicate" ? "Duplicate on the TV" : "Extend to the TV";
+    // The preview picks the screen to duplicate; the display manager replaces it when extending.
+    el.preview.toggleAttribute("hidden", state.choice.mode === "extend");
+    displays.render();
     el.consent.hidden = !view.confirming;
     el.consentText.textContent = view.consentText;
     el.stop.hidden = !view.canStop && state.stream.state !== "stopping";
@@ -195,6 +322,12 @@ export function createScreenPanel(
     const fps = Number(el.fps.value);
     if (isRate(fps)) {
       update(choose(state, { fps }));
+    }
+  });
+  el.refresh.addEventListener("change", () => {
+    const refresh = Number(el.refresh.value);
+    if (isRefresh(refresh)) {
+      update(choose(state, { refresh }));
     }
   });
   el.ask.addEventListener("click", () => {

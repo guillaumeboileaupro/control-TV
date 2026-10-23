@@ -67,13 +67,15 @@ class FakeRunner:
     group: FakeGroup = field(default_factory=FakeGroup)
     error: BaseException | None = None
     argv: list[tuple[str, ...]] = field(default_factory=list)
+    segments: int = 4  # listed in the playlist written at start (the encoder waits for them)
 
     def start(self, argv: Sequence[str], *, stderr_path: Path) -> ManagedProcess:
         if self.error is not None:
             raise self.error
         self.argv.append(tuple(argv))
         stderr_path.write_text("")
-        (stderr_path.parent / "index.m3u8").write_text("#EXTM3U\n")
+        listed = "".join(f"#EXTINF:2.0,\nsegment-{n:05d}.ts\n" for n in range(self.segments))
+        (stderr_path.parent / "index.m3u8").write_text(f"#EXTM3U\n{listed}")
         return self.group
 
 

@@ -150,6 +150,8 @@ class ReceiverStatus:
 
     app_id: str | None = None
     app_name: str | None = None
+    app_session_id: str | None = None
+    """Receiver-application session reported by Cast, distinct from mediaSessionId."""
     volume_level: float | None = None
     muted: bool | None = None
     standby: bool | None = None
@@ -157,6 +159,11 @@ class ReceiverStatus:
     """Reported by the receiver; None means it did not say (never assumed adjustable or fixed)."""
 
     def __post_init__(self) -> None:
+        _require(
+            self.app_session_id is None
+            or (isinstance(self.app_session_id, str) and bool(self.app_session_id.strip())),
+            f"receiver app session id must be a non-blank string or None: {self.app_session_id!r}",
+        )
         _require(
             self.volume_control_type is None
             or isinstance(self.volume_control_type, VolumeControlType),

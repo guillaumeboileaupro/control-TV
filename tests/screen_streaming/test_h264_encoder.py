@@ -910,3 +910,61 @@ def test_an_output_already_gone_when_a_start_is_abandoned_is_not_kept(
     with pytest.raises(KeyboardInterrupt):
         live.start(SOURCE, PROFILE)
     assert held(live) == () and nothing_left(tmp_path) and runner.group.releases == 1
+
+
+# Readiness: a receiver is loaded only once the playlist holds a few segments -------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _waiting(tmp_path: Path, runner: FakeRunner, clock: _Clock) -> D0LiveEncoder:
+    return D0LiveEncoder(
+        runner,
+        FakeProbe(),
+        LiveEncoderSettings(stop_grace_seconds=0.05),
+        make_workdir=lambda: tmp_path,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+
+
+def test_start_waits_until_the_playlist_lists_enough_segments(tmp_path: Path) -> None:
+    clock = _Clock()
+    runner = FakeRunner(segments=1)
+    live = _waiting(tmp_path, runner, clock)
+
+    def grow(seconds: float) -> None:
+        clock.now += seconds
+        if clock.now >= 3:  # FFmpeg has written more segments meanwhile
+            listed = "".join(f"#EXTINF:2.0,\nsegment-{n:05d}.ts\n" for n in range(4))
+            (tmp_path / "index.m3u8").write_text(f"#EXTM3U\n{listed}")
+
+    live._sleep = grow
+    stream = live.start(SOURCE, PROFILE)
+
+    assert clock.now >= 3
+    live.stop(stream)
+
+
+def test_an_encoder_that_ends_or_writes_nothing_in_time_starts_nothing(tmp_path: Path) -> None:
+    ended = FakeRunner(segments=0)
+    ended.group.ended = True
+    (tmp_path / "a").mkdir()
+    with pytest.raises(StreamStartError, match="stopped before its first segments"):
+        _waiting(tmp_path / "a", ended, _Clock()).start(SOURCE, PROFILE)
+
+    silent = FakeRunner(segments=0)
+    (tmp_path / "b").mkdir()
+    live = _waiting(tmp_path / "b", silent, _Clock())
+    with pytest.raises(StreamStartError, match="no segment in time"):
+        live.start(SOURCE, PROFILE)
+    assert live.unreleased == () and silent.group.signals

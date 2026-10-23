@@ -474,6 +474,13 @@
               Extend the desktop
             </button>
           </div>
+          <svg
+            id="screen-preview"
+            class="display-preview"
+            viewBox="0 0 600 260"
+            role="group"
+            aria-label="Current display arrangement"
+          ></svg>
           <div class="screen-options">
             <label id="screen-field" class="screen-option">
               <span>Screen</span>
@@ -482,6 +489,7 @@
             <label class="screen-option">
               <span>Resolution</span>
               <select id="screen-size" class="field">
+                <option value="auto">Auto (1920×1080)</option>
                 <option value="1280x720">1280×720</option>
                 <option value="1920x1080">1920×1080</option>
               </select>
@@ -491,11 +499,99 @@
               <select id="screen-fps" class="field">
                 <option value="25">25 fps</option>
                 <option value="30">30 fps</option>
-                <option value="60">60 fps</option>
               </select>
             </label>
           </div>
-          <button id="screen-ask" class="btn btn-primary" type="button">Duplicate on the TV</button>
+          <!-- The extension menu: the TV becomes a second screen of the desktop. The sizes and
+               refresh rates are the ones the desktop accepted; the arrangement places the TV's
+               screen around the main one (click a side). -->
+          <div id="screen-extension" class="screen-extension" hidden>
+            <label class="screen-option">
+              <span>TV refresh rate</span>
+              <select id="screen-refresh" class="field">
+                <option value="60">60 Hz</option>
+                <option value="50">50 Hz</option>
+              </select>
+            </label>
+            <!-- The display manager, like Settings > Displays: drag the numbered screens (edges
+                 stick together), set the selected one, then Apply; a change must be kept within
+                 the countdown or it is reverted by itself. Before the extension starts, the TV's
+                 screen-to-be is shown too and can be dragged into place. -->
+            <div id="display-manager" class="display-manager">
+              <div
+                id="display-scene"
+                class="display-scene"
+                role="group"
+                aria-label="Screens: drag one to arrange them, or use the arrow keys"
+              ></div>
+              <div
+                id="display-arrangement"
+                class="screen-actions"
+                role="group"
+                aria-label="How the screens are used"
+              >
+                <button class="btn btn-small" type="button" data-arrangement="join">
+                  Join displays
+                </button>
+                <button class="btn btn-small" type="button" data-arrangement="clone">Mirror</button>
+                <button class="btn btn-small" type="button" data-arrangement="single">
+                  Single display
+                </button>
+              </div>
+              <fieldset id="display-settings" class="display-settings" hidden>
+                <legend id="display-title"></legend>
+                <div class="display-checks">
+                  <label class="display-check">
+                    <input id="display-enabled" type="checkbox" />
+                    On
+                  </label>
+                  <label class="display-check">
+                    <input id="display-primary" type="checkbox" />
+                    Main display
+                  </label>
+                </div>
+                <div class="screen-options">
+                  <label class="screen-option">
+                    <span>Resolution</span>
+                    <select id="display-resolution" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Refresh rate</span>
+                    <select id="display-rate" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Orientation</span>
+                    <select id="display-rotation" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Scale</span>
+                    <select id="display-scale" class="field"></select>
+                  </label>
+                </div>
+              </fieldset>
+              <div class="screen-actions">
+                <button id="display-apply" class="btn btn-primary" type="button">Apply</button>
+                <button id="display-cancel" class="btn" type="button">Cancel</button>
+              </div>
+              <div
+                id="display-keep"
+                class="screen-consent"
+                role="alertdialog"
+                aria-labelledby="display-keep-text"
+                hidden
+              >
+                <p id="display-keep-text"></p>
+                <div class="screen-actions">
+                  <button id="display-keep-button" class="btn btn-primary" type="button">
+                    Keep changes
+                  </button>
+                  <button id="display-revert" class="btn" type="button">Revert</button>
+                </div>
+              </div>
+              <p id="display-message" class="note" role="status" hidden></p>
+            </div>
+          </div>
+          <button id="screen-ask" class="btn btn-primary" type="button">Apply</button>
           <div
             id="screen-consent"
             class="screen-consent"

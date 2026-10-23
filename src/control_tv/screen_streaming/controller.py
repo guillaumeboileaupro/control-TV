@@ -30,10 +30,16 @@ from control_tv.screen_streaming.d1 import (
 )
 from control_tv.screen_streaming.model import InvalidStreamConfiguration, ScreenStreamError
 from control_tv.screen_streaming.ports import StreamReceiver
+from control_tv.screen_streaming.virtual_display import (
+    REFRESH_RATES,
+    Position,
+    XrandrVirtualMonitor,
+)
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output
 
 SIZES = ((1280, 720), (1920, 1080))
-RATES = (25, 30, 60)
+# 60 is not offered: the TV's Cast receiver did not keep up with 1080p60 (hardware, 2026-10-20).
+RATES = (25, 30)
 _POLL_SECONDS = 0.5
 _CLOSE_SECONDS = 20.0
 
@@ -57,6 +63,10 @@ class ScreenRequest:
     height: int
     fps: int
     consent: bool
+    refresh: int = 60  # the extended screen (EXTEND)
+    position: Position = Position.RIGHT  # the extended screen (EXTEND)
+    x: int | None = None
+    y: int | None = None
 
     def checked(self) -> ScreenRequest:
         if self.consent is not True:
@@ -72,7 +82,17 @@ class ScreenRequest:
         if (self.width, self.height) not in SIZES:
             raise InvalidStreamConfiguration("the resolution is 1280x720 or 1920x1080")
         if self.fps not in RATES:
-            raise InvalidStreamConfiguration("the frame rate is 25, 30 or 60")
+            raise InvalidStreamConfiguration("the frame rate is 25 or 30")
+        if self.mode is Mode.EXTEND and self.refresh not in REFRESH_RATES:
+            raise InvalidStreamConfiguration("the extended screen refreshes at 60 or 50 Hz")
+        if type(self.position) is not Position:
+            raise InvalidStreamConfiguration("the extended screen is left, right, above or below")
+        if (self.x is None) != (self.y is None) or any(
+            isinstance(value, bool) or not isinstance(value, int) or not -32768 <= value <= 32767
+            for value in (self.x, self.y)
+            if value is not None
+        ):
+            raise InvalidStreamConfiguration("the extended screen coordinates are invalid")
         return self
 
 
@@ -109,6 +129,7 @@ class ScreenStreamController:
         *,
         connect: Connect = tv_and_route,
         capture: Callable[[], X11Capture] = X11Capture,
+        extension: Callable[[], XrandrVirtualMonitor] = XrandrVirtualMonitor,
         build: Assemble = assemble,
         seconds: int = MAX_D1_SECONDS,
         clock: Callable[[], float] = time.monotonic,
@@ -116,6 +137,7 @@ class ScreenStreamController:
     ) -> None:
         self._connect = connect
         self._capture = capture
+        self._extension = extension
         self._build = build
         self._seconds = seconds
         self._clock = clock
@@ -126,12 +148,12 @@ class ScreenStreamController:
         self._lock = threading.Lock()
 
     def screens(self) -> tuple[X11Output, ...]:
-        """The outputs that can be duplicated (read only); the virtual monitor is not one."""
-        return tuple(
-            output
-            for output in self._capture().outputs()
-            if not output.name.startswith("control-tv-")
-        )
+        """The outputs that can be duplicated (read only)."""
+        return self._capture().outputs()
+
+    def extension_output(self) -> str | None:
+        """The free output "Étendre" would use (read only), or None when none is enabled."""
+        return self._extension().free_output()
 
     def status(self) -> ScreenStatus:
         with self._lock:
@@ -197,6 +219,10 @@ class ScreenStreamController:
                     request.height,
                     request.fps,
                     consent=request.consent,
+                    refresh=request.refresh,
+                    position=request.position,
+                    x=request.x,
+                    y=request.y,
                 ),
                 capture=self._capture(),
             )

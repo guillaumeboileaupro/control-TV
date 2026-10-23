@@ -677,6 +677,30 @@ def test_load_media_is_unconfirmed_while_the_tv_still_shows_other_content(
     assert f"loaded content is {MOVIE_URL!r}, not " in result.detail
 
 
+def test_close_app_targets_and_confirms_the_exact_receiver_session(
+    service: ControlService, transport: FakeTransport
+) -> None:
+    transport.tv.app_session_id = "receiver-session-1"
+    target = transport.tv.app_session_id
+    assert target is not None
+
+    result = service.close_app(DEVICE_ID, target)
+
+    assert result.command is Command.CLOSE_APP and result.confirmed
+    assert transport.calls[-2] == ("close_app", (DEVICE_ID, target))
+    assert transport.tv.app_session_id is None
+
+
+@pytest.mark.parametrize("receiver_session_id", ["", "  ", True, 1, None])
+def test_close_app_refuses_invalid_session_ids_without_sending(
+    service: ControlService, transport: FakeTransport, receiver_session_id: object
+) -> None:
+    with pytest.raises(InvalidArgumentError, match="receiver app session id"):
+        service.close_app(DEVICE_ID, receiver_session_id)  # type: ignore[arg-type]
+
+    assert transport.attempted() == []
+
+
 def test_seek_is_confirmed_within_tolerance(
     service: ControlService, transport: FakeTransport
 ) -> None:

@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from control_tv.domain import (
+    CommandResult,
     Confirmation,
     ControlError,
     DeviceId,
@@ -39,6 +40,7 @@ HLS_CONTENT_TYPE = "application/x-mpegURL"
 class _Session:
     device_id: DeviceId
     url: str
+    receiver_session_id: str | None
     stopping: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -78,7 +80,7 @@ class CastHlsReceiver:
             ) from None
         if result.confirmation is not Confirmation.CONFIRMED:
             # It may be playing it anyway: stop it while it is still this stream, then fail.
-            session = _Session(device_id, publication.uri)
+            session = _Session(device_id, publication.uri, _receiver_session(result))
             # A failure here is not raised: the publication itself ends with the cleanup.
             with contextlib.suppress(StreamCleanupError):
                 self._stop_if_still_ours(session)
@@ -86,8 +88,14 @@ class CastHlsReceiver:
                 f"the receiver did not confirm the stream ({result.confirmation.value})"
             )
         handle = f"cast-hls-{uuid.uuid4().hex}"
+        receiver_session_id = _receiver_session(result)
+        if receiver_session_id is None:
+            session = _Session(device_id, publication.uri, None)
+            with contextlib.suppress(StreamCleanupError):
+                self._stop_if_still_ours(session)
+            raise StreamStartError("the receiver did not report its application session")
         with self._lock:
-            self._sessions[handle] = _Session(device_id, publication.uri)
+            self._sessions[handle] = _Session(device_id, publication.uri, receiver_session_id)
         return ReceiverSession(handle)
 
     def stop(self, session: ReceiverSession) -> None:
@@ -116,15 +124,39 @@ class CastHlsReceiver:
                 f"the receiver state could not be read ({error.code.value})"
             ) from None
         media = status.media
-        if media is None or media.content_id != session.url:
-            return  # nothing of ours plays any more: never stop someone else's content
+        receiver = status.receiver
+        current_receiver_session = None if receiver is None else receiver.app_session_id
+        if media is not None and media.content_id != session.url:
+            return  # another item now plays: never stop it or its application
+        if media is not None:
+            try:
+                result = self._control.stop(session.device_id)
+            except ControlError as error:
+                raise StreamCleanupError(
+                    f"the receiver could not be stopped ({error.code.value})"
+                ) from None
+            if result.confirmation is not Confirmation.CONFIRMED:
+                raise StreamCleanupError(
+                    f"the receiver stop was not confirmed ({result.confirmation.value})"
+                )
+        if (
+            session.receiver_session_id is None
+            or current_receiver_session != session.receiver_session_id
+        ):
+            return
         try:
-            result = self._control.stop(session.device_id)
+            closed = self._control.close_app(session.device_id, session.receiver_session_id)
         except ControlError as error:
             raise StreamCleanupError(
-                f"the receiver could not be stopped ({error.code.value})"
+                f"the receiver application could not be closed ({error.code.value})"
             ) from None
-        if result.confirmation is not Confirmation.CONFIRMED:
+        if closed.confirmation is not Confirmation.CONFIRMED:
             raise StreamCleanupError(
-                f"the receiver stop was not confirmed ({result.confirmation.value})"
+                f"the receiver application close was not confirmed ({closed.confirmation.value})"
             )
+
+
+def _receiver_session(result: CommandResult) -> str | None:
+    observed = result.observed
+    receiver = None if observed is None else observed.receiver
+    return None if receiver is None else receiver.app_session_id
