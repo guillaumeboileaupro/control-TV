@@ -10,6 +10,8 @@ import { isJsonObject, type JsonValue } from "./json.ts";
 import type { BridgeFailure } from "./model.ts";
 
 export type ScreenMode = "duplicate" | "extend";
+export type TransportChoice = "auto" | "webrtc" | "hls";
+export type ActiveTransport = Exclude<TransportChoice, "auto">;
 export type StreamStateName = "idle" | "starting" | "running" | "stopping" | "failed";
 
 // "auto" is the largest size the TV path takes (Full HD).
@@ -54,6 +56,7 @@ export interface StreamStatus {
 }
 
 export interface ScreenChoice {
+  transport: TransportChoice;
   mode: ScreenMode;
   screen: string | null;
   size: SizeName;
@@ -84,6 +87,7 @@ export interface ScreenPanelState {
   pending: boolean;
   // The last request the control layer refused or could not answer.
   failure: BridgeFailure | null;
+  transportUsed: ActiveTransport | null;
 }
 
 export const IDLE_STREAM: StreamStatus = { state: "idle", mode: null, screen: null, error: null };
@@ -93,6 +97,7 @@ export function initialScreenState(): ScreenPanelState {
     availability: { kind: "unknown" },
     stream: IDLE_STREAM,
     choice: {
+      transport: "auto",
       mode: "duplicate",
       screen: null,
       size: "auto",
@@ -105,6 +110,7 @@ export function initialScreenState(): ScreenPanelState {
     confirming: false,
     pending: false,
     failure: null,
+    transportUsed: null,
   };
 }
 
@@ -353,6 +359,16 @@ export function describeScreen(state: ScreenPanelState, tvSelected: boolean): Sc
   const needsScreen = state.choice.mode === "duplicate" && state.choice.screen === null;
   const blocked = needsScreen || (extending && !canExtend);
   const canChoose = !running && !state.pending && state.stream.state !== "failed";
+  const transport =
+    state.transportUsed === "webrtc" ? "WebRTC" : state.transportUsed === "hls" ? "HLS" : null;
+  const statusText =
+    transport !== null && state.stream.state === "starting"
+      ? `Starting the ${transport} stream…`
+      : transport !== null && state.stream.state === "running"
+        ? `Streaming to the TV with ${transport}.`
+        : transport !== null && state.stream.state === "stopping"
+          ? `Stopping the ${transport} stream…`
+          : STATUS_TEXT[state.stream.state];
   return {
     visible: state.availability.kind === "available",
     canChoose,
@@ -375,12 +391,13 @@ export function describeScreen(state: ScreenPanelState, tvSelected: boolean): Sc
           ? "No screen can be duplicated: extend instead."
           : extending && !canExtend && !running
             ? "Extending needs a free video output enabled first (see the test procedure)."
-            : STATUS_TEXT[state.stream.state],
+            : statusText,
     errorText: sentence(state.failure?.message ?? state.stream.error),
   };
 }
 
 export interface ScreenInvocation {
+  transport: TransportChoice;
   command: "bridge_start_screen_stream";
   args: {
     deviceId: string;
@@ -420,6 +437,7 @@ export function consentedStart(
   return {
     state: { ...state, confirming: false, pending: true, failure: null },
     request: {
+      transport: state.choice.transport,
       command: "bridge_start_screen_stream",
       args: {
         deviceId,
@@ -436,6 +454,90 @@ export function consentedStart(
           : {}),
       },
     },
+  };
+}
+
+export interface ReceiverCapabilities {
+  deviceAvailable: boolean;
+  hlsAvailable: boolean;
+  remoteAccessible: boolean;
+  webrtcConfirmed: boolean;
+  reason: string | null;
+}
+
+export function parseReceiverCapabilities(value: JsonValue): ReceiverCapabilities | null {
+  const capabilities = isJsonObject(value) ? value["capabilities"] : undefined;
+  if (!isJsonObject(capabilities)) {
+    return null;
+  }
+  const { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason } = capabilities;
+  if (
+    typeof deviceAvailable !== "boolean" ||
+    typeof hlsAvailable !== "boolean" ||
+    typeof remoteAccessible !== "boolean" ||
+    typeof webrtcConfirmed !== "boolean" ||
+    (reason !== null && typeof reason !== "string")
+  ) {
+    return null;
+  }
+  return { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason };
+}
+
+export function selectTransport(
+  requested: TransportChoice,
+  capabilities: ReceiverCapabilities,
+): ActiveTransport | null {
+  if (requested === "webrtc") {
+    return capabilities.webrtcConfirmed ? "webrtc" : null;
+  }
+  if (requested === "hls") {
+    return capabilities.hlsAvailable ? "hls" : null;
+  }
+  return capabilities.webrtcConfirmed ? "webrtc" : capabilities.hlsAvailable ? "hls" : null;
+}
+
+export function shouldApplyPoll(
+  requestedGeneration: number,
+  currentGeneration: number,
+  pending: boolean,
+  requestedTransport: ActiveTransport | null,
+  currentTransport: ActiveTransport | null,
+): boolean {
+  return (
+    requestedGeneration === currentGeneration && !pending && requestedTransport === currentTransport
+  );
+}
+
+const WEBRTC_STATES: Record<string, StreamStateName> = {
+  idle: "idle",
+  awaiting_receiver: "starting",
+  negotiating: "starting",
+  streaming: "running",
+  stopping: "stopping",
+  failed: "failed",
+};
+
+export function finishWebRtc(
+  state: ScreenPanelState,
+  answer: { ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure },
+): ScreenPanelState {
+  if (!answer.ok) {
+    return { ...state, pending: false, failure: answer.failure };
+  }
+  if (!isJsonObject(answer.result) || typeof answer.result["state"] !== "string") {
+    return state;
+  }
+  const mapped = WEBRTC_STATES[answer.result["state"]];
+  if (mapped === undefined) {
+    return state;
+  }
+  const error = typeof answer.result["error"] === "string" ? answer.result["error"] : null;
+  return {
+    ...state,
+    pending: false,
+    failure: null,
+    transportUsed: mapped === "idle" ? null : "webrtc",
+    stream: { ...state.stream, state: mapped, error },
   };
 }
 

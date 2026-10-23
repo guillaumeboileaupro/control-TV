@@ -22,18 +22,23 @@ import {
   describeScreen,
   finishPoll,
   finishScreen,
+  finishWebRtc,
   follows,
   initialScreenState,
   moveExtension,
   parseListing,
+  parseReceiverCapabilities,
   previewScreens,
   startStop,
+  selectTransport,
+  shouldApplyPoll,
   withScreens,
   type Rate,
   type RefreshRate,
   type ScreenMode,
   type ScreenPanelState,
   type SizeName,
+  type TransportChoice,
 } from "./screen.ts";
 
 // How often the panel asks for the stream's state while it starts, runs or stops.
@@ -49,6 +54,7 @@ export interface ScreenPanelElements {
   screen: HTMLSelectElement;
   size: HTMLSelectElement;
   fps: HTMLSelectElement;
+  transport: HTMLSelectElement;
   // The extension menu: refresh rate and the arrangement of the TV's screen around the main one.
   extension: HTMLElement;
   refresh: HTMLSelectElement;
@@ -90,12 +96,17 @@ function isRefresh(value: number): value is RefreshRate {
   return (REFRESH_RATES as readonly number[]).includes(value);
 }
 
+function isTransport(value: string): value is TransportChoice {
+  return value === "auto" || value === "webrtc" || value === "hls";
+}
+
 export function createScreenPanel(
   el: ScreenPanelElements,
   ports: ScreenPanelPorts,
 ): { refresh(): void; render(): void } {
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
+  let operation = 0;
   const displays = createDisplayPanel(el.display, {
     call: ports.call,
     timers: ports.timers,
@@ -139,8 +150,22 @@ export function createScreenPanel(
       }
       return;
     }
-    const reply = await answer("bridge_get_screen_stream", {});
-    update(reply.ok ? finishPoll(state, reply.result) : state);
+    const generation = operation;
+    const transport = state.transportUsed;
+    const reply = await answer(
+      transport === "webrtc" ? "get_webrtc_stream" : "bridge_get_screen_stream",
+      {},
+    );
+    if (!shouldApplyPoll(generation, operation, state.pending, transport, state.transportUsed)) {
+      return;
+    }
+    update(
+      transport === "webrtc"
+        ? finishWebRtc(state, reply)
+        : reply.ok
+          ? finishPoll(state, reply.result)
+          : state,
+    );
   }
 
   async function refresh(): Promise<void> {
@@ -266,8 +291,9 @@ export function createScreenPanel(
     el.screen.value = state.choice.screen ?? "";
     el.size.value = state.choice.size;
     el.fps.value = String(state.choice.fps);
+    el.transport.value = state.choice.transport;
     el.refresh.value = String(state.choice.refresh);
-    for (const field of [el.screen, el.size, el.fps, el.refresh]) {
+    for (const field of [el.screen, el.size, el.fps, el.transport, el.refresh]) {
       field.disabled = !view.canChoose;
     }
     el.extension.hidden = !view.extending;
@@ -293,8 +319,43 @@ export function createScreenPanel(
     const next = consentedStart(state, ports.selectedTv());
     update(next.state);
     if (next.request !== null) {
-      const { command, args } = next.request;
-      update(finishScreen(state, await answer(command, { ...args })));
+      const generation = ++operation;
+      const capabilitiesReply = await answer("bridge_get_screen_receiver_capabilities", {
+        deviceId: next.request.args.deviceId,
+      });
+      if (generation !== operation) {
+        return;
+      }
+      if (!capabilitiesReply.ok) {
+        update(finishScreen(state, capabilitiesReply));
+        return;
+      }
+      const capabilities = parseReceiverCapabilities(capabilitiesReply.result);
+      const used = capabilities && selectTransport(next.request.transport, capabilities);
+      if (used === null) {
+        update(
+          finishScreen(state, {
+            ok: false,
+            failure: {
+              code: "receiver_unavailable",
+              message:
+                next.request.transport === "webrtc"
+                  ? "WebRTC is not confirmed for the selected TV"
+                  : "No screen streaming transport is available for the selected TV",
+            },
+          }),
+        );
+        return;
+      }
+      state = { ...state, transportUsed: used };
+      const reply = await answer(
+        used === "webrtc" ? "start_webrtc_stream" : next.request.command,
+        used === "webrtc" ? { ...next.request.args, audioDevice: null } : { ...next.request.args },
+      );
+      if (generation !== operation) {
+        return;
+      }
+      update(used === "webrtc" ? finishWebRtc(state, reply) : finishScreen(state, reply));
     }
   }
 
@@ -302,7 +363,13 @@ export function createScreenPanel(
     const next = startStop(state);
     update(next.state);
     if (next.send) {
-      update(finishScreen(state, await answer("bridge_stop_screen_stream", {})));
+      const generation = ++operation;
+      const webrtc = state.transportUsed === "webrtc";
+      const reply = await answer(webrtc ? "stop_webrtc_stream" : "bridge_stop_screen_stream", {});
+      if (generation !== operation) {
+        return;
+      }
+      update(webrtc ? finishWebRtc(state, reply) : finishScreen(state, reply));
     }
   }
 
@@ -322,6 +389,11 @@ export function createScreenPanel(
     const fps = Number(el.fps.value);
     if (isRate(fps)) {
       update(choose(state, { fps }));
+    }
+  });
+  el.transport.addEventListener("change", () => {
+    if (isTransport(el.transport.value)) {
+      update(choose(state, { transport: el.transport.value }));
     }
   });
   el.refresh.addEventListener("change", () => {

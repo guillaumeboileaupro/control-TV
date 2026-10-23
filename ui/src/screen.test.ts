@@ -14,12 +14,16 @@ import {
   describeScreen,
   finishPoll,
   finishScreen,
+  finishWebRtc,
   follows,
   initialScreenState,
   moveExtension,
   parseListing,
+  parseReceiverCapabilities,
   parseStream,
   previewScreens,
+  selectTransport,
+  shouldApplyPoll,
   startStop,
   withScreens,
   type ScreenPanelState,
@@ -148,6 +152,7 @@ describe("consent", () => {
     const chosen = askConsent(choose(available(), { size: "1280x720", fps: 25 }), true);
     const next = consentedStart(chosen, "tv-1");
     assert.deepEqual(next.request, {
+      transport: "auto",
       command: "bridge_start_screen_stream",
       args: {
         deviceId: "tv-1",
@@ -172,6 +177,45 @@ describe("consent", () => {
 });
 
 describe("the stream", () => {
+  test("receiver capabilities select WebRTC only when confirmed", () => {
+    const capabilities = parseReceiverCapabilities({
+      capabilities: {
+        deviceAvailable: true,
+        hlsAvailable: true,
+        remoteAccessible: true,
+        webrtcConfirmed: true,
+        reason: null,
+      },
+    });
+    assert.notEqual(capabilities, null);
+    assert.equal(selectTransport("auto", capabilities!), "webrtc");
+    assert.equal(selectTransport("hls", capabilities!), "hls");
+    assert.equal(selectTransport("webrtc", { ...capabilities!, webrtcConfirmed: false }), null);
+    assert.equal(parseReceiverCapabilities({ capabilities: { hlsAvailable: true } }), null);
+  });
+
+  test("WebRTC states are mapped without exposing pairing credentials", () => {
+    const sent = {
+      ...consentedStart(confirming(), "tv-1").state,
+      transportUsed: "webrtc" as const,
+    };
+    const starting = finishWebRtc(sent, {
+      ok: true,
+      result: { state: "awaiting_receiver", pairingToken: "must-not-be-rendered" },
+    });
+    assert.equal(starting.stream.state, "starting");
+    assert.equal(starting.transportUsed, "webrtc");
+    assert.equal(describeScreen(starting, true).statusText, "Starting the WebRTC stream…");
+    const idle = finishWebRtc(starting, { ok: true, result: { state: "idle", error: null } });
+    assert.equal(idle.transportUsed, null);
+  });
+
+  test("a poll started before Stop can never replace the stop result", () => {
+    assert.equal(shouldApplyPoll(4, 5, false, "webrtc", null), false);
+    assert.equal(shouldApplyPoll(5, 5, true, "webrtc", "webrtc"), false);
+    assert.equal(shouldApplyPoll(5, 5, false, "webrtc", "webrtc"), true);
+  });
+
   test("a started stream is followed until it is idle again", () => {
     const sent = consentedStart(confirming(), "tv-1").state;
     const started = finishScreen(sent, { ok: true, result: stream("starting") });

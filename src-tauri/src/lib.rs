@@ -8,6 +8,8 @@
 
 mod bridge;
 mod commands;
+#[cfg(target_os = "linux")]
+mod webrtc_commands;
 // A phone has no status area: only the desktop and the tests use this module.
 #[cfg_attr(not(any(desktop, test)), allow(dead_code))]
 mod tray;
@@ -59,6 +61,8 @@ pub fn run() {
         .setup(|app| {
             let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
+            #[cfg(target_os = "linux")]
+            app.manage(webrtc_commands::WebRtcState::default());
             // Without a status area (or its AppIndicator support) the window works as before.
             #[cfg(desktop)]
             if let Err(error) = tray::install(app) {
@@ -84,6 +88,10 @@ pub fn run() {
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
             commands::bridge_list_screens,
+            commands::bridge_get_screen_receiver_capabilities,
+            commands::bridge_prepare_webrtc_capture,
+            commands::bridge_activate_webrtc_capture,
+            commands::bridge_release_webrtc_capture,
             commands::bridge_start_screen_stream,
             commands::bridge_stop_screen_stream,
             commands::bridge_get_screen_stream,
@@ -91,6 +99,12 @@ pub fn run() {
             commands::bridge_apply_display_layout,
             commands::bridge_confirm_display_layout,
             commands::bridge_revert_display_layout,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::start_webrtc_stream,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::stop_webrtc_stream,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::get_webrtc_stream,
             commands::show_main_window,
             remember_selection
         ])

@@ -89,6 +89,10 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              Answers {"result": {"package", "deviceId", "confirmation",
                              "detail", "frontApp"}}: `confirmed` only when the TV then reports
                              that app in front, `not_checked` when it does not say.
+- `get_screen_receiver_capabilities` -> the selected TV's reachability, HLS availability and
+                             exact ControlTV Receiver installation/access state. A failed app
+                             inventory is returned as an explicit capability state and never
+                             guessed as "not installed". Read-only.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -130,7 +134,11 @@ from control_tv.trace_files import AcceptanceTracing
 Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
-    from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
+    from control_tv.screen_streaming.controller import (
+        ScreenRequest,
+        ScreenStatus,
+        ScreenStreamController,
+    )
     from control_tv.screen_streaming.display_layout import Display, DisplayManager, OutputSetting
     from control_tv.screen_streaming.virtual_display import Position
 INTERNAL_ERROR_CODE = "internal_error"
@@ -377,6 +385,86 @@ def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
+def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObject) -> JsonObject:
+    """Probe only the selected device through existing control-layer reads.
+
+    A successful Cast status proves that the selected equipment is reachable and can use the
+    existing HLS path. The ADB inventory separately proves whether the exact receiver package is
+    installed and accessible; inability to read that inventory stays distinct from absence. A
+    WebRTC confirmation additionally requires the already-paired Android Remote channel used for
+    the one-time secret handoff.
+    """
+    device_id = _device_id_param(params)
+    try:
+        control.get_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": False,
+                "hlsAvailable": False,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    try:
+        apps = control.list_tv_apps(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    from control_tv.screen_streaming.controller import WEBRTC_RECEIVER_PACKAGE
+
+    installed = any(app.package == WEBRTC_RECEIVER_PACKAGE for app in apps)
+    if not installed:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": False,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": "receiver_not_installed",
+            }
+        }
+    try:
+        control.get_remote_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": True,
+                "receiverAccessible": True,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    return {
+        "capabilities": {
+            "deviceAvailable": True,
+            "hlsAvailable": True,
+            "receiverAppInstalled": True,
+            "receiverAccessible": True,
+            "remoteAccessible": True,
+            "webrtcConfirmed": True,
+            "reason": None,
+        }
+    }
+
+
 def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     package = params.get("package")
@@ -552,8 +640,7 @@ def _positions() -> dict[str, Position]:
     }
 
 
-def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
+def _screen_request(params: JsonObject) -> ScreenRequest:
     from control_tv.screen_streaming.controller import ScreenRequest
     from control_tv.screen_streaming.d1 import Mode
 
@@ -568,7 +655,7 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
     if not isinstance(position, str) or position not in _positions():
         raise InvalidArgumentError("position must be left, right, above or below")
     refresh = _strict_int(params, "refresh") if "refresh" in params else 60
-    request = ScreenRequest(
+    return ScreenRequest(
         str(_device_id_param(params)),
         Mode(mode),
         screen,
@@ -581,7 +668,48 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         _strict_int(params, "x") if "x" in params else None,
         _strict_int(params, "y") if "y" in params else None,
     )
+
+
+def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    request = _screen_request(params)
     return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
+
+
+def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+
+    def prepare() -> JsonObject:
+        lease = _screen().prepare_webrtc_capture(_screen_request(params))
+        return {
+            "capture": {
+                "bindAddress": lease.bind_address,
+                "display": lease.display,
+                "offsetX": lease.offset_x,
+                "offsetY": lease.offset_y,
+                "sourceWidth": lease.source_width,
+                "sourceHeight": lease.source_height,
+            }
+        }
+
+    return _screen_call(prepare)
+
+
+def _handle_activate_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().activate_webrtc_capture())}
+    )
+
+
+def _handle_release_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    error = params.get("error")
+    if error is not None and not isinstance(error, str):
+        raise InvalidArgumentError("error must be a string or null")
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().release_webrtc_capture(error))}
+    )
 
 
 def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
@@ -635,9 +763,13 @@ _HANDLERS: dict[str, Handler] = {
     "press_remote_key": _handle_press_remote_key,
     "type_remote_text": _handle_type_remote_text,
     "list_tv_apps": _handle_list_tv_apps,
+    "get_screen_receiver_capabilities": _handle_get_screen_receiver_capabilities,
     "launch_tv_app": _handle_launch_tv_app,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,
+    "prepare_webrtc_capture": _handle_prepare_webrtc_capture,
+    "activate_webrtc_capture": _handle_activate_webrtc_capture,
+    "release_webrtc_capture": _handle_release_webrtc_capture,
     "stop_screen_stream": _handle_stop_screen_stream,
     "get_screen_stream": _handle_get_screen_stream,
     "get_display_layout": _handle_get_display_layout,

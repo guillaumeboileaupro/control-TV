@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol
 
+from control_tv.domain import DeviceId
 from control_tv.ports import TvControl
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
 from control_tv.screen_streaming.d1 import (
@@ -28,7 +29,11 @@ from control_tv.screen_streaming.d1 import (
     assemble,
     tv_and_route,
 )
-from control_tv.screen_streaming.model import InvalidStreamConfiguration, ScreenStreamError
+from control_tv.screen_streaming.model import (
+    InvalidStreamConfiguration,
+    ScreenStreamError,
+    StreamCleanupError,
+)
 from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.virtual_display import (
     REFRESH_RATES,
@@ -42,6 +47,7 @@ SIZES = ((1280, 720), (1920, 1080))
 RATES = (25, 30)
 _POLL_SECONDS = 0.5
 _CLOSE_SECONDS = 20.0
+WEBRTC_RECEIVER_PACKAGE = "io.github.guillaumeboileaupro.controltv.receiver"
 
 
 class StreamState(StrEnum):
@@ -107,6 +113,22 @@ class ScreenStatus:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class WebRtcCaptureLease:
+    """Capture geometry owned by this controller until `release_webrtc_capture`.
+
+    The lease contains no receiver credential. The Rust host consumes only the selected local
+    route and X11 region; this controller remains responsible for restoring a D2 extension.
+    """
+
+    bind_address: str
+    display: str
+    offset_x: int
+    offset_y: int
+    source_width: int
+    source_height: int
+
+
 Connect = Callable[[str], tuple[TvControl, str]]
 
 
@@ -145,6 +167,12 @@ class ScreenStreamController:
         self._status = ScreenStatus(StreamState.IDLE)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._webrtc_lease: WebRtcCaptureLease | None = None
+        self._webrtc_extension: XrandrVirtualMonitor | None = None
+        self._webrtc_generation = 0
+        self._webrtc_preparing = False
+        self._webrtc_prepare_done = threading.Event()
+        self._webrtc_prepare_done.set()
         self._lock = threading.Lock()
 
     def screens(self) -> tuple[X11Output, ...]:
@@ -201,6 +229,143 @@ class ScreenStreamController:
         thread = self._thread
         if thread is not None:
             thread.join(_CLOSE_SECONDS)
+        self.release_webrtc_capture()
+        self._webrtc_prepare_done.wait(_CLOSE_SECONDS)
+        self.release_webrtc_capture()
+
+    def prepare_webrtc_capture(self, request: ScreenRequest) -> WebRtcCaptureLease:
+        """Reserve the existing D1/D2 source for the Rust engine, never a parallel display.
+
+        Receiver installation is rechecked at acquisition time so an explicit WebRTC start
+        fails closed even if a prior capability result became stale.
+        """
+        checked = request.checked()
+        with self._lock:
+            if (
+                self._status.state is not StreamState.IDLE
+                or self._webrtc_lease is not None
+                or self._webrtc_preparing
+            ):
+                raise InvalidStreamConfiguration(
+                    "a screen stream is already running: stop it first"
+                )
+            self._webrtc_generation += 1
+            generation = self._webrtc_generation
+            self._webrtc_preparing = True
+            self._webrtc_prepare_done.clear()
+            self._status = ScreenStatus(
+                StreamState.STARTING,
+                checked.mode,
+                checked.screen if checked.mode is Mode.DUPLICATE else None,
+                checked.width,
+                checked.height,
+                checked.fps,
+            )
+        extension: XrandrVirtualMonitor | None = None
+        try:
+            control, address = self._connect(checked.device_id)
+            installed = control.list_tv_apps(DeviceId(checked.device_id))
+            if not any(app.package == WEBRTC_RECEIVER_PACKAGE for app in installed):
+                raise InvalidStreamConfiguration(
+                    "ControlTV Receiver is not installed or accessible on the selected TV"
+                )
+            capture = self._capture()
+            output: X11Output | None
+            if checked.mode is Mode.EXTEND:
+                extension = self._extension()
+                output = extension.create(
+                    checked.width,
+                    checked.height,
+                    consent=checked.consent,
+                    refresh=checked.refresh,
+                    position=checked.position,
+                    x=checked.x,
+                    y=checked.y,
+                )
+            else:
+                output = next(
+                    (
+                        candidate
+                        for candidate in capture.outputs()
+                        if candidate.name == checked.screen
+                    ),
+                    None,
+                )
+                if output is None:
+                    raise InvalidStreamConfiguration("that screen output is not connected")
+            assert output is not None
+            lease = WebRtcCaptureLease(
+                address,
+                capture.display,
+                output.x,
+                output.y,
+                output.width - output.width % 2,
+                output.height - output.height % 2,
+            )
+            with self._lock:
+                if generation != self._webrtc_generation:
+                    raise InvalidStreamConfiguration("WebRTC preparation was cancelled")
+                self._webrtc_lease = lease
+                self._webrtc_extension = extension
+            return lease
+        except BaseException as caught:
+            cleanup_error: ScreenStreamError | None = None
+            if extension is not None:
+                try:
+                    extension.remove()
+                except ScreenStreamError as cleanup:
+                    cleanup_error = cleanup
+            with self._lock:
+                detail = "WebRTC preparation failed"
+                if cleanup_error is not None:
+                    detail += f"; the extended screen was not restored: {cleanup_error.message}"
+                    self._webrtc_extension = extension
+                if generation == self._webrtc_generation or cleanup_error is not None:
+                    self._status = ScreenStatus(StreamState.FAILED, error=detail)
+            if cleanup_error is not None:
+                raise StreamCleanupError(detail) from caught
+            raise
+        finally:
+            with self._lock:
+                self._webrtc_preparing = False
+            self._webrtc_prepare_done.set()
+
+    def activate_webrtc_capture(self) -> ScreenStatus:
+        with self._lock:
+            if self._webrtc_lease is None or self._status.state is not StreamState.STARTING:
+                raise InvalidStreamConfiguration("no WebRTC capture is prepared")
+            self._status = replace(self._status, state=StreamState.RUNNING)
+            return self._status
+
+    def release_webrtc_capture(self, error: str | None = None) -> ScreenStatus:
+        with self._lock:
+            self._webrtc_generation += 1
+            if self._webrtc_lease is None and self._webrtc_extension is None:
+                if self._status.state in (StreamState.STARTING, StreamState.STOPPING):
+                    self._status = (
+                        ScreenStatus(StreamState.IDLE)
+                        if error is None
+                        else ScreenStatus(StreamState.FAILED, error=error)
+                    )
+                return self._status
+            extension = self._webrtc_extension
+        cleanup_error: str | None = None
+        if extension is not None:
+            try:
+                extension.remove()
+            except ScreenStreamError as caught:
+                cleanup_error = f"the extended screen was not restored: {caught.message}"
+        with self._lock:
+            if cleanup_error is None:
+                self._webrtc_extension = None
+                self._webrtc_lease = None
+            failure = "; ".join(detail for detail in (error, cleanup_error) if detail) or None
+            self._status = (
+                ScreenStatus(StreamState.IDLE)
+                if failure is None
+                else ScreenStatus(StreamState.FAILED, error=failure)
+            )
+            return self._status
 
     def _serve(self, request: ScreenRequest) -> None:
         session: D1Session | None = None
