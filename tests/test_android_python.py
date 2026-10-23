@@ -213,15 +213,6 @@ def test_an_sdist_that_already_builds_a_pure_wheel_is_kept_without_retagging(
     assert len(calls) == 1  # no `wheel tags`, which would remove a file it renames to itself
 
 
-def test_adb_shell_is_built_from_its_locked_sdist_as_pure_python() -> None:
-    lock = real_lock()
-    entry = android.runtime_packages(lock, extras=android.EXTRAS)["adb-shell"]
-
-    assert "adb-shell" in android.FROM_SDIST
-    assert android.pure_wheel(entry) is None
-    assert entry["sdist"]["hash"].startswith("sha256:")
-
-
 def test_a_zeroconf_build_that_still_compiles_modules_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -317,7 +308,7 @@ def test_the_app_embeds_the_tv_remote_extra_and_never_the_mcp_server() -> None:
 
     assert android.EXTRAS == ("tvremote",)
     assert {"androidtvremote2", "aiofiles", "cryptography", "cffi", "pycparser"} <= names
-    assert {"adb-shell", "rsa", "pyasn1"} <= names
+    assert not names & {"adb-shell", "rsa", "pyasn1"}
     assert {"pychromecast", "zeroconf", "protobuf"} <= names
     assert not names & {"mcp", "starlette", "uvicorn", "pydantic", "pyjwt"}
 

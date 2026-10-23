@@ -92,6 +92,9 @@ class StubControl:
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         raise _unexpected("launch_tv_app")
 
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        raise _unexpected("pair_tv_apps")
+
 
 def test_the_bridge_dispatches_to_any_implementation_of_the_port() -> None:
     stub = StubControl()

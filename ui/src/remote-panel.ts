@@ -31,6 +31,11 @@ export interface RemotePanelElements {
   remoteText: HTMLInputElement;
   remoteTextSend: HTMLButtonElement;
   remoteAppsList: HTMLButtonElement;
+  remoteAppsPairing: HTMLElement;
+  remoteAppsPairingForm: HTMLFormElement;
+  remoteAppsPairingEndpoint: HTMLInputElement;
+  remoteAppsPairingCode: HTMLInputElement;
+  remoteAppsPair: HTMLButtonElement;
   remoteAppsFilter: HTMLInputElement;
   remoteApps: HTMLElement;
   remoteReadout: HTMLElement;
@@ -46,6 +51,37 @@ export interface RemotePanelActions {
   focusElsewhere(): void;
 }
 
+interface ValueField {
+  value: string;
+}
+
+// Consume the one-time code as the form is submitted so it cannot remain visible or readable in
+// the DOM while the asynchronous request is in flight or after it finishes.
+export function consumeAppsPairingCredentials(
+  endpointField: ValueField,
+  codeField: ValueField,
+): Extract<RemoteAction, { kind: "pair_apps" }> {
+  const action = {
+    kind: "pair_apps" as const,
+    pairingEndpoint: endpointField.value,
+    code: codeField.value,
+  };
+  codeField.value = "";
+  return action;
+}
+
+export function clearAppsPairingCodeWhenInactive(
+  codeField: ValueField,
+  pairingVisible: boolean,
+  selectedDeviceId: string | null,
+  previousDeviceId: string | null,
+): string | null {
+  if (!pairingVisible || selectedDeviceId !== previousDeviceId) {
+    codeField.value = "";
+  }
+  return selectedDeviceId;
+}
+
 export function createRemotePanel(
   el: RemotePanelElements,
   actions: RemotePanelActions,
@@ -53,6 +89,7 @@ export function createRemotePanel(
   // The feedback and the app list are redrawn only when what they show changed.
   let feedbackKey = "";
   let appsKey = "";
+  let pairingDeviceId: string | null = null;
 
   for (const button of el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
     button.addEventListener("click", () =>
@@ -61,6 +98,12 @@ export function createRemotePanel(
   }
   el.remoteRead.addEventListener("click", () => actions.run({ kind: "status" }));
   el.remoteAppsList.addEventListener("click", () => actions.run({ kind: "list_apps" }));
+  el.remoteAppsPairingForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    actions.run(
+      consumeAppsPairingCredentials(el.remoteAppsPairingEndpoint, el.remoteAppsPairingCode),
+    );
+  });
   el.remoteAppsFilter.addEventListener("input", () =>
     actions.filterApps(el.remoteAppsFilter.value),
   );
@@ -81,6 +124,12 @@ export function createRemotePanel(
   // way; the pairing area only when the TV asked for it; the TV's last report; the outcome.
   function render(state: AppState): void {
     const remote = describeRemote(state);
+    pairingDeviceId = clearAppsPairingCodeWhenInactive(
+      el.remoteAppsPairingCode,
+      remote.appsPairingNeeded,
+      state.selected?.id ?? null,
+      pairingDeviceId,
+    );
     const active = document.activeElement;
     const hadFocus = active !== null && el.tvRemote.contains(active);
     el.tvRemote.hidden = !remote.visible;
@@ -101,6 +150,10 @@ export function createRemotePanel(
     setBusy(el.remoteTextSend, !remote.keysEnabled);
     el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
     renderApps(state, remote);
+    el.remoteAppsPairing.hidden = !remote.appsPairingNeeded;
+    setBusy(el.remoteAppsPair, remote.busy);
+    el.remoteAppsPairingEndpoint.disabled = remote.busy;
+    el.remoteAppsPairingCode.disabled = remote.busy;
     el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
 
     el.remotePairing.hidden = remote.pairing === null;

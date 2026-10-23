@@ -19,6 +19,7 @@ import {
   recordServiceFailure,
   refreshStatus,
   selectDevice,
+  setHostCapabilities,
   chosenDevice,
   startDiscovery,
   toBridgeFailure,
@@ -75,6 +76,7 @@ const SEEK_COMMIT_DELAY_MS = 400;
 interface PingResult {
   status: string;
   controlTvVersion: string;
+  tvApps: boolean;
 }
 
 interface DiscoverDevicesResult {
@@ -751,7 +753,8 @@ function start(elements: Elements): void {
   async function checkBackend(): Promise<void> {
     const number = ++requestsStarted;
     try {
-      await invoke<PingResult>("bridge_ping");
+      const result = await invoke<PingResult>("bridge_ping");
+      update(setHostCapabilities(state, result.tvApps === true));
       noteAnswer(number, null);
     } catch (error) {
       const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
@@ -902,6 +905,11 @@ window.addEventListener("DOMContentLoaded", () => {
       remoteText: byId<HTMLInputElement>("remote-text"),
       remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
       remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+      remoteAppsPairing: byId("remote-apps-pairing"),
+      remoteAppsPairingForm: byId<HTMLFormElement>("remote-apps-pairing-form"),
+      remoteAppsPairingEndpoint: byId<HTMLInputElement>("remote-apps-pairing-endpoint"),
+      remoteAppsPairingCode: byId<HTMLInputElement>("remote-apps-pairing-code"),
+      remoteAppsPair: byId<HTMLButtonElement>("remote-apps-pair"),
       remoteKeys: byId("remote-keys"),
       remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
       remoteApps: byId("remote-apps"),

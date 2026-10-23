@@ -44,6 +44,35 @@ la surveillance complémentaire du publisher D1.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
 
+- [x] **ADB sans fil Ubuntu (2026-10-21, validation automatisée)** : serveur ADB existant,
+  appareils TCP et TLS, services mDNS, ports dynamiques, reconnexion, refus des correspondances
+  absentes/ambiguës et ciblage explicite par `adb -s`. L'interface propose l'association par
+  adresse/port et code temporaire, sans conserver le code. Correctifs de revue : une cible TCP
+  classique oubliée après redémarrage du serveur reçoit une seule reconnexion bornée sur 5555 ;
+  `adb pair` est vérifié avant usage ; l'UI masque les applications quand le bridge annonce
+  `tvApps: false` (notamment Android).
+- [x] **Correctifs de revue ADB #99 (simulation)** : l'absence de `adb mdns` ne bloque plus une
+  cible TCP classique déjà connectée ou reconnectable sur 5555 ; après une association acceptée,
+  l'apparition du service de connexion est attendue de façon bornée sans rejouer
+  `adb pair` ; la version Platform Tools est analysée avant association (ancienne, invalide,
+  bloquée ou défaillante refusée) ; le code à usage unique est masqué, consommé à la soumission et
+  effacé si le formulaire ferme ou si la TV change. Un service TLS annoncé qui refuse la connexion
+  n'est jamais remplacé par une tentative non-TLS sur 5555. Aucun appareil n'a été contacté.
+- [x] **Politique de packaging ADB moderne (audit sans installation)** : conserver `adb` Jammy
+  pour TCP classique ; ne pas redistribuer l'archive Google tant que ses conditions SDK n'ont pas
+  reçu de validation juridique explicite ; traiter Platform Tools >= 30 comme prérequis externe
+  pour l'association TLS. La candidate 37.0.1 est épinglée par URL officielle versionnée, taille
+  et SHA-256 dans `packaging/adb-platform-tools.json`, avec procédure de licence et mise à jour
+  dans `docs/ADB_PLATFORM_TOOLS.md`. L'archive n'entre ni dans Git ni dans le `.deb`.
+- [ ] **Fourniture ADB moderne sur installation propre** : le paquet `adb` d'Ubuntu 22.04 ne
+  fournit pas `adb pair`. Tant qu'une source redistribuable validée ou une baseline système plus
+  récente n'est pas décidée, ne pas présenter l'association sans fil comme incluse dans le `.deb`.
+- [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
+  application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
+  la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.
+- [ ] **Android** : définir un chemin TLS sans serveur permanent dans l'application ; le serveur
+  ADB platform-tools utilisé ici est disponible sur Ubuntu seulement.
+
 - [x] **Codex — diagnostic sans supposition :** le paquet installé est `control-tv` 0.1.0 amd64, mais son binaire du 15 octobre (`84186c3ea194052587595fa59accf96c012256fc5fc508d3b0661d4ec7140a53`) diffère du binaire extrait sans installation du `.deb` final du 17 octobre (`f4678ae03c13999a180b48442056359ab087b7c989fe34a1b22ed5ddb6e5149f`). La capture utilisait donc un ancien bundle, antérieur à #71. Le bundle frontend reconstruit contient l'identifiant Apple TV, son SVG et l'appel `appLogo`; la CSP reste validée par la recette statique.
 - [x] **Codex — correspondances :** le backend n'émet le libellé « Apple TV » que pour l'identifiant exact `com.apple.atve.androidtv.appletv`, ce qui établit l'identifiant reçu dans la capture sans nouvelle connexion TV. Il correspond exactement à `ui/src/app-logos.ts`; aucun alias ou logo approximatif n'a été ajouté. L'identifiant exact de chaque tuile est désormais conservé dans son infobulle et son nom accessible.
 - [x] **Codex — UI :** noms connus lisibles, identifiant technique accessible dans l'infobulle et aux technologies d'assistance ; fallback technique inconnu limité à trois lignes, police compacte et césure sans débordement ; logos officiels et fallback par initiale inchangés. Validation matérielle avant/après toujours ouverte.

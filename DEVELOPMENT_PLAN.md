@@ -1235,6 +1235,45 @@ Google Cast / pychromecast ne fournit pas nécessairement de mécanisme généri
 - [ ] Documenter les limitations et éviter d'afficher un succès non confirmé.
 
 **2E — APPLICATIONS INSTALLÉES SUR LA TV : découverte ET lancement (exigence propriétaire)**
+- [x] **Correction ADB sans fil Ubuntu (2026-10-21, automatisée seulement)** : le service utilise
+  le serveur `adb` existant au lieu d'ouvrir systématiquement `IP:5555` avec `adb-shell`. Il relie
+  la TV sélectionnée à un unique serial via l'adresse découverte, `adb devices -l` et les services
+  mDNS TLS, reconnecte le port dynamique annoncé, refuse tout appareil ambigu et cible chaque
+  commande avec `adb -s`. L'association intégrée distingue port d'association et port de
+  connexion ; le code temporaire passe par stdin, n'est ni journalisé ni conservé. Liste,
+  actualisation, recherche, tri, noms connus, logos locaux existants et lancement restent dans le
+  même `TvApps`/`ControlService`. Tests simulés : TCP, TLS, mDNS, reconnexion, multi-appareils,
+  absence/ambiguïté, association acceptée/refusée/expirée, perte de connexion, liste et lancement.
+  La preuve matérielle antérieure de lecture ADB est conservée ; la recette complète depuis
+  l'interface et l'observation physique d'un lancement restent NOT RUN sur cette branche.
+- [x] **Correctifs de revue #99 (automatisés)** : reconnexion unique d'une cible TCP classique
+  sur 5555 après redémarrage du serveur, sans remplacer les ports TLS/mDNS dynamiques ; préflight
+  de la capacité `adb pair` ; propagation de `tvApps` jusqu'à l'UI, qui ne propose plus les
+  contrôles sur une plateforme sans ADB. Aucun appareil n'a été contacté.
+- [x] **Correctifs de robustesse et confidentialité #99 (simulés)** : un ADB sans commande mDNS
+  conserve le chemin TCP classique exact sur 5555 et indique Platform Tools 30.0.0 minimum si
+  seule l'association sans fil manque ; la sortie de `adb version` est analysée et les versions
+  anciennes, invalides, bloquées ou défaillantes sont refusées avant `help` et `pair` ; après
+  succès de `adb pair`, le service de connexion est attendu avec un nombre borné de lectures,
+  sans répéter l'association ; une interruption est propagée et ne rejoue pas l'association. Un
+  service TLS annoncé qui échoue interdit le fallback classique 5555. Le code temporaire est
+  masqué puis retiré du DOM dès la soumission, la fermeture du formulaire ou un changement de TV.
+  Tests par doubles uniquement,
+  aucun ADB réel.
+- [x] **Décision et audit de packaging #99 (sans installation)** : l'`adb` Jammy reste la
+  dépendance du `.deb` pour TCP classique ; l'association TLS exige Platform Tools >= 30 externe.
+  L'archive Google n'est pas redistribuée sans validation juridique explicite de ses conditions
+  SDK. La candidate stable 37.0.1 est enregistrée comme référence non embarquée avec URL
+  versionnée `dl.google.com`, taille, SHA-256, NOTICE, termes SDK et politique de mise à jour dans
+  `packaging/adb-platform-tools.json` et `docs/ADB_PLATFORM_TOOLS.md`. Tests statiques : manifeste
+  cohérent, aucune archive ni ressource Tauri embarquée. Aucun binaire ADB installé ou exécuté.
+- [ ] **Fourniture ADB moderne sur installation propre** : décider entre une source réellement
+  redistribuable après audit juridique ou une baseline de distribution qui fournit Platform Tools
+  >= 30. Avant cela, le `.deb` garantit seulement TCP classique et ne doit pas annoncer
+  l'association sans fil comme incluse.
+- [ ] **Portée Android de 2E** : l'APK n'embarque plus `adb-shell` et ne peut pas exécuter le
+  serveur platform-tools ; concevoir un transport TLS Android compatible avec l'absence de
+  serveur permanent avant de déclarer la parité Ubuntu/Android.
 - [ ] Étudier une méthode **réelle** d'énumération des applications Android TV installées ; ne pas confondre catalogue Cast connu et packages réellement présents. Note (2026-10-10) : le service Android TV Remote permet de lancer une application par lien, mais **ne fournit pas la liste des applications installées** ; l'énumération reste à étudier (aucun service ADB réseau n'est annoncé par les TV). **Faisabilité (2026-10-12) :** la seule méthode d'énumération réelle identifiée est le débogage réseau ADB de la Google TV (`pm list packages` puis lancement par package), à activer par le propriétaire dans les options développeur ; il donne un accès complet à la TV depuis le réseau local (risque de sécurité) et ajoute une dépendance (client ADB ou bibliothèque Python). **Décision du propriétaire requise** ; sinon, alternative documentée : lancement par lien d'applications connues, présenté comme catalogue, jamais comme liste installée. Avancement 2E : **implémenté le 2026-10-13, 0 % confirmé sur TV** : liste par ADB (`adb-shell` 0.4.4, désactivé tant que le propriétaire n'active pas le débogage sur la TV et n'y autorise pas control-TV ; une seule requête en lecture), lancement par ADB (un événement `monkey` sur l'activité d'accueil du package, vérifié par l'application que la TV signale au premier plan ; les liens `market://` du canal télécommande ont été écartés après la revue Codex P1, car peu fiables), panneau « TV apps » avec filtre dans les deux interfaces. Noms affichés : connus de control-TV pour les applications courantes, sinon le package ; pas d'icônes (la TV ne les fournit pas par cette voie). **Limite (revue Codex P1, 2026-10-13) :** seules les TV dont le débogage USB accepte la connexion réseau classique sur le port 5555 sont prises en charge ; les TV (Android 13 et plus) qui n'offrent que le « Débogage sans fil » (code d'appairage, TLS) ne le sont pas encore (`adb-shell` ne parle pas ce protocole) ; à vérifier sur la TV du propriétaire.
 - [ ] Définir les permissions, appairages et restrictions nécessaires ; proposer une solution viable sans serveur permanent.
 - [ ] Récupérer identifiant/package, nom affiché, icône si disponible et statut lançable.
