@@ -96,14 +96,36 @@ async fn release_capture(bridge: SharedBridgeState, error: Option<String>) -> Op
 }
 
 fn combine_failure(primary: Option<&str>, cleanup: Option<String>) -> Option<String> {
+    combine_labeled_failure(primary, cleanup, "capture cleanup failed")
+}
+
+fn combine_labeled_failure(
+    primary: Option<&str>,
+    cleanup: Option<String>,
+    label: &str,
+) -> Option<String> {
     match (primary, cleanup) {
         (None, cleanup) => cleanup,
         (Some(primary), None) => Some(primary.to_owned()),
         (Some(primary), Some(cleanup)) if cleanup.contains(primary) => Some(cleanup),
-        (Some(primary), Some(cleanup)) => {
-            Some(format!("{primary}; capture cleanup failed: {cleanup}"))
-        }
+        (Some(primary), Some(cleanup)) => Some(format!("{primary}; {label}: {cleanup}")),
     }
+}
+
+async fn stop_engine_after_failure(
+    active: &mut ActiveState,
+    transport: &WebRtcTransport,
+    primary: String,
+) -> String {
+    let cleanup = match active.controller.stop(transport).await {
+        Ok(()) => {
+            active.transport = None;
+            None
+        }
+        Err(error) => Some(error.to_string()),
+    };
+    combine_labeled_failure(Some(&primary), cleanup, "engine cleanup failed")
+        .expect("a primary failure is always preserved")
 }
 
 async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
@@ -297,15 +319,7 @@ pub(crate) async fn start_webrtc_stream(
     .await
     {
         let mut active = state.active.lock().await;
-        let cleanup = active
-            .controller
-            .stop(transport.as_ref())
-            .await
-            .err()
-            .map(|error| format!("engine cleanup failed: {error}"));
-        active.transport = None;
-        let detail =
-            combine_failure(Some(&detail), cleanup).expect("a primary failure is always preserved");
+        let detail = stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
         active.last_error = Some(detail.clone());
         drop(active);
         return Err(release_start_failure(bridge.inner().clone(), detail).await);
@@ -331,9 +345,9 @@ pub(crate) async fn start_webrtc_stream(
                     .await
                 {
                     let detail = error.to_string();
+                    let detail =
+                        stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
                     active.last_error = Some(detail.clone());
-                    let _ = active.controller.stop(transport.as_ref()).await;
-                    active.transport = None;
                     drop(active);
                     release_after_failure(&state_handle, bridge_handle, detail).await;
                     return;
@@ -343,9 +357,9 @@ pub(crate) async fn start_webrtc_stream(
                     Arc::clone(&transport) as Arc<dyn MediaTransport>;
                 if let Err(error) = active.controller.start_media(source, media_transport) {
                     let detail = error.to_string();
+                    let detail =
+                        stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
                     active.last_error = Some(detail.clone());
-                    let _ = active.controller.stop(transport.as_ref()).await;
-                    active.transport = None;
                     drop(active);
                     release_after_failure(&state_handle, bridge_handle, detail).await;
                 } else {
@@ -355,20 +369,27 @@ pub(crate) async fn start_webrtc_stream(
                             .await
                     {
                         let mut active = state_handle.active.lock().await;
-                        active.last_error = Some(failure.message.clone());
-                        if let Some(transport) = active.transport.take() {
-                            let _ = active.controller.stop(transport.as_ref()).await;
-                        }
+                        let detail = if let Some(transport) = active.transport.clone() {
+                            stop_engine_after_failure(
+                                &mut active,
+                                transport.as_ref(),
+                                failure.message,
+                            )
+                            .await
+                        } else {
+                            failure.message
+                        };
+                        active.last_error = Some(detail.clone());
                         drop(active);
-                        release_after_failure(&state_handle, bridge_handle, failure.message).await;
+                        release_after_failure(&state_handle, bridge_handle, detail).await;
                     }
                 }
             }
             Err(error) => {
                 let detail = error.to_string();
+                let detail =
+                    stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
                 active.last_error = Some(detail.clone());
-                let _ = active.controller.stop(transport.as_ref()).await;
-                active.transport = None;
                 drop(active);
                 release_after_failure(&state_handle, bridge_handle, detail).await;
             }
@@ -439,6 +460,15 @@ mod tests {
             combine_failure(Some("engine failed"), None).as_deref(),
             Some("engine failed")
         );
+        assert_eq!(
+            combine_labeled_failure(
+                Some("media failed"),
+                Some("close failed".into()),
+                "transport cleanup failed",
+            )
+            .as_deref(),
+            Some("media failed; transport cleanup failed: close failed")
+        );
     }
 
     #[test]
@@ -501,10 +531,12 @@ pub(crate) async fn stop_webrtc_stream(
         task.abort();
     }
     let mut active = state.active.lock().await;
-    if let Some(transport) = active.transport.take() {
+    if let Some(transport) = active.transport.clone() {
         let result = active.controller.stop(transport.as_ref()).await;
         if let Err(error) = result {
             active.last_error = Some(error.to_string());
+        } else {
+            active.transport = None;
         }
     }
     let engine_error = active.last_error.clone();
@@ -530,9 +562,18 @@ pub(crate) async fn get_webrtc_stream(
         if let Err(error) = result {
             active.last_error = Some(error.to_string());
         }
-        if let Some(transport) = active.transport.take() {
-            if let Err(error) = transport.close().await {
-                active.last_error = Some(error.to_string());
+        if let Some(transport) = active.transport.clone() {
+            if let Some(primary) = active.last_error.clone() {
+                let detail =
+                    stop_engine_after_failure(&mut active, transport.as_ref(), primary).await;
+                active.last_error = Some(detail);
+            } else {
+                match transport.close().await {
+                    Ok(()) => active.transport = None,
+                    Err(error) => {
+                        active.last_error = Some(error.to_string());
+                    }
+                }
             }
         }
         let error = active.last_error.clone();

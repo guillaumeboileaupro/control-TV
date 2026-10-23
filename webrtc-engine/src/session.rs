@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
 #[async_trait]
-pub trait MediaSource: Send {
+pub trait MediaSource: Send + Sync {
     async fn start(&mut self) -> Result<MediaStreams, EngineError>;
     async fn stop(&mut self) -> Result<(), EngineError>;
 }
@@ -44,9 +44,16 @@ pub struct SessionController {
     token: Option<SessionToken>,
     deadline: Option<Instant>,
     diagnostics: Arc<Mutex<Diagnostics>>,
-    media_task: Option<JoinHandle<Result<(), EngineError>>>,
+    media_task: Option<JoinHandle<MediaTaskResult>>,
     media_stop: Option<oneshot::Sender<()>>,
+    unreleased_source: Option<Box<dyn MediaSource>>,
 }
+
+type MediaTaskResult = (
+    Result<(), EngineError>,
+    Result<(), EngineError>,
+    Box<dyn MediaSource>,
+);
 
 impl Default for SessionController {
     fn default() -> Self {
@@ -58,6 +65,7 @@ impl Default for SessionController {
             diagnostics: Arc::new(Mutex::new(Diagnostics::default())),
             media_task: None,
             media_stop: None,
+            unreleased_source: None,
         }
     }
 }
@@ -139,7 +147,7 @@ impl SessionController {
                 Err(error) => Err(error),
             };
             let cleanup = source.stop().await;
-            combine_media_and_cleanup(result, cleanup)
+            (result, cleanup, source)
         }));
         Ok(())
     }
@@ -158,18 +166,26 @@ impl SessionController {
         }
         self.media_stop.take();
         let result = match self.media_task.take().expect("finished media task").await {
-            Ok(Ok(()))
+            Ok((media, cleanup, source)) => {
+                if cleanup.is_err() {
+                    self.unreleased_source = Some(source);
+                }
+                combine_media_and_cleanup(media, cleanup)
+            }
+            Err(error) => Err(EngineError::Cleanup(error.to_string())),
+        };
+        let result = match result {
+            Ok(())
                 if self
                     .deadline
                     .is_some_and(|deadline| Instant::now() >= deadline) =>
             {
                 Ok(())
             }
-            Ok(Ok(())) => Err(EngineError::MediaSource(
+            Ok(()) => Err(EngineError::MediaSource(
                 "media pipeline ended unexpectedly".into(),
             )),
-            Ok(Err(error)) => Err(error),
-            Err(error) => Err(EngineError::Cleanup(error.to_string())),
+            Err(error) => Err(error),
         };
         self.state = if result.is_ok() {
             EngineState::Idle
@@ -187,18 +203,33 @@ impl SessionController {
             return Ok(());
         }
         self.state = EngineState::Stopping;
+        let pending_source_result = if let Some(source) = self.unreleased_source.as_mut() {
+            let result = source.stop().await;
+            if result.is_ok() {
+                self.unreleased_source = None;
+            }
+            result
+        } else {
+            Ok(())
+        };
         if let Some(stop) = self.media_stop.take() {
             let _ = stop.send(());
         }
-        let mut media_result = Ok(());
+        let mut media_result = pending_source_result;
         if let Some(task) = self.media_task.take() {
-            media_result = match task.await {
-                Ok(result) => result,
+            let task_result = match task.await {
+                Ok((media, cleanup, source)) => {
+                    if cleanup.is_err() {
+                        self.unreleased_source = Some(source);
+                    }
+                    combine_media_and_cleanup(media, cleanup)
+                }
                 Err(error) => Err(EngineError::Cleanup(error.to_string())),
             };
+            media_result = combine_media_and_cleanup(media_result, task_result);
         }
         let transport_result = transport.close().await;
-        let result = media_result.and(transport_result);
+        let result = combine_media_and_cleanup(media_result, transport_result);
         self.id = None;
         self.token = None;
         self.deadline = None;
@@ -288,7 +319,7 @@ async fn pump_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct FakeSource {
         keep_open: bool,
@@ -325,9 +356,42 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    struct RetryCleanupSource {
+        stop_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl MediaSource for RetryCleanupSource {
+        async fn start(&mut self) -> Result<MediaStreams, EngineError> {
+            let (_sender, receiver) = mpsc::channel(1);
+            Ok(MediaStreams {
+                video: receiver,
+                audio: None,
+            })
+        }
+
+        async fn stop(&mut self) -> Result<(), EngineError> {
+            let attempt = self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                Err(EngineError::Cleanup("first reap failed".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     struct FakeTransport {
         closed: AtomicBool,
+        fail_close: bool,
+    }
+
+    impl Default for FakeTransport {
+        fn default() -> Self {
+            Self {
+                closed: AtomicBool::new(false),
+                fail_close: false,
+            }
+        }
     }
 
     #[async_trait]
@@ -346,7 +410,11 @@ mod tests {
         }
         async fn close(&self) -> Result<(), EngineError> {
             self.closed.store(true, Ordering::SeqCst);
-            Ok(())
+            if self.fail_close {
+                Err(EngineError::Cleanup("synthetic transport failure".into()))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -421,6 +489,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_preserves_media_and_transport_cleanup_failures() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport = Arc::new(FakeTransport {
+            closed: AtomicBool::new(false),
+            fail_close: true,
+        });
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: true,
+                    fail_start: false,
+                    fail_stop: true,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                media_transport,
+            )
+            .expect("start media");
+
+        let error = controller
+            .stop(transport.as_ref())
+            .await
+            .expect_err("both cleanup failures must be reported")
+            .to_string();
+
+        assert!(error.contains("synthetic stop failure"));
+        assert!(error.contains("synthetic transport failure"));
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(transport.closed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn a_partial_start_failure_still_cleans_the_source() {
         let stopped = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(FakeTransport::default());
@@ -485,6 +587,42 @@ mod tests {
         assert!(message.contains("synthetic start failure"));
         assert!(message.contains("synthetic stop failure"));
         assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_failed_source_cleanup_remains_tracked_until_stop_retries_it() {
+        let stop_calls = Arc::new(AtomicUsize::new(0));
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(RetryCleanupSource {
+                    stop_calls: Arc::clone(&stop_calls),
+                }),
+                media_transport,
+            )
+            .expect("start media");
+
+        let first = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pipeline completion");
+        assert!(first.is_err());
+        assert_eq!(stop_calls.load(Ordering::SeqCst), 1);
+
+        controller
+            .stop(transport.as_ref())
+            .await
+            .expect("retry cleanup");
+        assert_eq!(stop_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(controller.state(), EngineState::Idle);
     }
 
     #[tokio::test]

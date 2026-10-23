@@ -10,6 +10,8 @@ L'arrêt demandé pendant l'attente du récepteur ou la négociation annule dés
 
 Le test d'intégration WebRTC local transmet désormais simultanément plusieurs unités H.264 et plusieurs paquets Opus et vérifie leur réception RTP chiffrée sur les deux pistes. Le nettoyage détecte aussi un FFmpeg déjà terminé et le récolte sans traiter son arrêt préalable comme une erreur ; l'attente de récolte reste bornée à cinq secondes.
 
+Le 2026-10-23, la revue renforcée a fermé deux défauts de nettoyage supplémentaires : le handle d'un FFmpeg dont la récolte échoue ou expire reste suivi pour un nouvel arrêt, et les erreurs simultanées du média, de la fermeture WebRTC et de la restauration Python sont combinées au lieu de s'écraser. Le test de régression force un premier timeout de récolte puis vérifie qu'une seconde tentative récolte effectivement l'enfant. La reconnexion automatique après perte réseau reste volontairement ouverte ; la session échoue sans rejeu et une relance manuelle est nécessaire.
+
 Corrections issues de la revue indépendante : même un démarrage média partiellement échoué exécute `MediaSource.stop`, les attentes de piste silencieuse expirent à la durée maximale de session, et le récepteur Android n'envoie qu'une seule réponse SDP finale après description locale et rassemblement ICE complet, quel que soit l'ordre des callbacks.
 
 Restent requis avant validation produit : relier le sélecteur graphique Auto/WebRTC/HLS et la découverte de capacité, compléter reconnexion/pertes/diagnostics, raccorder le parcours D2/#98, exécuter la CI, puis seulement après autorisation installer et mesurer sur les deux Android TV. Aucun essai matériel ni mesure de latence n'a été exécuté.

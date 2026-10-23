@@ -22,6 +22,8 @@
 
 **Robustesse logicielle :** Stop annule l'attente ou la négociation avant fermeture du transport ; une fin FFmpeg prématurée devient un état d'échec explicite et déclenche le nettoyage lors du relevé d'état. Restent ouverts les scénarios de perte réseau prolongée et la reconnexion bornée.
 
+**Nettoyage renforcé (2026-10-23) :** un enfant FFmpeg n'est plus retiré du suivi avant confirmation de sa récolte ; un timeout ou une erreur conserve le handle pour une nouvelle tentative. Les erreurs simultanées du pipeline média, du transport WebRTC et de la restauration D1/D2 sont toutes conservées dans le diagnostic. Tests automatisés uniquement ; la preuve d'absence de processus orphelin sur la plateforme réelle reste à faire. La reconnexion réseau automatique demeure non implémentée : après perte, la session s'arrête sans rejouer secret ni commande et doit être relancée manuellement.
+
 **Pipeline simulé :** un pair WebRTC local reçoit simultanément cinq paquets RTP H.264 et cinq paquets RTP Opus après négociation ICE/DTLS/SRTP ; ce test prouve le transport concurrent et chiffré, pas le décodage Android matériel, la synchronisation audible/visible ni la stabilité sur plusieurs minutes.
 
 **Revue indépendante du 2026-10-21 :** les blocages sur le nettoyage après échec partiel, la conservation conjointe des erreurs média/nettoyage, l'échéance d'une piste silencieuse, la réponse Android après ICE complet et la documentation obsolète ont été corrigés après les verdicts `CHANGES REQUESTED`. La revue finale du SHA `acefef9` est `APPROVED`, sans P0/P1/P2/P3 nouveau ; elle reste strictement logicielle. Les écarts fonctionnels UI/capacités, perte réseau/reconnexion et D2 restent ouverts.

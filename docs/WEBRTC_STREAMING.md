@@ -17,7 +17,7 @@ Le chemin faible latence complète, sans remplacer, `ControlService` et le repli
 
 Chaque session crée un certificat TLS éphémère. Le récepteur se connecte à `adresse:port`, vérifie son empreinte SHA-256 saisie avec les paramètres de session, puis envoie dans ce canal chiffré une ligne JSON contenant le jeton. Il reçoit l'offre SDP et renvoie, après rassemblement ICE complet, une ligne contenant le refus explicite ou la réponse SDP finale. Le certificat épinglé authentifie l'émetteur ; le jeton unique authentifie le récepteur et n'apparaît ni dans `Debug` ni dans les erreurs. Le serveur disparaît après cet échange, ce qui interdit sa réutilisation. Le média est ensuite chiffré par DTLS-SRTP.
 
-La détection de capacité réutilise le `TvControl` et l'inventaire d'applications existants, sur le seul identifiant sélectionné. La disponibilité Cast confirme le chemin HLS ; seul le paquet exact `io.github.guillaumeboileaupro.controltv.receiver`, effectivement listé par la TV, confirme l'installation et l'accessibilité WebRTC. Un inventaire ADB inaccessible reste « capacité non confirmée », jamais « application absente » ni compatibilité supposée.
+La détection de capacité réutilise le `TvControl` et l'inventaire d'applications existants, sur le seul identifiant sélectionné. La disponibilité Cast confirme le chemin HLS ; le paquet exact `io.github.guillaumeboileaupro.controltv.receiver`, effectivement listé par la TV, et une lecture réussie du canal Android Remote appairé sont tous deux requis pour confirmer l'accessibilité WebRTC. Un inventaire ADB ou un canal Remote inaccessible reste « capacité non confirmée », jamais « application absente » ni compatibilité supposée.
 
 Le bail D1/D2 appartient au contrôleur Python existant. Sa préparation est annulable : une fermeture invalide sa génération, attend la fin bornée de l'acquisition et empêche toute publication tardive. Une extension dont la restauration échoue reste suivie afin que l'arrêt puisse être retenté ; le diagnostic conserve simultanément une erreur du moteur et une erreur de restauration.
 
@@ -37,8 +37,30 @@ Une première connexion invalide consomme encore cette écoute à usage unique :
 
 Le test d'intégration Rust crée deux pairs réels, négocie ICE/SDP/DTLS/SRTP sur la machine, transmet simultanément plusieurs unités H.264 Annex-B et plusieurs paquets Opus, puis vérifie cinq paquets RTP reçus sur chaque piste. Les tests de signalisation TLS, d'empreinte invalide et d'anti-rejeu utilisent uniquement la boucle locale. Les sorties FFmpeg sont découpées en unités d'accès H.264 délimitées par AUD et en paquets Opus extraits de pages Ogg ; les files sont bornées, la vidéo obsolète peut être abandonnée et l'audio applique une contre-pression. L'APK est compilé mais jamais installé.
 
-La capture réelle Ubuntu, le décodage matériel Android TV, l'audio/vidéo synchronisé, la stabilité sur plusieurs minutes, D2, la reprise réseau et la latence physique restent `NOT RUN`. Le test local prouve le transport concurrent et chiffré, pas la recette média Ubuntu→TV ni le rendu matériel.
+La capture réelle Ubuntu, le décodage matériel Android TV, l'audio/vidéo synchronisé, la stabilité sur plusieurs minutes, D2, la reprise réseau et la latence physique restent `NOT RUN`. Le test local prouve le transport concurrent et chiffré, pas la recette média Ubuntu→TV ni le rendu matériel. Un enfant FFmpeg reste suivi tant que sa récolte n'est pas confirmée et un test force un premier timeout puis une récolte réussie au second essai. Les diagnostics conservent ensemble les échecs média, transport et restauration.
 
 ## Recette matérielle à autoriser
 
 Pour chaque Android TV : installer l'APK explicitement autorisé, accepter une nouvelle session, tester D1 puis D2, arrêt et reconnexion. Mesurer par caméra/chronomètre la latence physique médiane, p95 et maximale, FPS, pertes, dérive A/V, CPU/GPU et stabilité. Un RTT WebRTC n'est jamais une mesure bout en bout. Restaurer la topologie d'écran et confirmer l'absence de processus, socket ou session restante.
+
+### Préconditions et preuves
+
+Chaque ligne ci-dessous exige une autorisation explicite au moment de l'essai. Avant D2, enregistrer sous `.ai-private/` la sortie expurgée de `xrandr --query` et `xrandr --listmonitors`. Utiliser une mire animée sans donnée privée et des impulsions audio identifiables. Conserver uniquement états, durées, compteurs, codes de sortie et types d'erreur : jamais adresse, identifiant d'appareil, SDP/ICE, jeton `ctv1`, empreinte, nom de TV ou titre média.
+
+Après chaque essai, vérifier avec `pgrep -a ffmpeg`, `ss -ltnp` et les deux lectures `xrandr` qu'aucun processus, listener ou écran `control-tv-` ne subsiste. En cas de restauration D2 échouée, ne pas lancer une seconde session : utiliser d'abord Stop pour retenter la ressource encore suivie, puis restaurer manuellement la topologie initiale selon la procédure D2 autorisée.
+
+### Matrice reproductible
+
+| Scénario | Action autorisée proposée | Réussite observable | Échec / restauration |
+|---|---|---|---|
+| D1 WebRTC nominal | Sélectionner `WEBRTC`, dupliquer la mire avec audio pendant 10 min, puis Stop | paquet exact et champ sécurisé confirmés ; H.264 et Opus décodés simultanément ; état final inactif | aucun repli HLS silencieux ; aucun FFmpeg, pair ou bail restant |
+| D2 WebRTC nominal | Relever la topologie, étendre, déplacer la mire sur D2, tenir 10 min, puis Stop | seule la source D2 est rendue, géométrie correcte, bureau principal utilisable | topologie strictement identique avant/après ; Stop retentable si restauration refusée |
+| AUTO | Répéter avec récepteur+Remote disponibles, paquet absent, inventaire inaccessible, puis Remote indisponible | WebRTC uniquement dans le premier cas ; HLS dans les autres cas compatibles | aucun secret saisi si application ou champ non confirmé |
+| Arrêt pendant négociation | Retarder/refuser la réponse du récepteur puis demander Stop | attente annulée dans la borne, état inactif, second démarrage possible | aucun démarrage média tardif ; D1/D2 libéré |
+| FFmpeg interrompu | Identifier en preuve privée l'enfant vidéo puis audio et envoyer une fois `kill -TERM PID` | fin détectée, état d'échec compréhensible | autre enfant, transport et bail nettoyés ; aucun zombie |
+| Récepteur ou réseau perdu | Couper manuellement le réseau du récepteur pendant un flux stable, puis le rétablir | échec borné, aucun rejeu automatique | reconnexion automatique actuellement non attendue ; Stop puis redémarrage manuel réussi |
+| Authentification et rejeu | Présenter sous harnais autorisé une empreinte, un jeton, puis une enveloppe consommée incorrects | aucun SDP/média, refus borné ; ancien secret inutilisable | nouvelle session et nouveau secret requis ; journaux expurgés |
+| Endurance A/V | D1 puis D2, 30 min chacun, mire et tops audio, charge normale puis soutenue | FPS/résolution stables, pas de corruption ni coupure persistante | relever dérive A/V au début, 10 min et 30 min, croissance CPU/GPU/mémoire et pertes |
+| Sessions successives | Trois cycles Start/Stop par transport | chaque cycle repart proprement, aucune double libération | aucune ressource du cycle précédent et aucune commande rejouée |
+
+La latence se mesure en filmant simultanément la mire source et le téléviseur, puis en calculant médiane, p95 et maximum. La synchronisation A/V se mesure sur les tops visibles/audibles et leur dérive dans le temps. Un succès de CI, un paquet RTP reçu ou un RTT ne remplace jamais ces observations physiques.
