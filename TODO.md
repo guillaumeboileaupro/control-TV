@@ -4,6 +4,10 @@
   réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
   `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.
 
+- [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
+  premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
+  dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
+
 ## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
 
 **Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
