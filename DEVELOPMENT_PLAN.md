@@ -4,6 +4,11 @@ Security maintenance (2026-10-23): the Tauri lockfile pins Tokio 1.53.3, the min
 release for RUSTSEC-2026-0386 on the existing 1.53 LTS line. No audit waiver was added; validation
 is automated only and does not imply any TV or Android hardware result.
 
+Security maintenance (2026-10-24, integration branch): `setuptools` (the Android wheel build
+backend, `android` dependency group) moves from 84.0.0 to 84.1.0 for GHSA-xmj3-9gf7-h52w (low,
+Windows path escape during legacy wheel installation, published 2026-10-23), which fails the
+Python audit gate on every branch; `uv.lock` changes only `setuptools`. Automated validation only.
+
 ## Rust/WebRTC — état logiciel au 2026-10-21
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.

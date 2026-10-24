@@ -3,6 +3,9 @@
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
+- [x] **Sécurité Python — GHSA-xmj3-9gf7-h52w (2026-10-24) :** `setuptools` 84.0.0 → 84.1.0
+  (groupe `android`, backend des roues embarquées) ; l'audit Python échouait sur toutes les branches.
+  Aucune dérogation. Validation automatisée uniquement.
 - [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
   réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
   `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.
