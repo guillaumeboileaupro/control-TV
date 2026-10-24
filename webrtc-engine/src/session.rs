@@ -572,6 +572,65 @@ mod tests {
         assert!(transport.closed.load(Ordering::SeqCst));
     }
 
+    fn media_source(keep_open: bool) -> Box<FakeSource> {
+        Box::new(FakeSource {
+            keep_open,
+            fail_start: false,
+            fail_stop: false,
+            stopped: Arc::new(AtomicBool::new(false)),
+            sender: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_stopped_session_forgets_its_pairing_token() {
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        let token = controller
+            .pairing_token()
+            .expect("pairing token")
+            .expose_for_pairing()
+            .to_owned();
+        controller
+            .start_media(media_source(true), media_transport)
+            .expect("start media");
+        controller
+            .stop(transport.as_ref())
+            .await
+            .expect("stop session");
+
+        assert!(controller.pairing_token().is_none());
+        let answer = SessionDescription { sdp: "v=0".into() };
+        let replayed = controller
+            .negotiate(&token, answer, transport.as_ref(), Duration::from_secs(1))
+            .await;
+        assert!(matches!(replayed, Err(EngineError::NoActiveSession)));
+    }
+
+    #[tokio::test]
+    async fn a_failed_session_forgets_its_pairing_token() {
+        let transport: Arc<dyn MediaTransport> = Arc::new(FakeTransport::default());
+        let mut controller = streaming_controller();
+        controller
+            .start_media(media_source(false), transport)
+            .expect("start media");
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pipeline completion");
+
+        assert!(result.is_err());
+        assert_eq!(controller.state(), EngineState::Failed);
+        assert!(controller.pairing_token().is_none());
+    }
+
     #[tokio::test]
     async fn an_interrupted_stop_keeps_the_media_task_for_a_cleanup_retry() {
         let stop_started = Arc::new(Notify::new());
