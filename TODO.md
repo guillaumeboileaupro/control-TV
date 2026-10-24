@@ -10,6 +10,13 @@
   tardive échoue reprend après les étapes déjà faites (le bureau est remis en place) ; l'arrêt D1
   retire l'écran virtuel même après `KeyboardInterrupt`, `SystemExit` ou une erreur imprévue.
   Validation automatisée uniquement ; à reporter dans #97/#106 par leur auteur.
+- [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
+  `p256`/`p384`) :** aucun correctif compatible en amont ; dérogation datée et ciblée à approuver,
+  ou attente d'un correctif. Bloque `rust-audit` dès que la pile WebRTC arrive sur `main`.
+- [ ] **CI :** ajouter `webrtc-engine` (fmt, clippy, tests) et `android-tv-receiver` (tests JVM) au
+  workflow ; les PR empilées #99, #100, #106–#109 n'ont jamais eu de CI.
+- [x] **Hygiène de build (2026-10-24) :** `webrtc-engine/target/` et `android-tv-receiver/` ignorés et
+  nettoyés par `dev.py clean` ; test d'expiration du jeton d'appairage WebRTC ajouté.
 - [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
   réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
   `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.

@@ -18,6 +18,22 @@ virtual monitor behind; every step now runs, then the interrupt is raised first.
 now refuses deleting a missing or attached mode, like the real one (assumed, not checked on
 hardware). Automated validation only; no display or TV was used.
 
+Integration findings (2026-10-24, branch `integration/consolidation-2026-10-24`):
+- [ ] **Open, owner decision:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
+  constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`
+  0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13. Only `crypto-bigint` >= 0.7.6 is
+  patched; the newest `dtls` (0.17.2) still requires `p256` ^0.13, and `webrtc` 0.21 moves to the
+  `rtc` stack (a rewrite, unverified). `rust-audit` fails once the WebRTC stack reaches `main`:
+  an owner-approved, dated and package-scoped waiver, or an upstream fix, is required; no waiver
+  was added.
+- [ ] **CI gap:** the workflow tests neither `webrtc-engine` (its `cargo test`, clippy, fmt and
+  the H.264/Opus decode test) nor `android-tv-receiver` (no Gradle wrapper; 7 JVM tests), and the
+  stacked PRs #99, #100 and #106-#109 never ran CI. Run locally on the integration branch: all
+  green, including the 120 s synthetic endurance.
+- [x] `webrtc-engine/target/` and `android-tv-receiver/{build,app/build}/` git-ignored and cleaned by
+  `dev.py clean`; the pairing token is now asserted to disappear after a stop and after a failed
+  media pipeline (it already did). Automated validation only.
+
 ## Rust/WebRTC — état logiciel au 2026-10-21
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
