@@ -8,7 +8,7 @@
     "build": "tsc && vite build && node scripts/check-bundle-size.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test --test-reporter=spec node_modules/.cache/control-tv-tests/app-logos.test.js node_modules/.cache/control-tv-tests/model.test.js node_modules/.cache/control-tv-tests/playback.test.js node_modules/.cache/control-tv-tests/sound.test.js node_modules/.cache/control-tv-tests/remote.test.js node_modules/.cache/control-tv-tests/remote-panel.test.js node_modules/.cache/control-tv-tests/tray.test.js node_modules/.cache/control-tv-tests/interaction.test.js node_modules/.cache/control-tv-tests/screen.test.js node_modules/.cache/control-tv-tests/display.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test --test-reporter=spec node_modules/.cache/control-tv-tests/app-logos.test.js node_modules/.cache/control-tv-tests/import-boundaries.test.js node_modules/.cache/control-tv-tests/model.test.js node_modules/.cache/control-tv-tests/playback.test.js node_modules/.cache/control-tv-tests/sound.test.js node_modules/.cache/control-tv-tests/remote.test.js node_modules/.cache/control-tv-tests/remote-panel.test.js node_modules/.cache/control-tv-tests/tray.test.js node_modules/.cache/control-tv-tests/interaction.test.js node_modules/.cache/control-tv-tests/screen.test.js node_modules/.cache/control-tv-tests/display.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "tauri": "tauri"

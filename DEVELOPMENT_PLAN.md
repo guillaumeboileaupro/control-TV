@@ -330,6 +330,11 @@ Not part of the window (owner, 2026-10-08): a microphone, a voice assistant, a s
 Exit criteria:
 - [ ] application controls a TV manually, with no AI service in the path (needs a recorded real-hardware command result; with the restored scope this covers the TV's applications, power, audible sound, playback and navigation per capability, items M and Q);
 - [x] frontend presentation remains separated from Cast transport/control logic (verified in the code on 2026-09-26: TypeScript and Rust hold no Cast logic; every command goes through the bridge to `ControlService`, and only the adapter imports PyChromecast).
+- [x] Graphify structural check (2026-10-23): the remaining runtime cycles `model.ts` ↔
+  `remote.ts` and `model.ts` ↔ `playback.ts` were removed without changing behaviour. Shared
+  state shapes now live in the import-free `view-state.ts` leaf; `model.ts` owns `AppState`, and
+  feature reducers depend one-way on that model. An AST-based regression test checks the complete
+  production module graph for direct and indirect cycles and pins the intended boundary.
 
 ## Phase 4b - Desktop native integration
 

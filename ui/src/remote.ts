@@ -13,22 +13,29 @@
 // `main.ts` performs the I/O and draws the result; `npm test` covers every rule below.
 
 import { isJsonObject, type JsonObject, type JsonValue } from "./json.ts";
-import { describeFailure, idle, type AppState, type BridgeFailure } from "./model.ts";
+import { describeFailure, idle, type AppState } from "./model.ts";
+import type {
+  AudibleVolume,
+  BridgeFailure,
+  RemoteAction,
+  RemoteKeyName,
+  RemoteOutcome,
+  RemoteReport,
+  RemoteView,
+  TvApp,
+} from "./view-state.ts";
 
-export type RemoteKeyName =
-  | "volume_down"
-  | "volume_up"
-  | "mute"
-  | "power"
-  | "up"
-  | "down"
-  | "left"
-  | "right"
-  | "ok"
-  | "back"
-  | "home"
-  | "delete"
-  | "enter";
+export {
+  REMOTE_IDLE,
+  type AudibleVolume,
+  type PairingStep,
+  type RemoteAction,
+  type RemoteKeyName,
+  type RemoteOutcome,
+  type RemoteReport,
+  type RemoteView,
+  type TvApp,
+} from "./view-state.ts";
 
 export const KEY_LABELS: Record<RemoteKeyName, string> = {
   volume_down: "Volume down",
@@ -44,73 +51,6 @@ export const KEY_LABELS: Record<RemoteKeyName, string> = {
   home: "Home",
   delete: "Backspace",
   enter: "Enter",
-};
-
-// The TV's own report, as the control layer relays it. `null` means the TV did not say.
-export interface AudibleVolume {
-  level: number;
-  max: number;
-  muted: boolean;
-}
-
-export interface RemoteReport {
-  isOn: boolean | null;
-  // The package name of the app in front on the TV, as the TV reported it.
-  currentApp: string | null;
-  volume: AudibleVolume | null;
-}
-
-export type RemoteAction =
-  | { kind: "status" }
-  | { kind: "key"; key: RemoteKeyName }
-  | { kind: "show_code" }
-  | { kind: "pair"; code: string }
-  // Text for the TV's active field. It may be a password: it is never put in an outcome.
-  | { kind: "text"; text: string }
-  | { kind: "list_apps" }
-  | { kind: "pair_apps"; pairingEndpoint: string; code: string }
-  | { kind: "launch_app"; package: string; label: string };
-
-// `not_tried`: not tried yet. `needed`: the TV answered that it must be paired first.
-// `code_shown`: the TV was asked to show a code. `paired`: the TV accepted this app.
-export type PairingStep = "not_tried" | "needed" | "code_shown" | "paired";
-
-export interface RemoteOutcome {
-  // `done`: the TV reported the expected result. `sent`: sent, effect not reported by the TV.
-  // `failed`: not sent, refused, or its delivery is uncertain.
-  tone: "done" | "sent" | "failed";
-  text: string;
-  // The raw code and message, for a collapsed diagnostic disclosure only.
-  technical: string | null;
-}
-
-// An app installed on the TV, as the TV listed it: its package, and a display name control-TV
-// knows for it or null.
-export interface TvApp {
-  package: string;
-  name: string | null;
-}
-
-export interface RemoteView {
-  report: RemoteReport | null;
-  pending: { requestId: number; action: RemoteAction } | null;
-  pairing: PairingStep;
-  outcome: RemoteOutcome | null;
-  // The TV's apps from its last listing; null until listed.
-  apps: TvApp[] | null;
-  // What the person typed to narrow the app list.
-  appFilter: string;
-  appsPairingNeeded: boolean;
-}
-
-export const REMOTE_IDLE: RemoteView = {
-  report: null,
-  pending: null,
-  pairing: "not_tried",
-  outcome: null,
-  apps: null,
-  appFilter: "",
-  appsPairingNeeded: false,
 };
 
 export function appLabel(app: TvApp): string {

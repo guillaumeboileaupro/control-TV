@@ -1,6 +1,12 @@
 import type { Thrown } from "./json.ts";
-import type { CommandView } from "./playback.ts";
-import { REMOTE_IDLE, type RemoteView } from "./remote.ts";
+import {
+  REMOTE_IDLE,
+  type BridgeFailure,
+  type CommandView,
+  type RemoteView,
+} from "./view-state.ts";
+
+export type { BridgeFailure } from "./view-state.ts";
 
 // Application state and presentation logic for the manual UI, as plain functions.
 //
@@ -60,11 +66,6 @@ export interface DeviceStatus {
 // What a rejected Tauri command carries: a stable `code` (a control-layer error code such
 // as `device_unavailable`, or one of the shell's own `backend_unavailable`,
 // `bridge_timeout`, `bridge_transport`) plus a human-readable `message`.
-export interface BridgeFailure {
-  code: string;
-  message: string;
-}
-
 export type DiscoveryView =
   | { kind: "idle" }
   | { kind: "running" }
