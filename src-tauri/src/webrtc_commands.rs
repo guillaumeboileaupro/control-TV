@@ -54,6 +54,16 @@ struct ActiveState {
     reconnecting: bool,
 }
 
+impl ActiveState {
+    fn begin_reconnect(&mut self) {
+        self.reconnecting = true;
+    }
+
+    fn end_reconnect(&mut self) {
+        self.reconnecting = false;
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CaptureLease {
@@ -153,7 +163,7 @@ async fn stop_engine_after_failure(
 async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
     let cleanup = release_capture(bridge, Some(detail.clone())).await;
     let mut active = state.active.lock().await;
-    active.reconnecting = false;
+    active.end_reconnect();
     active.last_error = combine_failure(Some(&detail), cleanup);
 }
 
@@ -385,13 +395,13 @@ pub(crate) async fn start_webrtc_stream(
                 let detail =
                     stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
                 let Some(reconnect_attempts) = reconnect_budget.claim() else {
-                    active.reconnecting = false;
+                    active.end_reconnect();
                     active.last_error = Some(detail.clone());
                     drop(active);
                     release_after_failure(&state_handle, bridge_handle, detail).await;
                     return;
                 };
-                active.reconnecting = true;
+                active.begin_reconnect();
                 drop(active);
                 tokio::time::sleep(RECONNECT_DELAY).await;
 
@@ -439,7 +449,7 @@ pub(crate) async fn start_webrtc_stream(
                     .clone();
                 active.transport = Some(Arc::clone(&retry_transport));
                 active.last_error = None;
-                active.reconnecting = false;
+                active.end_reconnect();
                 drop(active);
                 if let Err(detail) = handoff_pairing(
                     bridge_handle.clone(),
@@ -577,6 +587,32 @@ mod tests {
         assert!(state.operation.try_lock().is_ok());
     }
 
+    #[tokio::test]
+    async fn stop_during_reconnect_delay_clears_the_visible_active_state() {
+        let active = Arc::new(Mutex::new(ActiveState::default()));
+        active.lock().await.begin_reconnect();
+        let task_active = Arc::clone(&active);
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            task_active.lock().await.end_reconnect();
+        });
+
+        {
+            let state = active.lock().await;
+            assert_eq!(reported_state(&state), EngineState::AwaitingReceiver);
+        }
+        task.abort();
+        active.lock().await.end_reconnect();
+        {
+            let state = active.lock().await;
+            assert_eq!(reported_state(&state), EngineState::Idle);
+        }
+        assert!(task
+            .await
+            .expect_err("the reconnect delay is cancelled")
+            .is_cancelled());
+    }
+
     #[test]
     fn cleanup_diagnostics_preserve_the_primary_without_duplication() {
         assert_eq!(
@@ -685,7 +721,7 @@ pub(crate) async fn stop_webrtc_stream(
         task.abort();
     }
     let mut active = state.active.lock().await;
-    active.reconnecting = false;
+    active.end_reconnect();
     if let Some(transport) = active.transport.clone() {
         let result = active.controller.stop(transport.as_ref()).await;
         if let Err(error) = result {

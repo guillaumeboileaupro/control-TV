@@ -29,6 +29,14 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
+private const val NEGOTIATION_DEADLINE_MS = 20_000L
+
+internal class OneShotGate {
+    private val claimed = AtomicBoolean(false)
+    fun claim(): Boolean = claimed.compareAndSet(false, true)
+    fun close() { claimed.set(true) }
+}
+
 internal class ReceiverSession(
     context: Context,
     private val renderer: SurfaceViewRenderer,
@@ -42,7 +50,8 @@ internal class ReceiverSession(
     private var answerWriter: BufferedWriter? = null
     private val answerGate = IceCompleteAnswerGate()
     private val closed = AtomicBoolean(false)
-    private val retryNotified = AtomicBoolean(false)
+    private val retryNotification = OneShotGate()
+    private val negotiationDeadline = OneShotGate()
 
     init {
         PeerConnectionFactory.initialize(
@@ -58,6 +67,14 @@ internal class ReceiverSession(
     fun connect(target: PairingTarget) {
         check(peer == null) { "A session is already active" }
         Thread({ pair(target) }, "control-tv-pairing").start()
+        Thread({
+            Thread.sleep(NEGOTIATION_DEADLINE_MS)
+            if (negotiationDeadline.claim()) {
+                onState("Erreur : délai de négociation dépassé")
+                close()
+                notifyRetryReady()
+            }
+        }, "control-tv-negotiation-watchdog").apply { isDaemon = true }.start()
     }
 
     private fun pair(target: PairingTarget) {
@@ -161,7 +178,7 @@ internal class ReceiverSession(
     }
 
     private fun notifyRetryReady() {
-        if (retryNotified.compareAndSet(false, true)) onRetryReady()
+        if (retryNotification.claim()) onRetryReady()
     }
 
     @Synchronized
@@ -171,6 +188,7 @@ internal class ReceiverSession(
         if (writer == null) return
         runCatching {
             writer.write(PairingProtocol.answer(answer, true)); writer.newLine(); writer.flush()
+            negotiationDeadline.close()
         }.onFailure {
             onState("Erreur : envoi de la réponse impossible")
             close()
@@ -180,6 +198,7 @@ internal class ReceiverSession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        negotiationDeadline.close()
         socket?.close(); socket = null
         answerWriter = null
         peer?.close(); peer?.dispose(); peer = null
