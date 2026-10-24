@@ -236,6 +236,15 @@ type ReconnectAttempt = (
     Arc<WebRtcTransport>,
 );
 
+fn reconnect_timeout(session_deadline: Instant, phase_limit: Duration) -> Result<Duration, String> {
+    let remaining = session_deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err("the bounded WebRTC session expired during reconnection".into())
+    } else {
+        Ok(remaining.min(phase_limit))
+    }
+}
+
 async fn create_reconnect_attempt(
     state: &WebRtcState,
     bridge: SharedBridgeState,
@@ -244,7 +253,12 @@ async fn create_reconnect_attempt(
     session_deadline: Instant,
     attempt: u32,
 ) -> Result<ReconnectAttempt, String> {
-    tokio::time::sleep(RECONNECT_DELAY).await;
+    tokio::time::timeout(
+        reconnect_timeout(session_deadline, RECONNECT_DELAY)?,
+        tokio::time::sleep(RECONNECT_DELAY),
+    )
+    .await
+    .map_err(|_| "the bounded WebRTC session expired during reconnection".to_owned())?;
     let remaining = session_deadline.saturating_duration_since(Instant::now());
     if remaining <= NEGOTIATION_TIMEOUT {
         return Err("the bounded WebRTC session expired during reconnection".into());
@@ -252,13 +266,23 @@ async fn create_reconnect_attempt(
     let mut retry_config = config.clone();
     retry_config.maximum_duration = remaining;
     let retry_transport = Arc::new(
-        tokio::time::timeout(RECONNECT_SETUP_TIMEOUT, WebRtcTransport::new())
-            .await
-            .map_err(|_| "timed out creating a replacement WebRTC transport".to_owned())?
-            .map_err(|error| error.to_string())?,
+        tokio::time::timeout(
+            reconnect_timeout(session_deadline, RECONNECT_SETUP_TIMEOUT)?,
+            WebRtcTransport::new(),
+        )
+        .await
+        .map_err(|_| "timed out creating a replacement WebRTC transport".to_owned())?
+        .map_err(|error| error.to_string())?,
     );
+    let offer_timeout = match reconnect_timeout(session_deadline, RECONNECT_SETUP_TIMEOUT) {
+        Ok(timeout) => timeout,
+        Err(detail) => {
+            let _ = retry_transport.close().await;
+            return Err(detail);
+        }
+    };
     let retry_offer =
-        match tokio::time::timeout(RECONNECT_SETUP_TIMEOUT, retry_transport.create_offer()).await {
+        match tokio::time::timeout(offer_timeout, retry_transport.create_offer()).await {
             Ok(Ok(offer)) => offer,
             Ok(Err(error)) => {
                 let _ = retry_transport.close().await;
@@ -269,20 +293,32 @@ async fn create_reconnect_attempt(
                 return Err("timed out creating a replacement WebRTC offer".into());
             }
         };
-    let (retry_server, endpoint): (PairingServer, PairingEndpoint) = match tokio::time::timeout(
-        RECONNECT_SETUP_TIMEOUT,
-        PairingServer::bind(retry_config.bind_address),
-    )
-    .await
-    {
-        Ok(Ok(pairing)) => pairing,
-        Ok(Err(error)) => {
+    let bind_timeout = match reconnect_timeout(session_deadline, RECONNECT_SETUP_TIMEOUT) {
+        Ok(timeout) => timeout,
+        Err(detail) => {
             let _ = retry_transport.close().await;
-            return Err(error.to_string());
+            return Err(detail);
         }
-        Err(_) => {
+    };
+    let (retry_server, endpoint): (PairingServer, PairingEndpoint) =
+        match tokio::time::timeout(bind_timeout, PairingServer::bind(retry_config.bind_address))
+            .await
+        {
+            Ok(Ok(pairing)) => pairing,
+            Ok(Err(error)) => {
+                let _ = retry_transport.close().await;
+                return Err(error.to_string());
+            }
+            Err(_) => {
+                let _ = retry_transport.close().await;
+                return Err("timed out opening replacement WebRTC signaling".into());
+            }
+        };
+    let handoff_timeout = match reconnect_timeout(session_deadline, REMOTE_TIMEOUT) {
+        Ok(timeout) => timeout,
+        Err(detail) => {
             let _ = retry_transport.close().await;
-            return Err("timed out opening replacement WebRTC signaling".into());
+            return Err(detail);
         }
     };
     let mut active = state.active.lock().await;
@@ -303,14 +339,19 @@ async fn create_reconnect_attempt(
     active.last_error = None;
     active.end_reconnect();
     drop(active);
-    if let Err(detail) = handoff_pairing(
-        bridge,
-        device_id,
-        endpoint.address,
-        retry_token.expose_for_pairing(),
-        &endpoint.certificate_sha256,
+    let handoff = tokio::time::timeout(
+        handoff_timeout,
+        handoff_pairing(
+            bridge,
+            device_id,
+            endpoint.address,
+            retry_token.expose_for_pairing(),
+            &endpoint.certificate_sha256,
+        ),
     )
-    .await
+    .await;
+    if let Err(detail) = handoff
+        .map_err(|_| "the bounded WebRTC session expired during receiver handoff".to_owned())?
     {
         let mut active = state.active.lock().await;
         let detail = stop_engine_after_failure(&mut active, retry_transport.as_ref(), detail).await;
@@ -480,10 +521,18 @@ pub(crate) async fn start_webrtc_stream(
         let mut reconnect_budget = ReconnectBudget::new(MAX_RECONNECT_ATTEMPTS);
         let mut capture_activated = false;
         'attempts: loop {
+            let negotiation_timeout = match reconnect_timeout(session_deadline, NEGOTIATION_TIMEOUT)
+            {
+                Ok(timeout) => timeout,
+                Err(detail) => {
+                    release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
+                    return;
+                }
+            };
             let answer = server
                 .take()
                 .expect("every attempt owns one signaling server")
-                .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
+                .accept_once(&token, &offer, negotiation_timeout)
                 .await;
             if let Err(error) = answer {
                 let detail = error.to_string();
@@ -595,12 +644,13 @@ pub(crate) async fn start_webrtc_stream(
                             };
                             match result {
                                 Ok(()) => {
-                                    let close_error = transport
-                                        .close()
-                                        .await
-                                        .err()
-                                        .map(|error| error.to_string());
-                                    active.transport = None;
+                                    let close_error = match transport.close().await {
+                                        Ok(()) => {
+                                            active.transport = None;
+                                            None
+                                        }
+                                        Err(error) => Some(error.to_string()),
+                                    };
                                     drop(active);
                                     let cleanup =
                                         release_capture(bridge_handle.clone(), close_error.clone())
@@ -821,6 +871,14 @@ mod tests {
         assert_eq!(budget.claim(), Some(2));
         assert_eq!(budget.claim(), None);
         assert_eq!(budget.claim(), None);
+    }
+
+    #[test]
+    fn every_reconnect_phase_is_clamped_to_the_absolute_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let timeout = reconnect_timeout(deadline, Duration::from_secs(15)).expect("time remains");
+        assert!(timeout <= Duration::from_millis(50));
+        assert!(reconnect_timeout(Instant::now(), Duration::from_secs(15)).is_err());
     }
 
     #[test]

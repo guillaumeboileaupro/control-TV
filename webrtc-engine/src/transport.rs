@@ -308,29 +308,88 @@ mod tests {
         );
     }
 
-    fn ogg_pages(stream: &Bytes) -> Vec<Bytes> {
-        let mut pages = Vec::new();
+    fn ogg_packets(stream: &Bytes) -> Vec<Bytes> {
+        let mut packets = Vec::new();
+        let mut packet = Vec::new();
         let mut offset = 0;
         while offset < stream.len() {
             assert_eq!(&stream[offset..offset + 4], b"OggS");
             let segment_count = usize::from(stream[offset + 26]);
-            let body_size: usize = stream[offset + 27..offset + 27 + segment_count]
-                .iter()
-                .map(|size| usize::from(*size))
-                .sum();
+            let lacing = &stream[offset + 27..offset + 27 + segment_count];
+            let body_size: usize = lacing.iter().map(|size| usize::from(*size)).sum();
             let page_size = 27 + segment_count + body_size;
-            pages.push(stream.slice(offset..offset + page_size));
+            let mut body_offset = offset + 27 + segment_count;
+            for size in lacing {
+                let end = body_offset + usize::from(*size);
+                packet.extend_from_slice(&stream[body_offset..end]);
+                body_offset = end;
+                if *size < 255 {
+                    packets.push(Bytes::from(std::mem::take(&mut packet)));
+                }
+            }
             offset += page_size;
         }
-        pages
+        assert!(packet.is_empty(), "fixture ends on an Opus packet boundary");
+        packets
+    }
+
+    fn ogg_crc(page: &[u8]) -> u32 {
+        page.iter().fold(0_u32, |mut crc, byte| {
+            crc ^= u32::from(*byte) << 24;
+            for _ in 0..8 {
+                crc = if crc & 0x8000_0000 != 0 {
+                    (crc << 1) ^ 0x04c1_1db7
+                } else {
+                    crc << 1
+                };
+            }
+            crc
+        })
+    }
+
+    fn ogg_page(packet: &[u8], sequence: u32, granule: u64, header_type: u8) -> Vec<u8> {
+        let mut lacing = vec![255_u8; packet.len() / 255];
+        lacing.push(u8::try_from(packet.len() % 255).expect("lacing remainder"));
+        let mut page = b"OggS\0".to_vec();
+        page.push(header_type);
+        page.extend_from_slice(&granule.to_le_bytes());
+        page.extend_from_slice(&0x4354_5631_u32.to_le_bytes());
+        page.extend_from_slice(&sequence.to_le_bytes());
+        page.extend_from_slice(&[0; 4]);
+        page.push(u8::try_from(lacing.len()).expect("lacing count"));
+        page.extend_from_slice(&lacing);
+        page.extend_from_slice(packet);
+        let checksum = ogg_crc(&page).to_le_bytes();
+        page[22..26].copy_from_slice(&checksum);
+        page
+    }
+
+    fn mux_received_opus(headers: &[Bytes], packets: &[Bytes]) -> Vec<u8> {
+        assert_eq!(headers.len(), 2);
+        let mut stream = Vec::new();
+        stream.extend(ogg_page(&headers[0], 0, 0, 2));
+        stream.extend(ogg_page(&headers[1], 1, 0, 0));
+        for (index, packet) in packets.iter().enumerate() {
+            let last = index + 1 == packets.len();
+            stream.extend(ogg_page(
+                packet,
+                u32::try_from(index + 2).expect("page sequence"),
+                u64::try_from(index + 1).expect("granule") * 960,
+                if last { 4 } else { 0 },
+            ));
+        }
+        stream
     }
 
     #[tokio::test]
     async fn real_peer_receives_and_decodes_continuous_h264_and_opus() {
-        if Command::new("ffmpeg").arg("-version").output().is_err() {
-            eprintln!("skipped: ffmpeg is unavailable");
-            return;
-        }
+        assert!(
+            Command::new("ffmpeg")
+                .arg("-version")
+                .output()
+                .is_ok_and(|output| output.status.success()),
+            "this decoding test requires ffmpeg"
+        );
         let video_fixture = encoded_fixture(&[
             "-f",
             "lavfi",
@@ -367,7 +426,9 @@ mod tests {
             "opus",
             "pipe:1",
         ]);
-        let audio_pages = ogg_pages(&audio_fixture);
+        let mut encoded_opus = ogg_packets(&audio_fixture);
+        assert!(encoded_opus.len() > 2, "headers plus audio packets");
+        let opus_headers: Vec<Bytes> = encoded_opus.drain(..2).collect();
         let sender = WebRtcTransport::new().await.expect("sender");
         let receiver = receiving_peer().await;
         let (video_tx, mut video_rx) = mpsc::channel(4);
@@ -435,7 +496,7 @@ mod tests {
         .expect("peers connected");
 
         let video = async {
-            for _ in 0..2 {
+            for _ in 0..3 {
                 sender
                     .send_video(video_fixture.clone(), Duration::from_secs(1))
                     .await
@@ -443,27 +504,37 @@ mod tests {
             }
         };
         let audio = async {
-            for page in audio_pages.iter().chain(audio_pages.first()) {
+            for packet in encoded_opus.iter().chain(encoded_opus.first()) {
                 sender
-                    .send_audio(page.clone(), Duration::from_millis(20))
+                    .send_audio(packet.clone(), Duration::from_millis(20))
                     .await
                     .expect("send audio");
             }
         };
         tokio::join!(video, audio);
-        let received_video = timeout(Duration::from_secs(5), video_rx.recv())
-            .await
-            .expect("video receive timeout")
-            .expect("video sample");
-        let received_audio = timeout(Duration::from_secs(5), async {
+        let received_video = timeout(Duration::from_secs(5), async {
             let mut stream = Vec::new();
-            for _ in 0..audio_pages.len() {
-                stream.extend_from_slice(&audio_rx.recv().await.expect("audio sample"));
+            for _ in 0..2 {
+                stream.extend_from_slice(&video_rx.recv().await.expect("video sample"));
             }
             stream
         })
         .await
+        .expect("video receive timeout");
+        let received_opus = timeout(Duration::from_secs(5), async {
+            let mut packets = Vec::new();
+            for _ in 0..encoded_opus.len() {
+                packets.push(audio_rx.recv().await.expect("audio sample"));
+            }
+            packets
+        })
+        .await
         .expect("audio receive timeout");
+        assert_eq!(
+            received_opus, encoded_opus,
+            "Opus payloads survive SRTP/RTP"
+        );
+        let received_audio = mux_received_opus(&opus_headers, &received_opus);
         assert_ffmpeg_decodes("h264", &received_video);
         assert_ffmpeg_decodes("ogg", &received_audio);
         sender.close().await.expect("close sender");

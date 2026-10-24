@@ -224,7 +224,7 @@ impl SessionController {
             let _ = stop.send(());
         }
         let mut media_result = pending_source_result;
-        if let Some(task) = self.media_task.take() {
+        if let Some(task) = self.media_task.as_mut() {
             let task_result = match task.await {
                 Ok((media, cleanup, source)) => {
                     if cleanup.is_err() {
@@ -234,6 +234,7 @@ impl SessionController {
                 }
                 Err(error) => Err(EngineError::Cleanup(error.to_string())),
             };
+            self.media_task.take();
             media_result = combine_media_and_cleanup(media_result, task_result);
         }
         let transport_result = transport.close().await;
@@ -367,6 +368,30 @@ mod tests {
 
     struct RetryCleanupSource {
         stop_calls: Arc<AtomicUsize>,
+    }
+
+    struct BlockingStopSource {
+        stop_started: Arc<Notify>,
+        allow_stop: Arc<Notify>,
+        sender: Option<mpsc::Sender<Result<MediaFrame, EngineError>>>,
+    }
+
+    #[async_trait]
+    impl MediaSource for BlockingStopSource {
+        async fn start(&mut self) -> Result<MediaStreams, EngineError> {
+            let (sender, receiver) = mpsc::channel(1);
+            self.sender = Some(sender);
+            Ok(MediaStreams {
+                video: receiver,
+                audio: None,
+            })
+        }
+
+        async fn stop(&mut self) -> Result<(), EngineError> {
+            self.stop_started.notify_one();
+            self.allow_stop.notified().await;
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -548,6 +573,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_interrupted_stop_keeps_the_media_task_for_a_cleanup_retry() {
+        let stop_started = Arc::new(Notify::new());
+        let allow_stop = Arc::new(Notify::new());
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(BlockingStopSource {
+                    stop_started: Arc::clone(&stop_started),
+                    allow_stop: Arc::clone(&allow_stop),
+                    sender: None,
+                }),
+                media_transport,
+            )
+            .expect("start media");
+
+        {
+            let first_stop = controller.stop(transport.as_ref());
+            tokio::pin!(first_stop);
+            tokio::select! {
+                _ = stop_started.notified() => {}
+                result = &mut first_stop => panic!("stop unexpectedly completed: {result:?}"),
+            }
+        }
+        assert!(
+            controller.media_task.is_some(),
+            "cleanup ownership is retained"
+        );
+
+        allow_stop.notify_one();
+        controller
+            .stop(transport.as_ref())
+            .await
+            .expect("retry completes cleanup");
+        assert!(controller.media_task.is_none());
+        assert_eq!(controller.state(), EngineState::Idle);
+    }
+
+    #[tokio::test]
     async fn stop_preserves_media_and_transport_cleanup_failures() {
         let stopped = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(FakeTransport {
@@ -711,9 +776,31 @@ mod tests {
         let duration = Duration::from_secs(seconds);
         let (video_tx, video_rx) = mpsc::channel(2);
         let (audio_tx, audio_rx) = mpsc::channel(16);
+        for _ in 0..2 {
+            video_tx
+                .try_send(Ok(MediaFrame {
+                    data: Bytes::from_static(&[0, 0, 0, 1, 0x65]),
+                    duration: Duration::from_millis(10),
+                    keyframe: true,
+                }))
+                .expect("video queue high-water mark");
+        }
+        for _ in 0..16 {
+            audio_tx
+                .try_send(Ok(MediaFrame {
+                    data: Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
+                    duration: Duration::from_millis(20),
+                    keyframe: false,
+                }))
+                .expect("audio queue high-water mark");
+        }
+        assert_eq!(video_tx.capacity(), 0);
+        assert_eq!(audio_tx.capacity(), 0);
         let video_producer = tokio::spawn(async move {
             let deadline = Instant::now() + duration;
+            let mut ticks = tokio::time::interval(Duration::from_millis(10));
             while Instant::now() < deadline {
+                ticks.tick().await;
                 if video_tx
                     .send(Ok(MediaFrame {
                         data: Bytes::from_static(&[0, 0, 0, 1, 0x65]),
@@ -725,12 +812,13 @@ mod tests {
                 {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
         let audio_producer = tokio::spawn(async move {
             let deadline = Instant::now() + duration;
+            let mut ticks = tokio::time::interval(Duration::from_millis(20));
             while Instant::now() < deadline {
+                ticks.tick().await;
                 if audio_tx
                     .send(Ok(MediaFrame {
                         data: Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
@@ -742,7 +830,6 @@ mod tests {
                 {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(20)).await;
             }
         });
         let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
@@ -764,5 +851,11 @@ mod tests {
         assert!(finished.duration_since(started) >= duration);
         assert!(values.captured_frames >= seconds.saturating_mul(50));
         assert!(values.sent_audio_bytes >= seconds.saturating_mul(50));
+        let video_timeline_ms = values.captured_frames.saturating_mul(10);
+        let audio_timeline_ms = (values.sent_audio_bytes / 3).saturating_mul(20);
+        assert!(
+            video_timeline_ms.abs_diff(audio_timeline_ms) <= 400,
+            "synthetic A/V timelines diverged: video={video_timeline_ms}ms audio={audio_timeline_ms}ms"
+        );
     }
 }
