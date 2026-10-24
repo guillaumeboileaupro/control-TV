@@ -65,6 +65,13 @@ Steps 4-5 build and labels, Step 6 HTML, Steps 6b-8 exports, Step 9 manifest and
 `references/build-pipeline.md`. Read it before a full build and follow its steps in order; the
 query fast path above and the subcommands below do not need it.
 
+**In control-TV** (`AGENTS.md`, Code knowledge graph; skill `hardware-safety` for installs):
+- never run Step 1's install commands (`uv tool install`, `pip install`, `--break-system-packages`)
+  without the owner's authorization: if `graphify` is missing, stop and ask;
+- builds are AST-only: prefer `graphify update .`; in a full build run Part A and the Part B
+  fast path (empty semantic file) even when documents are detected, and run semantic extraction
+  (subagents or Gemini) only with the owner's explicit authorization.
+
 ## Interpreter guard for subcommands
 
 Before running any subcommand below (`--update`, `--cluster-only`, `query`, `path`, `explain`, `add`), check that `.graphify_python` exists. If it's missing (e.g. user deleted `graphify-out/`), re-resolve the interpreter first:

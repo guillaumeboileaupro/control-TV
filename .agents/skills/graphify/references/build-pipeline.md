@@ -9,6 +9,9 @@ Only when the path is one or more `https://github.com/...` URLs, or several loca
 
 ### Step 1 - Ensure graphify is installed
 
+> **control-TV:** if `graphify` cannot be imported, stop and ask the owner before any
+> installation below (`uv tool install`, `pip install`, `--break-system-packages`).
+
 ```bash
 # Detect the correct Python interpreter (handles uv tool, pipx, venv, system installs)
 PYTHON=""
@@ -102,6 +105,10 @@ Then act on it:
 Skip this step entirely if `detect` returned zero `video` files. When the corpus has video or audio, see `references/transcribe.md` to transcribe them to text first, then treat the transcripts as doc files in Step 3.
 
 ### Step 3 - Extract entities and relationships
+
+> **control-TV:** builds are AST-only. Unless the owner explicitly authorizes semantic
+> extraction for this run, skip Part B whatever was detected: write the empty semantic file of the
+> Part B fast path and go to Part C. Never let a set `GEMINI_API_KEY`/`GOOGLE_API_KEY` start it.
 
 **Before starting:** note whether `--mode deep` was given. You must pass `DEEP_MODE=true` to every subagent in Step B2 if it was. Track this from the original invocation - do not lose it.
 
