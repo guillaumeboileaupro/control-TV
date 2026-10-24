@@ -8,23 +8,16 @@
 // `main.ts` performs the I/O and draws the result; `npm test` covers every rule below.
 
 import type { JsonObject } from "./json.ts";
-import {
-  formatClock,
-  idle,
-  playbackKind,
-  type AppState,
-  type BridgeFailure,
-  type DeviceStatus,
-} from "./model.ts";
+import { formatClock, idle, playbackKind, type AppState, type DeviceStatus } from "./model.ts";
+import type { BridgeFailure, CommandName, SoundTarget, TransportCommand } from "./view-state.ts";
 
-export type TransportCommand = "play" | "pause" | "stop";
-// Volume and mute are absolute requests: a level to reach, a mute state to reach. The names are
-// the control layer's own, so an answer can be matched to the command that was sent.
-export type SoundCommand = "set_volume" | "set_muted";
-export type CommandName = TransportCommand | "seek" | SoundCommand;
-
-// What a sound command asks the TV for. It is a request, never something the TV reported.
-export type SoundTarget = { kind: "volume"; percent: number } | { kind: "mute"; muted: boolean };
+export type {
+  CommandName,
+  CommandView,
+  SoundCommand,
+  SoundTarget,
+  TransportCommand,
+} from "./view-state.ts";
 
 // What the control layer answers once a command was sent. `confirmed` means a status observed
 // on the TV shows the result; `unconfirmed` means it did not in time (`detail` says what the TV
@@ -38,31 +31,6 @@ export interface CommandResult {
   detail: string | null;
   observed: DeviceStatus | null;
 }
-
-export type CommandView =
-  | { kind: "idle" }
-  | {
-      kind: "pending";
-      requestId: number;
-      command: CommandName;
-      targetSeconds: number | null;
-      sound: SoundTarget | null;
-    }
-  // The TV showed the result. `positionSeconds` is the position it reported (a seek's outcome).
-  | { kind: "confirmed"; command: CommandName; positionSeconds: number | null }
-  // Sent, but the TV did not show the result in time (or nothing checked): not a success.
-  | {
-      kind: "sent";
-      command: CommandName;
-      confirmation: "unconfirmed" | "not_checked";
-      detail: string | null;
-      targetSeconds: number | null;
-      sound: SoundTarget | null;
-      // The volume the answer itself reported, in whole percent, when it carried an observation.
-      reportedPercent: number | null;
-    }
-  // Not sent, or refused: an error with the control layer's code.
-  | { kind: "failed"; command: CommandName; failure: BridgeFailure };
 
 export interface CommandRequest {
   requestId: number;
