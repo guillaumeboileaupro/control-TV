@@ -89,6 +89,10 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              Answers {"result": {"package", "deviceId", "confirmation",
                              "detail", "frontApp"}}: `confirmed` only when the TV then reports
                              that app in front, `not_checked` when it does not say.
+- `get_screen_receiver_capabilities` -> the selected TV's reachability, HLS availability and
+                             exact ControlTV Receiver installation/access state. A failed app
+                             inventory is returned as an explicit capability state and never
+                             guessed as "not installed". Read-only.
 
 An error `code` is either a `ControlError` code (`invalid_argument`, `device_not_found`,
 `device_unavailable`, `timeout`, ...) or `internal_error` for an unexpected exception,
@@ -101,7 +105,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, TextIO
 
 import control_tv
@@ -130,7 +134,13 @@ from control_tv.trace_files import AcceptanceTracing
 Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
-    from control_tv.screen_streaming.controller import ScreenStatus, ScreenStreamController
+    from control_tv.screen_streaming.controller import (
+        ScreenRequest,
+        ScreenStatus,
+        ScreenStreamController,
+    )
+    from control_tv.screen_streaming.display_layout import Display, DisplayManager, OutputSetting
+    from control_tv.screen_streaming.virtual_display import Position
 INTERNAL_ERROR_CODE = "internal_error"
 
 
@@ -375,12 +385,102 @@ def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"apps": [_app_to_json(app) for app in apps]}
 
 
+def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObject) -> JsonObject:
+    """Probe only the selected device through existing control-layer reads.
+
+    A successful Cast status proves that the selected equipment is reachable and can use the
+    existing HLS path. The ADB inventory separately proves whether the exact receiver package is
+    installed and accessible; inability to read that inventory stays distinct from absence. A
+    WebRTC confirmation additionally requires the already-paired Android Remote channel used for
+    the one-time secret handoff.
+    """
+    device_id = _device_id_param(params)
+    try:
+        control.get_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": False,
+                "hlsAvailable": False,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    try:
+        apps = control.list_tv_apps(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": None,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    from control_tv.screen_streaming.controller import WEBRTC_RECEIVER_PACKAGE
+
+    installed = any(app.package == WEBRTC_RECEIVER_PACKAGE for app in apps)
+    if not installed:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": False,
+                "receiverAccessible": False,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": "receiver_not_installed",
+            }
+        }
+    try:
+        control.get_remote_status(device_id)
+    except ControlError as error:
+        return {
+            "capabilities": {
+                "deviceAvailable": True,
+                "hlsAvailable": True,
+                "receiverAppInstalled": True,
+                "receiverAccessible": True,
+                "remoteAccessible": False,
+                "webrtcConfirmed": False,
+                "reason": error.code.value,
+            }
+        }
+    return {
+        "capabilities": {
+            "deviceAvailable": True,
+            "hlsAvailable": True,
+            "receiverAppInstalled": True,
+            "receiverAccessible": True,
+            "remoteAccessible": True,
+            "webrtcConfirmed": True,
+            "reason": None,
+        }
+    }
+
+
 def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     device_id = _device_id_param(params)
     package = params.get("package")
     if not isinstance(package, str):
         raise InvalidArgumentError("package must be a string")
     return {"result": _app_launch_to_json(control.launch_tv_app(device_id, package))}
+
+
+def _handle_pair_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
+    device_id = _device_id_param(params)
+    pairing_endpoint = params.get("pairingEndpoint")
+    code = params.get("code")
+    if not isinstance(pairing_endpoint, str) or not isinstance(code, str):
+        raise InvalidArgumentError("pairingEndpoint and code must be strings")
+    control.pair_tv_apps(device_id, pairing_endpoint, code)
+    return {"pairing": "paired"}
 
 
 # The screen stream (D3/D4): one controller per bridge process, created on first use (never on
@@ -398,9 +498,84 @@ def _screen() -> ScreenStreamController:
 
 
 def close_screen_stream() -> None:
-    """Stop the screen stream, if one was ever started (the bridge is exiting)."""
-    if _screen_controller is not None:
-        _screen_controller.close()
+    """Stop the screen stream, if one was ever started, and revert a screen configuration that
+    was not kept (the bridge is exiting). Both are attempted."""
+    try:
+        if _screen_controller is not None:
+            _screen_controller.close()
+    finally:
+        if _display_manager is not None:
+            _display_manager.close()
+
+
+_display_manager: DisplayManager | None = None
+
+
+def _displays() -> DisplayManager:
+    global _display_manager
+    if _display_manager is None:
+        from control_tv.screen_streaming.display_layout import DisplayManager
+
+        _display_manager = DisplayManager()
+    return _display_manager
+
+
+def _layout_to_json(manager: DisplayManager, displays: Sequence[Display]) -> JsonObject:
+    shown: list[JsonValue] = []
+    for display in displays:
+        setting = display.setting
+        modes: list[JsonValue] = [
+            {"id": mode.id, "width": mode.width, "height": mode.height, "rate": mode.rate}
+            for mode in display.modes
+        ]
+        shown.append(
+            {
+                "name": display.name,
+                "connected": display.connected,
+                "enabled": setting.enabled,
+                "mode": setting.mode,
+                "x": setting.x,
+                "y": setting.y,
+                "rotation": setting.rotation.value,
+                "scale": setting.scale,
+                "primary": setting.primary,
+                "modes": modes,
+            }
+        )
+    return {
+        "displays": shown,
+        "awaitingConfirmation": manager.awaiting_confirmation,
+        "revertedByItself": manager.take_reverted_notice(),
+    }
+
+
+def _setting_from_json(value: JsonValue) -> OutputSetting:
+    from control_tv.screen_streaming.display_layout import OutputSetting, Rotation
+
+    if not isinstance(value, dict):
+        raise InvalidArgumentError("each display must be an object")
+    name, enabled, mode = value.get("name"), value.get("enabled"), value.get("mode")
+    rotation, scale, primary = value.get("rotation"), value.get("scale"), value.get("primary")
+    if not isinstance(name, str) or not isinstance(enabled, bool):
+        raise InvalidArgumentError("a display needs a name and enabled true or false")
+    if not enabled:
+        return OutputSetting(name, False)
+    if not isinstance(mode, str) or not isinstance(primary, bool):
+        raise InvalidArgumentError("a display that is on needs a mode and primary true or false")
+    if rotation not in ("normal", "left", "right", "inverted"):
+        raise InvalidArgumentError("rotation must be normal, left, right or inverted")
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise InvalidArgumentError("scale must be a number")
+    return OutputSetting(
+        name,
+        True,
+        mode,
+        _strict_int(value, "x"),
+        _strict_int(value, "y"),
+        Rotation(rotation),
+        float(scale),
+        primary,
+    )
 
 
 def _screen_call(call: Callable[[], JsonObject]) -> JsonObject:
@@ -436,24 +611,46 @@ def _strict_int(params: JsonObject, name: str) -> int:
 def _handle_list_screens(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
 
+    from control_tv.screen_streaming.virtual_display import REFRESH_RATES, SIZES
+
     def listed() -> JsonObject:
-        return {
-            "screens": [
-                {
-                    "name": output.name,
-                    "width": output.width,
-                    "height": output.height,
-                    "primary": output.primary,
-                }
-                for output in _screen().screens()
-            ]
+        controller = _screen()
+        screens: list[JsonValue] = [
+            {
+                "name": output.name,
+                "width": output.width,
+                "height": output.height,
+                "x": output.x,
+                "y": output.y,
+                "primary": output.primary,
+            }
+            for output in controller.screens()
+        ]
+        # What "Étendre" can offer here, as measured on the desktop; no output means the
+        # extension is not available until the owner enables one.
+        extension: JsonObject = {
+            "output": controller.extension_output(),
+            "sizes": [[width, height] for width, height in SIZES],
+            "refreshRates": list(REFRESH_RATES),
+            "positions": list(_positions()),
         }
+        return {"screens": screens, "extension": extension}
 
     return _screen_call(listed)
 
 
-def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
+def _positions() -> dict[str, Position]:
+    from control_tv.screen_streaming.virtual_display import Position
+
+    return {
+        "left": Position.LEFT,
+        "right": Position.RIGHT,
+        "above": Position.ABOVE,
+        "below": Position.BELOW,
+    }
+
+
+def _screen_request(params: JsonObject) -> ScreenRequest:
     from control_tv.screen_streaming.controller import ScreenRequest
     from control_tv.screen_streaming.d1 import Mode
 
@@ -464,7 +661,11 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         raise InvalidArgumentError("screen must be a string")
     if not isinstance(consent, bool):
         raise InvalidArgumentError("consent must be true or false")
-    request = ScreenRequest(
+    position = params.get("position", "right")
+    if not isinstance(position, str) or position not in _positions():
+        raise InvalidArgumentError("position must be left, right, above or below")
+    refresh = _strict_int(params, "refresh") if "refresh" in params else 60
+    return ScreenRequest(
         str(_device_id_param(params)),
         Mode(mode),
         screen,
@@ -472,13 +673,83 @@ def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonO
         _strict_int(params, "height"),
         _strict_int(params, "fps"),
         consent,
+        refresh,
+        _positions()[position],
+        _strict_int(params, "x") if "x" in params else None,
+        _strict_int(params, "y") if "y" in params else None,
     )
+
+
+def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    request = _screen_request(params)
     return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
+
+
+def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+
+    def prepare() -> JsonObject:
+        lease = _screen().prepare_webrtc_capture(_screen_request(params))
+        return {
+            "capture": {
+                "bindAddress": lease.bind_address,
+                "display": lease.display,
+                "offsetX": lease.offset_x,
+                "offsetY": lease.offset_y,
+                "sourceWidth": lease.source_width,
+                "sourceHeight": lease.source_height,
+            }
+        }
+
+    return _screen_call(prepare)
+
+
+def _handle_activate_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().activate_webrtc_capture())}
+    )
+
+
+def _handle_release_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    error = params.get("error")
+    if error is not None and not isinstance(error, str):
+        raise InvalidArgumentError("error must be a string or null")
+    return _screen_call(
+        lambda: {"stream": _screen_status_to_json(_screen().release_webrtc_capture(error))}
+    )
 
 
 def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
     return {"stream": _screen_status_to_json(_screen().stop())}
+
+
+def _handle_get_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().layout()))
+
+
+def _handle_apply_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control
+    displays = params.get("displays")
+    if not isinstance(displays, list):
+        raise InvalidArgumentError("displays must be a list")
+    settings = [_setting_from_json(value) for value in displays]
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().apply(settings)))
+
+
+def _handle_confirm_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    _displays().confirm()
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().layout()))
+
+
+def _handle_revert_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
+    del control, params
+    return _screen_call(lambda: _layout_to_json(_displays(), _displays().revert()))
 
 
 def _handle_get_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
@@ -502,11 +773,20 @@ _HANDLERS: dict[str, Handler] = {
     "press_remote_key": _handle_press_remote_key,
     "type_remote_text": _handle_type_remote_text,
     "list_tv_apps": _handle_list_tv_apps,
+    "get_screen_receiver_capabilities": _handle_get_screen_receiver_capabilities,
     "launch_tv_app": _handle_launch_tv_app,
+    "pair_tv_apps": _handle_pair_tv_apps,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,
+    "prepare_webrtc_capture": _handle_prepare_webrtc_capture,
+    "activate_webrtc_capture": _handle_activate_webrtc_capture,
+    "release_webrtc_capture": _handle_release_webrtc_capture,
     "stop_screen_stream": _handle_stop_screen_stream,
     "get_screen_stream": _handle_get_screen_stream,
+    "get_display_layout": _handle_get_display_layout,
+    "apply_display_layout": _handle_apply_display_layout,
+    "confirm_display_layout": _handle_confirm_display_layout,
+    "revert_display_layout": _handle_revert_display_layout,
 }
 
 

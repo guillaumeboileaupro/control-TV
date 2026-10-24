@@ -1,6 +1,6 @@
 // The "Screen to TV" panel's rules: which screens can be streamed, the person's choice (duplicate
-// one screen or extend onto a virtual monitor, size, frame rate), the explicit consent step and
-// what the panel shows for each state of the stream. Pure functions over plain data: the panel
+// one screen or extend the desktop onto the TV: size, refresh rate and where the TV's screen sits,
+// frame rate), the explicit consent step and what the panel shows for each state of the stream. Pure functions over plain data: the panel
 // (screen-panel.ts) performs the calls and draws the DOM.
 //
 // The stream runs in the control layer, which needs the owner's explicit consent for every start
@@ -10,22 +10,42 @@ import { isJsonObject, type JsonValue } from "./json.ts";
 import type { BridgeFailure } from "./model.ts";
 
 export type ScreenMode = "duplicate" | "extend";
+export type TransportChoice = "auto" | "webrtc" | "hls";
+export type ActiveTransport = Exclude<TransportChoice, "auto">;
 export type StreamStateName = "idle" | "starting" | "running" | "stopping" | "failed";
 
-export const SIZES = ["1280x720", "1920x1080"] as const;
+// "auto" is the largest size the TV path takes (Full HD).
+export const SIZES = ["auto", "1280x720", "1920x1080"] as const;
 export type SizeName = (typeof SIZES)[number];
 const PIXELS: Record<SizeName, { width: number; height: number }> = {
+  auto: { width: 1920, height: 1080 },
   "1280x720": { width: 1280, height: 720 },
   "1920x1080": { width: 1920, height: 1080 },
 };
-export const RATES = [25, 30, 60] as const;
+// The extended screen's refresh rates and sides, as measured on the desktop (30 Hz refused).
+export const REFRESH_RATES = [60, 50] as const;
+export type RefreshRate = (typeof REFRESH_RATES)[number];
+export const POSITIONS = ["left", "right", "above", "below"] as const;
+export type Placement = (typeof POSITIONS)[number];
+// 60 is not offered: the TV's Cast receiver did not keep up with 1080p60 (hardware test).
+export const RATES = [25, 30] as const;
 export type Rate = (typeof RATES)[number];
 
 export interface ScreenOutput {
   name: string;
   width: number;
   height: number;
+  x: number;
+  y: number;
   primary: boolean;
+  virtual?: boolean;
+}
+
+export interface PreviewScreen extends ScreenOutput {
+  previewX: number;
+  previewY: number;
+  previewWidth: number;
+  previewHeight: number;
 }
 
 export interface StreamStatus {
@@ -36,14 +56,26 @@ export interface StreamStatus {
 }
 
 export interface ScreenChoice {
+  transport: TransportChoice;
   mode: ScreenMode;
   screen: string | null;
   size: SizeName;
   fps: Rate;
+  refresh: RefreshRate;
+  position: Placement;
+  x: number | null;
+  y: number | null;
+}
+
+// What `bridge_list_screens` reports: the screens to duplicate, and the free video output the
+// extension would use (null: the extension is not available until one is enabled).
+export interface Listing {
+  screens: ScreenOutput[];
+  extensionOutput: string | null;
 }
 
 export type Availability =
-  { kind: "unknown" } | { kind: "available"; screens: ScreenOutput[] } | { kind: "unavailable" };
+  { kind: "unknown" } | ({ kind: "available" } & Listing) | { kind: "unavailable" };
 
 export interface ScreenPanelState {
   availability: Availability;
@@ -55,6 +87,7 @@ export interface ScreenPanelState {
   pending: boolean;
   // The last request the control layer refused or could not answer.
   failure: BridgeFailure | null;
+  transportUsed: ActiveTransport | null;
 }
 
 export const IDLE_STREAM: StreamStatus = { state: "idle", mode: null, screen: null, error: null };
@@ -63,10 +96,21 @@ export function initialScreenState(): ScreenPanelState {
   return {
     availability: { kind: "unknown" },
     stream: IDLE_STREAM,
-    choice: { mode: "duplicate", screen: null, size: "1920x1080", fps: 30 },
+    choice: {
+      transport: "auto",
+      mode: "duplicate",
+      screen: null,
+      size: "auto",
+      fps: 30,
+      refresh: 60,
+      position: "right",
+      x: null,
+      y: null,
+    },
     confirming: false,
     pending: false,
     failure: null,
+    transportUsed: null,
   };
 }
 
@@ -80,23 +124,55 @@ function isStateName(value: JsonValue | undefined): value is StreamStateName {
   return typeof value === "string" && (STATES as readonly string[]).includes(value);
 }
 
-// The screens a `bridge_list_screens` answer reports; `null` when it has another shape.
-export function parseScreens(value: JsonValue): ScreenOutput[] | null {
+// What a `bridge_list_screens` answer reports; `null` when it has another shape.
+export function parseListing(value: JsonValue): Listing | null {
   if (!isJsonObject(value) || !Array.isArray(value["screens"])) {
     return null;
   }
+  const extension = value["extension"];
+  const output = isJsonObject(extension) ? extension["output"] : undefined;
   const screens: ScreenOutput[] = [];
   for (const entry of value["screens"]) {
     if (!isJsonObject(entry)) {
       return null;
     }
-    const { name, width, height, primary } = entry;
-    if (typeof name !== "string" || typeof width !== "number" || typeof height !== "number") {
+    const { name, width, height, x, y, primary } = entry;
+    if (
+      typeof name !== "string" ||
+      typeof width !== "number" ||
+      typeof height !== "number" ||
+      typeof x !== "number" ||
+      typeof y !== "number" ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      !Number.isInteger(x) ||
+      !Number.isInteger(y) ||
+      width <= 0 ||
+      height <= 0
+    ) {
       return null;
     }
-    screens.push({ name, width, height, primary: primary === true });
+    screens.push({ name, width, height, x, y, primary: primary === true });
   }
-  return screens;
+  return { screens, extensionOutput: typeof output === "string" ? output : null };
+}
+
+export function previewScreens(screens: readonly ScreenOutput[]): PreviewScreen[] {
+  if (screens.length === 0) {
+    return [];
+  }
+  const left = Math.min(...screens.map((screen) => screen.x));
+  const top = Math.min(...screens.map((screen) => screen.y));
+  const right = Math.max(...screens.map((screen) => screen.x + screen.width));
+  const bottom = Math.max(...screens.map((screen) => screen.y + screen.height));
+  const scale = Math.min(560 / (right - left), 220 / (bottom - top));
+  return screens.map((screen) => ({
+    ...screen,
+    previewX: 20 + (screen.x - left) * scale,
+    previewY: 20 + (screen.y - top) * scale,
+    previewWidth: screen.width * scale,
+    previewHeight: screen.height * scale,
+  }));
 }
 
 // The stream state an answer of the screen stream commands reports; `null` otherwise.
@@ -114,20 +190,98 @@ export function parseStream(value: JsonValue): StreamStatus | null {
   };
 }
 
-export function withScreens(
-  state: ScreenPanelState,
-  screens: ScreenOutput[] | null,
-): ScreenPanelState {
-  if (screens === null) {
+export function withScreens(state: ScreenPanelState, listing: Listing | null): ScreenPanelState {
+  if (listing === null) {
     return { ...state, availability: { kind: "unavailable" } };
   }
+  const { screens } = listing;
   const kept = screens.some((screen) => screen.name === state.choice.screen);
   const screen = kept ? state.choice.screen : (screens[0]?.name ?? null);
+  const primary = screens.find((candidate) => candidate.primary) ?? screens[0];
+  const placed =
+    state.choice.x === null && primary !== undefined
+      ? { x: primary.x + primary.width, y: primary.y }
+      : { x: state.choice.x, y: state.choice.y };
   return {
     ...state,
-    availability: { kind: "available", screens },
-    choice: { ...state.choice, screen },
+    availability: { kind: "available", ...listing },
+    choice: { ...state.choice, screen, ...placed },
   };
+}
+
+export function arrangementScreens(state: ScreenPanelState): ScreenOutput[] {
+  if (state.availability.kind !== "available") {
+    return [];
+  }
+  const screens = [...state.availability.screens];
+  if (
+    state.choice.mode === "extend" &&
+    state.availability.extensionOutput !== null &&
+    state.choice.x !== null &&
+    state.choice.y !== null
+  ) {
+    screens.push({
+      name: state.availability.extensionOutput,
+      ...PIXELS[state.choice.size],
+      x: state.choice.x,
+      y: state.choice.y,
+      primary: false,
+      virtual: true,
+    });
+  }
+  return screens;
+}
+
+// The TV's screen-to-be while the extension is chosen but not started: the display manager shows
+// it at the chosen position, at the stream's size (null otherwise).
+export function pendingExtension(
+  state: ScreenPanelState,
+): { name: string; width: number; height: number; x: number; y: number } | null {
+  if (
+    state.choice.mode !== "extend" ||
+    state.stream.state !== "idle" ||
+    state.availability.kind !== "available" ||
+    state.availability.extensionOutput === null ||
+    state.choice.x === null ||
+    state.choice.y === null
+  ) {
+    return null;
+  }
+  return {
+    name: state.availability.extensionOutput,
+    ...PIXELS[state.choice.size],
+    x: state.choice.x,
+    y: state.choice.y,
+  };
+}
+
+export function moveExtension(state: ScreenPanelState, x: number, y: number): ScreenPanelState {
+  if (!describeScreen(state, true).canChoose || state.choice.mode !== "extend") {
+    return state;
+  }
+  const size = PIXELS[state.choice.size];
+  const screens = state.availability.kind === "available" ? state.availability.screens : [];
+  const xGuides = screens.flatMap((screen) => [
+    screen.x,
+    screen.x + screen.width,
+    screen.x - size.width,
+    screen.x + screen.width - size.width,
+  ]);
+  const yGuides = screens.flatMap((screen) => [
+    screen.y,
+    screen.y + screen.height,
+    screen.y - size.height,
+    screen.y + screen.height - size.height,
+  ]);
+  const snap = (value: number, guides: readonly number[]): number => {
+    const nearest = guides.reduce<number | null>(
+      (best, guide) =>
+        best === null || Math.abs(guide - value) < Math.abs(best - value) ? guide : best,
+      null,
+    );
+    return nearest !== null && Math.abs(nearest - value) <= 48 ? nearest : Math.round(value);
+  };
+  return choose(state, { x: snap(x, xGuides), y: snap(y, yGuides) });
 }
 
 export function choose(state: ScreenPanelState, choice: Partial<ScreenChoice>): ScreenPanelState {
@@ -151,6 +305,10 @@ export function follows(state: ScreenPanelState): boolean {
 export interface ScreenDescription {
   visible: boolean;
   canChoose: boolean;
+  // The extension menu (refresh rate, arrangement) is shown for "extend".
+  extending: boolean;
+  // A free video output is enabled, so the desktop can be extended.
+  canExtend: boolean;
   needsScreen: boolean;
   canAsk: boolean;
   confirming: boolean;
@@ -170,13 +328,16 @@ const STATUS_TEXT: Record<StreamStateName, string> = {
 };
 
 function consentText(choice: ScreenChoice): string {
+  const { width, height } = PIXELS[choice.size];
   const what =
     choice.mode === "duplicate"
       ? `Everything on the screen ${choice.screen ?? ""} will be visible on the TV.`
-      : "A virtual monitor is added to the right of your desktop until the stream stops; what you move onto it is visible on the TV.";
+      : `The TV becomes a second screen at desktop coordinates ${choice.x ?? 0}, ${choice.y ?? 0} ` +
+        `(${width}×${height}, ${choice.refresh} Hz) until the stream stops; what you move onto it ` +
+        "is visible on the TV, and your main screen is restored afterwards.";
   return (
-    `${what} The stream is sent at ${choice.size}, ${choice.fps} frames per second, only on your ` +
-    "home network, with a private address. It stops after one hour, on Stop, or when you quit."
+    `${what} The stream is sent at ${width}×${height}, ${choice.fps} frames per second, only on ` +
+    "your home network, with a private address. It stops after one hour, on Stop, or when you quit."
   );
 }
 
@@ -190,15 +351,31 @@ function sentence(message: string | null): string | null {
 }
 
 export function describeScreen(state: ScreenPanelState, tvSelected: boolean): ScreenDescription {
-  const screens = state.availability.kind === "available" ? state.availability.screens : [];
+  const available = state.availability.kind === "available" ? state.availability : null;
+  const screens = available?.screens ?? [];
+  const canExtend = (available?.extensionOutput ?? null) !== null;
   const running = active(state.stream);
+  const extending = state.choice.mode === "extend";
   const needsScreen = state.choice.mode === "duplicate" && state.choice.screen === null;
+  const blocked = needsScreen || (extending && !canExtend);
   const canChoose = !running && !state.pending && state.stream.state !== "failed";
+  const transport =
+    state.transportUsed === "webrtc" ? "WebRTC" : state.transportUsed === "hls" ? "HLS" : null;
+  const statusText =
+    transport !== null && state.stream.state === "starting"
+      ? `Starting the ${transport} stream…`
+      : transport !== null && state.stream.state === "running"
+        ? `Streaming to the TV with ${transport}.`
+        : transport !== null && state.stream.state === "stopping"
+          ? `Stopping the ${transport} stream…`
+          : STATUS_TEXT[state.stream.state];
   return {
     visible: state.availability.kind === "available",
     canChoose,
+    extending,
+    canExtend,
     needsScreen,
-    canAsk: canChoose && tvSelected && !needsScreen && !state.confirming,
+    canAsk: canChoose && tvSelected && !blocked && !state.confirming,
     confirming: canChoose && tvSelected && state.confirming,
     consentText: consentText(state.choice),
     canStop:
@@ -212,12 +389,15 @@ export function describeScreen(state: ScreenPanelState, tvSelected: boolean): Sc
         ? "Choose a TV first."
         : screens.length === 0 && state.choice.mode === "duplicate" && !running
           ? "No screen can be duplicated: extend instead."
-          : STATUS_TEXT[state.stream.state],
+          : extending && !canExtend && !running
+            ? "Extending needs a free video output enabled first (see the test procedure)."
+            : statusText,
     errorText: sentence(state.failure?.message ?? state.stream.error),
   };
 }
 
 export interface ScreenInvocation {
+  transport: TransportChoice;
   command: "bridge_start_screen_stream";
   args: {
     deviceId: string;
@@ -227,6 +407,10 @@ export interface ScreenInvocation {
     height: number;
     fps: number;
     consent: true;
+    refresh: RefreshRate;
+    position: Placement;
+    x?: number;
+    y?: number;
   };
 }
 
@@ -253,6 +437,7 @@ export function consentedStart(
   return {
     state: { ...state, confirming: false, pending: true, failure: null },
     request: {
+      transport: state.choice.transport,
       command: "bridge_start_screen_stream",
       args: {
         deviceId,
@@ -262,8 +447,97 @@ export function consentedStart(
         height,
         fps: state.choice.fps,
         consent: true,
+        refresh: state.choice.refresh,
+        position: state.choice.position,
+        ...(state.choice.mode === "extend" && state.choice.x !== null && state.choice.y !== null
+          ? { x: state.choice.x, y: state.choice.y }
+          : {}),
       },
     },
+  };
+}
+
+export interface ReceiverCapabilities {
+  deviceAvailable: boolean;
+  hlsAvailable: boolean;
+  remoteAccessible: boolean;
+  webrtcConfirmed: boolean;
+  reason: string | null;
+}
+
+export function parseReceiverCapabilities(value: JsonValue): ReceiverCapabilities | null {
+  const capabilities = isJsonObject(value) ? value["capabilities"] : undefined;
+  if (!isJsonObject(capabilities)) {
+    return null;
+  }
+  const { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason } = capabilities;
+  if (
+    typeof deviceAvailable !== "boolean" ||
+    typeof hlsAvailable !== "boolean" ||
+    typeof remoteAccessible !== "boolean" ||
+    typeof webrtcConfirmed !== "boolean" ||
+    (reason !== null && typeof reason !== "string")
+  ) {
+    return null;
+  }
+  return { deviceAvailable, hlsAvailable, remoteAccessible, webrtcConfirmed, reason };
+}
+
+export function selectTransport(
+  requested: TransportChoice,
+  capabilities: ReceiverCapabilities,
+): ActiveTransport | null {
+  if (requested === "webrtc") {
+    return capabilities.webrtcConfirmed ? "webrtc" : null;
+  }
+  if (requested === "hls") {
+    return capabilities.hlsAvailable ? "hls" : null;
+  }
+  return capabilities.webrtcConfirmed ? "webrtc" : capabilities.hlsAvailable ? "hls" : null;
+}
+
+export function shouldApplyPoll(
+  requestedGeneration: number,
+  currentGeneration: number,
+  pending: boolean,
+  requestedTransport: ActiveTransport | null,
+  currentTransport: ActiveTransport | null,
+): boolean {
+  return (
+    requestedGeneration === currentGeneration && !pending && requestedTransport === currentTransport
+  );
+}
+
+const WEBRTC_STATES: Record<string, StreamStateName> = {
+  idle: "idle",
+  awaiting_receiver: "starting",
+  negotiating: "starting",
+  streaming: "running",
+  stopping: "stopping",
+  failed: "failed",
+};
+
+export function finishWebRtc(
+  state: ScreenPanelState,
+  answer: { ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure },
+): ScreenPanelState {
+  if (!answer.ok) {
+    return { ...state, pending: false, failure: answer.failure };
+  }
+  if (!isJsonObject(answer.result) || typeof answer.result["state"] !== "string") {
+    return state;
+  }
+  const mapped = WEBRTC_STATES[answer.result["state"]];
+  if (mapped === undefined) {
+    return state;
+  }
+  const error = typeof answer.result["error"] === "string" ? answer.result["error"] : null;
+  return {
+    ...state,
+    pending: false,
+    failure: null,
+    transportUsed: mapped === "idle" ? null : "webrtc",
+    stream: { ...state.stream, state: mapped, error },
   };
 }
 

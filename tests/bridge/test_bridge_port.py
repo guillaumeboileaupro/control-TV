@@ -13,6 +13,8 @@ from control_tv.bridge import dispatch, handle_line
 from control_tv.domain import (
     AppLaunchResult,
     CommandResult,
+    ConnectionState,
+    DebuggingOffError,
     Device,
     DeviceId,
     DeviceNotFoundError,
@@ -24,9 +26,9 @@ from control_tv.domain import (
     RemoteTextResult,
     TvApp,
 )
-from control_tv.json_types import as_object
+from control_tv.json_types import JsonObject, as_object
 from control_tv.ports import TvControl
-from fakes import DEVICE_ID
+from fakes import DEVICE_ID, OBSERVED_AT
 
 
 def _unexpected(name: str) -> AssertionError:
@@ -57,6 +59,9 @@ class StubControl:
 
     def stop(self, device_id: DeviceId) -> CommandResult:
         raise _unexpected("stop")
+
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> CommandResult:
+        raise _unexpected("close_app")
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
         raise _unexpected("seek")
@@ -89,6 +94,9 @@ class StubControl:
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         raise _unexpected("launch_tv_app")
 
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        raise _unexpected("pair_tv_apps")
+
 
 def test_the_bridge_dispatches_to_any_implementation_of_the_port() -> None:
     stub = StubControl()
@@ -114,3 +122,106 @@ def test_an_error_of_the_port_keeps_its_code_through_the_bridge() -> None:
     assert response["ok"] is False
     assert as_object(response["error"])["code"] == "device_not_found"
     assert stub.calls == [("get_status", str(DEVICE_ID))]
+
+
+class ReachableStub(StubControl):
+    def get_status(self, device_id: DeviceId) -> DeviceStatus:
+        self.calls.append(("get_status", device_id))
+        return DeviceStatus(
+            device_id=device_id,
+            connection=ConnectionState.CONNECTED,
+            observed_at=OBSERVED_AT,
+        )
+
+    def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
+        self.calls.append(("get_remote_status", device_id))
+        return RemoteObservation(is_on=True, volume=None, current_app=None)
+
+
+def capabilities(control: StubControl) -> JsonObject:
+    response = dispatch(
+        control,
+        {
+            "id": 4,
+            "method": "get_screen_receiver_capabilities",
+            "params": {"deviceId": str(DEVICE_ID)},
+        },
+    )
+    assert response["ok"] is True
+    return as_object(as_object(response["result"])["capabilities"])
+
+
+def test_screen_capabilities_confirm_only_the_exact_receiver_package() -> None:
+    receiver = TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+    stub = ReachableStub(apps=(TvApp("com.example.receiver", None), receiver))
+
+    assert capabilities(stub) == {
+        "deviceAvailable": True,
+        "hlsAvailable": True,
+        "receiverAppInstalled": True,
+        "receiverAccessible": True,
+        "remoteAccessible": True,
+        "webrtcConfirmed": True,
+        "reason": None,
+    }
+    assert stub.calls == [
+        ("get_status", str(DEVICE_ID)),
+        ("list_tv_apps", str(DEVICE_ID)),
+        ("get_remote_status", str(DEVICE_ID)),
+    ]
+
+
+def test_screen_capabilities_distinguish_absent_and_inaccessible_receiver() -> None:
+    absent = ReachableStub()
+    assert capabilities(absent)["receiverAppInstalled"] is False
+    assert capabilities(absent)["reason"] == "receiver_not_installed"
+
+    class InaccessibleStub(ReachableStub):
+        def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
+            self.calls.append(("list_tv_apps", device_id))
+            raise DebuggingOffError("debugging is off", device_id=str(device_id))
+
+    inaccessible = InaccessibleStub()
+    assert capabilities(inaccessible) == {
+        "deviceAvailable": True,
+        "hlsAvailable": True,
+        "receiverAppInstalled": None,
+        "receiverAccessible": False,
+        "remoteAccessible": False,
+        "webrtcConfirmed": False,
+        "reason": "debugging_off",
+    }
+
+
+def test_screen_capabilities_stop_after_the_selected_device_is_unavailable() -> None:
+    stub = StubControl()
+    assert capabilities(stub) == {
+        "deviceAvailable": False,
+        "hlsAvailable": False,
+        "receiverAppInstalled": None,
+        "receiverAccessible": False,
+        "remoteAccessible": False,
+        "webrtcConfirmed": False,
+        "reason": "device_not_found",
+    }
+    assert stub.calls == [("get_status", str(DEVICE_ID))]
+
+
+def test_screen_capabilities_require_the_remote_handoff_channel() -> None:
+    class RemoteUnavailableStub(ReachableStub):
+        def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
+            self.calls.append(("get_remote_status", device_id))
+            raise DebuggingOffError("remote pairing is unavailable", device_id=str(device_id))
+
+    receiver = TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+    stub = RemoteUnavailableStub(apps=(receiver,))
+
+    assert capabilities(stub) == {
+        "deviceAvailable": True,
+        "hlsAvailable": True,
+        "receiverAppInstalled": True,
+        "receiverAccessible": True,
+        "remoteAccessible": False,
+        "webrtcConfirmed": False,
+        "reason": "debugging_off",
+    }

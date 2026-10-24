@@ -33,12 +33,10 @@ pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 /// `control_tv.adapters.tv_remote`); this is generous on top of it, so only a stuck bridge
 /// exceeds it. A key is never resent on a timeout: its delivery is then ambiguous.
 pub(crate) const REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
-/// Outer bound on listing or opening the TV's apps over its network debugging. A first,
-/// slow authorization in the pinned adb-shell runs in stages: up to 5s to open the socket, up
-/// to 5s for each of its two first handshake answers, then up to 30s for the owner to allow
-/// control-TV on the TV; then 10s for the list, or one 15s budget shared by a launch and its
-/// checks of the app in front (`control_tv.adapters.tv_apps`). That is 70s at most before
-/// bridge overhead; this bound leaves margin above it.
+/// Outer bound on listing, pairing or opening the TV's apps through Android Platform Tools.
+/// Each ADB subprocess has a 10s bound. Pairing may additionally make four bounded attempts to
+/// observe the separate connection service; a launch shares one 15s budget with its foreground
+/// checks (`control_tv.adapters.tv_apps`). This outer bound leaves margin for bridge overhead.
 pub(crate) const APPS_TIMEOUT: Duration = Duration::from_secs(90);
 /// Outer bound on one screen stream request. Starting and stopping only hand the session to the
 /// bridge's own background thread and return; listing the screens reads `xrandr` (5s at most in
@@ -261,6 +259,10 @@ pub(crate) fn app_request(device_id: &str, package: &str) -> Value {
     json!({ "deviceId": device_id, "package": package })
 }
 
+pub(crate) fn app_pairing_request(device_id: &str, pairing_endpoint: &str, code: &str) -> Value {
+    json!({ "deviceId": device_id, "pairingEndpoint": pairing_endpoint, "code": code })
+}
+
 /// Forwards one request on the TV's own remote channel. A plain forward like the Cast commands:
 /// no retry, no state of its own, and the answer is data.
 pub(crate) async fn send_remote(
@@ -372,8 +374,31 @@ pub(crate) async fn bridge_launch_tv_app(
     .await
 }
 
+#[tauri::command]
+pub(crate) async fn bridge_pair_tv_apps(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    pairing_endpoint: String,
+    code: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "pair_tv_apps",
+        app_pairing_request(&device_id, &pairing_endpoint, &code),
+        APPS_TIMEOUT,
+    )
+    .await
+}
+
+/// Where and how "extend" places the TV's screen: its refresh rate and its side of the primary
+/// screen ("left", "right", "above" or "below"), as the window's extension menu chose them.
+pub(crate) struct Placement<'a> {
+    pub(crate) refresh: u32,
+    pub(crate) position: &'a str,
+}
+
 /// The request that starts streaming this computer's screen to the TV: "duplicate" one screen or
-/// "extend" onto a virtual monitor, at one of the offered sizes and rates. `consent` is the
+/// "extend" onto a second screen, at one of the offered sizes and rates. `consent` is the
 /// owner's explicit agreement given in the window; the bridge refuses without it.
 pub(crate) fn screen_stream_request(
     device_id: &str,
@@ -382,6 +407,7 @@ pub(crate) fn screen_stream_request(
     size: (u32, u32),
     fps: u32,
     consent: bool,
+    placement: &Placement<'_>,
 ) -> Value {
     json!({
         "deviceId": device_id,
@@ -391,6 +417,8 @@ pub(crate) fn screen_stream_request(
         "height": size.1,
         "fps": fps,
         "consent": consent,
+        "refresh": placement.refresh,
+        "position": placement.position,
     })
 }
 
@@ -412,6 +440,72 @@ pub(crate) async fn bridge_list_screens(
     send_screen(state.inner().clone(), "list_screens", json!({})).await
 }
 
+/// Read-only capabilities of the selected TV for AUTO/WebRTC/HLS selection. The Python control
+/// layer owns device selection and distinguishes an absent receiver from an inaccessible app
+/// inventory; the shell does not infer capabilities from the device model.
+#[tauri::command]
+pub(crate) async fn bridge_get_screen_receiver_capabilities(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    send_screen(
+        state.inner().clone(),
+        "get_screen_receiver_capabilities",
+        json!({ "deviceId": device_id }),
+    )
+    .await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn bridge_prepare_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+    mode: String,
+    screen: Option<String>,
+    width: u32,
+    height: u32,
+    fps: u32,
+    consent: bool,
+    refresh: Option<u32>,
+    position: Option<String>,
+) -> Result<Value, BridgeFailure> {
+    let placement = Placement {
+        refresh: refresh.unwrap_or(60),
+        position: position.as_deref().unwrap_or("right"),
+    };
+    let params = screen_stream_request(
+        &device_id,
+        &mode,
+        screen.as_deref(),
+        (width, height),
+        fps,
+        consent,
+        &placement,
+    );
+    send_screen(state.inner().clone(), "prepare_webrtc_capture", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_activate_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "activate_webrtc_capture", json!({})).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_release_webrtc_capture(
+    state: tauri::State<'_, SharedBridgeState>,
+    error: Option<String>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(
+        state.inner().clone(),
+        "release_webrtc_capture",
+        json!({ "error": error }),
+    )
+    .await
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn bridge_start_screen_stream(
@@ -423,7 +517,13 @@ pub(crate) async fn bridge_start_screen_stream(
     height: u32,
     fps: u32,
     consent: bool,
+    refresh: Option<u32>,
+    position: Option<String>,
 ) -> Result<Value, BridgeFailure> {
+    let placement = Placement {
+        refresh: refresh.unwrap_or(60),
+        position: position.as_deref().unwrap_or("right"),
+    };
     let params = screen_stream_request(
         &device_id,
         &mode,
@@ -431,6 +531,7 @@ pub(crate) async fn bridge_start_screen_stream(
         (width, height),
         fps,
         consent,
+        &placement,
     );
     send_screen(state.inner().clone(), "start_screen_stream", params).await
 }
@@ -440,6 +541,44 @@ pub(crate) async fn bridge_stop_screen_stream(
     state: tauri::State<'_, SharedBridgeState>,
 ) -> Result<Value, BridgeFailure> {
     send_screen(state.inner().clone(), "stop_screen_stream", json!({})).await
+}
+
+/// Read-only: the desktop's screens, their modes and how each is set.
+#[tauri::command]
+pub(crate) async fn bridge_get_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "get_display_layout", json!({})).await
+}
+
+/// The request that sets every screen: the window's display manager sends the whole layout.
+pub(crate) fn display_layout_request(displays: Value) -> Value {
+    json!({ "displays": displays })
+}
+
+/// Sets every screen; the bridge restores the previous configuration if this fails, and reverts
+/// it by itself unless it is kept (`bridge_confirm_display_layout`) in time.
+#[tauri::command]
+pub(crate) async fn bridge_apply_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+    displays: Value,
+) -> Result<Value, BridgeFailure> {
+    let params = display_layout_request(displays);
+    send_screen(state.inner().clone(), "apply_display_layout", params).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_confirm_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "confirm_display_layout", json!({})).await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_revert_display_layout(
+    state: tauri::State<'_, SharedBridgeState>,
+) -> Result<Value, BridgeFailure> {
+    send_screen(state.inner().clone(), "revert_display_layout", json!({})).await
 }
 
 /// Read-only: the screen stream's state (idle, starting, running, stopping or failed).

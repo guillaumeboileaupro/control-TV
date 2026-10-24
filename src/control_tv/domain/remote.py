@@ -88,9 +88,9 @@ MAX_TEXT_LENGTH = 256
 
 @dataclass(frozen=True, slots=True)
 class TextEntry:
-    """Text that was sent once to the TV's active text field.
+    """A guarded attempt to send text once to the TV's active text field.
 
-    `field_reported`: whether the TV reported an active text field when the text was sent.
+    `field_reported`: whether the TV reported an active field and the text was sent.
     The text itself is never kept here: it may be a password.
     """
 
@@ -101,8 +101,8 @@ class TextEntry:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RemoteTextResult:
-    """Text sent to the TV's active field. The TV does not echo it back, so its effect is
-    never confirmed by the TV: only the person in front of it can check."""
+    """Guarded text entry into the TV's active field. The TV does not echo text back, so a
+    send's effect is never confirmed by the TV: only the person in front of it can check."""
 
     device_id: DeviceId
     confirmation: Confirmation

@@ -19,6 +19,7 @@ class Command(StrEnum):
     PLAY = "play"
     PAUSE = "pause"
     STOP = "stop"
+    CLOSE_APP = "close_app"
     SEEK = "seek"
     SET_VOLUME = "set_volume"
     SET_MUTED = "set_muted"

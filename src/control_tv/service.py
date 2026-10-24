@@ -271,6 +271,20 @@ def _loaded(url: str) -> ExpectedState:
     return check
 
 
+def _receiver_session_ended(receiver_session_id: str) -> ExpectedState:
+    def check(status: DeviceStatus) -> Observation:
+        receiver = status.receiver
+        current = None if receiver is None else receiver.app_session_id
+        return Observation(
+            current != receiver_session_id,
+            "the receiver application ended"
+            if current != receiver_session_id
+            else "the same receiver application is still running",
+        )
+
+    return check
+
+
 def _position_near(
     target: float, tolerance: float, expected: _MediaIdentity | None
 ) -> ExpectedState:
@@ -461,6 +475,27 @@ class ControlService:
             target_session_id=target.media_session_id,
         )
 
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> CommandResult:
+        """Close one captured Cast application session without ever targeting the current cache."""
+        device_id = _checked_id(device_id)
+        _require(
+            isinstance(receiver_session_id, str) and bool(receiver_session_id.strip()),
+            "receiver app session id must be a non-blank string",
+            device_id,
+        )
+        trace = self._trace.command(Command.CLOSE_APP)
+        self._send(
+            trace,
+            lambda: self._transport.close_app(device_id, receiver_session_id),
+        )
+        return self._verify(
+            Command.CLOSE_APP,
+            device_id,
+            _receiver_session_ended(receiver_session_id),
+            "the receiver application to end",
+            trace=trace,
+        )
+
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
         device_id = _checked_id(device_id)
         position_seconds = _number(position_seconds, "seek position", device_id)
@@ -558,6 +593,9 @@ class ControlService:
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         return self._channels.launch_tv_app(device_id, package)
+
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        self._channels.pair_tv_apps(device_id, pairing_endpoint, code)
 
     def _discovered(self, device_id: DeviceId) -> Device | None:
         """The device of the last discovery with this id, or None."""

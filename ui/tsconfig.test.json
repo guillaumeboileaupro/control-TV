@@ -24,13 +24,18 @@
     "src/sound.test.ts",
     "src/remote.ts",
     "src/remote.test.ts",
+    "src/remote-panel.ts",
+    "src/remote-panel.test.ts",
+    "src/dom.ts",
     "src/tray.ts",
     "src/tray.test.ts",
     "src/interaction.ts",
     "src/interaction.test.ts",
     "src/screen.ts",
     "src/screen.test.ts",
-    "src/view-state.ts"
+    "src/view-state.ts",
+    "src/display.ts",
+    "src/display.test.ts"
   ],
   "exclude": []
 }

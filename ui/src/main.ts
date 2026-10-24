@@ -19,6 +19,7 @@ import {
   recordServiceFailure,
   refreshStatus,
   selectDevice,
+  setHostCapabilities,
   chosenDevice,
   startDiscovery,
   toBridgeFailure,
@@ -75,6 +76,7 @@ const SEEK_COMMIT_DELAY_MS = 400;
 interface PingResult {
   status: string;
   controlTvVersion: string;
+  tvApps: boolean;
 }
 
 interface DiscoverDevicesResult {
@@ -751,7 +753,8 @@ function start(elements: Elements): void {
   async function checkBackend(): Promise<void> {
     const number = ++requestsStarted;
     try {
-      await invoke<PingResult>("bridge_ping");
+      const result = await invoke<PingResult>("bridge_ping");
+      update(setHostCapabilities(state, result.tvApps === true));
       noteAnswer(number, null);
     } catch (error) {
       const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
@@ -839,7 +842,10 @@ function start(elements: Elements): void {
   screenPanel = createScreenPanel(elements.screen, {
     call: (command, args) => invoke<JsonValue>(command, args),
     selectedTv: () => state.selected?.id ?? null,
-    timers: { set: (callback, delayMs) => window.setTimeout(callback, delayMs) },
+    timers: {
+      set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clear: (handle) => window.clearTimeout(handle),
+    },
   });
 
   render();
@@ -852,10 +858,33 @@ window.addEventListener("DOMContentLoaded", () => {
     screen: {
       panel: byId("screen-panel"),
       mode: byId("screen-mode"),
+      preview: byId("screen-preview"),
+      display: {
+        scene: byId("display-scene"),
+        arrangement: byId("display-arrangement"),
+        settings: byId("display-settings"),
+        title: byId("display-title"),
+        enabled: byId<HTMLInputElement>("display-enabled"),
+        primary: byId<HTMLInputElement>("display-primary"),
+        resolution: byId<HTMLSelectElement>("display-resolution"),
+        rate: byId<HTMLSelectElement>("display-rate"),
+        rotation: byId<HTMLSelectElement>("display-rotation"),
+        scale: byId<HTMLSelectElement>("display-scale"),
+        apply: byId<HTMLButtonElement>("display-apply"),
+        cancel: byId<HTMLButtonElement>("display-cancel"),
+        keep: byId("display-keep"),
+        keepText: byId("display-keep-text"),
+        keepButton: byId<HTMLButtonElement>("display-keep-button"),
+        revertButton: byId<HTMLButtonElement>("display-revert"),
+        message: byId("display-message"),
+      },
       screenField: byId("screen-field"),
       screen: byId<HTMLSelectElement>("screen-select"),
+      transport: byId<HTMLSelectElement>("screen-transport"),
       size: byId<HTMLSelectElement>("screen-size"),
       fps: byId<HTMLSelectElement>("screen-fps"),
+      extension: byId("screen-extension"),
+      refresh: byId<HTMLSelectElement>("screen-refresh"),
       ask: byId<HTMLButtonElement>("screen-ask"),
       consent: byId("screen-consent"),
       consentText: byId("screen-consent-text"),
@@ -877,6 +906,11 @@ window.addEventListener("DOMContentLoaded", () => {
       remoteText: byId<HTMLInputElement>("remote-text"),
       remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
       remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+      remoteAppsPairing: byId("remote-apps-pairing"),
+      remoteAppsPairingForm: byId<HTMLFormElement>("remote-apps-pairing-form"),
+      remoteAppsPairingEndpoint: byId<HTMLInputElement>("remote-apps-pairing-endpoint"),
+      remoteAppsPairingCode: byId<HTMLInputElement>("remote-apps-pairing-code"),
+      remoteAppsPair: byId<HTMLButtonElement>("remote-apps-pair"),
       remoteKeys: byId("remote-keys"),
       remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
       remoteApps: byId("remote-apps"),

@@ -2,6 +2,15 @@
 
 This is an engineering inventory of what the Linux release `.deb` contains and of what each license asks of a distributor. **It is not a legal review, and no legal validation has taken place.** It records the state found on 2026-10-04 for version 0.1.0 built with CPython 3.12.15 (`python3 scripts/dev.py release-deb`).
 
+Android Platform Tools are deliberately absent from the `.deb`. Ubuntu 22.04's `adb` package is
+an external runtime dependency for classic TCP only; Google's modern Platform Tools archive is a
+separate SDK download whose terms require acceptance and restrict redistribution. The pinned,
+non-bundled candidate and the required review/update procedure are documented in
+[`ADB_PLATFORM_TOOLS.md`](ADB_PLATFORM_TOOLS.md) and
+[`packaging/adb-platform-tools.json`](../packaging/adb-platform-tools.json). This inventory must
+not list Platform Tools as shipped unless a later explicit legal review approves redistribution
+and the artifact/license inventory is updated in the same release change.
+
 ## What the package ships
 
 | Component | Version | How it is shipped | License | Text in the package |

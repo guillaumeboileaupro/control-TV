@@ -1,28 +1,23 @@
-"""The TV's installed apps over network debugging (`control_tv.adapters.tv_apps`).
-
-The ADB device, the signer and the key generator are fakes: no network, no real key. The rules
-pinned: only launchable apps, by package, sorted and unique; a private key; one connection,
-always closed; each failure becomes the control error that tells the owner what to do; no TV
-address in any message; nothing but the one read-only query is sent.
-"""
+"""ADB app inventory tests use a command double and never contact a device."""
 
 from __future__ import annotations
 
-import stat
+import shutil
+import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import adb_shell.exceptions as adb
 import pytest
 
-from control_tv.adapters import tv_apps
 from control_tv.adapters.tv_apps import (
-    KEY_FILE,
     LAUNCHER_QUERY,
     AdbAppInventory,
     apps_installed,
+    parse_devices,
     parse_front_app,
     parse_launcher_apps,
+    parse_mdns_services,
 )
 from control_tv.domain import (
     CommandRejectedError,
@@ -36,372 +31,478 @@ from control_tv.domain import (
 )
 
 HOST = "192.0.2.10"
-QUERY_OUTPUT = """priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false
-  com.google.android.youtube.tv/com.google.android.apps.youtube.tv.activity.ShellActivity
-priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false
-  com.netflix.ninja/.MainActivity
-  com.example.unknown/com.example.unknown.Main$Launcher
-  com.netflix.ninja/.OtherActivity
-not a component line
+Answers = dict[tuple[str, ...], list[subprocess.CompletedProcess[str]]]
+TLS_SERIAL = "adb-serial-ABC._adb-tls-connect._tcp"
+DEVICES_TLS = f"List of devices attached\n{TLS_SERIAL} device product:tv model:TV\n"
+DEVICES_TCP = f"List of devices attached\n{HOST}:5555 device product:tv model:TV\n"
+MDNS_TLS = (
+    f"adb-serial-ABC\t_adb-tls-connect._tcp.\t{HOST}:37123\n"
+    f"adb-serial-ABC\t_adb-tls-pairing._tcp.\t{HOST}:40211\n"
+)
+ADB_VERSION = "Android Debug Bridge version 1.0.41\nVersion 30.0.0-0000000\n"
+QUERY_OUTPUT = """com.netflix.ninja/.MainActivity
+com.example.video/com.example.video.Main
+com.netflix.ninja/.OtherActivity
+not a component
 """
+FRONT_NETFLIX = "topResumedActivity=ActivityRecord{a u0 com.netflix.ninja/.MainActivity t1}"
 
 
-class FakeDevice:
-    def __init__(self, record: dict[str, Any]) -> None:
-        self.record = record
-
-    def connect(self, rsa_keys: list[Any], auth_timeout_s: float) -> bool:
-        self.record["connect"] = (rsa_keys, auth_timeout_s)
-        if self.record.get("connect_error") is not None:
-            raise self.record["connect_error"]
-        return bool(self.record.get("connected", True))
-
-    def shell(self, command: str, read_timeout_s: float) -> Any:
-        self.record.setdefault("commands", []).append(command)
-        if self.record.get("shell_error") is not None:
-            raise self.record["shell_error"]
-        return self.record.get("output", QUERY_OUTPUT)
-
-    def close(self) -> None:
-        self.record["closed"] = self.record.get("closed", 0) + 1
+def done(stdout: str = "", stderr: str = "", code: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(["adb"], code, stdout, stderr)
 
 
-def inventory(tmp_path: Path, record: dict[str, Any]) -> AdbAppInventory:
-    def device(host: str, port: int, timeout: float) -> FakeDevice:
-        record["device"] = (host, port, timeout)
-        return FakeDevice(record)
+class FakeRunner:
+    def __init__(
+        self, answers: dict[tuple[str, ...], list[subprocess.CompletedProcess[str]]]
+    ) -> None:
+        self.answers = answers
+        self.calls: list[tuple[tuple[str, ...], str | None, float]] = []
 
-    def keygen(path: str) -> None:
-        record["keygen"] = record.get("keygen", 0) + 1
-        Path(path).write_bytes(b"private")
-        Path(path + ".pub").write_bytes(b"public")
-
-    return AdbAppInventory(
-        tmp_path / "remote",
-        device_factory=device,
-        signer_factory=lambda key: ("signer", key),
-        keygen=keygen,
-    )
-
-
-def mode(path: Path) -> int:
-    return stat.S_IMODE(path.stat().st_mode)
+    def __call__(
+        self, command: Sequence[str], stdin: str | None, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        key = tuple(command[1:])
+        self.calls.append((tuple(command), stdin, timeout))
+        answers = self.answers.get(key)
+        if not answers:
+            raise AssertionError(f"unexpected command: {key}")
+        return answers.pop(0)
 
 
-def test_only_launchable_apps_are_listed_by_package_sorted_and_unique() -> None:
+def inventory(runner: FakeRunner, **kwargs: Any) -> AdbAppInventory:
+    return AdbAppInventory(Path("unused"), run=runner, sleep=lambda _: None, **kwargs)
+
+
+def listing_answers(
+    devices: str = DEVICES_TLS, mdns: str = MDNS_TLS
+) -> dict[tuple[str, ...], list[subprocess.CompletedProcess[str]]]:
+    return {
+        ("devices", "-l"): [done(devices)],
+        ("mdns", "services"): [done(mdns)],
+        ("-s", TLS_SERIAL if devices == DEVICES_TLS else f"{HOST}:5555", "shell", LAUNCHER_QUERY): [
+            done(QUERY_OUTPUT)
+        ],
+    }
+
+
+def test_parsers_cover_tcp_tls_mdns_and_launcher_apps() -> None:
+    assert parse_devices(DEVICES_TCP)[0].serial == f"{HOST}:5555"
+    assert parse_devices(DEVICES_TLS)[0].state == "device"
+    assert parse_mdns_services(MDNS_TLS)[0].serial == TLS_SERIAL
     assert parse_launcher_apps(QUERY_OUTPUT) == (
-        TvApp("com.example.unknown", None),
-        TvApp("com.google.android.youtube.tv", "YouTube"),
+        TvApp("com.example.video", None),
         TvApp("com.netflix.ninja", "Netflix"),
     )
-    assert parse_launcher_apps("") == ()
 
 
-def test_the_list_is_the_tvs_answer_to_one_read_only_query(tmp_path: Path) -> None:
-    record: dict[str, Any] = {}
-
-    apps = inventory(tmp_path, record).list_apps(HOST)
-
-    assert [app.package for app in apps] == [
-        "com.example.unknown",
-        "com.google.android.youtube.tv",
+@pytest.mark.parametrize("devices", [DEVICES_TCP, DEVICES_TLS])
+def test_selected_tv_resolves_to_classic_or_tls_device(devices: str) -> None:
+    runner = FakeRunner(listing_answers(devices))
+    assert [a.package for a in inventory(runner).list_apps(HOST)] == [
+        "com.example.video",
         "com.netflix.ninja",
     ]
-    assert record["device"] == (HOST, 5555, 5.0)
-    assert record["commands"] == [LAUNCHER_QUERY]
-    assert record["closed"] == 1
-    assert record["connect"][1] == 30.0  # time for the owner to allow control-TV on the TV
+    shell = runner.calls[-1][0]
+    assert shell[1:3] == ("-s", TLS_SERIAL if devices == DEVICES_TLS else f"{HOST}:5555")
 
 
-def test_the_query_only_reads_the_launcher_activities() -> None:
-    assert LAUNCHER_QUERY.startswith("cmd package query-activities --brief ")
-    assert "LEANBACK_LAUNCHER" in LAUNCHER_QUERY
-    for word in ("install", "uninstall", "am start", "pm ", "rm ", ";", "&&", "|"):
-        assert word not in LAUNCHER_QUERY
+def test_dynamic_connect_port_is_reconnected_then_used() -> None:
+    answers = listing_answers()
+    answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TLS)]
+    answers[("connect", f"{HOST}:37123")] = [done(f"connected to {HOST}:37123")]
+    runner = FakeRunner(answers)
+    inventory(runner).list_apps(HOST)
+    assert ("adb", "connect", f"{HOST}:37123") in [call[0] for call in runner.calls]
 
 
-def test_the_key_is_created_once_and_kept_private(tmp_path: Path) -> None:
-    record: dict[str, Any] = {}
-    apps = inventory(tmp_path, record)
+def test_failed_tls_connect_never_downgrades_to_classic_port() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done(f"adb-serial-ABC\t_adb-tls-connect._tcp.\t{HOST}:37123\n")],
+            ("connect", f"{HOST}:37123"): [done("failed to connect", code=1)],
+        }
+    )
 
-    apps.list_apps(HOST)
-    apps.list_apps(HOST)
+    with pytest.raises(DeviceUnavailableError, match="TLS connection failed"):
+        inventory(runner).list_apps(HOST)
 
-    folder = tmp_path / "remote"
-    assert record["keygen"] == 1
-    assert mode(folder) == 0o700
-    assert mode(folder / KEY_FILE) == 0o600
-    assert record["connect"][0] == [("signer", str(folder / KEY_FILE))]
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands == [
+        ("devices", "-l"),
+        ("mdns", "services"),
+        ("connect", f"{HOST}:37123"),
+    ]
+    assert ("connect", f"{HOST}:5555") not in commands
+
+
+def test_classic_tcp_device_is_reconnected_after_a_fresh_adb_server() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TCP)]
+    answers[("connect", f"{HOST}:5555")] = [done(f"connected to {HOST}:5555")]
+    runner = FakeRunner(answers)
+
+    inventory(runner).list_apps(HOST)
+
+    assert [call[0] for call in runner.calls].count(("adb", "connect", f"{HOST}:5555")) == 1
+
+
+def test_classic_tcp_still_works_when_adb_has_no_mdns_command() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("mdns", "services")] = [done("", "adb: unknown command mdns", 1)]
+    runner = FakeRunner(answers)
+
+    assert [app.package for app in inventory(runner).list_apps(HOST)] == [
+        "com.example.video",
+        "com.netflix.ninja",
+    ]
+
+
+def test_fresh_classic_tcp_reconnects_when_adb_has_no_mdns_command() -> None:
+    answers = listing_answers(devices=DEVICES_TCP, mdns="")
+    answers[("devices", "-l")] = [done("List of devices attached\n"), done(DEVICES_TCP)]
+    answers[("mdns", "services")] = [done("", "adb: unknown command mdns", 1)]
+    answers[("connect", f"{HOST}:5555")] = [done(f"connected to {HOST}:5555")]
+    runner = FakeRunner(answers)
+
+    inventory(runner).list_apps(HOST)
+
+    assert [call[0] for call in runner.calls].count(("adb", "connect", f"{HOST}:5555")) == 1
+
+
+def test_old_adb_without_classic_target_names_the_required_platform_tools() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done("", "adb: unknown command mdns", 1)],
+            ("connect", f"{HOST}:5555"): [done("failed to connect", code=1)],
+        }
+    )
+
+    with pytest.raises(UnsupportedOperationError, match=r"Platform Tools 30\.0\.0"):
+        inventory(runner).list_apps(HOST)
+
+    assert not any("shell" in call[0] for call in runner.calls)
+
+
+def test_multiple_devices_never_select_the_first_or_wrong_host() -> None:
+    devices = "List of devices attached\n192.0.2.99:5555 device\n" + DEVICES_TLS.split("\n", 1)[1]
+    answers = listing_answers(devices)
+    answers[("-s", TLS_SERIAL, "shell", LAUNCHER_QUERY)] = [done(QUERY_OUTPUT)]
+    runner = FakeRunner(answers)
+    inventory(runner).list_apps(HOST)
+    assert runner.calls[-1][0][2] == TLS_SERIAL
+
+
+def test_ambiguous_matches_are_refused_before_shell() -> None:
+    devices = DEVICES_TLS + f"{HOST}:5555 device\n"
+    runner = FakeRunner(
+        {("devices", "-l"): [done(devices)], ("mdns", "services"): [done(MDNS_TLS)]}
+    )
+    with pytest.raises(DeviceUnavailableError, match="more than one"):
+        inventory(runner).list_apps(HOST)
+
+
+def test_pairing_service_is_not_misreported_as_debugging_off() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done(MDNS_TLS.replace("_adb-tls-connect", "_ignored"))],
+        }
+    )
+    with pytest.raises(PairingRequiredError, match="pair it in control-TV"):
+        inventory(runner).list_apps(HOST)
+
+
+def test_no_matching_service_explains_wireless_debugging() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done("")],
+            ("connect", f"{HOST}:5555"): [done("failed to connect", code=1)],
+        }
+    )
+    with pytest.raises(DebuggingOffError, match="Wireless debugging"):
+        inventory(runner).list_apps(HOST)
+
+
+def test_pairing_code_uses_stdin_and_is_never_an_argument() -> None:
+    answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done(DEVICES_TLS)],
+        ("mdns", "services"): [done(MDNS_TLS)],
+    }
+    runner = FakeRunner(answers)
+    inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+    pair_call = next(call for call in runner.calls if call[0][1] == "pair")
+    assert pair_call[0] == ("adb", "pair", f"{HOST}:40211")
+    assert pair_call[1] == "123456\n"
+
+
+def test_pairing_is_never_replayed_while_waiting_for_the_connect_service() -> None:
+    pairing_only = MDNS_TLS.replace("_adb-tls-connect", "_ignored")
+    answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done("List of devices attached\n"), done(DEVICES_TLS)],
+        ("mdns", "services"): [done(pairing_only), done(MDNS_TLS)],
+    }
+    runner = FakeRunner(answers)
+
+    inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands.count(("pair", f"{HOST}:40211")) == 1
+    assert commands.count(("mdns", "services")) == 2
+
+
+@pytest.mark.parametrize("code", ["", "12345", "abcdef", "1234567"])
+def test_invalid_or_expired_pairing_is_rejected(code: str) -> None:
+    runner = FakeRunner({})
+    with pytest.raises(InvalidArgumentError):
+        inventory(runner).pair(HOST, f"{HOST}:40211", code)
+    assert runner.calls == []
+
+
+def test_refused_pairing_does_not_retain_or_echo_code() -> None:
+    runner = FakeRunner(
+        {
+            ("version",): [done(ADB_VERSION)],
+            ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+            ("pair", f"{HOST}:40211"): [done("", "failed", 1)],
+        }
+    )
+    with pytest.raises(CommandRejectedError) as error:
+        inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+    assert "123456" not in str(error.value)
+
+
+def test_old_adb_explains_that_wireless_pairing_is_unavailable() -> None:
+    runner = FakeRunner(
+        {
+            ("version",): [done(ADB_VERSION)],
+            ("help",): [done("adb connect HOST[:PORT]")],
+        }
+    )
+    with pytest.raises(UnsupportedOperationError, match=r"does not support.*pairing"):
+        inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
+    assert all("pair" not in call[0][1:] for call in runner.calls)
 
 
 @pytest.mark.parametrize(
-    ("where", "raised", "expected"),
+    ("version_output", "returncode", "message"),
     [
-        ("connect_error", ConnectionRefusedError(f"refused by {HOST}"), DebuggingOffError),
-        ("connect_error", adb.TcpTimeoutException(f"{HOST}:5555"), PairingRequiredError),
-        ("connect_error", adb.DeviceAuthError("not allowed"), PairingRequiredError),
-        ("connect_error", adb.AdbTimeoutError("no answer to AUTH"), PairingRequiredError),
-        ("connect_error", OSError(f"unreachable {HOST}"), DeviceUnavailableError),
-        ("shell_error", adb.AdbTimeoutError("slow"), OperationTimeoutError),
-        ("shell_error", adb.TcpTimeoutException("slow read"), OperationTimeoutError),
-        ("shell_error", adb.AdbConnectionError("closed"), DeviceUnavailableError),
-        ("shell_error", adb.InvalidResponseError("garbage"), DeviceUnavailableError),
+        (
+            "Android Debug Bridge version 1.0.41\nVersion 29.0.6-debian\n",
+            0,
+            "30.0.0",
+        ),
+        ("Android Debug Bridge version unknown\n", 0, "could not be verified"),
+        ("", 2, "not functional"),
     ],
 )
-def test_each_failure_says_what_to_do_without_the_tv_address(
-    tmp_path: Path, where: str, raised: Exception, expected: type[Exception]
+def test_pairing_rejects_old_invalid_or_nonfunctional_adb_before_help_or_pair(
+    version_output: str, returncode: int, message: str
 ) -> None:
-    record: dict[str, Any] = {where: raised}
+    runner = FakeRunner({("version",): [done(version_output, code=returncode)]})
 
-    with pytest.raises(expected) as excinfo:
-        inventory(tmp_path, record).list_apps(HOST)
+    with pytest.raises(UnsupportedOperationError, match=message):
+        inventory(runner).pair(HOST, f"{HOST}:40211", "123456")
 
-    assert HOST not in str(excinfo.value)
-    assert record["closed"] == 1
-
-
-def test_debugging_off_explains_how_to_turn_it_on(tmp_path: Path) -> None:
-    with pytest.raises(DebuggingOffError, match="developer options"):
-        inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
+    assert [call[0][1:] for call in runner.calls] == [("version",)]
 
 
-def test_a_connection_the_tv_did_not_allow_asks_to_allow_it(tmp_path: Path) -> None:
-    with pytest.raises(PairingRequiredError, match="allow control-TV on the TV"):
-        inventory(tmp_path, {"connected": False}).list_apps(HOST)
+def test_pairing_version_probe_timeout_never_reaches_help_or_pair() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def timeout(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin
+        calls.append(tuple(command[1:]))
+        raise subprocess.TimeoutExpired(command, seconds)
+
+    with pytest.raises(OperationTimeoutError, match="ADB did not answer"):
+        AdbAppInventory(run=timeout).pair(HOST, f"{HOST}:40211", "123456")
+
+    assert calls == [("version",)]
 
 
-def test_an_answer_that_is_not_text_is_not_a_list(tmp_path: Path) -> None:
-    with pytest.raises(DeviceUnavailableError):
-        inventory(tmp_path, {"output": None}).list_apps(HOST)
+def test_missing_adb_executable_never_reaches_help_or_pair() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def missing(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, seconds
+        calls.append(tuple(command[1:]))
+        raise FileNotFoundError
+
+    with pytest.raises(UnsupportedOperationError, match="not installed"):
+        AdbAppInventory(run=missing).pair(HOST, f"{HOST}:40211", "123456")
+
+    assert calls == [("version",)]
+
+
+def test_interrupted_post_pair_wait_never_replays_pair() -> None:
+    answers: Answers = {
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done("List of devices attached\n")],
+        ("mdns", "services"): [done(MDNS_TLS.replace("_adb-tls-connect", "_ignored"))],
+    }
+    runner = FakeRunner(answers)
+
+    def interrupt_wait(_: float) -> None:
+        raise KeyboardInterrupt
+
+    apps = AdbAppInventory(
+        run=runner,
+        sleep=interrupt_wait,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        apps.pair(HOST, f"{HOST}:40211", "123456")
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands.count(("pair", f"{HOST}:40211")) == 1
+    assert commands.count(("mdns", "services")) == 1
+
+
+def test_pairing_cannot_target_another_device() -> None:
+    runner = FakeRunner({})
+    with pytest.raises(InvalidArgumentError, match="selected TV"):
+        inventory(runner).pair(HOST, "192.0.2.99:40000", "123456")
+
+
+def test_launch_is_sent_once_and_confirmed_from_front_app() -> None:
+    answers = {
+        ("devices", "-l"): [done(DEVICES_TLS)],
+        ("mdns", "services"): [done(MDNS_TLS)],
+        (
+            "-s",
+            TLS_SERIAL,
+            "shell",
+            "monkey -p com.netflix.ninja -c android.intent.category.LEANBACK_LAUNCHER 1",
+        ): [done("Events injected: 1")],
+        ("-s", TLS_SERIAL, "shell", "dumpsys activity activities"): [done(FRONT_NETFLIX)],
+    }
+    runner = FakeRunner(answers)
+    assert inventory(runner).launch_app(HOST, "com.netflix.ninja").front_app == "com.netflix.ninja"
+    assert len([c for c in runner.calls if "monkey" in c[0][-1]]) == 1
+
+
+def test_missing_activity_and_lost_connection_have_distinct_errors() -> None:
+    base: Answers = {
+        ("devices", "-l"): [done(DEVICES_TLS)],
+        ("mdns", "services"): [done(MDNS_TLS)],
+    }
+    command = (
+        "-s",
+        TLS_SERIAL,
+        "shell",
+        "monkey -p com.example.service -c android.intent.category.LEANBACK_LAUNCHER 1",
+    )
+    runner = FakeRunner({**base, command: [done("No activities found; monkey aborted")]})
+    with pytest.raises(CommandRejectedError):
+        inventory(runner).launch_app(HOST, "com.example.service")
+    base = {
+        ("devices", "-l"): [done(DEVICES_TLS)],
+        ("mdns", "services"): [done(MDNS_TLS)],
+    }
+    runner = FakeRunner({**base, command: [done("", "device offline", 1)]})
+    with pytest.raises(DeviceUnavailableError, match="lost"):
+        inventory(runner).launch_app(HOST, "com.example.service")
+
+
+def test_invalid_package_never_invokes_adb() -> None:
+    runner = FakeRunner({})
+    with pytest.raises(InvalidArgumentError):
+        inventory(runner).launch_app(HOST, "com.example;reboot")
+    assert runner.calls == []
+
+
+def test_timeout_missing_binary_and_apps_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, seconds)
+
+    with pytest.raises(OperationTimeoutError):
+        AdbAppInventory(run=timeout).list_apps(HOST)
+
+    def missing(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError
+
+    with pytest.raises(UnsupportedOperationError):
+        AdbAppInventory(run=missing).list_apps(HOST)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert apps_installed() is False
+
+
+def test_front_parser_only_accepts_resumed_activity() -> None:
+    assert parse_front_app(FRONT_NETFLIX) == "com.netflix.ninja"
+    assert parse_front_app("mFocusedApp=com.netflix.ninja") is None
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("device unauthorized", PairingRequiredError),
+        ("permission denied", CommandRejectedError),
+        ("protocol fault", DeviceUnavailableError),
+    ],
+)
+def test_shell_failures_are_classified(stderr: str, expected: type[Exception]) -> None:
+    answers = listing_answers()
+    answers[("-s", TLS_SERIAL, "shell", LAUNCHER_QUERY)] = [done("", stderr, 1)]
+    with pytest.raises(expected):
+        inventory(FakeRunner(answers)).list_apps(HOST)
+
+
+def test_adb_inventory_failure_and_os_failure_are_plain_control_errors() -> None:
+    runner = FakeRunner({("devices", "-l"): [done("", "server failed", 1)]})
+    with pytest.raises(DeviceUnavailableError, match="could not list"):
+        inventory(runner).list_apps(HOST)
+
+    def broken(
+        command: Sequence[str], stdin: str | None, seconds: float
+    ) -> subprocess.CompletedProcess[str]:
+        raise OSError
+
+    with pytest.raises(DeviceUnavailableError, match="local ADB server"):
+        AdbAppInventory(run=broken).list_apps(HOST)
 
 
 @pytest.mark.parametrize("host", ["tv.local", "", None])
-def test_a_tv_is_reached_by_ip_address_only(tmp_path: Path, host: Any) -> None:
-    record: dict[str, Any] = {}
-
+def test_invalid_tv_address_never_invokes_adb(host: Any) -> None:
+    runner = FakeRunner({})
     with pytest.raises(InvalidArgumentError):
-        inventory(tmp_path, record).list_apps(host)
-
-    assert "device" not in record
-
-
-def test_without_the_library_the_list_says_it_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import sys
-
-    monkeypatch.setitem(sys.modules, "adb_shell.exceptions", None)
-
-    with pytest.raises(UnsupportedOperationError, match="not installed"):
-        inventory(tmp_path, {}).list_apps(HOST)
+        inventory(runner).list_apps(host)
+    assert runner.calls == []
 
 
-def test_the_library_is_reported_installed_without_importing_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import importlib.util
-
-    assert apps_installed() is True
-    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
-    assert apps_installed() is False
-
-    def broken(name: str) -> None:
-        raise ValueError("broken")
-
-    monkeypatch.setattr(importlib.util, "find_spec", broken)
-    assert apps_installed() is False
-
-
-def test_the_real_library_objects_are_built_offline(tmp_path: Path) -> None:
-    key = tmp_path / "adbkey"
-
-    tv_apps._default_keygen(str(key))
-    signer: Any = tv_apps._default_signer(str(key))
-    device: Any = tv_apps._default_device(HOST, 5555, 1.0)
-
-    assert signer.public_key.startswith(b"QAAAA")  # Android's RSA public key encoding
-    assert len(signer.Sign(b"x" * 20)) == 256
-    assert device.available is False  # built, never connected
-
-
-# Opening an app --------------------------------------------------------------------------------
-
-FRONT_NETFLIX = "  topResumedActivity=ActivityRecord{2b4c u0 com.netflix.ninja/.MainActivity t12}\n"
-FRONT_HOME = (
-    "  mResumedActivity: ActivityRecord{6f8 u0 com.google.android.apps.tv.launcherx/"
-    ".home.HomeActivity t3}\n"
-)
-
-
-class LaunchDevice(FakeDevice):
-    def shell(self, command: str, read_timeout_s: float) -> Any:
-        self.record.setdefault("commands", []).append(command)
-        if command.startswith("monkey"):
-            return self.record.get("monkey_output", "Events injected: 1")
-        fronts = self.record.setdefault("fronts", [FRONT_NETFLIX])
-        return fronts.pop(0) if len(fronts) > 1 else fronts[0]
-
-
-def launcher(tmp_path: Path, record: dict[str, Any]) -> AdbAppInventory:
-    def device(host: str, port: int, timeout: float) -> LaunchDevice:
-        return LaunchDevice(record)
-
-    def keygen(path: str) -> None:
-        Path(path).write_bytes(b"private")
-        Path(path + ".pub").write_bytes(b"public")
-
-    return AdbAppInventory(
-        tmp_path / "remote",
-        device_factory=device,
-        signer_factory=lambda key: key,
-        keygen=keygen,
-        sleep=lambda seconds: record.setdefault("sleeps", []).append(seconds),
-    )
-
-
-def test_an_app_is_opened_once_by_its_home_screen_activity_then_read_in_front(
-    tmp_path: Path,
-) -> None:
-    record: dict[str, Any] = {}
-
-    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
-
-    assert record["commands"] == [
-        "monkey -p com.netflix.ninja -c android.intent.category.LEANBACK_LAUNCHER 1",
-        "dumpsys activity activities",
-    ]
-    assert launch.front_app == "com.netflix.ninja"
-    assert record["closed"] == 1
-
-
-def test_the_app_in_front_is_read_again_within_a_short_budget(tmp_path: Path) -> None:
-    record: dict[str, Any] = {"fronts": [FRONT_HOME, FRONT_HOME, FRONT_NETFLIX]}
-
-    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
-
-    assert launch.front_app == "com.netflix.ninja"
-    assert [c for c in record["commands"] if c.startswith("monkey")] == [
-        "monkey -p com.netflix.ninja -c android.intent.category.LEANBACK_LAUNCHER 1"
-    ]
-    assert record["sleeps"] == [0.75, 0.75]
-
-
-def test_an_app_never_reported_in_front_returns_what_the_tv_said_last(tmp_path: Path) -> None:
-    record: dict[str, Any] = {"fronts": [FRONT_HOME]}
-
-    launch = launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja")
-
-    assert launch.front_app == "com.google.android.apps.tv.launcherx"
-    assert len([c for c in record["commands"] if c.startswith("dumpsys")]) == 4
-
-
-def test_a_tv_that_does_not_say_what_is_in_front_is_unknown(tmp_path: Path) -> None:
-    record: dict[str, Any] = {"fronts": ["no activity lines here"]}
-
-    assert launcher(tmp_path, record).launch_app(HOST, "com.netflix.ninja").front_app is None
-
-
-def test_an_app_without_a_home_screen_activity_is_refused_by_the_tv(tmp_path: Path) -> None:
-    record: dict[str, Any] = {"monkey_output": "** No activities found to run, monkey aborted."}
-
-    with pytest.raises(CommandRejectedError):
-        launcher(tmp_path, record).launch_app(HOST, "com.example.service")
-
-    assert [c for c in record["commands"] if c.startswith("dumpsys")] == []
-
-
-@pytest.mark.parametrize(
-    "package",
-    ["", "youtube", "com.example;reboot", "com.example && rm", "1com.example", "a" * 256, None],
-)
-def test_only_a_package_name_reaches_the_launch_command(tmp_path: Path, package: Any) -> None:
-    record: dict[str, Any] = {}
-
+@pytest.mark.parametrize("endpoint", ["bad", f"{HOST}:0", f"{HOST}:99999"])
+def test_invalid_pairing_endpoint_never_invokes_adb(endpoint: str) -> None:
+    runner = FakeRunner({})
     with pytest.raises(InvalidArgumentError):
-        launcher(tmp_path, record).launch_app(HOST, package)
-
-    assert "commands" not in record
-
-
-def test_the_front_app_parser_reads_only_a_resumed_activity_record() -> None:
-    assert parse_front_app(FRONT_NETFLIX) == "com.netflix.ninja"
-    assert parse_front_app(FRONT_HOME) == "com.google.android.apps.tv.launcherx"
-    assert parse_front_app("mFocusedApp=com.netflix.ninja") is None
-    assert parse_front_app(None) is None
+        inventory(runner).pair(HOST, endpoint, "123456")
+    assert runner.calls == []
 
 
-def test_a_launch_and_its_checks_share_one_budget(tmp_path: Path) -> None:
-    record: dict[str, Any] = {"fronts": [FRONT_HOME]}
-    now = [100.0]
-
-    def device(host: str, port: int, timeout: float) -> LaunchDevice:
-        class Slow(LaunchDevice):
-            def shell(self, command: str, read_timeout_s: float) -> Any:
-                record.setdefault("timeouts", []).append(read_timeout_s)
-                now[0] += 6.0  # each read takes 6 s on this slow TV
-                return super().shell(command, read_timeout_s)
-
-        return Slow(record)
-
-    def keygen(path: str) -> None:
-        Path(path).write_bytes(b"private")
-        Path(path + ".pub").write_bytes(b"public")
-
-    apps = AdbAppInventory(
-        tmp_path / "remote",
-        device_factory=device,
-        signer_factory=lambda key: key,
-        keygen=keygen,
-        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
-        clock=lambda: now[0],
+def test_multiple_tls_services_for_selected_tv_are_refused() -> None:
+    mdns = MDNS_TLS + f"adb-other\t_adb-tls-connect._tcp.\t{HOST}:37124\n"
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done(mdns)],
+        }
     )
-
-    launch = apps.launch_app(HOST, "com.netflix.ninja")
-
-    assert launch.front_app == "com.google.android.apps.tv.launcherx"
-    assert now[0] - 100.0 <= 15.0 + 6.0  # never starts a read past the budget
-    assert record["timeouts"][0] == 10.0
-    assert all(t <= 10.0 for t in record["timeouts"])
-    assert len(record["timeouts"]) < 1 + 4  # the slow TV cut the checks short
-
-
-def test_a_tv_without_the_classic_debugging_port_names_what_is_not_supported(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(DebuggingOffError, match="Wireless debugging") as excinfo:
-        inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)
-
-    assert "port 5555" in str(excinfo.value)
-
-
-@pytest.mark.parametrize(
-    ("package", "name"),
-    [
-        ("com.cbs.ca", "Paramount+"),
-        ("com.google.android.videos", "Google TV"),
-        ("com.wbd.stream", "HBO Max"),
-        ("fr.francetv.zouzous", "Okoo"),
-        ("fr.m6.m6replay", "M6+"),
-        ("fr.tf1.mytf1.free", "TF1+"),
-        ("fr.tfou.max", "TFOU MAX"),
-        ("tv.twitch.android.app", "Twitch"),
-    ],
-)
-def test_names_checked_against_google_play_are_known(package: str, name: str) -> None:
-    assert tv_apps.KNOWN_NAMES[package] == name
-
-
-@pytest.mark.parametrize(
-    "package",
-    [
-        "fr.freebox.disneypluslauncher",
-        "fr.freebox.fbx8lc.fbxdiags",
-        "fr.free.aktu",
-        "com.nextinteractive.rmcbfmplay.tv.free",
-        "net.oqee.androidtv",
-        "net.oqee.launcher",
-        "fr.m6.m6replay.free",
-    ],
-)
-def test_freebox_packages_without_a_verifiable_name_keep_their_package(package: str) -> None:
-    assert package not in tv_apps.KNOWN_NAMES
+    with pytest.raises(DeviceUnavailableError, match="more than one Wireless"):
+        inventory(runner).list_apps(HOST)

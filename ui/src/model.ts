@@ -79,6 +79,8 @@ export type StatusView =
   | { kind: "failed"; failure: BridgeFailure };
 
 export interface AppState {
+  // Host capability reported by the bridge ping. False on Android builds without adb.
+  tvAppsAvailable: boolean;
   devices: Device[];
   discovery: DiscoveryView;
   // The whole discovered device, not just its id, so the selected-device panel does not
@@ -206,6 +208,7 @@ export function describeDevicesMessage(state: AppState): DevicesMessage {
 
 export function initialState(): AppState {
   return {
+    tvAppsAvailable: false,
     devices: [],
     discovery: { kind: "idle" },
     selected: null,
@@ -217,6 +220,11 @@ export function initialState(): AppState {
     notice: null,
     nextRequestId: 1,
   };
+}
+
+// Records only capabilities reported by the local bridge; it sends nothing to a device.
+export function setHostCapabilities(state: AppState, tvAppsAvailable: boolean): AppState {
+  return state.tvAppsAvailable === tvAppsAvailable ? state : { ...state, tvAppsAvailable };
 }
 
 // The backend is single-flight (one request at a time) and every request's timeout starts

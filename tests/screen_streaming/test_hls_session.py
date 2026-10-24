@@ -97,7 +97,7 @@ def test_the_encoder_publication_and_receiver_start_and_stop_together(tmp_path: 
 
     assert state(service) is SessionState.STOPPED and service.unreleased == ()
     assert refused(uri) and published(publisher) == ()
-    assert transport.attempted() == ["load_media", "stop"]
+    assert transport.attempted() == ["load_media", "stop", "close_app"]
     assert runner.group.releases == 1 and list(tmp_path.iterdir()) == []
 
 

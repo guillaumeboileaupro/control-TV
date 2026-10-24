@@ -248,6 +248,7 @@ def test_the_release_overlay_ships_the_bridge_the_notices_and_the_project_licens
 
     assert overlay["bundle"]["resources"] == {"../dist/python-bridge/": "python-bridge/"}
     assert overlay["bundle"]["linux"]["deb"]["depends"] == [
+        "adb",
         "ffmpeg",
         "libayatana-appindicator3-1",
         "x11-xserver-utils",

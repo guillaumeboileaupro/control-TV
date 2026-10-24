@@ -305,9 +305,8 @@ class TvRemoteChannel:
     def type_text(self, host: str, text: str) -> TextEntry:
         """Send `text` once to the TV's active text field, replacing what the field holds.
 
-        The adapter waits a short time for the TV to report an active field, then sends the
-        text once either way and says whether a field was reported. The text never appears
-        in an error or a result.
+        The adapter waits a short time for the TV to report an active field. It sends the text
+        exactly once only when that field exists. The text never appears in an error or a result.
         """
         host = _checked_host(host)
         text = _checked_text(text)
@@ -315,7 +314,8 @@ class TvRemoteChannel:
         async def send(remote: RemoteClient) -> TextEntry:
             await self._wait_for(lambda: _field_reported(remote))
             reported = _field_reported(remote)
-            remote.send_text(text)
+            if reported:
+                remote.send_text(text)
             return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
 
         return self._run(lambda: self._session(host, send))

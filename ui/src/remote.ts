@@ -86,6 +86,8 @@ export interface RemoteRequest {
 export type RemoteAnswer = { ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure };
 
 const PAIRING_CODE = /^[0-9a-fA-F]{6}$/;
+const ADB_PAIRING_CODE = /^[0-9]{6}$/;
+const ADB_PAIRING_ENDPOINT = /^(?:\[[0-9a-fA-F:]+\]|(?:[0-9]{1,3}\.){3}[0-9]{1,3}):[0-9]{1,5}$/;
 export const MAX_TEXT_LENGTH = 256;
 
 // What the control layer accepts: 1 to 256 characters, none of them a control character.
@@ -120,6 +122,11 @@ export function remoteInvocation(request: RemoteRequest): {
       return { command: "bridge_type_remote_text", args: { deviceId, text: action.text } };
     case "list_apps":
       return { command: "bridge_list_tv_apps", args: { deviceId } };
+    case "pair_apps":
+      return {
+        command: "bridge_pair_tv_apps",
+        args: { deviceId, pairingEndpoint: action.pairingEndpoint, code: action.code },
+      };
     case "launch_app":
       return { command: "bridge_launch_tv_app", args: { deviceId, package: action.package } };
   }
@@ -134,11 +141,11 @@ export function remoteAvailable(state: AppState): boolean {
 // The TV's apps go through its debugging, a separate service: every TV (a Cast video device), not
 // a group or a speaker, whatever discovery saw of its remote channel.
 export function appsAvailable(state: AppState): boolean {
-  return state.selected !== null && state.selected.kind === "cast";
+  return state.tvAppsAvailable && state.selected !== null && state.selected.kind === "cast";
 }
 
 function isAppAction(action: RemoteAction): boolean {
-  return action.kind === "list_apps" || action.kind === "launch_app";
+  return action.kind === "list_apps" || action.kind === "pair_apps" || action.kind === "launch_app";
 }
 
 function keysAllowed(state: AppState): boolean {
@@ -162,6 +169,7 @@ export function startRemote(
     action.kind !== "show_code" &&
     action.kind !== "pair" &&
     action.kind !== "list_apps" &&
+    action.kind !== "pair_apps" &&
     action.kind !== "launch_app";
   if (needsRemote && !keysAllowed(state)) {
     return { state, request: null };
@@ -189,6 +197,19 @@ export function startRemote(
       return { state: { ...state, remote: { ...state.remote, outcome } }, request: null };
     }
     sent = { kind: "pair", code: code.toUpperCase() };
+  }
+  if (action.kind === "pair_apps") {
+    const pairingEndpoint = action.pairingEndpoint.trim();
+    const code = action.code.trim();
+    if (!ADB_PAIRING_ENDPOINT.test(pairingEndpoint) || !ADB_PAIRING_CODE.test(code)) {
+      const outcome: RemoteOutcome = {
+        tone: "failed",
+        text: "Type the pairing IP address and port shown by the TV, and its 6-digit code.",
+        technical: null,
+      };
+      return { state: { ...state, remote: { ...state.remote, outcome } }, request: null };
+    }
+    sent = { kind: "pair_apps", pairingEndpoint, code };
   }
   const requestId = state.nextRequestId;
   return {
@@ -225,18 +246,18 @@ export function toReport(value: JsonValue | undefined): RemoteReport | null {
 
 function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOutcome {
   const technical = `${failure.code}: ${failure.message}`;
-  if (action.kind === "list_apps" || action.kind === "launch_app") {
+  if (isAppAction(action)) {
     if (failure.code === "debugging_off") {
       return {
         tone: "failed",
-        text: "To list and open the TV's apps, turn on USB debugging on the TV: Settings › System › About, select “Android TV OS build” 7 times, then Settings › System › Developer options › USB debugging. Then list the apps again and allow control-TV when the TV asks. A TV that only offers “Wireless debugging” (with a pairing code) can't list its apps here yet.",
+        text: "No debugging service matches this TV. In Developer options, turn on Wireless debugging (or classic network debugging), keep the TV on the same network, then refresh the app list.",
         technical,
       };
     }
     if (failure.code === "pairing_required") {
       return {
         tone: "failed",
-        text: "Allow control-TV on the TV when it asks about debugging, then try again.",
+        text: "Allow this computer if the TV shows an authorization prompt. For Wireless debugging, open the pairing-code screen and enter its pairing address and temporary code here.",
         technical,
       };
     }
@@ -348,9 +369,16 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
   if (!answer.ok) {
     const failure = answer.failure;
     let pairing = remote.pairing;
-    if (action.kind === "list_apps" || action.kind === "launch_app") {
+    if (isAppAction(action)) {
       // The apps' own "allow control-TV on the TV" is not the remote's pairing.
-      return { ...state, remote: { ...remote, outcome: failureOutcome(action, failure) } };
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          appsPairingNeeded: failure.code === "pairing_required" || remote.appsPairingNeeded,
+          outcome: failureOutcome(action, failure),
+        },
+      };
     }
     if (failure.code === "pairing_required") {
       pairing = "needed";
@@ -416,6 +444,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         remote: {
           ...remote,
           apps,
+          appsPairingNeeded: false,
           outcome:
             apps.length === 0
               ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
@@ -423,6 +452,19 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         },
       };
     }
+    case "pair_apps":
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          appsPairingNeeded: false,
+          outcome: {
+            tone: "done",
+            text: "Wireless debugging paired and connected.",
+            technical: null,
+          },
+        },
+      };
     case "launch_app": {
       const launched = isJsonObject(result["result"]) ? result["result"] : {};
       const label = action.label;
@@ -509,6 +551,7 @@ export interface RemoteDescription {
   listingApps: boolean;
   launchEnabled: boolean;
   pendingApp: string | null;
+  appsPairingNeeded: boolean;
   busy: boolean;
   outcome: RemoteOutcome | null;
 }
@@ -528,6 +571,7 @@ const HIDDEN: RemoteDescription = {
   listingApps: false,
   launchEnabled: false,
   pendingApp: null,
+  appsPairingNeeded: false,
   busy: false,
   outcome: null,
 };
@@ -546,6 +590,8 @@ function progressOf(action: RemoteAction): string {
       return "Sending text…";
     case "list_apps":
       return "Listing the TV's apps… If the TV asks, allow control-TV.";
+    case "pair_apps":
+      return "Pairing Wireless debugging…";
     case "launch_app":
       return `Opening ${action.label}…`;
   }
@@ -611,11 +657,12 @@ export function describeRemote(state: AppState): RemoteDescription {
     pendingKey: pending !== null && pending.action.kind === "key" ? pending.action.key : null,
     sendingText: pending !== null && pending.action.kind === "text",
     apps: filteredApps(remote.apps, remote.appFilter),
-    appsEnabled: !busy,
+    appsEnabled: appsAvailable(state) && !busy,
     listingApps: pending !== null && pending.action.kind === "list_apps",
-    launchEnabled: !busy,
+    launchEnabled: appsAvailable(state) && !busy,
     pendingApp:
       pending !== null && pending.action.kind === "launch_app" ? pending.action.package : null,
+    appsPairingNeeded: remote.appsPairingNeeded,
     busy,
     outcome: remote.outcome,
   };

@@ -108,8 +108,8 @@ class TvChannels:
         )
 
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
-        """Send text once to the TV's active text field. The TV never echoes it, so the result
-        is `NOT_CHECKED`; the detail says whether the TV reported an active field."""
+        """Send text once only when the TV reports an active field. The TV never echoes it,
+        so the result is `NOT_CHECKED`; the detail says whether anything was sent."""
         if not isinstance(text, str):
             raise InvalidArgumentError("the text to type must be a string", device_id=device_id)
         remote, host = self._remote_target(device_id)
@@ -117,7 +117,7 @@ class TvChannels:
         detail = (
             "sent to the TV's active text field; check the TV"
             if entry.field_reported
-            else "sent, but the TV did not report an active text field; check the TV"
+            else "not sent because the TV did not report an active text field"
         )
         return RemoteTextResult(
             device_id=device_id,
@@ -163,6 +163,18 @@ class TvChannels:
             detail=detail,
             front_app=front,
         )
+
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        """Pair the selected TV's Wireless debugging service using its temporary code."""
+        if not isinstance(pairing_endpoint, str) or not isinstance(code, str):
+            raise InvalidArgumentError("the pairing address and code must be text")
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot pair with the TV's debugging service",
+                device_id=device_id,
+            )
+        self._apps.pair(host, pairing_endpoint, code)
 
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
         if self._remote is None:

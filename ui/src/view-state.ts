@@ -68,6 +68,7 @@ export type RemoteAction =
   | { kind: "pair"; code: string }
   | { kind: "text"; text: string }
   | { kind: "list_apps" }
+  | { kind: "pair_apps"; pairingEndpoint: string; code: string }
   | { kind: "launch_app"; package: string; label: string };
 
 export type PairingStep = "not_tried" | "needed" | "code_shown" | "paired";
@@ -90,6 +91,7 @@ export interface RemoteView {
   outcome: RemoteOutcome | null;
   apps: TvApp[] | null;
   appFilter: string;
+  appsPairingNeeded: boolean;
 }
 
 export const REMOTE_IDLE: RemoteView = {
@@ -99,4 +101,5 @@ export const REMOTE_IDLE: RemoteView = {
   outcome: null,
   apps: null,
   appFilter: "",
+  appsPairingNeeded: false,
 };

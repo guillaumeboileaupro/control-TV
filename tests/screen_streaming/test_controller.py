@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from control_tv import bridge
+from control_tv.domain import TvApp
 from control_tv.json_types import JsonObject, JsonValue, as_object
 from control_tv.ports import TvControl
 from control_tv.screen_streaming import (
@@ -25,7 +26,7 @@ from control_tv.screen_streaming.controller import (
     StreamState,
 )
 from control_tv.screen_streaming.ports import StreamReceiver
-from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.service import ControlService
 from fakes import DEVICE_ID, FakeClock, FakeTransport
@@ -91,13 +92,21 @@ class Rig:
         return session
 
     def controller(self, **options: object) -> ScreenStreamController:
+        connect = options.pop("connect", self.connect)
+        extension = options.pop("extension", lambda: XrandrVirtualMonitor(X11, self.xrandr))
         return ScreenStreamController(
-            connect=self.connect,
+            connect=connect,  # type: ignore[arg-type]
             capture=self.capture,
             build=self.build,
+            extension=extension,  # type: ignore[arg-type]
             sleep=lambda seconds: time.sleep(0.01),
             **options,  # type: ignore[arg-type]
         )
+
+    def install_receiver(self) -> None:
+        self.control.list_tv_apps = lambda device_id: [  # type: ignore[method-assign]
+            TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+        ]
 
 
 def wait_for(controller: ScreenStreamController, *states: StreamState) -> StreamState:
@@ -119,7 +128,7 @@ def test_duplicate_runs_until_stopped_then_everything_is_released(tmp_path: Path
 
     assert controller.stop().state is StreamState.STOPPING
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
-    assert rig.transport.attempted() == ["load_media", "stop"]
+    assert rig.transport.attempted() == ["load_media", "stop", "close_app"]
     session = rig.sessions[0]
     assert session.publisher.unreleased == () and rig.runner.group.releases == 1
     controller.stop()  # idempotent
@@ -129,14 +138,137 @@ def test_duplicate_runs_until_stopped_then_everything_is_released(tmp_path: Path
 def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     controller = rig.controller()
-    request = ScreenRequest(str(DEVICE_ID), d1.Mode.EXTEND, None, 1920, 1080, 30, True)
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1920, 1080, 30, True, 50, Position.LEFT
+    )
 
     controller.start(request)
     assert wait_for(controller, StreamState.RUNNING) is StreamState.RUNNING
-    assert rig.xrandr.virtual and controller.status().screen is None
+    assert rig.xrandr.enabled is not None and controller.status().screen is None
+    assert ("--output", "HDMI-2", "--mode", "control-tv-1920x1080-50", "--left-of", "eDP-1") in (
+        rig.xrandr.calls
+    )
     controller.close()
 
-    assert not rig.xrandr.virtual and controller.status().state is StreamState.IDLE
+    assert rig.xrandr.enabled is None and controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_duplicate_uses_the_existing_capture_and_releases_its_lease(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    controller = rig.controller()
+
+    lease = controller.prepare_webrtc_capture(DUPLICATE)
+
+    assert lease.bind_address == "127.0.0.1"
+    assert (lease.display, lease.offset_x, lease.offset_y) == (":0", 0, 0)
+    assert (lease.source_width, lease.source_height) == (1920, 1080)
+    assert controller.activate_webrtc_capture().state is StreamState.RUNNING
+    assert controller.release_webrtc_capture().state is StreamState.IDLE
+    controller.prepare_webrtc_capture(DUPLICATE)  # a second session can acquire it
+    controller.close()
+    assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_extension_is_restored_on_release_and_bridge_close(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    controller = rig.controller()
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1280, 720, 30, True, 60, Position.RIGHT
+    )
+
+    lease = controller.prepare_webrtc_capture(request)
+    assert (lease.offset_x, lease.offset_y, lease.source_width, lease.source_height) == (
+        1920,
+        0,
+        1280,
+        720,
+    )
+    assert rig.xrandr.enabled is not None
+    controller.close()
+    assert rig.xrandr.enabled is None
+    assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_extension_cleanup_failure_is_retained_and_retryable(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+
+    class FlakyExtension(XrandrVirtualMonitor):
+        attempts = 0
+
+        def remove(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise StreamCleanupError("stuck")
+            super().remove()
+
+    extension = FlakyExtension(X11, rig.xrandr)
+    controller = rig.controller(extension=lambda: extension)
+    request = ScreenRequest(
+        str(DEVICE_ID), d1.Mode.EXTEND, None, 1280, 720, 30, True, 60, Position.RIGHT
+    )
+    controller.prepare_webrtc_capture(request)
+
+    failed = controller.release_webrtc_capture("the Rust engine stopped")
+    assert failed.state is StreamState.FAILED
+    assert failed.error == ("the Rust engine stopped; the extended screen was not restored: stuck")
+    assert rig.xrandr.enabled is not None
+
+    assert controller.release_webrtc_capture().state is StreamState.IDLE
+    assert extension.attempts == 2
+    assert rig.xrandr.enabled is None
+
+
+def test_close_cancels_a_concurrent_webrtc_preparation(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    entered = threading.Event()
+    proceed = threading.Event()
+
+    def blocked_connect(device_id: str) -> tuple[TvControl, str]:
+        entered.set()
+        assert proceed.wait(5)
+        return rig.connect(device_id)
+
+    controller = rig.controller(connect=blocked_connect)
+    outcome: list[BaseException] = []
+
+    def prepare() -> None:
+        try:
+            controller.prepare_webrtc_capture(DUPLICATE)
+        except BaseException as caught:
+            outcome.append(caught)
+
+    preparing = threading.Thread(target=prepare)
+    preparing.start()
+    assert entered.wait(5)
+    closing = threading.Thread(target=controller.close)
+    closing.start()
+    proceed.set()
+    preparing.join(5)
+    closing.join(5)
+
+    assert not preparing.is_alive() and not closing.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], InvalidStreamConfiguration)
+    assert str(outcome[0]) == "WebRTC preparation was cancelled"
+    assert controller.status().state is StreamState.IDLE
+    controller.prepare_webrtc_capture(DUPLICATE)
+    controller.close()
+
+
+def test_webrtc_preparation_fails_closed_without_the_exact_receiver(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.control.list_tv_apps = lambda device_id: [TvApp("example.other", None)]  # type: ignore[method-assign]
+    controller = rig.controller()
+
+    with pytest.raises(InvalidStreamConfiguration, match="not installed or accessible"):
+        controller.prepare_webrtc_capture(DUPLICATE)
+
+    assert controller.status().state is StreamState.FAILED
+    assert rig.xrandr.enabled is None
 
 
 @pytest.mark.parametrize(
@@ -147,7 +279,9 @@ def test_extend_creates_and_removes_the_virtual_monitor(tmp_path: Path) -> None:
         ({"mode": d1.Mode.SYNTHETIC}, "duplicate or extend"),
         ({"screen": None}, "choose the screen"),
         ({"width": 1024, "height": 768}, "1280x720 or 1920x1080"),
-        ({"fps": 24}, "25, 30 or 60"),
+        ({"fps": 60}, "25 or 30"),
+        ({"mode": d1.Mode.EXTEND, "refresh": 30}, "60 or 50 Hz"),
+        ({"position": "left"}, "left, right, above or below"),
     ],
 )
 def test_an_invalid_request_touches_nothing(
@@ -224,7 +358,7 @@ def test_the_session_bound_ends_the_stream(tmp_path: Path) -> None:
     )
     controller.start(DUPLICATE)
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
-    assert rig.transport.attempted() == ["load_media", "stop"]
+    assert rig.transport.attempted() == ["load_media", "stop", "close_app"]
 
 
 def test_a_stop_before_the_session_started_starts_nothing(tmp_path: Path) -> None:
@@ -278,12 +412,6 @@ def test_an_unexpected_error_or_an_unclean_stop_is_reported(tmp_path: Path) -> N
     assert unclean.status().error == "the screen stream did not stop cleanly: stuck"
 
 
-def test_the_virtual_monitor_is_not_offered_for_duplication(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
-    rig.xrandr.virtual = True
-    assert [output.name for output in rig.controller().screens()] == ["eDP-1", "HDMI-1"]
-
-
 # Bridge methods ---------------------------------------------------------------------------
 
 
@@ -317,9 +445,22 @@ def stream(method: str, **params: JsonValue) -> JsonObject:
 def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
     assert answered("list_screens") == {
         "screens": [
-            {"name": "eDP-1", "width": 1920, "height": 1080, "primary": True},
-            {"name": "HDMI-1", "width": 2561, "height": 1441, "primary": False},
-        ]
+            {"name": "eDP-1", "width": 1920, "height": 1080, "x": 0, "y": 0, "primary": True},
+            {
+                "name": "HDMI-1",
+                "width": 2561,
+                "height": 1441,
+                "x": 1920,
+                "y": 0,
+                "primary": False,
+            },
+        ],
+        "extension": {
+            "output": "HDMI-2",
+            "sizes": [[1280, 720], [1920, 1080]],
+            "refreshRates": [60, 50],
+            "positions": ["left", "right", "above", "below"],
+        },
     }
     started = stream(
         "start_screen_stream",
@@ -348,6 +489,32 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
     assert wait_for(controller, StreamState.IDLE) is StreamState.IDLE
 
 
+def test_the_bridge_acquires_activates_and_releases_one_webrtc_capture(screen: Rig) -> None:
+    screen.install_receiver()
+    request: dict[str, JsonValue] = {
+        "deviceId": str(DEVICE_ID),
+        "mode": "duplicate",
+        "screen": "eDP-1",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "consent": True,
+    }
+
+    assert answered("prepare_webrtc_capture", **request) == {
+        "capture": {
+            "bindAddress": "127.0.0.1",
+            "display": ":0",
+            "offsetX": 0,
+            "offsetY": 0,
+            "sourceWidth": 1920,
+            "sourceHeight": 1080,
+        }
+    }
+    assert stream("activate_webrtc_capture")["state"] == "running"
+    assert stream("release_webrtc_capture")["state"] == "idle"
+
+
 @pytest.mark.parametrize(
     ("params", "message"),
     [
@@ -356,6 +523,11 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
         ({"consent": "yes"}, "consent must be true or false"),
         ({"width": True}, "width must be an integer"),
         ({"consent": False}, "explicit consent"),
+        ({"position": "behind"}, "position must be left, right, above or below"),
+        ({"refresh": "60"}, "refresh must be an integer"),
+        ({"mode": "extend", "refresh": 30}, "60 or 50 Hz"),
+        ({"mode": "extend", "x": True, "y": 0}, "x must be an integer"),
+        ({"mode": "extend", "x": 0}, "coordinates are invalid"),
     ],
 )
 def test_the_bridge_refuses_a_malformed_or_unconsented_request(

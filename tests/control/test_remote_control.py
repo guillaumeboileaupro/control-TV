@@ -401,10 +401,10 @@ def test_text_goes_once_to_the_discovered_tv_and_is_never_confirmed_by_it() -> N
     assert result.detail == "sent to the TV's active text field; check the TV"
 
 
-def test_text_sent_without_an_active_field_reported_says_so() -> None:
+def test_text_is_not_sent_without_an_active_field_reported() -> None:
     result = discovered(FakeRemote(field_reported=False)).type_remote_text(DEVICE_ID, "abc")
 
-    assert result.detail == "sent, but the TV did not report an active text field; check the TV"
+    assert result.detail == "not sent because the TV did not report an active text field"
     assert result.field_reported is False
 
 
@@ -477,6 +477,11 @@ class FakeApps:
             raise self.error
         return AppLaunch(package=package, front_app=self.front)
 
+    def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
+        self.calls.append(("pair", host, pairing_endpoint, code))
+        if self.error is not None:
+            raise self.error
+
 
 def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
     service = ControlService(transport or FakeTransport(), remote=FakeRemote(), apps=apps)
@@ -489,6 +494,28 @@ def test_the_app_list_comes_from_the_discovered_tv() -> None:
 
     assert with_apps(apps).list_tv_apps(DEVICE_ID) == list(apps.apps)
     assert apps.calls == [("list", HOST)]
+
+
+def test_wireless_debugging_pairing_targets_only_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    response = call(
+        with_apps(apps),
+        "pair_tv_apps",
+        deviceId=str(DEVICE_ID),
+        pairingEndpoint=f"{HOST}:40123",
+        code="123456",
+    )
+
+    assert response["result"] == {"pairing": "paired"}
+    assert apps.calls == [("pair", HOST, f"{HOST}:40123", "123456")]
+
+
+def test_wireless_debugging_pairing_needs_text_and_the_apps_channel() -> None:
+    with pytest.raises(InvalidArgumentError):
+        with_apps(FakeApps()).pair_tv_apps(DEVICE_ID, None, "123456")  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).pair_tv_apps(DEVICE_ID, f"{HOST}:40123", "123456")
 
 
 def test_no_app_list_for_a_group_or_without_the_inventory() -> None:
