@@ -71,6 +71,8 @@ LOCAL_ONLY = (  # a trailing "/" marks a directory
     ".claude/settings.local.json",
     "CLAUDE.local.md",
     "AGENTS.override.md",
+    "graphify-out/",
+    ".worktrees/",
 )
 CODEX_SKILLS = Path(".agents/skills")
 CLAUDE_SKILLS = Path(".claude/skills")

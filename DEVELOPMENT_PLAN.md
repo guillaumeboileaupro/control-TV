@@ -93,6 +93,7 @@ Deliverables:
 - [x] explicit `clean`, `dist-clean` and disk-usage inspection commands for the current Python tooling;
 - [x] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output; PR #4 added the allowlisted paths/tests and validated cleanup against real generated Tauri/Rust/frontend artifacts;
 - [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
+- [x] Graphify integrated in the shared agent configuration (owner decision to keep it, 2026-10-23, branch `chore/graphify-agent-integration`): one skill `graphify` in `.agents/skills/` linked from `.claude/skills/`, its 793-line entry split verbatim into a short `SKILL.md` and `references/build-pipeline.md`, generic `~/` examples written `$HOME/`; rules in `AGENTS.md` (local AST-only graph per worktree, query first and verify in the source, stale-graph check), not restated in `CLAUDE.md`; `/graphify-out/` and `/.worktrees/` git-ignored and enforced by `agent_config.py check` as local-only paths. The untracked pre-archive copies of `local-device-mcp-bridge` and `project-bootstrap-context` in older checkouts are documented in `.agents/inactive-skills/README.md` and left for the owner to remove. Configuration checks and tests only; the local `graphify` CLI and hooks are not versioned.
 
 Exit criteria:
 - [x] project-owned versus shared caches are clearly distinguished;

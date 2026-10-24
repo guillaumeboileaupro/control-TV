@@ -353,6 +353,8 @@ def test_link_shares_the_configuration_and_git_still_ignores_it(tmp_path: Path) 
     assert errors(target) == [
         "local-only path is not git-ignored: CLAUDE.local.md",
         "local-only path is not git-ignored: AGENTS.override.md",
+        "local-only path is not git-ignored: graphify-out/",
+        "local-only path is not git-ignored: .worktrees/",
     ]
 
 

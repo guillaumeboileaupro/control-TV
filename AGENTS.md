@@ -94,9 +94,30 @@ Project skills: one source, `.agents/skills/<name>/SKILL.md` (Codex), linked as
 `independent-code-review`, `hardware-safety`, `development-reporting`, `agent-token-efficiency`;
 quality: `python-project-quality`, `solid-code-design`, `typescript-no-any`,
 `conventional-commits-pr`; domain: disk hygiene, multiplatform release (`.deb`, `.apk`), CI
-diagnosis, dependency review, release audit, accessibility. Inactive (discovered by neither
-agent): `.agents/inactive-skills/`. Usage: `docs/AGENT_INSTRUCTIONS.md`; consistency check:
-`python3 scripts/agent_config.py check`.
+diagnosis, dependency review, release audit, accessibility; code navigation: `graphify`.
+Inactive (discovered by neither agent): `.agents/inactive-skills/`. Usage:
+`docs/AGENT_INSTRUCTIONS.md`; consistency check: `python3 scripts/agent_config.py check`.
+
+## Code knowledge graph (graphify)
+
+Each checkout or worktree may hold a local graph in `graphify-out/` (god nodes, communities,
+cross-file relationships), built by the `graphify` CLI; skill `graphify` describes its commands
+and `/graphify`.
+
+- `graphify-out/` is local and git-ignored: never commit it, never copy or overwrite another
+  worktree's graph. A worktree without a graph builds its own with `graphify update .`.
+- Only AST extraction (`graphify update .`, no API key, no cost); a semantic or paid backend
+  needs the owner's authorization.
+- When `graphify-out/graph.json` exists, start a codebase question with `graphify query
+  "<question>"`, `graphify path "<A>" "<B>"` or `graphify explain "<concept>"`, then read only
+  the source lines they locate, and verify every conclusion in the source. Put this rule in
+  every subagent prompt that explores code. `GRAPH_REPORT.md` is for broad architecture
+  reviews only; `graphify-out/wiki/index.md`, when present, for broad navigation.
+- The graph can be stale: compare its `built_at_commit` with `HEAD` and run `graphify update .`
+  first when they differ, and again after modifying code. Changed files under `graphify-out/`
+  (hooks, updates) are expected and never a reason to skip the graph.
+- Graphify commands and hooks write state under `graphify-out/` (cache, query stamp, dated
+  backups): a read-only mission states it, or skips graphify.
 
 ## Handoff and definition of done
 
