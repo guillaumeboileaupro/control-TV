@@ -23,3 +23,7 @@ The mandatory documentation-update and time-reporting policies are inherited fro
   context; it complements, never replaces, these rules.
 - Development commands, including `npx --prefix ui tauri dev` from the repository root, are in
   `README.md`.
+- Graphify: the rules are in `AGENTS.md` (Code knowledge graph); `/graphify` loads the skill
+  `graphify`. The optional `graphify hook-guard` hooks that `graphify claude install --project`
+  writes to `.claude/settings.json` stay local (git-ignored) and also write under
+  `graphify-out/`.
