@@ -25,25 +25,16 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
 private const val NEGOTIATION_DEADLINE_MS = 20_000L
-private const val DISCONNECT_GRACE_MS = 3_000L
 
 internal class OneShotGate {
     private val claimed = AtomicBoolean(false)
     fun claim(): Boolean = claimed.compareAndSet(false, true)
     fun close() { claimed.set(true) }
-}
-
-internal class DisconnectRecoveryGate {
-    private val generation = AtomicLong(0)
-    fun disconnected(): Long = generation.incrementAndGet()
-    fun recovered() { generation.incrementAndGet() }
-    fun isStillDisconnected(ticket: Long): Boolean = generation.get() == ticket
 }
 
 internal class ReceiverSession(
@@ -61,7 +52,6 @@ internal class ReceiverSession(
     private val closed = AtomicBoolean(false)
     private val retryNotification = OneShotGate()
     private val negotiationDeadline = OneShotGate()
-    private val disconnectRecovery = DisconnectRecoveryGate()
 
     init {
         PeerConnectionFactory.initialize(
@@ -158,26 +148,10 @@ internal class ReceiverSession(
             override fun onRenegotiationNeeded() = Unit
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) = Unit
             override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-                when (state) {
-                    PeerConnection.PeerConnectionState.CONNECTED -> disconnectRecovery.recovered()
-                    PeerConnection.PeerConnectionState.DISCONNECTED -> {
-                        val ticket = disconnectRecovery.disconnected()
-                        Thread({
-                            Thread.sleep(DISCONNECT_GRACE_MS)
-                            if (disconnectRecovery.isStillDisconnected(ticket)) {
-                                onState(state.name.lowercase())
-                                close()
-                                notifyRetryReady()
-                            }
-                        }, "control-tv-disconnect-watchdog").apply { isDaemon = true }.start()
-                    }
-                    PeerConnection.PeerConnectionState.FAILED -> {
-                        disconnectRecovery.recovered()
-                        onState(state.name.lowercase())
-                        close()
-                        notifyRetryReady()
-                    }
-                    else -> Unit
+                if (state == PeerConnection.PeerConnectionState.FAILED) {
+                    onState(state.name.lowercase())
+                    close()
+                    notifyRetryReady()
                 }
             }
         }
@@ -224,7 +198,6 @@ internal class ReceiverSession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        disconnectRecovery.recovered()
         negotiationDeadline.close()
         socket?.close(); socket = null
         answerWriter = null

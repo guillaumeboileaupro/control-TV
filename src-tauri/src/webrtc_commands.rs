@@ -264,7 +264,6 @@ async fn create_reconnect_attempt(
         return Err("the bounded WebRTC session expired during reconnection".into());
     }
     let mut retry_config = config.clone();
-    retry_config.maximum_duration = remaining;
     let retry_transport = Arc::new(
         tokio::time::timeout(
             reconnect_timeout(session_deadline, RECONNECT_SETUP_TIMEOUT)?,
@@ -321,6 +320,11 @@ async fn create_reconnect_attempt(
             return Err(detail);
         }
     };
+    retry_config.maximum_duration = session_deadline.saturating_duration_since(Instant::now());
+    if retry_config.maximum_duration <= retry_config.negotiation_timeout {
+        let _ = retry_transport.close().await;
+        return Err("the bounded WebRTC session expired during reconnection".into());
+    }
     let mut active = state.active.lock().await;
     if let Err(error) = active.controller.prepare(&retry_config, &SystemClock).await {
         drop(active);
@@ -350,9 +354,11 @@ async fn create_reconnect_attempt(
         ),
     )
     .await;
-    if let Err(detail) = handoff
-        .map_err(|_| "the bounded WebRTC session expired during receiver handoff".to_owned())?
-    {
+    let handoff = match handoff {
+        Ok(result) => result,
+        Err(_) => Err("the bounded WebRTC session expired during receiver handoff".to_owned()),
+    };
+    if let Err(detail) = handoff {
         let mut active = state.active.lock().await;
         let detail = stop_engine_after_failure(&mut active, retry_transport.as_ref(), detail).await;
         return Err(detail);
@@ -525,6 +531,10 @@ pub(crate) async fn start_webrtc_stream(
             {
                 Ok(timeout) => timeout,
                 Err(detail) => {
+                    let mut active = state_handle.active.lock().await;
+                    let detail =
+                        stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
+                    drop(active);
                     release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
                     return;
                 }

@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
         lateinit var watcher: TextWatcher
         fun awaitFreshHandoff() {
             session = null
+            handoff.removeTextChangedListener(watcher)
             handoff.text.clear()
             handoff.visibility = View.VISIBLE
             handoff.addTextChangedListener(watcher)
@@ -51,12 +52,13 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(value: Editable?) {
                 val encoded = value?.toString() ?: return
-                if (!encoded.startsWith("ctv1|") || session != null) return
+                if (!encoded.startsWith("ctv1|")) return
                 handoff.removeTextChangedListener(this)
                 handoff.text.clear()
+                session?.close()
+                session = null
                 runCatching { PairingProtocol.handoff(encoded) }
                     .onSuccess { target ->
-                        handoff.visibility = View.GONE
                         session = ReceiverSession(
                             this@MainActivity,
                             renderer,
@@ -64,6 +66,8 @@ class MainActivity : AppCompatActivity() {
                             { runOnUiThread { awaitFreshHandoff() } },
                         )
                         session?.connect(target)
+                        handoff.addTextChangedListener(this)
+                        handoff.requestFocus()
                     }
                     .onFailure {
                         status.text = "Paramètres de session refusés"
