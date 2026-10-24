@@ -1,6 +1,7 @@
 # Rust / Tauri build output
 /target/
 /src-tauri/target/
+/webrtc-engine/target/
 /src-tauri/gen/schemas/
 
 # Android generated/build output
@@ -9,6 +10,8 @@
 /src-tauri/gen/android/app/build/
 /src-tauri/gen/android/buildSrc/build/
 /src-tauri/gen/android/buildSrc/.gradle/
+/android-tv-receiver/build/
+/android-tv-receiver/app/build/
 /src-tauri/gen/android/app/src/main/jniLibs/
 .gradle/
 
