@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -523,3 +523,41 @@ def test_the_small_remaining_paths(tmp_path: Path) -> None:
     live = encoder(tmp_path, FakeRunner())
     with pytest.raises(InvalidStreamConfiguration, match="synthetic picture or a screen"):
         live.start(object(), EncodingProfile())  # type: ignore[arg-type]
+
+
+class FailOnce:
+    """The fake `xrandr`, refusing once the first command that `matches`."""
+
+    def __init__(self, xrandr: FakeXrandr, matches: Callable[[Sequence[str]], bool]) -> None:
+        self.xrandr, self.matches, self.pending = xrandr, matches, True
+
+    def __call__(
+        self, argv: Sequence[str], environ: Mapping[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        if self.pending and self.matches(argv):
+            self.pending = False
+            return subprocess.CompletedProcess(argv, 1, "", "refused")
+        return self.xrandr(argv, environ)
+
+
+def test_a_removal_retried_after_a_late_failure_finishes_and_puts_the_desktop_back() -> None:
+    xrandr = FakeXrandr()
+    desktop = dict(xrandr.places)
+
+    def puts_back(argv: Sequence[str]) -> bool:
+        return argv[1] == "--output" and "--pos" in argv and "--mode" not in argv
+
+    extension = XrandrVirtualMonitor(X11, FailOnce(xrandr, puts_back), no_wait)
+    extension.create(1280, 720, consent=True, x=-1280, y=0)  # the desktop moves right
+    assert xrandr.places != desktop
+
+    # The mode is already deleted when moving the desktop back fails: the retry must not
+    # delete it again (xrandr refuses a missing mode), only finish what is left.
+    with pytest.raises(StreamCleanupError, match="--output failed"):
+        extension.remove()
+    assert extension.active and xrandr.modes == set()
+    extension.remove()
+    assert not extension.active and xrandr.places == desktop
+
+    extension.create(1280, 720, consent=True)  # nothing left blocks a new extension
+    assert extension.active

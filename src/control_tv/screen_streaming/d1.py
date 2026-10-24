@@ -136,8 +136,9 @@ class D1Session:
 
     def stop(self) -> None:
         """Stop the receiver, the publication and the encoder, then forget the capture and
-        remove the virtual monitor. Every step is attempted; the first failure is raised."""
-        failures: list[ScreenStreamError] = []
+        remove the virtual monitor. Every step is attempted, even after an interrupt; then an
+        interrupt (`KeyboardInterrupt`, `SystemExit`) is raised first, else the first failure."""
+        failures: list[BaseException] = []
         steps: list[Callable[[], None]] = [self.service.close]
         if self.capture is not None and self.capture_handle is not None:
             capture, handle = self.capture, self.capture_handle
@@ -147,10 +148,11 @@ class D1Session:
         for step in steps:
             try:
                 step()
-            except ScreenStreamError as error:
+            except BaseException as error:  # the next steps still run
                 failures.append(error)
-        if failures:
-            raise failures[0]
+        interrupts = [error for error in failures if not isinstance(error, Exception)]
+        if interrupts or failures:
+            raise (interrupts or failures)[0]
 
     def run(
         self,

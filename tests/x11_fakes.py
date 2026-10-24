@@ -36,6 +36,9 @@ class FakeXrandr:
         self.forced = forced
         self.accept = accept
         self.modes: set[str] = set() if leftover is None else {leftover}
+        # Modes added to an output (`--addmode`): like the real xrandr, `--delmode` refuses a mode
+        # that is not on the output and `--rmmode` one that is undefined or still on an output.
+        self.added: set[tuple[str, str]] = set()
         self.enabled: tuple[str, int, int, int, int] | None = None  # output, w, h, x, y
         # Where the desktop's own screens are (moved when the TV goes left of or above them).
         self.places = {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
@@ -68,7 +71,15 @@ class FakeXrandr:
             out = self._query()
         elif arguments[0] == "--newmode":
             self.modes.add(arguments[1])
+        elif arguments[0] == "--addmode":
+            self.added.add((arguments[1], arguments[2]))
+        elif arguments[0] == "--delmode":
+            if (arguments[1], arguments[2]) not in self.added:
+                return subprocess.CompletedProcess(argv, 1, "", "cannot find mode on output")
+            self.added.discard((arguments[1], arguments[2]))
         elif arguments[0] == "--rmmode":
+            if arguments[1] not in self.modes or any(m == arguments[1] for _, m in self.added):
+                return subprocess.CompletedProcess(argv, 1, "", "cannot remove mode")
             self.modes.discard(arguments[1])
         elif arguments[0] == "--output":
             self._outputs(arguments)

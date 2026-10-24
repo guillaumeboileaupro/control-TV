@@ -6,6 +6,10 @@
 - [x] **Sécurité Python — GHSA-xmj3-9gf7-h52w (2026-10-24) :** `setuptools` 84.0.0 → 84.1.0
   (groupe `android`, backend des roues embarquées) ; l'audit Python échouait sur toutes les branches.
   Aucune dérogation. Validation automatisée uniquement.
+- [x] **Nettoyage D1/D2 (2026-10-24, défauts signalés sur #97) :** un retrait D2 dont une étape
+  tardive échoue reprend après les étapes déjà faites (le bureau est remis en place) ; l'arrêt D1
+  retire l'écran virtuel même après `KeyboardInterrupt`, `SystemExit` ou une erreur imprévue.
+  Validation automatisée uniquement ; à reporter dans #97/#106 par leur auteur.
 - [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
   réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
   `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.

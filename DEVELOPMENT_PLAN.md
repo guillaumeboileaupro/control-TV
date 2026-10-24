@@ -9,6 +9,15 @@ backend, `android` dependency group) moves from 84.0.0 to 84.1.0 for GHSA-xmj3-9
 Windows path escape during legacy wheel installation, published 2026-10-23), which fails the
 Python audit gate on every branch; `uv.lock` changes only `setuptools`. Automated validation only.
 
+D1/D2 cleanup (2026-10-24, integration branch; reported on #97 at `146df10`): a D2 removal whose
+late step failed (moving the desktop back after the mode was deleted) could never be retried,
+because the retry deleted the missing mode again; the extension stayed active and the desktop
+shifted. `XrandrVirtualMonitor.remove` now resumes after the steps already done. `D1Session.stop`
+stopped cleaning up on `KeyboardInterrupt`, `SystemExit` or an unexpected error and could leave the
+virtual monitor behind; every step now runs, then the interrupt is raised first. The fake `xrandr`
+now refuses deleting a missing or attached mode, like the real one (assumed, not checked on
+hardware). Automated validation only; no display or TV was used.
+
 ## Rust/WebRTC — état logiciel au 2026-10-21
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.

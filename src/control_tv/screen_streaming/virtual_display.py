@@ -85,6 +85,9 @@ class XrandrVirtualMonitor:
         self._run = run
         self._sleep = sleep
         self._extension: _Extension | None = None
+        # Removal steps of the extension already done: a retry resumes after them, since xrandr
+        # refuses to delete a mode that is already gone.
+        self._removed = 0
         self._lock = threading.Lock()
 
     @property
@@ -152,19 +155,25 @@ class XrandrVirtualMonitor:
                 self._forget(extension)
                 raise
             self._extension = extension
+            self._removed = 0
         return output
 
     def remove(self) -> None:
-        """Turn the extra screen off and delete its mode. Idempotent; a failure keeps it for a
-        retry."""
+        """Turn the extra screen off, delete its mode and put the desktop back. Idempotent; a
+        failure keeps it for a retry, which resumes after the steps already done."""
         with self._lock:
             extension = self._extension
             if extension is None:
                 return
-            self._xrandr("--output", extension.output, "--off", cleanup=True)
-            self._xrandr("--delmode", extension.output, extension.mode, cleanup=True)
-            self._xrandr("--rmmode", extension.mode, cleanup=True)
-            self._put_back(extension, cleanup=True)
+            steps: tuple[Callable[[], object], ...] = (
+                lambda: self._xrandr("--output", extension.output, "--off", cleanup=True),
+                lambda: self._xrandr("--delmode", extension.output, extension.mode, cleanup=True),
+                lambda: self._xrandr("--rmmode", extension.mode, cleanup=True),
+                lambda: self._put_back(extension, cleanup=True),
+            )
+            for step in steps[self._removed :]:
+                step()
+                self._removed += 1
             self._extension = None
 
     def _place(self, extension: _Extension, x: int, y: int) -> tuple[tuple[str, ...], _Extension]:
