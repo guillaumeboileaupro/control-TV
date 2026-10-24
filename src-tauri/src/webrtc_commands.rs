@@ -51,6 +51,7 @@ struct ActiveState {
     controller: SessionController,
     transport: Option<Arc<WebRtcTransport>>,
     last_error: Option<String>,
+    reconnecting: bool,
 }
 
 #[derive(Deserialize)]
@@ -151,7 +152,17 @@ async fn stop_engine_after_failure(
 
 async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
     let cleanup = release_capture(bridge, Some(detail.clone())).await;
-    state.active.lock().await.last_error = combine_failure(Some(&detail), cleanup);
+    let mut active = state.active.lock().await;
+    active.reconnecting = false;
+    active.last_error = combine_failure(Some(&detail), cleanup);
+}
+
+fn reported_state(active: &ActiveState) -> EngineState {
+    if active.reconnecting {
+        EngineState::AwaitingReceiver
+    } else {
+        active.controller.state()
+    }
 }
 
 async fn release_start_failure(bridge: SharedBridgeState, detail: String) -> String {
@@ -374,11 +385,13 @@ pub(crate) async fn start_webrtc_stream(
                 let detail =
                     stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
                 let Some(reconnect_attempts) = reconnect_budget.claim() else {
+                    active.reconnecting = false;
                     active.last_error = Some(detail.clone());
                     drop(active);
                     release_after_failure(&state_handle, bridge_handle, detail).await;
                     return;
                 };
+                active.reconnecting = true;
                 drop(active);
                 tokio::time::sleep(RECONNECT_DELAY).await;
 
@@ -426,6 +439,7 @@ pub(crate) async fn start_webrtc_stream(
                     .clone();
                 active.transport = Some(Arc::clone(&retry_transport));
                 active.last_error = None;
+                active.reconnecting = false;
                 drop(active);
                 if let Err(detail) = handoff_pairing(
                     bridge_handle.clone(),
@@ -644,6 +658,16 @@ mod tests {
         assert_eq!(budget.claim(), None);
         assert_eq!(budget.claim(), None);
     }
+
+    #[test]
+    fn reconnecting_state_remains_visible_and_stoppable() {
+        let active = ActiveState {
+            reconnecting: true,
+            ..ActiveState::default()
+        };
+        assert_eq!(active.controller.state(), EngineState::Idle);
+        assert_eq!(reported_state(&active), EngineState::AwaitingReceiver);
+    }
 }
 
 #[tauri::command]
@@ -661,6 +685,7 @@ pub(crate) async fn stop_webrtc_stream(
         task.abort();
     }
     let mut active = state.active.lock().await;
+    active.reconnecting = false;
     if let Some(transport) = active.transport.clone() {
         let result = active.controller.stop(transport.as_ref()).await;
         if let Err(error) = result {
@@ -675,7 +700,7 @@ pub(crate) async fn stop_webrtc_stream(
     let active = state.active.lock().await;
     let error = combine_failure(engine_error.as_deref(), cleanup_error);
     Ok(StatusReply {
-        state: active.controller.state(),
+        state: reported_state(&active),
         diagnostics: active.controller.diagnostics().await,
         error,
     })
@@ -713,7 +738,7 @@ pub(crate) async fn get_webrtc_stream(
         active.last_error = combine_failure(active.last_error.as_deref(), cleanup_error);
     }
     Ok(StatusReply {
-        state: active.controller.state(),
+        state: reported_state(&active),
         diagnostics: active.controller.diagnostics().await,
         error: active.last_error.clone(),
     })

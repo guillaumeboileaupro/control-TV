@@ -33,6 +33,7 @@ internal class ReceiverSession(
     context: Context,
     private val renderer: SurfaceViewRenderer,
     private val onState: (String) -> Unit,
+    private val onRetryReady: () -> Unit,
 ) : Closeable {
     private val egl = EglBase.create()
     private val factory: PeerConnectionFactory
@@ -41,6 +42,7 @@ internal class ReceiverSession(
     private var answerWriter: BufferedWriter? = null
     private val answerGate = IceCompleteAnswerGate()
     private val closed = AtomicBoolean(false)
+    private val retryNotified = AtomicBoolean(false)
 
     init {
         PeerConnectionFactory.initialize(
@@ -97,6 +99,7 @@ internal class ReceiverSession(
         } catch (error: Exception) {
             onState("Erreur : ${error.message ?: error.javaClass.simpleName}")
             close()
+            notifyRetryReady()
         }
     }
 
@@ -128,7 +131,11 @@ internal class ReceiverSession(
             override fun onRenegotiationNeeded() = Unit
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) = Unit
             override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-                if (state == PeerConnection.PeerConnectionState.FAILED || state == PeerConnection.PeerConnectionState.CLOSED) onState(state.name.lowercase())
+                if (state == PeerConnection.PeerConnectionState.FAILED) {
+                    onState(state.name.lowercase())
+                    close()
+                    notifyRetryReady()
+                }
             }
         }
     ))
@@ -136,15 +143,25 @@ internal class ReceiverSession(
     private fun creationObserver(onSuccess: (SessionDescription) -> Unit): SdpObserver = object : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = onSuccess(description)
         override fun onSetSuccess() = Unit
-        override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
-        override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+        override fun onCreateFailure(message: String) = failSdp(message)
+        override fun onSetFailure(message: String) = failSdp(message)
     }
 
     private fun settingObserver(onSuccess: () -> Unit): SdpObserver = object : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = Unit
         override fun onSetSuccess() = onSuccess()
-        override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
-        override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+        override fun onCreateFailure(message: String) = failSdp(message)
+        override fun onSetFailure(message: String) = failSdp(message)
+    }
+
+    private fun failSdp(message: String) {
+        onState("Erreur SDP : $message")
+        close()
+        notifyRetryReady()
+    }
+
+    private fun notifyRetryReady() {
+        if (retryNotified.compareAndSet(false, true)) onRetryReady()
     }
 
     @Synchronized
@@ -157,6 +174,7 @@ internal class ReceiverSession(
         }.onFailure {
             onState("Erreur : envoi de la réponse impossible")
             close()
+            notifyRetryReady()
         }
     }
 
