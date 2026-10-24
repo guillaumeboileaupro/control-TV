@@ -42,6 +42,10 @@ from fakes import DEVICE_ID, FakeTransport
 HOST = "192.168.1.20"  # FakeTransport's discovered address
 
 
+def power(is_on: bool | None) -> RemoteObservation:
+    return RemoteObservation(is_on=is_on, volume=None)
+
+
 def volume(level: int, muted: bool = False) -> RemoteObservation:
     return RemoteObservation(
         is_on=True, volume=AudibleVolume(level=level, maximum=100, muted=muted)
@@ -172,7 +176,11 @@ def test_without_a_remote_channel_the_service_says_so() -> None:
             volume(11),
             Confirmation.UNCONFIRMED,
         ),
-        (RemoteKey.POWER, volume(10), volume(10), Confirmation.NOT_CHECKED),
+        (RemoteKey.POWER, power(False), power(True), Confirmation.CONFIRMED),
+        (RemoteKey.POWER, power(True), power(False), Confirmation.CONFIRMED),
+        (RemoteKey.POWER, power(False), power(False), Confirmation.UNCONFIRMED),
+        (RemoteKey.POWER, power(None), power(True), Confirmation.UNCONFIRMED),
+        (RemoteKey.POWER, power(False), power(None), Confirmation.UNCONFIRMED),
         (RemoteKey.DPAD_CENTER, volume(10), volume(10), Confirmation.NOT_CHECKED),
     ],
 )
@@ -199,6 +207,17 @@ def test_the_detail_states_what_the_tv_reported() -> None:
 
     assert up.detail == "the TV reports volume 11/100"
     assert mute.detail == "sent; the TV still reports its sound not muted"
+
+
+def test_power_is_confirmed_only_by_the_tvs_power_report() -> None:
+    def pressed(before: bool | None, after: bool | None) -> str:
+        remote = FakeRemote(before=power(before), after=power(after))
+        return discovered(remote).press_remote_key(DEVICE_ID, RemoteKey.POWER).detail
+
+    assert pressed(False, True) == "the TV reports it is on"
+    assert pressed(True, False) == "the TV reports it is off"
+    assert pressed(False, False) == "sent; the TV still reports it is off"
+    assert pressed(True, None) == "sent; the TV did not report whether it is on"
 
 
 def test_a_tv_that_does_not_report_its_sound_is_named_for_the_key_pressed() -> None:
@@ -458,6 +477,11 @@ class FakeApps:
             raise self.error
         return AppLaunch(package=package, front_app=self.front)
 
+    def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
+        self.calls.append(("pair", host, pairing_endpoint, code))
+        if self.error is not None:
+            raise self.error
+
 
 def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
     service = ControlService(transport or FakeTransport(), remote=FakeRemote(), apps=apps)
@@ -470,6 +494,28 @@ def test_the_app_list_comes_from_the_discovered_tv() -> None:
 
     assert with_apps(apps).list_tv_apps(DEVICE_ID) == list(apps.apps)
     assert apps.calls == [("list", HOST)]
+
+
+def test_wireless_debugging_pairing_targets_only_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    response = call(
+        with_apps(apps),
+        "pair_tv_apps",
+        deviceId=str(DEVICE_ID),
+        pairingEndpoint=f"{HOST}:40123",
+        code="123456",
+    )
+
+    assert response["result"] == {"pairing": "paired"}
+    assert apps.calls == [("pair", HOST, f"{HOST}:40123", "123456")]
+
+
+def test_wireless_debugging_pairing_needs_text_and_the_apps_channel() -> None:
+    with pytest.raises(InvalidArgumentError):
+        with_apps(FakeApps()).pair_tv_apps(DEVICE_ID, None, "123456")  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).pair_tv_apps(DEVICE_ID, f"{HOST}:40123", "123456")
 
 
 def test_no_app_list_for_a_group_or_without_the_inventory() -> None:

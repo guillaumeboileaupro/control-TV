@@ -58,6 +58,9 @@ CERT_FILE = "client-cert.pem"
 KEY_FILE = "client-key.pem"
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_SETTLE = 1.0
+# A TV that wakes or goes to standby reports its new power state later than a volume change;
+# bounded well under DEFAULT_TIMEOUT, which also covers connecting.
+DEFAULT_POWER_SETTLE = 4.0
 PAIRING_CODE = re.compile(r"[0-9A-Fa-f]{6}")
 _SETTLE_STEP = 0.05
 
@@ -207,6 +210,7 @@ class TvRemoteChannel:
         client_name: str = CLIENT_NAME,
         timeout: float = DEFAULT_TIMEOUT,
         settle: float = DEFAULT_SETTLE,
+        power_settle: float = DEFAULT_POWER_SETTLE,
         remote_factory: RemoteFactory = _default_remote_factory,
         cert_generator: CertGenerator = _default_cert_generator,
     ) -> None:
@@ -214,6 +218,7 @@ class TvRemoteChannel:
         self._client_name = client_name
         self._timeout = timeout
         self._settle = settle
+        self._power_settle = power_settle
         self._remote_factory = remote_factory
         self._cert_generator = cert_generator
         self._lock = threading.Lock()
@@ -271,20 +276,28 @@ class TvRemoteChannel:
     def press(self, host: str, key: RemoteKey) -> KeyPress:
         """Send one key once, and report what the TV said before and after it.
 
-        For a volume key the TV normally reports its new volume; the adapter waits for that
-        report a short time, then returns whatever the TV said, changed or not.
+        For a volume key the TV normally reports its new volume, and for Power its new power
+        state; the adapter waits for that report a short time, then returns whatever the TV
+        said, changed or not.
         """
         host = _checked_host(host)
         if not isinstance(key, RemoteKey):
             raise InvalidArgumentError(f"not an allowed key: {key!r}")
 
         async def send(remote: RemoteClient) -> KeyPress:
-            if key in VOLUME_KEYS:  # the volume it changes; other keys are not delayed
+            # What the key changes is read first; navigation keys are not delayed.
+            if key in VOLUME_KEYS:
                 await self._wait_for(lambda: remote.volume_info is not None)
+            elif key is RemoteKey.POWER:
+                await self._wait_for(lambda: _observe(remote).is_on is not None)
             before = _observe(remote)
             remote.send_key_command(key.value)
             if key in VOLUME_KEYS:
                 await self._wait_for(lambda: _observe(remote).volume != before.volume)
+            elif key is RemoteKey.POWER:
+                await self._wait_for(
+                    lambda: _observe(remote).is_on != before.is_on, self._power_settle
+                )
             return KeyPress(key=key, before=before, after=_observe(remote))
 
         return self._run(lambda: self._session(host, send))
@@ -332,9 +345,10 @@ class TvRemoteChannel:
             # Closing the connection flushes what was written to it before closing.
             remote.disconnect()
 
-    async def _wait_for(self, condition: Callable[[], bool]) -> None:
+    async def _wait_for(self, condition: Callable[[], bool], limit: float | None = None) -> None:
+        bound = self._settle if limit is None else limit
         waited = 0.0
-        while not condition() and waited < self._settle:
+        while not condition() and waited < bound:
             await asyncio.sleep(_SETTLE_STEP)
             waited += _SETTLE_STEP
 

@@ -29,10 +29,19 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
+private const val NEGOTIATION_DEADLINE_MS = 20_000L
+
+internal class OneShotGate {
+    private val claimed = AtomicBoolean(false)
+    fun claim(): Boolean = claimed.compareAndSet(false, true)
+    fun close() { claimed.set(true) }
+}
+
 internal class ReceiverSession(
     context: Context,
     private val renderer: SurfaceViewRenderer,
     private val onState: (String) -> Unit,
+    private val onRetryReady: () -> Unit,
 ) : Closeable {
     private val egl = EglBase.create()
     private val factory: PeerConnectionFactory
@@ -41,6 +50,8 @@ internal class ReceiverSession(
     private var answerWriter: BufferedWriter? = null
     private val answerGate = IceCompleteAnswerGate()
     private val closed = AtomicBoolean(false)
+    private val retryNotification = OneShotGate()
+    private val negotiationDeadline = OneShotGate()
 
     init {
         PeerConnectionFactory.initialize(
@@ -56,6 +67,14 @@ internal class ReceiverSession(
     fun connect(target: PairingTarget) {
         check(peer == null) { "A session is already active" }
         Thread({ pair(target) }, "control-tv-pairing").start()
+        Thread({
+            Thread.sleep(NEGOTIATION_DEADLINE_MS)
+            if (negotiationDeadline.claim()) {
+                onState("Erreur : délai de négociation dépassé")
+                close()
+                notifyRetryReady()
+            }
+        }, "control-tv-negotiation-watchdog").apply { isDaemon = true }.start()
     }
 
     private fun pair(target: PairingTarget) {
@@ -97,6 +116,7 @@ internal class ReceiverSession(
         } catch (error: Exception) {
             onState("Erreur : ${error.message ?: error.javaClass.simpleName}")
             close()
+            notifyRetryReady()
         }
     }
 
@@ -128,7 +148,11 @@ internal class ReceiverSession(
             override fun onRenegotiationNeeded() = Unit
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) = Unit
             override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-                if (state == PeerConnection.PeerConnectionState.FAILED || state == PeerConnection.PeerConnectionState.CLOSED) onState(state.name.lowercase())
+                if (state == PeerConnection.PeerConnectionState.FAILED) {
+                    onState(state.name.lowercase())
+                    close()
+                    notifyRetryReady()
+                }
             }
         }
     ))
@@ -136,15 +160,25 @@ internal class ReceiverSession(
     private fun creationObserver(onSuccess: (SessionDescription) -> Unit): SdpObserver = object : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = onSuccess(description)
         override fun onSetSuccess() = Unit
-        override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
-        override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+        override fun onCreateFailure(message: String) = failSdp(message)
+        override fun onSetFailure(message: String) = failSdp(message)
     }
 
     private fun settingObserver(onSuccess: () -> Unit): SdpObserver = object : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = Unit
         override fun onSetSuccess() = onSuccess()
-        override fun onCreateFailure(message: String) = onState("Erreur SDP : $message")
-        override fun onSetFailure(message: String) = onState("Erreur SDP : $message")
+        override fun onCreateFailure(message: String) = failSdp(message)
+        override fun onSetFailure(message: String) = failSdp(message)
+    }
+
+    private fun failSdp(message: String) {
+        onState("Erreur SDP : $message")
+        close()
+        notifyRetryReady()
+    }
+
+    private fun notifyRetryReady() {
+        if (retryNotification.claim()) onRetryReady()
     }
 
     @Synchronized
@@ -154,14 +188,17 @@ internal class ReceiverSession(
         if (writer == null) return
         runCatching {
             writer.write(PairingProtocol.answer(answer, true)); writer.newLine(); writer.flush()
+            negotiationDeadline.close()
         }.onFailure {
             onState("Erreur : envoi de la réponse impossible")
             close()
+            notifyRetryReady()
         }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        negotiationDeadline.close()
         socket?.close(); socket = null
         answerWriter = null
         peer?.close(); peer?.dispose(); peer = null

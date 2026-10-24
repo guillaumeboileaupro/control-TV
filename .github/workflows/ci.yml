@@ -311,12 +311,17 @@ jobs:
       - name: Install the package, ping its bridge and remove it
         run: |
           sudo apt-get install --no-install-recommends -y ./dist/control-tv_*_amd64.deb
+          for package in ffmpeg x11-xserver-utils; do
+            test "$(dpkg-query -W -f='${Status}' "$package")" = "install ok installed"
+          done
           cd "$RUNNER_TEMP"
           printf '{"id":1,"method":"ping","params":{}}\n' \
             | env -i PATH=/nonexistent /usr/lib/control-tv/python-bridge/control-tv-bridge \
             | tee ping.json
           grep -q '"status": "ready"' ping.json
           sudo apt-get remove --purge -y control-tv
+          if dpkg-query -W control-tv >/dev/null 2>&1; then exit 1; fi
+          test ! -e /usr/bin/control-tv
           test ! -e /usr/lib/control-tv
 
       - name: Keep the release package, inventory and checksums

@@ -38,7 +38,15 @@ class MainActivity : AppCompatActivity() {
             addView(renderer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 2f))
         }
         setContentView(root)
-        handoff.addTextChangedListener(object : TextWatcher {
+        lateinit var watcher: TextWatcher
+        fun awaitFreshHandoff() {
+            session = null
+            handoff.text.clear()
+            handoff.visibility = View.VISIBLE
+            handoff.addTextChangedListener(watcher)
+            handoff.requestFocus()
+        }
+        watcher = object : TextWatcher {
             override fun beforeTextChanged(value: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(value: Editable?) {
@@ -49,9 +57,12 @@ class MainActivity : AppCompatActivity() {
                 runCatching { PairingProtocol.handoff(encoded) }
                     .onSuccess { target ->
                         handoff.visibility = View.GONE
-                        session = ReceiverSession(this@MainActivity, renderer) { message ->
-                            runOnUiThread { status.text = message }
-                        }
+                        session = ReceiverSession(
+                            this@MainActivity,
+                            renderer,
+                            { message -> runOnUiThread { status.text = message } },
+                            { runOnUiThread { awaitFreshHandoff() } },
+                        )
                         session?.connect(target)
                     }
                     .onFailure {
@@ -59,7 +70,8 @@ class MainActivity : AppCompatActivity() {
                         handoff.addTextChangedListener(this)
                     }
             }
-        })
+        }
+        handoff.addTextChangedListener(watcher)
         handoff.requestFocus()
     }
 

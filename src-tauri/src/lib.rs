@@ -87,6 +87,7 @@ pub fn run() {
             commands::bridge_type_remote_text,
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
+            commands::bridge_pair_tv_apps,
             commands::bridge_list_screens,
             commands::bridge_get_screen_receiver_capabilities,
             commands::bridge_prepare_webrtc_capture,
@@ -1248,6 +1249,18 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
         assert_eq!(
             app_request("uuid-1", "com.example.video"),
             json!({"deviceId": "uuid-1", "package": "com.example.video"})
+        );
+    }
+
+    #[test]
+    fn an_adb_pairing_request_keeps_the_endpoint_and_temporary_code_separate() {
+        assert_eq!(
+            app_pairing_request("uuid-1", "192.0.2.10:40123", "123456"),
+            json!({
+                "deviceId": "uuid-1",
+                "pairingEndpoint": "192.0.2.10:40123",
+                "code": "123456"
+            })
         );
     }
 

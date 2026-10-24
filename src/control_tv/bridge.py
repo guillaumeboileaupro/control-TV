@@ -473,6 +473,16 @@ def _handle_launch_tv_app(control: TvControl, params: JsonObject) -> JsonObject:
     return {"result": _app_launch_to_json(control.launch_tv_app(device_id, package))}
 
 
+def _handle_pair_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
+    device_id = _device_id_param(params)
+    pairing_endpoint = params.get("pairingEndpoint")
+    code = params.get("code")
+    if not isinstance(pairing_endpoint, str) or not isinstance(code, str):
+        raise InvalidArgumentError("pairingEndpoint and code must be strings")
+    control.pair_tv_apps(device_id, pairing_endpoint, code)
+    return {"pairing": "paired"}
+
+
 # The screen stream (D3/D4): one controller per bridge process, created on first use (never on
 # Android or without X11), closed when the bridge exits so quitting the app stops the stream.
 _screen_controller: ScreenStreamController | None = None
@@ -765,6 +775,7 @@ _HANDLERS: dict[str, Handler] = {
     "list_tv_apps": _handle_list_tv_apps,
     "get_screen_receiver_capabilities": _handle_get_screen_receiver_capabilities,
     "launch_tv_app": _handle_launch_tv_app,
+    "pair_tv_apps": _handle_pair_tv_apps,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,
     "prepare_webrtc_capture": _handle_prepare_webrtc_capture,

@@ -156,6 +156,13 @@ impl SessionController {
         self.diagnostics.lock().await.clone()
     }
 
+    /// Records a host-orchestrated reconnect attempt. The host must create a new
+    /// transport and call `prepare` again so every attempt receives a fresh token.
+    pub async fn record_reconnect_attempt(&self) {
+        let mut diagnostics = self.diagnostics.lock().await;
+        diagnostics.reconnect_attempts = diagnostics.reconnect_attempts.saturating_add(1);
+    }
+
     pub async fn poll_media(&mut self) -> Option<Result<(), EngineError>> {
         if !self
             .media_task
@@ -426,6 +433,14 @@ mod tests {
             deadline: Some(Instant::now() + Duration::from_secs(60)),
             ..SessionController::default()
         }
+    }
+
+    #[tokio::test]
+    async fn reconnect_attempts_are_reported_without_exposing_session_secrets() {
+        let controller = SessionController::default();
+        controller.record_reconnect_attempt().await;
+        controller.record_reconnect_attempt().await;
+        assert_eq!(controller.diagnostics().await.reconnect_attempts, 2);
     }
 
     #[tokio::test]

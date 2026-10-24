@@ -16,7 +16,28 @@ use crate::commands::{
 
 const MAXIMUM_SESSION: Duration = Duration::from_secs(60 * 60);
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_RECONNECT_ATTEMPTS: u32 = 2;
+const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const RECEIVER_PACKAGE: &str = "io.github.guillaumeboileaupro.controltv.receiver";
+
+struct ReconnectBudget {
+    used: u32,
+    maximum: u32,
+}
+
+impl ReconnectBudget {
+    fn new(maximum: u32) -> Self {
+        Self { used: 0, maximum }
+    }
+
+    fn claim(&mut self) -> Option<u32> {
+        if self.used >= self.maximum {
+            return None;
+        }
+        self.used += 1;
+        Some(self.used)
+    }
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct WebRtcState {
@@ -30,6 +51,17 @@ struct ActiveState {
     controller: SessionController,
     transport: Option<Arc<WebRtcTransport>>,
     last_error: Option<String>,
+    reconnecting: bool,
+}
+
+impl ActiveState {
+    fn begin_reconnect(&mut self) {
+        self.reconnecting = true;
+    }
+
+    fn end_reconnect(&mut self) {
+        self.reconnecting = false;
+    }
 }
 
 #[derive(Deserialize)]
@@ -130,7 +162,17 @@ async fn stop_engine_after_failure(
 
 async fn release_after_failure(state: &WebRtcState, bridge: SharedBridgeState, detail: String) {
     let cleanup = release_capture(bridge, Some(detail.clone())).await;
-    state.active.lock().await.last_error = combine_failure(Some(&detail), cleanup);
+    let mut active = state.active.lock().await;
+    active.end_reconnect();
+    active.last_error = combine_failure(Some(&detail), cleanup);
+}
+
+fn reported_state(active: &ActiveState) -> EngineState {
+    if active.reconnecting {
+        EngineState::AwaitingReceiver
+    } else {
+        active.controller.state()
+    }
 }
 
 async fn release_start_failure(bridge: SharedBridgeState, detail: String) -> String {
@@ -154,6 +196,16 @@ async fn handoff_receiver(
     .await
     .map_err(|failure| failure.message)?;
     verify_receiver_launch(&launch)?;
+    handoff_pairing(bridge, device_id, address, token, certificate_sha256).await
+}
+
+async fn handoff_pairing(
+    bridge: SharedBridgeState,
+    device_id: &str,
+    address: SocketAddr,
+    token: &str,
+    certificate_sha256: &str,
+) -> Result<(), String> {
     let payload = pairing_payload(address, token, certificate_sha256);
     let reply = call_bridge(
         bridge,
@@ -328,71 +380,164 @@ pub(crate) async fn start_webrtc_stream(
     let state_handle = state.inner().clone();
     let bridge_handle = bridge.inner().clone();
     let task = tauri::async_runtime::spawn(async move {
-        let answer = server
-            .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
-            .await;
-        let mut active = state_handle.active.lock().await;
-        match answer {
-            Ok(answer) => {
-                if let Err(error) = active
+        let mut server = server;
+        let mut token = token;
+        let mut offer = offer;
+        let mut transport = transport;
+        let mut reconnect_budget = ReconnectBudget::new(MAX_RECONNECT_ATTEMPTS);
+        loop {
+            let answer = server
+                .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
+                .await;
+            if let Err(error) = answer {
+                let detail = error.to_string();
+                let mut active = state_handle.active.lock().await;
+                let detail =
+                    stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
+                let Some(reconnect_attempts) = reconnect_budget.claim() else {
+                    active.end_reconnect();
+                    active.last_error = Some(detail.clone());
+                    drop(active);
+                    release_after_failure(&state_handle, bridge_handle, detail).await;
+                    return;
+                };
+                active.begin_reconnect();
+                drop(active);
+                tokio::time::sleep(RECONNECT_DELAY).await;
+
+                let retry_transport = match WebRtcTransport::new().await {
+                    Ok(transport) => Arc::new(transport),
+                    Err(error) => {
+                        release_after_failure(&state_handle, bridge_handle, error.to_string())
+                            .await;
+                        return;
+                    }
+                };
+                let retry_offer = match retry_transport.create_offer().await {
+                    Ok(offer) => offer,
+                    Err(error) => {
+                        let _ = retry_transport.close().await;
+                        release_after_failure(&state_handle, bridge_handle, error.to_string())
+                            .await;
+                        return;
+                    }
+                };
+                let (retry_server, retry_endpoint) =
+                    match PairingServer::bind(config.bind_address).await {
+                        Ok(pairing) => pairing,
+                        Err(error) => {
+                            let _ = retry_transport.close().await;
+                            release_after_failure(&state_handle, bridge_handle, error.to_string())
+                                .await;
+                            return;
+                        }
+                    };
+                let mut active = state_handle.active.lock().await;
+                if let Err(error) = active.controller.prepare(&config, &SystemClock).await {
+                    drop(active);
+                    let _ = retry_transport.close().await;
+                    release_after_failure(&state_handle, bridge_handle, error.to_string()).await;
+                    return;
+                }
+                for _ in 0..reconnect_attempts {
+                    active.controller.record_reconnect_attempt().await;
+                }
+                let retry_token = active
                     .controller
-                    .negotiate(
-                        token.expose_for_pairing(),
-                        answer,
-                        transport.as_ref(),
-                        NEGOTIATION_TIMEOUT,
-                    )
-                    .await
+                    .pairing_token()
+                    .expect("prepared reconnect token")
+                    .clone();
+                active.transport = Some(Arc::clone(&retry_transport));
+                active.last_error = None;
+                active.end_reconnect();
+                drop(active);
+                if let Err(detail) = handoff_pairing(
+                    bridge_handle.clone(),
+                    &device_id,
+                    retry_endpoint.address,
+                    retry_token.expose_for_pairing(),
+                    &retry_endpoint.certificate_sha256,
+                )
+                .await
                 {
-                    let detail = error.to_string();
+                    let mut active = state_handle.active.lock().await;
                     let detail =
-                        stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
+                        stop_engine_after_failure(&mut active, retry_transport.as_ref(), detail)
+                            .await;
                     active.last_error = Some(detail.clone());
                     drop(active);
                     release_after_failure(&state_handle, bridge_handle, detail).await;
                     return;
                 }
-                let source = Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
-                let media_transport: Arc<dyn MediaTransport> =
-                    Arc::clone(&transport) as Arc<dyn MediaTransport>;
-                if let Err(error) = active.controller.start_media(source, media_transport) {
-                    let detail = error.to_string();
-                    let detail =
-                        stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
-                    active.last_error = Some(detail.clone());
-                    drop(active);
-                    release_after_failure(&state_handle, bridge_handle, detail).await;
-                } else {
-                    drop(active);
-                    if let Err(failure) =
-                        send_screen(bridge_handle.clone(), "activate_webrtc_capture", json!({}))
-                            .await
+                server = retry_server;
+                token = retry_token;
+                offer = retry_offer;
+                transport = retry_transport;
+                continue;
+            }
+
+            let mut active = state_handle.active.lock().await;
+            match answer {
+                Ok(answer) => {
+                    if let Err(error) = active
+                        .controller
+                        .negotiate(
+                            token.expose_for_pairing(),
+                            answer,
+                            transport.as_ref(),
+                            NEGOTIATION_TIMEOUT,
+                        )
+                        .await
                     {
-                        let mut active = state_handle.active.lock().await;
-                        let detail = if let Some(transport) = active.transport.clone() {
-                            stop_engine_after_failure(
-                                &mut active,
-                                transport.as_ref(),
-                                failure.message,
-                            )
-                            .await
-                        } else {
-                            failure.message
-                        };
+                        let detail = error.to_string();
+                        let detail =
+                            stop_engine_after_failure(&mut active, transport.as_ref(), detail)
+                                .await;
                         active.last_error = Some(detail.clone());
                         drop(active);
                         release_after_failure(&state_handle, bridge_handle, detail).await;
+                        return;
+                    }
+                    let source =
+                        Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
+                    let media_transport: Arc<dyn MediaTransport> =
+                        Arc::clone(&transport) as Arc<dyn MediaTransport>;
+                    if let Err(error) = active.controller.start_media(source, media_transport) {
+                        let detail = error.to_string();
+                        let detail =
+                            stop_engine_after_failure(&mut active, transport.as_ref(), detail)
+                                .await;
+                        active.last_error = Some(detail.clone());
+                        drop(active);
+                        release_after_failure(&state_handle, bridge_handle, detail).await;
+                    } else {
+                        drop(active);
+                        if let Err(failure) =
+                            send_screen(bridge_handle.clone(), "activate_webrtc_capture", json!({}))
+                                .await
+                        {
+                            let mut active = state_handle.active.lock().await;
+                            let detail = if let Some(transport) = active.transport.clone() {
+                                stop_engine_after_failure(
+                                    &mut active,
+                                    transport.as_ref(),
+                                    failure.message,
+                                )
+                                .await
+                            } else {
+                                failure.message
+                            };
+                            active.last_error = Some(detail.clone());
+                            drop(active);
+                            release_after_failure(&state_handle, bridge_handle, detail).await;
+                        }
                     }
                 }
+                Err(_) => {
+                    unreachable!("negotiation errors are retried before locking active state")
+                }
             }
-            Err(error) => {
-                let detail = error.to_string();
-                let detail =
-                    stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
-                active.last_error = Some(detail.clone());
-                drop(active);
-                release_after_failure(&state_handle, bridge_handle, detail).await;
-            }
+            break;
         }
     });
     *state
@@ -440,6 +585,32 @@ mod tests {
         assert!(state.operation.try_lock().is_err());
         drop(first);
         assert!(state.operation.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn stop_during_reconnect_delay_clears_the_visible_active_state() {
+        let active = Arc::new(Mutex::new(ActiveState::default()));
+        active.lock().await.begin_reconnect();
+        let task_active = Arc::clone(&active);
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            task_active.lock().await.end_reconnect();
+        });
+
+        {
+            let state = active.lock().await;
+            assert_eq!(reported_state(&state), EngineState::AwaitingReceiver);
+        }
+        task.abort();
+        active.lock().await.end_reconnect();
+        {
+            let state = active.lock().await;
+            assert_eq!(reported_state(&state), EngineState::Idle);
+        }
+        assert!(task
+            .await
+            .expect_err("the reconnect delay is cancelled")
+            .is_cancelled());
     }
 
     #[test]
@@ -514,6 +685,25 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn reconnect_budget_is_strictly_bounded() {
+        let mut budget = ReconnectBudget::new(2);
+        assert_eq!(budget.claim(), Some(1));
+        assert_eq!(budget.claim(), Some(2));
+        assert_eq!(budget.claim(), None);
+        assert_eq!(budget.claim(), None);
+    }
+
+    #[test]
+    fn reconnecting_state_remains_visible_and_stoppable() {
+        let active = ActiveState {
+            reconnecting: true,
+            ..ActiveState::default()
+        };
+        assert_eq!(active.controller.state(), EngineState::Idle);
+        assert_eq!(reported_state(&active), EngineState::AwaitingReceiver);
+    }
 }
 
 #[tauri::command]
@@ -531,6 +721,7 @@ pub(crate) async fn stop_webrtc_stream(
         task.abort();
     }
     let mut active = state.active.lock().await;
+    active.end_reconnect();
     if let Some(transport) = active.transport.clone() {
         let result = active.controller.stop(transport.as_ref()).await;
         if let Err(error) = result {
@@ -545,7 +736,7 @@ pub(crate) async fn stop_webrtc_stream(
     let active = state.active.lock().await;
     let error = combine_failure(engine_error.as_deref(), cleanup_error);
     Ok(StatusReply {
-        state: active.controller.state(),
+        state: reported_state(&active),
         diagnostics: active.controller.diagnostics().await,
         error,
     })
@@ -583,7 +774,7 @@ pub(crate) async fn get_webrtc_stream(
         active.last_error = combine_failure(active.last_error.as_deref(), cleanup_error);
     }
     Ok(StatusReply {
-        state: active.controller.state(),
+        state: reported_state(&active),
         diagnostics: active.controller.diagnostics().await,
         error: active.last_error.clone(),
     })
