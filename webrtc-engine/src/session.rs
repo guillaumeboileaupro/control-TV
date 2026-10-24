@@ -142,6 +142,7 @@ impl SessionController {
             let result = match source.start().await {
                 Ok(streams) => tokio::select! {
                     result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
+                    result = transport.wait_for_disconnect() => result,
                     _ = stop_rx => Ok(()),
                 },
                 Err(error) => Err(error),
@@ -327,6 +328,7 @@ async fn pump_audio(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     struct FakeSource {
         keep_open: bool,
@@ -390,6 +392,7 @@ mod tests {
     struct FakeTransport {
         closed: AtomicBool,
         fail_close: bool,
+        disconnected: Arc<Notify>,
     }
 
     impl Default for FakeTransport {
@@ -397,6 +400,7 @@ mod tests {
             Self {
                 closed: AtomicBool::new(false),
                 fail_close: false,
+                disconnected: Arc::new(Notify::new()),
             }
         }
     }
@@ -422,6 +426,10 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+        async fn wait_for_disconnect(&self) -> Result<(), EngineError> {
+            self.disconnected.notified().await;
+            Err(EngineError::Transport("synthetic network loss".into()))
         }
     }
 
@@ -477,6 +485,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_streaming_network_loss_stops_and_cleans_the_media_source() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transport = Arc::new(FakeTransport::default());
+        let media_transport: Arc<dyn MediaTransport> = transport.clone();
+        let mut controller = streaming_controller();
+        controller
+            .start_media(
+                Box::new(FakeSource {
+                    keep_open: true,
+                    fail_start: false,
+                    fail_stop: false,
+                    stopped: Arc::clone(&stopped),
+                    sender: None,
+                }),
+                media_transport,
+            )
+            .expect("start media");
+
+        transport.disconnected.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(result) = controller.poll_media().await {
+                    return result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("network loss reported");
+
+        assert!(matches!(result, Err(EngineError::Transport(_))));
+        assert_eq!(controller.state(), EngineState::Failed);
+        assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn stop_cancels_media_cooperatively_and_closes_transport() {
         let stopped = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(FakeTransport::default());
@@ -509,6 +553,7 @@ mod tests {
         let transport = Arc::new(FakeTransport {
             closed: AtomicBool::new(false),
             fail_close: true,
+            disconnected: Arc::new(Notify::new()),
         });
         let media_transport: Arc<dyn MediaTransport> = transport.clone();
         let mut controller = streaming_controller();
@@ -654,5 +699,70 @@ mod tests {
             .await
             .expect("deadline")
             .expect("silent track stops cleanly");
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit synthetic endurance check; set CONTROL_TV_ENDURANCE_SECONDS"]
+    async fn bounded_audio_video_queues_remain_live_for_the_endurance_window() {
+        let seconds = std::env::var("CONTROL_TV_ENDURANCE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(120);
+        let duration = Duration::from_secs(seconds);
+        let (video_tx, video_rx) = mpsc::channel(2);
+        let (audio_tx, audio_rx) = mpsc::channel(16);
+        let video_producer = tokio::spawn(async move {
+            let deadline = Instant::now() + duration;
+            while Instant::now() < deadline {
+                if video_tx
+                    .send(Ok(MediaFrame {
+                        data: Bytes::from_static(&[0, 0, 0, 1, 0x65]),
+                        duration: Duration::from_millis(10),
+                        keyframe: true,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let audio_producer = tokio::spawn(async move {
+            let deadline = Instant::now() + duration;
+            while Instant::now() < deadline {
+                if audio_tx
+                    .send(Ok(MediaFrame {
+                        data: Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
+                        duration: Duration::from_millis(20),
+                        keyframe: false,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
+        let started = Instant::now();
+        pump_media(
+            MediaStreams {
+                video: video_rx,
+                audio: Some(audio_rx),
+            },
+            &FakeTransport::default(),
+            Arc::clone(&diagnostics),
+            started + duration,
+        )
+        .await
+        .expect("bounded media pump");
+        let finished = Instant::now();
+        let _ = tokio::join!(video_producer, audio_producer);
+        let values = diagnostics.lock().await;
+        assert!(finished.duration_since(started) >= duration);
+        assert!(values.captured_frames >= seconds.saturating_mul(50));
+        assert!(values.sent_audio_bytes >= seconds.saturating_mul(50));
     }
 }

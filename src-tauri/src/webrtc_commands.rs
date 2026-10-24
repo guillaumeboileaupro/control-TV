@@ -1,12 +1,13 @@
 use control_tv_webrtc::{
-    AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingServer,
-    ProcessRunner, SessionConfig, SessionController, SystemClock, VideoConfig, WebRtcTransport,
+    AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingEndpoint,
+    PairingServer, ProcessRunner, SessionConfig, SessionController, SessionDescription,
+    SessionToken, SystemClock, VideoConfig, WebRtcTransport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::bridge::{call_bridge, SharedBridgeState};
@@ -18,6 +19,7 @@ const MAXIMUM_SESSION: Duration = Duration::from_secs(60 * 60);
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RECONNECT_ATTEMPTS: u32 = 2;
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const RECONNECT_SETUP_TIMEOUT: Duration = Duration::from_secs(15);
 const RECEIVER_PACKAGE: &str = "io.github.guillaumeboileaupro.controltv.receiver";
 
 struct ReconnectBudget {
@@ -227,6 +229,96 @@ async fn handoff_pairing(
     Ok(())
 }
 
+type ReconnectAttempt = (
+    PairingServer,
+    SessionToken,
+    SessionDescription,
+    Arc<WebRtcTransport>,
+);
+
+async fn create_reconnect_attempt(
+    state: &WebRtcState,
+    bridge: SharedBridgeState,
+    device_id: &str,
+    config: &SessionConfig,
+    session_deadline: Instant,
+    attempt: u32,
+) -> Result<ReconnectAttempt, String> {
+    tokio::time::sleep(RECONNECT_DELAY).await;
+    let remaining = session_deadline.saturating_duration_since(Instant::now());
+    if remaining <= NEGOTIATION_TIMEOUT {
+        return Err("the bounded WebRTC session expired during reconnection".into());
+    }
+    let mut retry_config = config.clone();
+    retry_config.maximum_duration = remaining;
+    let retry_transport = Arc::new(
+        tokio::time::timeout(RECONNECT_SETUP_TIMEOUT, WebRtcTransport::new())
+            .await
+            .map_err(|_| "timed out creating a replacement WebRTC transport".to_owned())?
+            .map_err(|error| error.to_string())?,
+    );
+    let retry_offer =
+        match tokio::time::timeout(RECONNECT_SETUP_TIMEOUT, retry_transport.create_offer()).await {
+            Ok(Ok(offer)) => offer,
+            Ok(Err(error)) => {
+                let _ = retry_transport.close().await;
+                return Err(error.to_string());
+            }
+            Err(_) => {
+                let _ = retry_transport.close().await;
+                return Err("timed out creating a replacement WebRTC offer".into());
+            }
+        };
+    let (retry_server, endpoint): (PairingServer, PairingEndpoint) = match tokio::time::timeout(
+        RECONNECT_SETUP_TIMEOUT,
+        PairingServer::bind(retry_config.bind_address),
+    )
+    .await
+    {
+        Ok(Ok(pairing)) => pairing,
+        Ok(Err(error)) => {
+            let _ = retry_transport.close().await;
+            return Err(error.to_string());
+        }
+        Err(_) => {
+            let _ = retry_transport.close().await;
+            return Err("timed out opening replacement WebRTC signaling".into());
+        }
+    };
+    let mut active = state.active.lock().await;
+    if let Err(error) = active.controller.prepare(&retry_config, &SystemClock).await {
+        drop(active);
+        let _ = retry_transport.close().await;
+        return Err(error.to_string());
+    }
+    for _ in 0..attempt {
+        active.controller.record_reconnect_attempt().await;
+    }
+    let retry_token = active
+        .controller
+        .pairing_token()
+        .expect("prepared reconnect token")
+        .clone();
+    active.transport = Some(Arc::clone(&retry_transport));
+    active.last_error = None;
+    active.end_reconnect();
+    drop(active);
+    if let Err(detail) = handoff_pairing(
+        bridge,
+        device_id,
+        endpoint.address,
+        retry_token.expose_for_pairing(),
+        &endpoint.certificate_sha256,
+    )
+    .await
+    {
+        let mut active = state.active.lock().await;
+        let detail = stop_engine_after_failure(&mut active, retry_transport.as_ref(), detail).await;
+        return Err(detail);
+    }
+    Ok((retry_server, retry_token, retry_offer, retry_transport))
+}
+
 fn verify_receiver_launch(launch: &Value) -> Result<(), String> {
     let launch_result = launch.get("result").and_then(Value::as_object);
     let confirmed = launch_result
@@ -379,14 +471,18 @@ pub(crate) async fn start_webrtc_stream(
 
     let state_handle = state.inner().clone();
     let bridge_handle = bridge.inner().clone();
+    let session_deadline = Instant::now() + MAXIMUM_SESSION;
     let task = tauri::async_runtime::spawn(async move {
-        let mut server = server;
+        let mut server = Some(server);
         let mut token = token;
         let mut offer = offer;
         let mut transport = transport;
         let mut reconnect_budget = ReconnectBudget::new(MAX_RECONNECT_ATTEMPTS);
-        loop {
+        let mut capture_activated = false;
+        'attempts: loop {
             let answer = server
+                .take()
+                .expect("every attempt owns one signaling server")
                 .accept_once(&token, &offer, NEGOTIATION_TIMEOUT)
                 .await;
             if let Err(error) = answer {
@@ -398,81 +494,31 @@ pub(crate) async fn start_webrtc_stream(
                     active.end_reconnect();
                     active.last_error = Some(detail.clone());
                     drop(active);
-                    release_after_failure(&state_handle, bridge_handle, detail).await;
+                    release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
                     return;
                 };
                 active.begin_reconnect();
                 drop(active);
-                tokio::time::sleep(RECONNECT_DELAY).await;
-
-                let retry_transport = match WebRtcTransport::new().await {
-                    Ok(transport) => Arc::new(transport),
-                    Err(error) => {
-                        release_after_failure(&state_handle, bridge_handle, error.to_string())
-                            .await;
-                        return;
-                    }
-                };
-                let retry_offer = match retry_transport.create_offer().await {
-                    Ok(offer) => offer,
-                    Err(error) => {
-                        let _ = retry_transport.close().await;
-                        release_after_failure(&state_handle, bridge_handle, error.to_string())
-                            .await;
-                        return;
-                    }
-                };
-                let (retry_server, retry_endpoint) =
-                    match PairingServer::bind(config.bind_address).await {
-                        Ok(pairing) => pairing,
-                        Err(error) => {
-                            let _ = retry_transport.close().await;
-                            release_after_failure(&state_handle, bridge_handle, error.to_string())
-                                .await;
-                            return;
-                        }
-                    };
-                let mut active = state_handle.active.lock().await;
-                if let Err(error) = active.controller.prepare(&config, &SystemClock).await {
-                    drop(active);
-                    let _ = retry_transport.close().await;
-                    release_after_failure(&state_handle, bridge_handle, error.to_string()).await;
-                    return;
-                }
-                for _ in 0..reconnect_attempts {
-                    active.controller.record_reconnect_attempt().await;
-                }
-                let retry_token = active
-                    .controller
-                    .pairing_token()
-                    .expect("prepared reconnect token")
-                    .clone();
-                active.transport = Some(Arc::clone(&retry_transport));
-                active.last_error = None;
-                active.end_reconnect();
-                drop(active);
-                if let Err(detail) = handoff_pairing(
+                let retry = create_reconnect_attempt(
+                    &state_handle,
                     bridge_handle.clone(),
                     &device_id,
-                    retry_endpoint.address,
-                    retry_token.expose_for_pairing(),
-                    &retry_endpoint.certificate_sha256,
+                    &config,
+                    session_deadline,
+                    reconnect_attempts,
                 )
-                .await
-                {
-                    let mut active = state_handle.active.lock().await;
-                    let detail =
-                        stop_engine_after_failure(&mut active, retry_transport.as_ref(), detail)
-                            .await;
-                    active.last_error = Some(detail.clone());
-                    drop(active);
-                    release_after_failure(&state_handle, bridge_handle, detail).await;
-                    return;
-                }
-                server = retry_server;
-                token = retry_token;
-                offer = retry_offer;
-                transport = retry_transport;
+                .await;
+                let (next_server, next_token, next_offer, next_transport) = match retry {
+                    Ok(retry) => retry,
+                    Err(detail) => {
+                        release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
+                        return;
+                    }
+                };
+                server = Some(next_server);
+                token = next_token;
+                offer = next_offer;
+                transport = next_transport;
                 continue;
             }
 
@@ -495,11 +541,13 @@ pub(crate) async fn start_webrtc_stream(
                                 .await;
                         active.last_error = Some(detail.clone());
                         drop(active);
-                        release_after_failure(&state_handle, bridge_handle, detail).await;
+                        release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
                         return;
                     }
-                    let source =
-                        Box::new(FfmpegMediaSource::new(ProcessRunner::default(), capture));
+                    let source = Box::new(FfmpegMediaSource::new(
+                        ProcessRunner::default(),
+                        capture.clone(),
+                    ));
                     let media_transport: Arc<dyn MediaTransport> =
                         Arc::clone(&transport) as Arc<dyn MediaTransport>;
                     if let Err(error) = active.controller.start_media(source, media_transport) {
@@ -509,27 +557,108 @@ pub(crate) async fn start_webrtc_stream(
                                 .await;
                         active.last_error = Some(detail.clone());
                         drop(active);
-                        release_after_failure(&state_handle, bridge_handle, detail).await;
+                        release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
                     } else {
                         drop(active);
-                        if let Err(failure) =
-                            send_screen(bridge_handle.clone(), "activate_webrtc_capture", json!({}))
-                                .await
-                        {
+                        if !capture_activated {
+                            if let Err(failure) = send_screen(
+                                bridge_handle.clone(),
+                                "activate_webrtc_capture",
+                                json!({}),
+                            )
+                            .await
+                            {
+                                let mut active = state_handle.active.lock().await;
+                                let detail = if let Some(transport) = active.transport.clone() {
+                                    stop_engine_after_failure(
+                                        &mut active,
+                                        transport.as_ref(),
+                                        failure.message,
+                                    )
+                                    .await
+                                } else {
+                                    failure.message
+                                };
+                                active.last_error = Some(detail.clone());
+                                drop(active);
+                                release_after_failure(&state_handle, bridge_handle.clone(), detail)
+                                    .await;
+                                return;
+                            }
+                            capture_activated = true;
+                        }
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                             let mut active = state_handle.active.lock().await;
-                            let detail = if let Some(transport) = active.transport.clone() {
-                                stop_engine_after_failure(
-                                    &mut active,
-                                    transport.as_ref(),
-                                    failure.message,
-                                )
-                                .await
-                            } else {
-                                failure.message
+                            let Some(result) = active.controller.poll_media().await else {
+                                continue;
                             };
-                            active.last_error = Some(detail.clone());
-                            drop(active);
-                            release_after_failure(&state_handle, bridge_handle, detail).await;
+                            match result {
+                                Ok(()) => {
+                                    let close_error = transport
+                                        .close()
+                                        .await
+                                        .err()
+                                        .map(|error| error.to_string());
+                                    active.transport = None;
+                                    drop(active);
+                                    let cleanup =
+                                        release_capture(bridge_handle.clone(), close_error.clone())
+                                            .await;
+                                    state_handle.active.lock().await.last_error =
+                                        combine_failure(close_error.as_deref(), cleanup);
+                                    return;
+                                }
+                                Err(error) => {
+                                    let detail = error.to_string();
+                                    let detail = stop_engine_after_failure(
+                                        &mut active,
+                                        transport.as_ref(),
+                                        detail,
+                                    )
+                                    .await;
+                                    let Some(attempt) = reconnect_budget.claim() else {
+                                        active.last_error = Some(detail.clone());
+                                        drop(active);
+                                        release_after_failure(
+                                            &state_handle,
+                                            bridge_handle.clone(),
+                                            detail,
+                                        )
+                                        .await;
+                                        return;
+                                    };
+                                    active.begin_reconnect();
+                                    drop(active);
+                                    let retry = create_reconnect_attempt(
+                                        &state_handle,
+                                        bridge_handle.clone(),
+                                        &device_id,
+                                        &config,
+                                        session_deadline,
+                                        attempt,
+                                    )
+                                    .await;
+                                    let (next_server, next_token, next_offer, next_transport) =
+                                        match retry {
+                                            Ok(retry) => retry,
+                                            Err(detail) => {
+                                                release_after_failure(
+                                                    &state_handle,
+                                                    bridge_handle,
+                                                    detail,
+                                                )
+                                                .await;
+                                                return;
+                                            }
+                                        };
+                                    server = Some(next_server);
+                                    token = next_token;
+                                    offer = next_offer;
+                                    transport = next_transport;
+                                    continue 'attempts;
+                                }
+                            }
                         }
                     }
                 }
@@ -537,7 +666,6 @@ pub(crate) async fn start_webrtc_stream(
                     unreachable!("negotiation errors are retried before locking active state")
                 }
             }
-            break;
         }
     });
     *state
@@ -712,13 +840,14 @@ pub(crate) async fn stop_webrtc_stream(
     bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
     let _operation = state.operation.lock().await;
-    if let Some(task) = state
+    let task = state
         .negotiation
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    {
+        .take();
+    if let Some(task) = task {
         task.abort();
+        let _ = task.await;
     }
     let mut active = state.active.lock().await;
     active.end_reconnect();
@@ -745,34 +874,10 @@ pub(crate) async fn stop_webrtc_stream(
 #[tauri::command]
 pub(crate) async fn get_webrtc_stream(
     state: tauri::State<'_, WebRtcState>,
-    bridge: tauri::State<'_, SharedBridgeState>,
+    _bridge: tauri::State<'_, SharedBridgeState>,
 ) -> Result<StatusReply, String> {
     let _operation = state.operation.lock().await;
-    let mut active = state.active.lock().await;
-    if let Some(result) = active.controller.poll_media().await {
-        if let Err(error) = result {
-            active.last_error = Some(error.to_string());
-        }
-        if let Some(transport) = active.transport.clone() {
-            if let Some(primary) = active.last_error.clone() {
-                let detail =
-                    stop_engine_after_failure(&mut active, transport.as_ref(), primary).await;
-                active.last_error = Some(detail);
-            } else {
-                match transport.close().await {
-                    Ok(()) => active.transport = None,
-                    Err(error) => {
-                        active.last_error = Some(error.to_string());
-                    }
-                }
-            }
-        }
-        let error = active.last_error.clone();
-        drop(active);
-        let cleanup_error = release_capture(bridge.inner().clone(), error).await;
-        active = state.active.lock().await;
-        active.last_error = combine_failure(active.last_error.as_deref(), cleanup_error);
-    }
+    let active = state.active.lock().await;
     Ok(StatusReply {
         state: reported_state(&active),
         diagnostics: active.controller.diagnostics().await,
