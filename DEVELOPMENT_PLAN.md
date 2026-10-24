@@ -1,5 +1,10 @@
 # Development plan
 
+Security maintenance (2026-10-24): `setuptools` (the Android wheel build backend, `android`
+dependency group) moves from 84.0.0 to 84.1.0 for GHSA-xmj3-9gf7-h52w (low, Windows path escape
+during legacy wheel installation, published 2026-10-23), which fails the Python audit gate on
+every branch; `uv.lock` changes only `setuptools`. Automated validation only.
+
 ## Goal
 
 **control-TV is a standalone graphical TV remote, in two applications: Debian/Ubuntu and Android** (personal use, sideloaded APK, no Google Play objective). Both control the same Google TV / Chromecast independently and in parallel, without a permanent server, through the same shared Python engine (`ControlService`): discover and select TVs, show the TV's installed applications and launch them, power on and off, the TV's audible volume and mute, playback, navigation and a remote keyboard for the TV's text fields. Owner priority: issue #37 (2026-10-08) and the French section "Plan complet et suivi du temps" below, which is the tracking reference.

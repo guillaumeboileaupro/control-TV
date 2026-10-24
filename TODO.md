@@ -1,5 +1,8 @@
 # control-TV — TODO
 
+- [x] **Sécurité Python — GHSA-xmj3-9gf7-h52w (2026-10-24) :** `setuptools` 84.0.0 → 84.1.0
+  (groupe `android`, backend des roues embarquées) ; l'audit Python échouait sur toutes les branches.
+  Aucune dérogation. Validation automatisée uniquement.
 ## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
 
 **Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
