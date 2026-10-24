@@ -311,7 +311,7 @@ jobs:
       - name: Install the package, ping its bridge and remove it
         run: |
           sudo apt-get install --no-install-recommends -y ./dist/control-tv_*_amd64.deb
-          for package in ffmpeg x11-xserver-utils; do
+          for package in adb ffmpeg libayatana-appindicator3-1 x11-xserver-utils; do
             test "$(dpkg-query -W -f='${Status}' "$package")" = "install ok installed"
           done
           cd "$RUNNER_TEMP"
