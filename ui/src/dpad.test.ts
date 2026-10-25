@@ -1,7 +1,8 @@
 // Tests for the directional pad's five click zones, run with Node's built-in runner (`npm test`).
 // They read the real markup and stylesheet: each zone is a button the remote panel wires to its
-// own key, and the five round zones sit inside the ring without overlapping, so a click always
-// reaches exactly one key.
+// own key; the four arrows are quarters of the ring (clip-path polygons) and OK a disc above them,
+// in a pad clipped to a disc. Every point of the pad, edges and corners included, is hit-tested
+// against those shapes: it reaches exactly one key, and nothing outside the pad reaches any.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -45,18 +46,48 @@ function percent(value: string | undefined): number {
   return Number.parseFloat(literal);
 }
 
-interface Disc {
-  x: number;
-  y: number;
-  r: number;
+type Point = readonly [number, number];
+type Zone = (typeof ZONES)[number];
+const ARROWS = ["up", "right", "down", "left"] as const;
+
+// The polygon of an arrow's `clip-path`, in % of the pad.
+function quarter(name: (typeof ARROWS)[number]): Point[] {
+  const clip = rule(`.dpad-${name}`).get("clip-path") ?? "";
+  const inner = /^polygon\((.*)\)$/.exec(clip);
+  assert.ok(inner !== null, `.dpad-${name} is clipped to a polygon`);
+  return inner[1].split(",").map((pair) => {
+    const [x, y] = pair.trim().split(/\s+/).map(percent);
+    return [x, y] as const;
+  });
 }
 
-function zone(name: (typeof ZONES)[number]): Disc {
-  const own = rule(name === "ok" ? ".dpad-ok" : `.dpad-${name}`);
-  const size = percent(name === "ok" ? own.get("width") : rule(".dpad-key").get("width"));
-  const left = own.has("left") ? percent(own.get("left")) : 100 - percent(own.get("right")) - size;
-  const top = own.has("top") ? percent(own.get("top")) : 100 - percent(own.get("bottom")) - size;
-  return { x: left + size / 2, y: top + size / 2, r: size / 2 };
+// Strictly inside a convex polygon (on an edge counts as "edge", not inside).
+function within(polygon: Point[], [x, y]: Point): "inside" | "edge" | "outside" {
+  let sign = 0;
+  for (const [index, [ax, ay]] of polygon.entries()) {
+    const [bx, by] = polygon[(index + 1) % polygon.length];
+    const cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+    if (Math.abs(cross) < 1e-9) {
+      const between = Math.min(ax, bx) <= x && x <= Math.max(ax, bx);
+      if (between && Math.min(ay, by) <= y && y <= Math.max(ay, by)) return "edge";
+      continue;
+    }
+    if (sign !== 0 && Math.sign(cross) !== sign) return "outside";
+    sign = Math.sign(cross);
+  }
+  return "inside";
+}
+
+// The keys a press at `point` (in % of the pad) can reach, as the stylesheet draws them.
+function keysAt(point: Point): Zone[] {
+  const [x, y] = point;
+  const padRadius = Number.parseFloat(
+    /^circle\((.*)\)$/.exec(rule(".dpad").get("clip-path") ?? "")?.[1] ?? "",
+  );
+  if (Math.hypot(x - 50, y - 50) > padRadius) return [];
+  const ok = percent(rule(".dpad").get("--ok")) / 2;
+  if (Math.hypot(x - 50, y - 50) < ok) return ["ok"]; // OK is drawn above the quarters
+  return ARROWS.filter((name) => within(quarter(name), point) !== "outside");
 }
 
 class FakeButton extends EventTarget {
@@ -109,28 +140,71 @@ describe("the directional pad", () => {
     );
   });
 
-  test("the five zones are round, inside the ring and never overlap", () => {
+  test("the pad is a disc, OK sits above four quarters of it", () => {
+    assert.equal(rule(".dpad").get("clip-path"), "circle(50%)");
     assert.equal(rule(".dpad").get("position"), "relative");
-    assert.equal(rule(".dpad-key").get("position"), "absolute");
+    assert.equal(rule(".dpad-key").get("inset"), "0");
     assert.equal(rule(".dpad-ok").get("position"), "absolute");
-    const discs = ZONES.map(zone);
-    for (const disc of discs) {
-      assert.ok(Math.hypot(disc.x - 50, disc.y - 50) + disc.r <= 50, "inside the round pad");
+    assert.equal(rule(".dpad-ok").get("z-index"), "1");
+    for (const name of ARROWS) {
+      assert.equal(quarter(name).length, 3, `${name} is a triangle from the centre`);
+      assert.deepEqual(quarter(name)[0], [50, 50]);
     }
-    for (const [i, a] of discs.entries()) {
-      for (const b of discs.slice(i + 1)) {
-        assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= a.r + b.r, "zones never overlap");
+  });
+
+  test("every point of the pad reaches exactly one key: no dead zone, no overlap", () => {
+    for (let x = 0; x <= 100; x += 1) {
+      for (let y = 0; y <= 100; y += 1) {
+        const keys = keysAt([x, y]);
+        const inside = Math.hypot(x - 50, y - 50) <= 50;
+        const onDiagonal = Math.abs(x - 50) === Math.abs(y - 50) && keys[0] !== "ok";
+        if (!inside) {
+          assert.deepEqual(keys, [], `(${x}, ${y}) is outside the pad`);
+        } else if (onDiagonal && !(x === 50 && y === 50)) {
+          // The border between two quarters: either neighbour, never a hole.
+          assert.equal(keys.length, 2, `(${x}, ${y}) borders two quarters`);
+        } else {
+          assert.equal(keys.length, 1, `(${x}, ${y}) reaches ${keys.join("+") || "nothing"}`);
+        }
       }
     }
   });
 
-  test("the four arrows are identical and symmetric around OK in the centre", () => {
-    const [up, left, ok, right, down] = ZONES.map(zone);
-    assert.deepEqual([ok.x, ok.y], [50, 50]);
-    const arrows = [up, left, right, down];
-    assert.ok(arrows.every((disc) => disc.r === up.r));
-    const distances = arrows.map((disc) => Math.hypot(disc.x - 50, disc.y - 50));
-    assert.ok(distances.every((distance) => Math.abs(distance - distances[0]) < 1e-9));
-    assert.deepEqual([up.x, down.x, left.y, right.y], [50, 50, 50, 50]);
+  test("edges, corners and borders reach the expected key", () => {
+    const cases: [Point, Zone[]][] = [
+      [[50, 0.5], ["up"]], // the very top of the ring
+      [[99.5, 50], ["right"]],
+      [[50, 99.5], ["down"]],
+      [[0.5, 50], ["left"]],
+      [[50, 50], ["ok"]],
+      [[50, 32.1], ["ok"]], // just inside OK's edge
+      [[50, 31.9], ["up"]], // just outside it: the arrow, not a gap
+      [[68.1, 50], ["right"]],
+      [[50, 68.1], ["down"]],
+      [[31.9, 50], ["left"]],
+      // Either side of each border between quarters (the diagonals), inside the ring.
+      [[80, 19], ["up"]],
+      [[80, 21], ["right"]],
+      [[81, 80], ["right"]],
+      [[80, 81], ["down"]],
+      [[20, 81], ["down"]],
+      [[20, 79], ["left"]],
+      [[19, 20], ["left"]],
+      [[20, 19], ["up"]],
+      [[2, 2], []], // the square's corners are outside the round pad
+      [[98, 2], []],
+      [[2, 98], []],
+      [[98, 98], []],
+    ];
+    for (const [point, keys] of cases) {
+      assert.deepEqual(keysAt(point), keys, `(${point[0]}, ${point[1]})`);
+    }
+  });
+
+  test("the four quarters are the same shape turned around the centre", () => {
+    const rotate = ([x, y]: Point): Point => [100 - y, x]; // 90° clockwise about (50, 50)
+    assert.deepEqual(quarter("up").map(rotate), quarter("right"));
+    assert.deepEqual(quarter("right").map(rotate), quarter("down"));
+    assert.deepEqual(quarter("down").map(rotate), quarter("left"));
   });
 });
