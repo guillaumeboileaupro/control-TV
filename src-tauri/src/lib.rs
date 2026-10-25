@@ -1231,17 +1231,50 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     fn tray_actions_are_the_quick_controls_and_never_a_level_or_a_free_command() {
         let ids: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
 
-        assert_eq!(
-            ids,
-            [
-                "play_pause",
-                "stop",
-                "tv_mute",
-                "tv_volume_down",
-                "tv_volume_up"
-            ]
-        );
+        assert_eq!(ids.len(), 21);
+        for quick in [
+            "play_pause",
+            "stop",
+            "tv_mute",
+            "tv_volume_down",
+            "tv_volume_up",
+        ] {
+            assert!(ids.contains(&quick), "{quick} stays in the tray");
+        }
+        for remote in [
+            "power",
+            "assistant",
+            "up",
+            "ok",
+            "back",
+            "home",
+            "channel_up",
+            "input",
+        ] {
+            assert!(ids.contains(&remote), "{remote} is in the tray");
+        }
+        assert!(!ids
+            .iter()
+            .any(|id| id.contains("volume_set") || id.contains("text")));
         assert_eq!(tray::EVENT, "tray-action");
+    }
+
+    #[test]
+    fn the_tray_layout_shows_every_action_once_in_named_submenus() {
+        let mut shown: Vec<&str> = tray::LAYOUT
+            .iter()
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
+        shown.sort_unstable();
+        let mut actions: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
+        actions.sort_unstable();
+        assert_eq!(shown, actions);
+        let titles: Vec<&str> = tray::LAYOUT
+            .iter()
+            .filter_map(|(title, _)| *title)
+            .collect();
+        assert_eq!(titles, ["Navigation", "Channels", "TV"]);
+        assert_eq!(tray::LAYOUT[0].1, ["power", "assistant"]);
     }
 
     #[test]

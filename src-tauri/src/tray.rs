@@ -8,13 +8,50 @@
 //! service.
 
 /// The TV actions the tray offers, by the identifier the window handles, and their label.
-pub(crate) const ACTIONS: [(&str, &str); 5] = [
+pub(crate) const ACTIONS: [(&str, &str); 21] = [
+    ("power", "Power"),
+    ("assistant", "Google Assistant"),
+    ("up", "Up"),
+    ("down", "Down"),
+    ("left", "Left"),
+    ("right", "Right"),
+    ("ok", "OK"),
+    ("back", "Back"),
+    ("home", "Home"),
     ("play_pause", "Play / Pause"),
     ("stop", "Stop"),
-    ("tv_mute", "Mute the TV"),
     ("tv_volume_down", "TV volume −"),
+    ("tv_mute", "Mute the TV"),
     ("tv_volume_up", "TV volume +"),
+    ("channel_up", "Channel +"),
+    ("channel_down", "Channel −"),
+    ("guide", "Guide"),
+    ("input", "Input"),
+    ("settings", "Settings"),
+    ("info", "Info"),
+    ("subtitles", "Subtitles"),
 ];
+
+/// How the menu shows `ACTIONS`: groups between separators, a group with a title being a
+/// submenu. Every action appears exactly once.
+pub(crate) const LAYOUT: [(Option<&str>, &[&str]); 6] = [
+    (None, &["power", "assistant"]),
+    (
+        Some("Navigation"),
+        &["up", "down", "left", "right", "ok", "back", "home"],
+    ),
+    (None, &["play_pause", "stop"]),
+    (None, &["tv_volume_down", "tv_mute", "tv_volume_up"]),
+    (Some("Channels"), &["channel_up", "channel_down", "guide"]),
+    (Some("TV"), &["input", "settings", "info", "subtitles"]),
+];
+
+fn label(id: &str) -> &'static str {
+    ACTIONS
+        .iter()
+        .find(|(action, _)| *action == id)
+        .map_or("", |(_, label)| label)
+}
 pub(crate) const OPEN: &str = "open";
 pub(crate) const QUIT: &str = "quit";
 /// The event the window listens to; its payload is one identifier of `ACTIONS`.
@@ -44,22 +81,31 @@ pub(crate) fn event_for(id: &str) -> TrayEvent {
 
 #[cfg(desktop)]
 pub(crate) fn install(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
     use tauri::tray::TrayIconBuilder;
 
     let open = MenuItem::with_id(app, OPEN, "Open control-TV", true, None::<&str>)?;
-    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
-        Box::new(open),
-        Box::new(PredefinedMenuItem::separator(app)?),
-    ];
-    for (id, label) in ACTIONS {
-        items.push(Box::new(MenuItem::with_id(
-            app,
-            id,
-            label,
-            true,
-            None::<&str>,
-        )?));
+    let mut items: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = vec![Box::new(open)];
+    for (title, ids) in LAYOUT {
+        let mut group: Vec<MenuItem<tauri::Wry>> = Vec::new();
+        for id in ids {
+            group.push(MenuItem::with_id(app, *id, label(id), true, None::<&str>)?);
+        }
+        match title {
+            Some(title) => {
+                let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = group
+                    .iter()
+                    .map(|item| item as &dyn IsMenuItem<tauri::Wry>)
+                    .collect();
+                items.push(Box::new(Submenu::with_items(app, title, true, &refs)?));
+            }
+            None => {
+                items.push(Box::new(PredefinedMenuItem::separator(app)?));
+                for item in group {
+                    items.push(Box::new(item));
+                }
+            }
+        }
     }
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
     items.push(Box::new(MenuItem::with_id(

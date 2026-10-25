@@ -37,6 +37,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Owner request, 2026-10-25: the GNOME status-area menu offers Power, Google Assistant and Navigation,
+  Channels and TV submenus besides Cast playback and the TV's volume; each item stays the window's own
+  action (same TV, same single request), and a test keeps the Rust menu and the window's actions identical.
 - [x] 2026-10-25: tests always run their own checkout's code: pytest puts `src/` first and `tests/conftest.py`
   puts it first in `PYTHONPATH` for the Python processes tests start (a virtual environment made in another
   worktree installs that worktree's `src/`); `tests/test_source_root.py` checks both. Freebuff's key map

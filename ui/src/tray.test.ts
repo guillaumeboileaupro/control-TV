@@ -7,7 +7,11 @@ import { describe, test } from "node:test";
 import { DEVICE, readyWith, statusOf } from "./fixtures.ts";
 import { initialState, type AppState } from "./model.ts";
 import { startTransport } from "./playback.ts";
-import { isTrayAction, trayRequest } from "./tray.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { KEY_LABELS } from "./remote.ts";
+import { isTrayAction, TRAY_ACTIONS, trayRequest } from "./tray.ts";
 
 const playing = (): AppState => readyWith(statusOf());
 const withRemote = (state: AppState): AppState => ({
@@ -74,6 +78,49 @@ describe("tray quick controls", () => {
     }
     for (const bad of ["set_volume", "", null, 3, "quit"]) {
       assert.equal(isTrayAction(bad), false);
+    }
+  });
+});
+
+describe("the tray's whole menu", () => {
+  test("the window handles exactly the actions the tray menu shows, in its order", () => {
+    const rust = readFileSync(resolve(process.cwd(), "../src-tauri/src/tray.rs"), "utf8");
+    const block = rust.slice(rust.indexOf("pub(crate) const ACTIONS"), rust.indexOf("];"));
+    const ids = [...block.matchAll(/\("([a-z_]+)",/g)].map((match) => match[1]);
+    assert.deepEqual(ids, [...TRAY_ACTIONS]);
+  });
+
+  test("each remote item sends the window's own key for the selected TV", () => {
+    for (const action of TRAY_ACTIONS) {
+      if (action === "play_pause" || action === "stop") continue;
+      const request = trayRequest(withRemote(playing()), action);
+      assert.equal(request.kind, "remote", action);
+      if (request.kind === "remote" && request.action.kind === "key") {
+        assert.ok(Object.prototype.hasOwnProperty.call(KEY_LABELS, request.action.key), action);
+      }
+    }
+    assert.deepEqual(trayRequest(withRemote(playing()), "assistant"), {
+      kind: "remote",
+      action: { kind: "key", key: "assistant" },
+    });
+    assert.deepEqual(trayRequest(withRemote(playing()), "ok"), {
+      kind: "remote",
+      action: { kind: "key", key: "ok" },
+    });
+  });
+
+  test("without a TV or its remote channel, a remote item only brings the window up", () => {
+    for (const action of TRAY_ACTIONS) {
+      if (action === "play_pause" || action === "stop") continue;
+      assert.equal(trayRequest(initialState(), action).kind, "show", action);
+      assert.equal(trayRequest(playing(), action).kind, "show", action);
+    }
+  });
+
+  test("only the menu's identifiers are actions", () => {
+    for (const action of TRAY_ACTIONS) assert.ok(isTrayAction(action), action);
+    for (const other of ["set_volume", "text", "", "mute", 3, null]) {
+      assert.equal(isTrayAction(other), false, String(other));
     }
   });
 });
