@@ -50,8 +50,8 @@
 - [x] **Tests du bon code (2026-10-25) :** pytest charge le `src/` du worktree en premier, y compris pour les
   processus Python lancés par les tests (`tests/conftest.py`) ; un environnement d'un autre worktree ne fait plus
   tester le mauvais code. Tests de Freebuff (carte des touches) intégrés.
-- [ ] **Validation matérielle :** pavé au toucher sur le téléphone ; récepteur (attente, interruption, reprise) sur
-  Liberté boîte et Chromecast.
+- [ ] **Validation matérielle (2026-10-25) :** à faire avec le propriétaire selon `docs/QUICK_ACCEPTANCE.md`
+  (Ubuntu, téléphone, Liberté boîte, Chromecast) ; aucune fonctionnalité n'est déclarée validée par la seule CI.
 - [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
   ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
   Fait côté Android : `VoiceCapture` (capture à la demande, permission, arrêt garanti, 8 tests). Reste : session
