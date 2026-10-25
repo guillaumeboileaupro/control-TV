@@ -5,14 +5,19 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application
         android:allowBackup="false"
-        android:label="ControlTV Receiver"
+        android:banner="@drawable/banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="ControlTV Récepteur"
         android:supportsRtl="true"
         android:theme="@style/Theme.ControlTVReceiver"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:configChanges="keyboardHidden|orientation|screenSize"
+            android:banner="@drawable/banner"
             android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="ControlTV Récepteur"
             android:launchMode="singleTask"
             android:screenOrientation="landscape">
             <intent-filter>

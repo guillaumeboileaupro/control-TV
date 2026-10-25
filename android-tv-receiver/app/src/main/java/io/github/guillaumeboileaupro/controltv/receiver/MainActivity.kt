@@ -21,15 +21,25 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val handoff = field("Connexion sécurisée en attente").apply {
+        // ControlTV on Ubuntu types the one-time session code into this field through the TV's
+        // remote channel; nobody has to type it. It stays focused so that input reaches it.
+        val handoff = field("Code de session (rempli automatiquement)").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val title = TextView(this).apply {
+            text = "ControlTV — écran de l'ordinateur"; textSize = 26f; gravity = Gravity.CENTER
+        }
+        val help = TextView(this).apply {
+            text = "Sur l'ordinateur, dans ControlTV, choisissez « Écran vers la TV » puis WebRTC.\n" +
+                "Cette TV se connecte toute seule : il n'y a rien à saisir ici."
+            textSize = 16f; gravity = Gravity.CENTER; setPadding(0, 16, 0, 24)
         }
         status = TextView(this).apply { text = "En attente de ControlTV"; textSize = 18f; gravity = Gravity.CENTER }
         val refuse = Button(this).apply { text = "Refuser / arrêter"; setOnClickListener { finish() } }
         form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             setPadding(64, 32, 64, 32)
-            addView(handoff); addView(refuse); addView(status)
+            addView(title); addView(help); addView(handoff); addView(refuse); addView(status)
         }
         renderer = SurfaceViewRenderer(this).apply { visibility = View.VISIBLE }
         val root = LinearLayout(this).apply {
