@@ -483,6 +483,172 @@ def test_bridge_keyboard_keys_are_backspace_and_enter() -> None:
     assert REMOTE_KEYS["enter"] is RemoteKey.ENTER
 
 
+# The key map: every button, and the exact key the TV receives ----------------------------------
+#
+# Each name on the left is the one `press_remote_key` takes and the window's button carries
+# (`data-remote-key`, `ui/src/remote.ts`); each code on the right is the Android key code the TV
+# receives on its own remote channel. Both are written out by hand, independently of the
+# implementation, so renaming a key on one side, or pointing a button at another key code, fails
+# here instead of silently sending something else to the TV.
+KEY_CODES: dict[str, str] = {
+    # Sound, power and the D-pad.
+    "volume_down": "KEYCODE_VOLUME_DOWN",
+    "volume_up": "KEYCODE_VOLUME_UP",
+    # The speaker's mute: `KEYCODE_MUTE` silences the microphone, not the sound.
+    "mute": "KEYCODE_VOLUME_MUTE",
+    "power": "KEYCODE_POWER",
+    "up": "KEYCODE_DPAD_UP",
+    "down": "KEYCODE_DPAD_DOWN",
+    "left": "KEYCODE_DPAD_LEFT",
+    "right": "KEYCODE_DPAD_RIGHT",
+    # The D-pad's own OK, not `KEYCODE_ENTER`, which submits the TV's active text field.
+    "ok": "KEYCODE_DPAD_CENTER",
+    "back": "KEYCODE_BACK",
+    "home": "KEYCODE_HOME",
+    # The keyboard's Backspace and Enter, for the TV's active text field.
+    "delete": "KEYCODE_DEL",
+    "enter": "KEYCODE_ENTER",
+    # The digits, by the number keys' own codes.
+    "digit_0": "KEYCODE_0",
+    "digit_1": "KEYCODE_1",
+    "digit_2": "KEYCODE_2",
+    "digit_3": "KEYCODE_3",
+    "digit_4": "KEYCODE_4",
+    "digit_5": "KEYCODE_5",
+    "digit_6": "KEYCODE_6",
+    "digit_7": "KEYCODE_7",
+    "digit_8": "KEYCODE_8",
+    "digit_9": "KEYCODE_9",
+    # The TV's own menus and information panels.
+    "info": "KEYCODE_INFO",
+    "guide": "KEYCODE_GUIDE",
+    "input": "KEYCODE_TV_INPUT",
+    "settings": "KEYCODE_SETTINGS",
+    # Subtitles and the audio track, the two switches a player offers.
+    "subtitles": "KEYCODE_CAPTIONS",
+    "audio_track": "KEYCODE_MEDIA_AUDIO_TRACK",
+    # Channel surfing.
+    "channel_up": "KEYCODE_CHANNEL_UP",
+    "channel_down": "KEYCODE_CHANNEL_DOWN",
+    # The four colour keys are the programmed keys, not `KEYCODE_RED` and friends.
+    "red": "KEYCODE_PROG_RED",
+    "green": "KEYCODE_PROG_GREEN",
+    "yellow": "KEYCODE_PROG_YELLOW",
+    "blue": "KEYCODE_PROG_BLUE",
+    # Playback on the TV's own remote: play and pause are one toggle key, and stop is its own.
+    "play_pause": "KEYCODE_MEDIA_PLAY_PAUSE",
+    "stop": "KEYCODE_MEDIA_STOP",
+    "rewind": "KEYCODE_MEDIA_REWIND",
+    "fast_forward": "KEYCODE_MEDIA_FAST_FORWARD",
+    "previous": "KEYCODE_MEDIA_PREVIOUS",
+    "next": "KEYCODE_MEDIA_NEXT",
+    "record": "KEYCODE_MEDIA_RECORD",
+    # Google Assistant, from the TV's own microphone.
+    "assistant": "KEYCODE_ASSIST",
+}
+
+# Names a person may reasonably try, or misremember, that this remote does not send. Each must be
+# refused by name, before anything reaches the TV, and never mapped to the nearest key the channel
+# happens to know: someone asking for "pause" is told ControlTV cannot, instead of being sent
+# another key's effect.
+UNSUPPORTED_KEYS: tuple[str, ...] = (
+    "mic",
+    "microphone",
+    "voice",
+    "search",
+    "menu",
+    "audio",
+    "audio_language",
+    "caption",
+    "subtitle",
+    "play",
+    "pause",
+    "record_stop",
+    "channel_plus",
+    "channel_minus",
+    "channels_up",
+    "channelup",
+    "volume_plus",
+    "vol_up",
+    "power_toggle",
+    "digit",
+    "0",
+    "5",
+    "google_assistant",
+    "assistant_key",
+    "dpad_up",
+    "UP",
+    "PLAY_PAUSE",
+    "KEYCODE_ASSIST",
+    " up",
+    "up ",
+    "up\n",
+    "text:hi",
+)
+
+
+@pytest.mark.parametrize(("name", "code"), sorted(KEY_CODES.items()))
+def test_each_button_sends_its_exact_key_code_to_the_tv(name: str, code: str) -> None:
+    remote = FakeRemote()
+
+    response = call(discovered(remote), "press_remote_key", deviceId=str(DEVICE_ID), key=name)
+
+    assert response["ok"] is True
+    assert response["result"]["result"]["key"] == name
+    assert remote.calls == [("press", HOST, code)]  # once, and nothing else
+
+
+def test_the_key_map_matches_every_key_the_bridge_accepts() -> None:
+    assert {name: key.value for name, key in REMOTE_KEYS.items()} == KEY_CODES
+    assert set(KEY_CODES.values()) == {key.value for key in RemoteKey}
+    assert len(set(KEY_CODES.values())) == len(KEY_CODES)  # no two buttons share a key code
+
+
+def test_no_key_code_turns_on_the_microphone_the_voice_assist_or_the_search() -> None:
+    sent = set(KEY_CODES.values())
+
+    for forbidden in (
+        "KEYCODE_MUTE",  # the microphone's mute, not the speaker's
+        "KEYCODE_VOICE_ASSIST",
+        "KEYCODE_SEARCH",
+    ):
+        assert forbidden not in sent
+
+
+@pytest.mark.parametrize("code", sorted(KEY_CODES.values()))
+def test_each_key_code_is_one_the_tv_library_knows(code: str) -> None:
+    # The library resolves the name to the protocol's own key code and raises for an unknown one,
+    # so a plausible but wrong name (KEYCODE_RED for the red colour key) fails here, not on the TV.
+    from androidtvremote2.remotemessage_pb2 import RemoteKeyCode
+
+    assert RemoteKeyCode.Value(code) > 0
+
+
+@pytest.mark.parametrize("name", UNSUPPORTED_KEYS)
+def test_a_button_controltv_cannot_send_is_refused_by_name_before_anything_is_sent(
+    name: str,
+) -> None:
+    remote = FakeRemote()
+
+    response = call(discovered(remote), "press_remote_key", deviceId=str(DEVICE_ID), key=name)
+
+    assert response["error"]["code"] == "invalid_argument"
+    assert remote.calls == []
+
+
+def test_the_refusal_names_every_button_that_can_be_sent() -> None:
+    service = discovered(FakeRemote())
+
+    response = call(service, "press_remote_key", deviceId=str(DEVICE_ID), key="pause")
+
+    message: str = response["error"]["message"]
+    listing, _, refused = message.partition(": ")
+    assert listing.startswith("key must be one of ")
+    assert listing.removeprefix("key must be one of ").split(", ") == list(REMOTE_KEYS)
+    assert refused == repr("pause")
+    assert set(KEY_CODES) == set(REMOTE_KEYS)  # the map covers every listed button, and no other
+
+
 # Apps ------------------------------------------------------------------------------------------
 
 
