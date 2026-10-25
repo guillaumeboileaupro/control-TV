@@ -487,10 +487,17 @@ jobs:
         working-directory: src-tauri/gen/android
         run: ./gradlew --console=plain :app:testArm64DebugUnitTest
 
-      # Standalone TV receiver: signaling validation, one-shot handoff and peer lifecycle tests.
-      # Reuse the already provisioned SDK/JDK and wrapper instead of creating another Android job.
-      - name: Run the Android TV receiver JVM tests
-        run: ./src-tauri/gen/android/gradlew --console=plain --project-dir android-tv-receiver test
+      # Standalone TV receiver: signaling validation, one-shot handoff and peer lifecycle tests,
+      # then its debug APK (a test build for the TV, not a release). Reuse the already provisioned
+      # SDK/JDK and wrapper instead of creating another Android job.
+      - name: Run the Android TV receiver JVM tests and build its debug APK
+        run: |
+          set -o pipefail  # a failed check must not hide behind tee
+          ./src-tauri/gen/android/gradlew --console=plain --project-dir android-tv-receiver test \
+            :app:assembleDebug
+          apk=android-tv-receiver/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          stat -c '%s bytes' "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Fails when the stable key was used but the APK is not signed by the pinned certificate
       # (a replaced key never passes), or when a push to main is not signed by it once a
@@ -520,6 +527,14 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/apk-provenance.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the Android TV receiver debug APK (build artifact, not a release)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-tv-android-tv-receiver-debug
+          path: android-tv-receiver/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error
 

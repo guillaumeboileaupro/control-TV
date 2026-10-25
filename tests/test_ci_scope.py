@@ -154,6 +154,18 @@ def test_ci_exercises_both_new_streaming_components_without_duplicate_build_jobs
     assert workflow.count("name: Android APK (arm64 debug build and JVM tests)") == 1
 
 
+def test_ci_publishes_the_three_installable_builds() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    for artifact in (
+        "control-tv-linux-release",
+        "control-tv-android-arm64-debug",
+        "control-tv-android-tv-receiver-debug",
+    ):
+        assert f"name: {artifact}" in workflow
+    assert "android-tv-receiver test \\\n            :app:assembleDebug" in workflow
+    assert "path: android-tv-receiver/app/build/outputs/apk/debug/app-debug.apk" in workflow
+
+
 def test_osv_audits_the_two_component_locks_and_fails_on_findings() -> None:
     workflow = DEPENDENCY_WORKFLOW.read_text(encoding="utf-8")
     assert "--lockfile=./webrtc-engine/Cargo.lock" in workflow
