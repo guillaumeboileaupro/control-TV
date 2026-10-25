@@ -23,8 +23,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from control_tv.ports import TvControl
+from control_tv.screen_streaming.audio_route import PulseAudioRoute
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
-from control_tv.screen_streaming.h264_encoder import D0LiveEncoder, LiveEncoderSettings
+from control_tv.screen_streaming.h264_encoder import (
+    SYSTEM_AUDIO,
+    D0LiveEncoder,
+    LiveEncoderSettings,
+)
 from control_tv.screen_streaming.hls_publisher import HlsPublisher, home_network_address
 from control_tv.screen_streaming.model import (
     MAX_SESSION_SECONDS,
@@ -111,6 +116,8 @@ class D1Session:
     capture: X11Capture | None = None
     capture_handle: CaptureHandle | None = None
     virtual: XrandrVirtualMonitor | None = None
+    # The computer's sound routed to the TV only, for a captured screen sent with its sound.
+    audio_route: PulseAudioRoute | None = None
 
     def start(self) -> None:
         """Start the encoder, the publication and the receiver; on failure everything this
@@ -145,6 +152,8 @@ class D1Session:
             steps.append(lambda: capture.stop(handle))
         if self.virtual is not None:
             steps.append(self.virtual.remove)
+        if self.audio_route is not None:
+            steps.append(self.audio_route.stop)
         for step in steps:
             try:
                 step()
@@ -205,6 +214,7 @@ def assemble(
     encoder: D0LiveEncoder | None = None,
     capture: X11Capture | None = None,
     virtual: XrandrVirtualMonitor | None = None,
+    audio_route: PulseAudioRoute | None = None,
 ) -> D1Session:
     """The composition root: one duration for the encoder and (with a margin) the publication;
     the picture is the test pattern, a duplicated output or a new virtual monitor."""
@@ -244,12 +254,28 @@ def assemble(
                 used_virtual.remove()
             raise
         source = CapturedVideo(handle)
-    live = encoder or D0LiveEncoder(
-        SubprocessRunner(),
-        FfmpegCapabilityProbe(),
-        LiveEncoderSettings(preference=preference, max_session_seconds=seconds),
-        capture_region=None if capture is None else capture.region,
+    # A captured screen goes with the computer's sound, which then plays on the TV only.
+    route = audio_route or (
+        PulseAudioRoute() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
     )
+    try:
+        sound = route.start() if route is not None else SYSTEM_AUDIO
+        live = encoder or D0LiveEncoder(
+            SubprocessRunner(),
+            FfmpegCapabilityProbe(),
+            LiveEncoderSettings(
+                preference=preference, max_session_seconds=seconds, system_audio=sound
+            ),
+            capture_region=None if capture is None else capture.region,
+        )
+    except BaseException:
+        if route is not None:
+            route.stop()
+        if capture is not None and handle is not None:
+            capture.stop(handle)
+        if used_virtual is not None:
+            used_virtual.remove()
+        raise
     publisher = HlsPublisher(live.output, bind_address=bind_address)
     publication = PublicationConfig(
         PublicationKind.HLS, max_session_seconds=float(seconds + PUBLICATION_MARGIN_SECONDS)
@@ -258,7 +284,9 @@ def assemble(
         source, profile, publication, ReceiverTarget(device_id), receiver_timeout=30.0
     )
     service = StreamingSessionService(live, publisher, receiver)
-    return D1Session(live, publisher, service, request, seconds, capture, handle, used_virtual)
+    return D1Session(
+        live, publisher, service, request, seconds, capture, handle, used_virtual, route
+    )
 
 
 def tv_and_route(device_id: str) -> tuple[TvControl, str]:  # pragma: no cover - a real TV

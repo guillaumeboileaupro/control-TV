@@ -23,6 +23,10 @@
 - [x] **Applis TV sur le téléphone (2026-10-25) :** #99 ne gardait que le programme `adb`, absent du téléphone ;
   l'adaptateur Python `adb-shell` de `main` est rétabli et choisi quand `adb` manque. Récepteur TV : nom,
   icône et bannière, consigne claire à l'écran. Validation automatisée ; essai réel en cours.
+- [x] **Son pendant l'écran vers la TV (2026-10-25) :** le son jouait sur la TV et sur l'ordinateur ; une sortie
+  virtuelle PulseAudio le reçoit pendant le flux HLS (le haut-parleur se tait), rétablie à l'arrêt. Validé
+  sur le PulseAudio du propriétaire (capture d'un son test) et par tests automatisés. Le flux WebRTC
+  n'envoie toujours aucun son (`audioDevice: null`) : à traiter.
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
   correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou
