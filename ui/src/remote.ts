@@ -502,7 +502,11 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
           apps,
           // The computer can still pair the TV's Wireless debugging to get its own list.
           appsPairingNeeded: reason === "pairing_required",
-          outcome: listingOutcome(result["source"], reason, apps.length),
+          appsNote: listingNote(result["source"]),
+          outcome:
+            apps.length === 0
+              ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
+              : null,
         },
       };
     }
@@ -574,30 +578,15 @@ function withFrontApp(
 
 // An app list as the control layer sends it; malformed entries are left out, never guessed.
 // Where the app list comes from. Only the TV's own list needs no word; a list from memory or
-// the usual apps says why, and that opening still works (through the TV's remote).
-function listingOutcome(
-  source: JsonValue | undefined,
-  reason: string | null,
-  count: number,
-): RemoteOutcome | null {
-  const technical = reason === null ? null : `${reason}: the TV's debugging did not list its apps`;
+// the usual apps says so, and that opening still works (through the TV's remote).
+function listingNote(source: JsonValue | undefined): string | null {
   if (source === "remembered") {
-    return {
-      tone: "sent",
-      text: "The TV's debugging didn't answer: these are the apps it listed last time. They open through the TV's remote.",
-      technical,
-    };
+    return "The TV's debugging didn't answer: these are the apps it listed last time. They open through the TV's remote.";
   }
   if (source === "known") {
-    return {
-      tone: "sent",
-      text: "The TV's debugging didn't answer and it never listed its apps: here are the usual ones. They open through the TV's remote; one that isn't installed opens its Play Store page.",
-      technical,
-    };
+    return "The TV didn't list its apps: here are the usual ones. They open through the TV's remote; one that isn't installed opens its Play Store page.";
   }
-  return count === 0
-    ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
-    : null;
+  return null;
 }
 
 export function toApps(value: JsonValue | undefined): TvApp[] {
@@ -640,6 +629,7 @@ export interface RemoteDescription {
   sendingText: boolean;
   // The TV's apps matching the filter, sorted by label; null until the TV listed them.
   apps: TvApp[] | null;
+  appsNote: string | null;
   appsEnabled: boolean;
   listingApps: boolean;
   launchEnabled: boolean;
@@ -660,6 +650,7 @@ const HIDDEN: RemoteDescription = {
   pendingKey: null,
   sendingText: false,
   apps: null,
+  appsNote: null,
   appsEnabled: false,
   listingApps: false,
   launchEnabled: false,
@@ -752,6 +743,7 @@ export function describeRemote(state: AppState): RemoteDescription {
     pendingKey: pending !== null && pending.action.kind === "key" ? pending.action.key : null,
     sendingText: pending !== null && pending.action.kind === "text",
     apps: filteredApps(remote.apps, remote.appFilter),
+    appsNote: remote.appsNote,
     appsEnabled: appsAvailable(state) && !busy,
     listingApps: pending !== null && pending.action.kind === "list_apps",
     launchEnabled: appsAvailable(state) && !busy,

@@ -869,8 +869,8 @@ describe("an app list without the TV's debugging", () => {
       remote.apps?.map((app) => app.package),
       ["com.netflix.ninja"],
     );
-    assert.match(remote.outcome?.text ?? "", /listed last time.*remote/);
-    assert.match(remote.outcome?.technical ?? "", /^debugging_off/);
+    assert.match(remote.appsNote ?? "", /listed last time.*remote/);
+    assert.equal(remote.outcome, null); // nothing floats over the list
     assert.equal(remote.appsPairingNeeded, false);
   });
 
@@ -878,7 +878,7 @@ describe("an app list without the TV's debugging", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, listed("known", "pairing_required"));
     const remote = describeRemote(state);
 
-    assert.match(remote.outcome?.text ?? "", /usual ones.*Play Store/);
+    assert.match(remote.appsNote ?? "", /usual ones.*Play Store/);
     assert.equal(remote.appsPairingNeeded, true); // the computer can still pair for the real list
   });
 
@@ -886,5 +886,6 @@ describe("an app list without the TV's debugging", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, listed("tv", null));
 
     assert.equal(describeRemote(state).outcome, null);
+    assert.equal(describeRemote(state).appsNote, null);
   });
 });

@@ -122,6 +122,8 @@ export interface RemoteView {
   outcome: RemoteOutcome | null;
   apps: TvApp[] | null;
   appFilter: string;
+  // Where a list not given by the TV now comes from; shown in the apps card, never over it.
+  appsNote: string | null;
   appsPairingNeeded: boolean;
 }
 
@@ -132,5 +134,6 @@ export const REMOTE_IDLE: RemoteView = {
   outcome: null,
   apps: null,
   appFilter: "",
+  appsNote: null,
   appsPairingNeeded: false,
 };
