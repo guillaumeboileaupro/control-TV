@@ -941,3 +941,57 @@ def test_the_tv_channels_need_only_a_device_lookup_not_the_cast_service() -> Non
     assert remote.calls == [("observe", HOST)]
     with pytest.raises(DeviceNotFoundError):
         channels.get_remote_status(DeviceId("uuid-other"))
+
+
+class ReceiverApps:
+    def __init__(self, apps: tuple[TvApp, ...] = (), error: Exception | None = None) -> None:
+        self.apps, self.error, self.hosts = apps, error, list[str]()
+
+    def list_apps(self, host: str) -> tuple[TvApp, ...]:
+        self.hosts.append(host)
+        if self.error is not None:
+            raise self.error
+        return self.apps
+
+
+def with_receiver(apps: FakeApps, receiver: ReceiverApps, memory: MemoryApps) -> ControlService:
+    service = ControlService(
+        FakeTransport(),
+        remote=FakeRemote(),
+        apps=apps,
+        app_memory=memory,
+        known_apps=KNOWN,
+        receiver_apps=receiver,
+    )
+    service.discover_devices(timeout=1.0)
+    return service
+
+
+def test_without_the_tvs_debugging_its_receiver_lists_the_apps_and_they_are_kept() -> None:
+    memory = MemoryApps()
+    receiver = ReceiverApps((TvApp("fr.free.oqee", "OQEE by Free"),))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, memory)
+
+    listing = service.browse_tv_apps(DEVICE_ID)
+
+    assert (listing.source, listing.reason) == ("tv", None)
+    assert listing.apps == receiver.apps
+    assert receiver.hosts == [HOST]
+    assert memory.kept[DEVICE_ID] == receiver.apps
+
+
+def test_when_neither_answers_the_debuggings_reason_is_given() -> None:
+    receiver = ReceiverApps(error=OperationTimeoutError("no receiver"))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, MemoryApps())
+
+    listing = service.browse_tv_apps(DEVICE_ID)
+
+    assert (listing.source, listing.reason) == ("known", "debugging_off")
+
+
+def test_the_receiver_is_not_asked_when_the_debugging_answers() -> None:
+    receiver = ReceiverApps()
+    service = with_receiver(FakeApps(), receiver, MemoryApps())
+
+    assert service.browse_tv_apps(DEVICE_ID).source == "tv"
+    assert receiver.hosts == []

@@ -104,6 +104,12 @@ class TvApps(Protocol):
     def open_classic_port(self, host: str) -> None: ...
 
 
+class AppLister(Protocol):
+    """Another way to read a TV's installed apps (ControlTV Receiver, on the TV itself)."""
+
+    def list_apps(self, host: str) -> tuple[TvApp, ...]: ...
+
+
 class AppMemory(Protocol):
     """The last app list each TV gave, kept on this device. Best effort: a list that cannot
     be read is `None`, one that cannot be written is not kept."""

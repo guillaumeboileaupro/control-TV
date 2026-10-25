@@ -70,6 +70,11 @@ DEFAULT_SETTLE = 1.0
 DEFAULT_POWER_SETTLE = 4.0
 # How long a connection stays open after its last use, for the next key to reuse it.
 KEEP_OPEN = 30.0
+# The only link besides an app's package this adapter opens: ControlTV Receiver's app list.
+RECEIVER_LINK = re.compile(
+    r"controltv-receiver://apps\?reply=http://\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}/apps"
+    r"&token=[A-Za-z0-9_-]{16,64}"
+)
 PAIRING_CODE = re.compile(r"[0-9A-Fa-f]{6}")
 _SETTLE_STEP = 0.05
 
@@ -375,6 +380,21 @@ class TvRemoteChannel:
             return AppLaunch(package=package, front_app=_observe(remote).current_app)
 
         return self._run(lambda: self._session(host, send))
+
+    def open_receiver_link(self, host: str, link: str) -> None:
+        """Open ControlTV Receiver's app-list link on the TV, once (see `receiver_apps`).
+
+        Only that link's exact shape is sent: a reply address on this network and a token.
+        """
+        host = _checked_host(host)
+        if not isinstance(link, str) or RECEIVER_LINK.fullmatch(link) is None:
+            raise InvalidArgumentError("not a ControlTV Receiver app-list link")
+
+        async def send(remote: RemoteClient, fresh: bool) -> None:
+            del fresh
+            remote.send_launch_app_command(link)
+
+        self._run(lambda: self._session(host, send))
 
     def close(self) -> None:
         """Drop a pending pairing and stop the event loop thread."""

@@ -786,3 +786,29 @@ def test_only_a_package_name_is_ever_sent_as_an_app(
     with pytest.raises(InvalidArgumentError):
         channel.launch(HOST, package)
     assert tv.log == []
+
+
+LINK = "controltv-receiver://apps?reply=http://192.0.2.20:40123/apps&token=" + "a" * 32
+
+
+def test_the_receivers_app_list_link_is_opened_once(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    channel.open_receiver_link(HOST, LINK)
+
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", LINK)]
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://example.com/",
+        "market://launch?id=com.netflix.ninja",
+        LINK.replace("/apps&", "/other&"),
+        LINK.replace("a" * 32, "short"),
+        LINK + "&extra=1",
+        None,
+    ],
+)
+def test_no_other_link_is_ever_opened(channel: TvRemoteChannel, tv: FakeTv, link: Any) -> None:
+    with pytest.raises(InvalidArgumentError):
+        channel.open_receiver_link(HOST, link)
+    assert tv.log == []

@@ -31,7 +31,7 @@ from control_tv.domain import (
     TvApp,
     UnsupportedOperationError,
 )
-from control_tv.ports import AppMemory, TvApps, TvRemote
+from control_tv.ports import AppLister, AppMemory, TvApps, TvRemote
 
 
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
@@ -79,12 +79,14 @@ class TvChannels:
         apps: TvApps | None = None,
         memory: AppMemory | None = None,
         known_apps: tuple[TvApp, ...] = (),
+        receiver_apps: AppLister | None = None,
     ) -> None:
         self._discovered = discovered
         self._remote = remote
         self._apps = apps
         self._memory = memory
         self._known_apps = known_apps
+        self._receiver_apps = receiver_apps
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
         remote, host = self._remote_target(device_id)
@@ -147,13 +149,13 @@ class TvChannels:
     def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
         """The apps to offer in the window, whatever the state of the TV's debugging.
 
-        The TV's own list when it answers (then kept for next time); otherwise its last list,
-        or the apps control-TV knows, with the reason the TV did not list them. A TV not found
-        or a Cast group is still refused: there is nothing to open there.
+        The TV's own list when its debugging or ControlTV Receiver answers (then kept for next
+        time); otherwise its last list, or the apps control-TV knows, with the reason the TV's
+        debugging did not list them. A TV not found or a Cast group is still refused.
         """
-        self._tv_host(device_id)
+        host = self._tv_host(device_id)
         try:
-            apps = tuple(self.list_tv_apps(device_id))
+            apps = self._own_list(device_id, host)
         except ControlError as error:
             remembered = None if self._memory is None else self._memory.recall(device_id)
             if remembered:
@@ -162,6 +164,19 @@ class TvChannels:
         if self._memory is not None and apps:
             self._memory.remember(device_id, apps)
         return AppListing(apps=apps, source="tv")
+
+    def _own_list(self, device_id: DeviceId, host: str) -> tuple[TvApp, ...]:
+        """The TV's debugging first; then ControlTV Receiver, which needs no TV setting.
+        The debugging's error is the one reported when neither answers."""
+        try:
+            return tuple(self.list_tv_apps(device_id))
+        except ControlError as debugging_error:
+            if self._receiver_apps is None or self._remote is None:
+                raise
+            try:
+                return self._receiver_apps.list_apps(self._tv_host(device_id, remote=True))
+            except ControlError:
+                raise debugging_error from None
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports
