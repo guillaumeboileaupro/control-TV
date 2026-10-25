@@ -36,6 +36,12 @@ const FILES = {
   "fr.francetv.zouzous": ["Okoo", "/app-logos/okoo.svg", "light"],
   "fr.tf1.mytf1": ["TF1+", "/app-logos/tf1-plus.svg", "light"],
   "fr.tf1.mytf1.free": ["TF1+", "/app-logos/tf1-plus.svg", "light"],
+  "fr.freebox.disneypluslauncher": ["Disney+", "/app-logos/disney-plus.svg", "light"],
+  "io.github.guillaumeboileaupro.controltv.receiver": [
+    "ControlTV Récepteur",
+    "/app-logos/controltv.svg",
+    "light",
+  ],
   "tv.arte.plus7": ["ARTE", "/app-logos/arte.svg", "light"],
 } as const;
 
@@ -75,9 +81,7 @@ describe("TV app logos", () => {
       "fr.m6.m6replay.by",
       "com.android.tv.settings",
       "com.google.android.tvrecommendations",
-      // Freebox-specific packages: no official name or logo can be verified for them, and a
-      // launcher is not the app it opens.
-      "fr.freebox.disneypluslauncher",
+      // Freebox-specific packages without a logo whose licence allows shipping it.
       "fr.freebox.fbx8lc.fbxdiags",
       "fr.free.aktu",
       "com.nextinteractive.rmcbfmplay.tv.free",

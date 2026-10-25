@@ -79,6 +79,10 @@ const LOGOS: AppLogoCatalogue = {
   "fr.tf1.mytf1": shipped("TF1+", "tf1-plus"),
   // TF1+'s own Freebox edition ("TF1+ : Streaming pour Freebox" on Google Play): the same app.
   "fr.tf1.mytf1.free": shipped("TF1+", "tf1-plus"),
+  // The Freebox's Disney+ entry opens Disney+ (owner decision, 2026-10-25).
+  "fr.freebox.disneypluslauncher": shipped("Disney+", "disney-plus"),
+  // control-TV's own TV receiver, with control-TV's own logo.
+  "io.github.guillaumeboileaupro.controltv.receiver": shipped("ControlTV Récepteur", "controltv"),
   "org.videolan.vlc": bundled(siVlcmediaplayer),
   "tv.arte.plus7": shipped("ARTE", "arte"),
   "tv.twitch.android.app": bundled(siTwitch),

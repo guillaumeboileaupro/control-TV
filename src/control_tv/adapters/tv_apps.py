@@ -81,6 +81,16 @@ KNOWN_NAMES = {
     "fr.tf1.mytf1.free": "TF1+",
     "fr.tfou.max": "TFOU MAX",
     "tv.twitch.android.app": "Twitch",
+    # The owner's Freebox editions, absent from Google Play: named as the owner's TV shows them
+    # (owner decision, 2026-10-25), and control-TV's own TV receiver.
+    "com.nextinteractive.rmcbfmplay.tv.free": "RMC BFM Play",
+    "fr.free.aktu": "Aktu Free",
+    "fr.m6.m6replay.free": "M6+",
+    "net.oqee.androidtv": "OQEE",
+    "net.oqee.launcher": "OQEE (accueil)",
+    "fr.freebox.disneypluslauncher": "Disney+",
+    "fr.freebox.fbx8lc.fbxdiags": "Diagnostic Freebox",
+    "io.github.guillaumeboileaupro.controltv.receiver": "ControlTV Récepteur",
 }
 
 

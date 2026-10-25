@@ -37,6 +37,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Owner request, 2026-10-25: the Freebox editions are named as the owner's TV shows them, the
+  receiver shows control-TV's own logo and the Freebox Disney+ entry the Disney+ logo; no other logo
+  with a shippable licence exists (OQEE and TFOU on Commons are CC BY-SA), so the initials stay.
 - [x] Owner request, 2026-10-25: the Ubuntu window is laid out for a computer (context column on the left,
   remote as the main area, TV apps beside it from 1180 px; default window 1280x820) instead of the
   560 px phone column; the phone keeps the single column. Checked on screenshots.
