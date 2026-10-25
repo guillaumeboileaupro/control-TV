@@ -3,3 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android") version "1.9.25" apply false
 }
 
+allprojects {
+    dependencyLocking {
+        lockAllConfigurations()
+    }
+}
+

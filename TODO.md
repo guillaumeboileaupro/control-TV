@@ -11,10 +11,13 @@
   retire l'écran virtuel même après `KeyboardInterrupt`, `SystemExit` ou une erreur imprévue.
   Validation automatisée uniquement ; à reporter dans #97/#106 par leur auteur.
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
-  `p256`/`p384`) :** aucun correctif compatible en amont ; dérogation datée et ciblée à approuver,
-  ou attente d'un correctif. Bloque `rust-audit` dès que la pile WebRTC arrive sur `main`.
-- [ ] **CI :** ajouter `webrtc-engine` (fmt, clippy, tests) et `android-tv-receiver` (tests JVM) au
-  workflow ; les PR empilées #99, #100, #106–#109 n'ont jamais eu de CI.
+  `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
+  correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou
+  approuver explicitement une dérogation datée et ciblée. Les audits restent bloquants et aucune
+  dérogation n'a été ajoutée.
+- [x] **CI :** `webrtc-engine` exécute fmt, Clippy, tests de reconnexion/décodage et son propre
+  audit Cargo ; `android-tv-receiver` exécute ses tests JVM avec verrou Gradle. Un audit OSV
+  bloquant couvre les deux verrous sans ajouter un second build Android coûteux.
 - [x] **Hygiène de build (2026-10-24) :** `webrtc-engine/target/` et `android-tv-receiver/` ignorés et
   nettoyés par `dev.py clean` ; test d'expiration du jeton d'appairage WebRTC ajouté.
 - [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2

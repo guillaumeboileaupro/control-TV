@@ -18,18 +18,23 @@ virtual monitor behind; every step now runs, then the interrupt is raised first.
 now refuses deleting a missing or attached mode, like the real one (assumed, not checked on
 hardware). Automated validation only; no display or TV was used.
 
-Integration findings (2026-10-24, branch `integration/consolidation-2026-10-24`):
+Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [ ] **Open, owner decision:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
   constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`
   0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13. Only `crypto-bigint` >= 0.7.6 is
   patched; the newest `dtls` (0.17.2) still requires `p256` ^0.13, and `webrtc` 0.21 moves to the
   `rtc` stack (a rewrite, unverified). `rust-audit` fails once the WebRTC stack reaches `main`:
-  an owner-approved, dated and package-scoped waiver, or an upstream fix, is required; no waiver
-  was added.
-- [ ] **CI gap:** the workflow tests neither `webrtc-engine` (its `cargo test`, clippy, fmt and
-  the H.264/Opus decode test) nor `android-tv-receiver` (no Gradle wrapper; 7 JVM tests), and the
-  stacked PRs #99, #100 and #106-#109 never ran CI. Run locally on the integration branch: all
-  green, including the 120 s synthetic endurance.
+  a compatible upstream fix, a separately reviewed migration to `webrtc` 0.21/`rtc`, or an
+  owner-approved dated and package-scoped waiver is required; no waiver was added. Reproducing
+  `cargo audit --no-fetch --json` against both consolidation heads and both lockfiles yields the
+  same vulnerability with the current 1,352-advisory database. The earlier clean result used the
+  1,351-advisory database from before RUSTSEC-2026-0387 was present.
+- [x] **CI coverage:** the Tauri job now runs `webrtc-engine` fmt, Clippy and all default tests,
+  including reconnection and real FFmpeg H.264/Opus decoding, plus a separate Cargo audit of its
+  lockfile. The existing Android job reuses its SDK/JDK/Gradle setup for the standalone receiver's
+  JVM tests. Its resolved dependencies are committed in `app/gradle.lockfile`; one pinned OSV
+  workflow audits that lock and the WebRTC Cargo lock without duplicating either platform build.
+  The 120 s synthetic endurance stays an explicit candidate check rather than running on every PR.
 - [x] `webrtc-engine/target/` and `android-tv-receiver/{build,app/build}/` git-ignored and cleaned by
   `dev.py clean`; the pairing token is now asserted to disappear after a stop and after a failed
   media pipeline (it already did). Automated validation only.

@@ -108,6 +108,7 @@ jobs:
             librsvg2-dev \
             libsoup-3.0-dev \
             libgtk-3-dev \
+            ffmpeg \
             build-essential
 
       # @stable is this action's own documented usage, not a moving-tag shortcut: it
@@ -182,11 +183,27 @@ jobs:
       - name: Audit the Tauri crate's Rust dependencies
         run: python3 scripts/dev.py rust-audit
 
+      # The engine has its own lockfile. Keep this separate from the Tauri audit so a transitive
+      # WebRTC advisory cannot disappear behind a different workspace resolution.
+      - name: Audit the WebRTC engine's Rust dependencies
+        working-directory: webrtc-engine
+        run: cargo audit
+
       - name: Type-check and format-check the frontend
         run: python3 scripts/dev.py ui-check
 
       - name: Format, lint and test the Tauri shell crate
         run: python3 scripts/dev.py rust-check
+
+      # Includes reconnection/error-path tests and the real local H.264/Opus FFmpeg decode test.
+      # The explicit 120-second endurance remains a local/release-candidate check, not a cost on
+      # every pull request.
+      - name: Format, lint and test the WebRTC engine
+        working-directory: webrtc-engine
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all-targets
 
       - name: Build the frontend and the Tauri application (debug profile)
         run: npx --prefix ui tauri build --debug --bundles deb
@@ -469,6 +486,11 @@ jobs:
       - name: Run the Android JVM unit tests (Kotlin bridge relay, multicast lock)
         working-directory: src-tauri/gen/android
         run: ./gradlew --console=plain :app:testArm64DebugUnitTest
+
+      # Standalone TV receiver: signaling validation, one-shot handoff and peer lifecycle tests.
+      # Reuse the already provisioned SDK/JDK and wrapper instead of creating another Android job.
+      - name: Run the Android TV receiver JVM tests
+        run: ./src-tauri/gen/android/gradlew --console=plain --project-dir android-tv-receiver test
 
       # Fails when the stable key was used but the APK is not signed by the pinned certificate
       # (a replaced key never passes), or when a push to main is not signed by it once a
