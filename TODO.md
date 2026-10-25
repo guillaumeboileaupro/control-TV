@@ -10,6 +10,9 @@
   tardive échoue reprend après les étapes déjà faites (le bureau est remis en place) ; l'arrêt D1
   retire l'écran virtuel même après `KeyboardInterrupt`, `SystemExit` ou une erreur imprévue.
   Validation automatisée uniquement ; à reporter dans #97/#106 par leur auteur.
+- [x] **CI (2026-10-25) :** tests `ping`/`tvApps` indépendants de la présence d'`adb` sur la machine ;
+  tests d'interaction du pavé directionnel (5 zones câblées, disjointes, symétriques). Aucun défaut
+  de zone reproduit (Chromium et WebKitGTK). Validation automatisée uniquement.
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
   correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou

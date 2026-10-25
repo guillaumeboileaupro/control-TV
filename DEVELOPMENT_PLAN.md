@@ -29,6 +29,14 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   `cargo audit --no-fetch --json` against both consolidation heads and both lockfiles yields the
   same vulnerability with the current 1,352-advisory database. The earlier clean result used the
   1,351-advisory database from before RUSTSEC-2026-0387 was present.
+  Rechecked 2026-10-25: still no `crypto-bigint` 0.5.x/0.6.x fix and no newer `dtls`; `rtc-dtls`
+  0.21.1 depends on no RustCrypto curve crate (`rtc-crypto` uses `aws-lc-rs`/`ring`), so the
+  `webrtc` 0.21 migration would remove the advisory, as a separate reviewed change.
+- [x] **CI, 2026-10-25:** three bridge `ping` tests expected `tvApps: true`, which held only where
+  `adb` was on PATH; they now put a stand-in `adb` on PATH, and `tvApps: false` without `adb` is
+  tested. The directional pad gains interaction tests (five buttons wired to their keys, five
+  disjoint symmetric round zones); measured in Chromium and WebKitGTK, every zone reaches its own
+  key, so no hit-area defect was reproduced. Automated validation only.
 - [x] **CI coverage:** the Tauri job now runs `webrtc-engine` fmt, Clippy and all default tests,
   including reconnection and real FFmpeg H.264/Opus decoding, plus a separate Cargo audit of its
   lockfile. The existing Android job reuses its SDK/JDK/Gradle setup for the standalone receiver's
