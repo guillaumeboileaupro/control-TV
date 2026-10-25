@@ -84,7 +84,8 @@ h2 {
   margin: 0;
 }
 
-/* Layout: a single column, the same model on a desktop window and a phone. */
+/* Layout: a single column on a phone; on a computer (see "Desktop layout" at the end) the
+   context on the left and the remote with the TV's apps as the main area. */
 
 .app {
   max-width: 560px;
@@ -1505,3 +1506,61 @@ h2 {
 .btn-assistant {
   font-weight: 600;
 }
+
+/* Desktop layout: a computer window is not a stretched phone. The context (which TV, what it
+   plays, its Cast sound, the screen sent to it) stays in a left column; the remote, the main
+   action, takes the rest, with the TV's apps beside it on a wide window. Same elements, same
+   order for keyboard and screen readers; only the placement changes. */
+@media (min-width: 960px) {
+  .app {
+    max-width: 1440px;
+    padding: 0 24px 32px;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    grid-template-rows: auto auto auto 1fr;
+    grid-template-areas:
+      "picker remote"
+      "now remote"
+      "sound remote"
+      "screen remote";
+    align-items: start;
+    gap: 16px 24px;
+  }
+
+  .context:not([hidden]) {
+    display: contents;
+  }
+
+  .picker {
+    grid-area: picker;
+  }
+
+  .now-card {
+    grid-area: now;
+  }
+
+  .sound {
+    grid-area: sound;
+  }
+
+  .screen-panel {
+    grid-area: screen;
+  }
+
+  .tv-remote {
+    grid-area: remote;
+  }
+}
+
+@media (min-width: 1180px) {
+  .tv-remote:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px 24px;
+  }
+}
+

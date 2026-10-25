@@ -30,6 +30,9 @@
 - [x] **Télécommande complète (demande du propriétaire, 2026-10-25) :** pavé numérique, Input, Settings, Info,
   Guide, chaînes, sous-titres, piste audio, touches de couleur, touches média et touche Google Assistant
   (ouvre l'Assistant de la TV). Validation automatisée ; essai réel à faire.
+- [x] **Fenêtre Ubuntu adaptée à l'ordinateur (demande du propriétaire, 2026-10-25) :** à partir de 960 px, le contexte
+  à gauche et la télécommande au centre, avec les applis TV à côté à partir de 1180 px ; fenêtre par défaut 1280×820.
+  Le téléphone garde sa colonne unique. Vérifié par capture ; essai réel à faire.
 - [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
   ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →

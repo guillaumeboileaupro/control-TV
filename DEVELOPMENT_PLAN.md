@@ -37,6 +37,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Owner request, 2026-10-25: the Ubuntu window is laid out for a computer (context column on the left,
+  remote as the main area, TV apps beside it from 1180 px; default window 1280x820) instead of the
+  560 px phone column; the phone keeps the single column. Checked on screenshots.
 - [x] Owner request, 2026-10-25: the window offers the whole Google TV remote (digits, Input, Settings,
   Info, Guide, channels, subtitles, audio track, colour keys, media keys, Google Assistant key); every
   window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone":
