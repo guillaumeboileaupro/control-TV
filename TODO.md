@@ -13,6 +13,8 @@
 - [x] **CI (2026-10-25) :** tests `ping`/`tvApps` indépendants de la présence d'`adb` sur la machine ;
   tests d'interaction du pavé directionnel (5 zones câblées, disjointes, symétriques). Aucun défaut
   de zone reproduit (Chromium et WebKitGTK). Validation automatisée uniquement.
+- [x] **Configuration agents (2026-10-25) :** le skill `repository-lifecycle` ajouté sur `main` (`baf9f68`)
+  n'avait pas son lien `.claude/skills/` ; lien ajouté, `agent_config.py check` revient à 0 erreur.
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
   correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou

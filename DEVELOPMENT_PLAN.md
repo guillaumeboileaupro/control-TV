@@ -32,6 +32,8 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   Rechecked 2026-10-25: still no `crypto-bigint` 0.5.x/0.6.x fix and no newer `dtls`; `rtc-dtls`
   0.21.1 depends on no RustCrypto curve crate (`rtc-crypto` uses `aws-lc-rs`/`ring`), so the
   `webrtc` 0.21 migration would remove the advisory, as a separate reviewed change.
+- [x] The CI publishes the Android TV receiver debug APK; `main`'s `repository-lifecycle` skill
+  (`baf9f68`) is linked for Claude (`.claude/skills/`), as `agent_config.py check` requires.
 - [x] **CI, 2026-10-25:** three bridge `ping` tests expected `tvApps: true`, which held only where
   `adb` was on PATH; they now put a stand-in `adb` on PATH, and `tvApps: false` without `adb` is
   tested. The directional pad gains interaction tests (five buttons wired to their keys, five
