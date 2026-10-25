@@ -32,7 +32,7 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   Rechecked 2026-10-25: still no `crypto-bigint` 0.5.x/0.6.x fix and no newer `dtls`; `rtc-dtls`
   0.21.1 depends on no RustCrypto curve crate (`rtc-crypto` uses `aws-lc-rs`/`ring`), so the
   `webrtc` 0.21 migration would remove the advisory, as a separate reviewed change.
-  Prepared 2026-10-25, **pending the owner's acceptance of the risk**: dated waivers until
+  **Risk accepted by the owner on 2026-10-25** (local-network trials only): dated waivers until
   2026-11-30 for RUSTSEC-2026-0387 (`crypto-bigint`, both Rust locks) and RUSTSEC-2025-0141
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an

@@ -1,6 +1,6 @@
 # OSV-Scanner waivers for the WebRTC engine and TV receiver locks (dependency-audit.yml).
 # Each entry names one advisory and stops applying at `ignoreUntil`: from 2026-12-01 the scan
-# fails again. Owner-approved <date>, for local-network trials only; see SECURITY.md, Dependency
+# fails again. Owner-approved 2026-10-25, for local-network trials only; see SECURITY.md, Dependency
 # advisories. Add nothing here without the owner's approval.
 
 [[IgnoredVulns]]

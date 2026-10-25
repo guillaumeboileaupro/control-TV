@@ -9,7 +9,7 @@
     {
       "advisory": "RUSTSEC-2026-0387",
       "package": "crypto-bigint",
-      "reason": "crypto-bigint 0.5.5 comes only through webrtc 0.14 -> dtls -> p256/p384 0.13 -> elliptic-curve, with no compatible fix (dtls 0.17.2 still needs p256 ^0.13). The fixed constant-time paths are absent from 0.5.5 or not called by that chain; DTLS signatures use ring and p256/p384 only compute single-use ECDHE keys. Accepted for local-network trials only until the webrtc 0.21 migration. Owner-approved <date>; see SECURITY.md, Dependency advisories.",
+      "reason": "crypto-bigint 0.5.5 comes only through webrtc 0.14 -> dtls -> p256/p384 0.13 -> elliptic-curve, with no compatible fix (dtls 0.17.2 still needs p256 ^0.13). The fixed constant-time paths are absent from 0.5.5 or not called by that chain; DTLS signatures use ring and p256/p384 only compute single-use ECDHE keys. Accepted for local-network trials only until the webrtc 0.21 migration. Owner-approved 2026-10-25; see SECURITY.md, Dependency advisories.",
       "expires": "2026-11-30"
     }
   ]
