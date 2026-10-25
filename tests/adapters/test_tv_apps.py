@@ -645,3 +645,14 @@ def test_without_an_sdk_the_adb_on_path_or_none(tmp_path: Path) -> None:
         {"CONTROL_TV_ADB": str(tmp_path / "missing")}, tmp_path, lambda _: "/usr/bin/adb"
     ) == ("/usr/bin/adb")
     assert find_adb({}, tmp_path, lambda _: None) is None
+
+
+def test_an_unreadable_home_is_no_sdk_and_never_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied(self: Path) -> bool:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "is_file", denied)
+
+    assert find_adb({}, tmp_path, lambda _: "/usr/bin/adb") == "/usr/bin/adb"

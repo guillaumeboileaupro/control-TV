@@ -181,6 +181,14 @@ def platform_tools_candidates(environ: Mapping[str, str], home: Path) -> list[Pa
     return candidates
 
 
+def _executable(path: Path) -> bool:
+    """An executable file; a path that cannot even be looked at (unreadable home) is not."""
+    try:
+        return path.is_file() and os.access(path, os.X_OK)
+    except OSError:
+        return False
+
+
 def find_adb(
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
@@ -190,7 +198,7 @@ def find_adb(
     for candidate in platform_tools_candidates(
         os.environ if environ is None else environ, Path.home() if home is None else home
     ):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
+        if _executable(candidate):
             return str(candidate)
     return (shutil.which if which is None else which)("adb")
 
