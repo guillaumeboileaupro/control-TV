@@ -1,18 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Merged into debug builds only: the owner's acceptance-mode screen and its export provider.
-     Release builds contain neither. -->
+     Release builds contain neither. The screen has no home-screen icon (a second "control-TV"
+     icon confused the owner); it is opened from the computer:
+     adb shell am start -n io.github.guillaumeboileaupro.controltv/.AcceptanceTraceActivity -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <activity
             android:name=".AcceptanceTraceActivity"
             android:exported="true"
             android:label="control-TV Recette"
-            android:taskAffinity=".acceptance">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:taskAffinity=".acceptance" />
         <provider
             android:name=".AcceptanceTraceProvider"
             android:authorities="${applicationId}.acceptance"
