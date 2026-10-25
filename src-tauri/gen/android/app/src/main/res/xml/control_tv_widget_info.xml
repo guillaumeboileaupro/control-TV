@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- No periodic update (updatePeriodMillis 0): the widget reads the TV only when tapped.
-     Minimum height 130dp: 24dp padding + 48dp header + 10dp gap + 48dp controls. -->
+     Height 270dp: 24dp padding + 48dp header + 10dp gap + 48dp controls + 10dp gap + three 40dp
+     remote rows 6dp apart. It can be made as small as 130dp (header and controls only): the
+     remote rows are then cut off, from the bottom. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_description"
     android:initialLayout="@layout/widget_control_tv"
     android:minWidth="250dp"
-    android:minHeight="130dp"
+    android:minHeight="270dp"
     android:minResizeWidth="250dp"
     android:minResizeHeight="130dp"
     android:previewLayout="@layout/widget_control_tv"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
-    android:targetCellHeight="2"
+    android:targetCellHeight="4"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen" />

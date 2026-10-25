@@ -45,7 +45,9 @@ addresses, kept apart from CI results.
   quarter, OK) and the keys as on Ubuntu.
 - [ ] **TV apps:** the TV's apps are listed from the phone (classic network debugging, port 5555);
   open one.
-- [ ] **Widget:** add it, use it once.
+- [ ] **Widget:** add it (or enlarge the existing one to 4x4 to show its remote rows); use play/pause
+  once, then Mute, Volume - and +, each arrow, OK, Back, Home, Power and Assistant once each: the TV
+  acts once per tap and the widget says which key was sent.
 - [ ] **Two remotes:** Ubuntu and the phone in turn on the same TV: each keeps its own state, nothing
   is sent twice.
 

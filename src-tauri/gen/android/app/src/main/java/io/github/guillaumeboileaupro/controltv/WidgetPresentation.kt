@@ -44,8 +44,11 @@ object WidgetPresentation {
             is WidgetOutcome.NoCommand -> stateView(title, outcome.state).copy(line = outcome.reason)
             is WidgetOutcome.NotSent -> WidgetView(
                 title,
-                if (outcome.code == "unsupported_operation") "The TV can't do that now. Nothing was sent."
-                else "Nothing was sent.",
+                when (outcome.code) {
+                    "unsupported_operation" -> "The TV can't do that now. Nothing was sent."
+                    "pairing_required" -> "Pair this TV in control-TV first. Nothing was sent."
+                    else -> "Nothing was sent."
+                },
             )
             is WidgetOutcome.MaybeSent -> WidgetView(title, MAYBE_SENT)
             is WidgetOutcome.Sent -> when (outcome.confirmation) {
@@ -59,7 +62,26 @@ object WidgetPresentation {
                 // Not checked: nothing reported, so no state is shown (neutral icons).
                 else -> WidgetView(title, "Sent. Tap ↻ to check.")
             }
+            // A key is worded as sent, not done: the TV's screen shows whether it acted.
+            is WidgetOutcome.KeySent -> WidgetView(title, "${keyLabel(outcome.action)} sent.")
         }
+
+    /** The name of the TV remote key a button presses, as the window's remote labels it. */
+    fun keyLabel(action: WidgetAction): String = when (action) {
+        WidgetAction.MUTE -> "Mute"
+        WidgetAction.VOLUME_DOWN -> "Volume −"
+        WidgetAction.VOLUME_UP -> "Volume +"
+        WidgetAction.POWER -> "Power"
+        WidgetAction.UP -> "Up"
+        WidgetAction.DOWN -> "Down"
+        WidgetAction.LEFT -> "Left"
+        WidgetAction.RIGHT -> "Right"
+        WidgetAction.OK -> "OK"
+        WidgetAction.BACK -> "Back"
+        WidgetAction.HOME -> "Home"
+        WidgetAction.ASSISTANT -> "Google Assistant"
+        WidgetAction.PLAY_PAUSE, WidgetAction.STOP, WidgetAction.REFRESH -> action.name
+    }
 
     /** "Playing · Title · 45%", "Paused · Muted", "Nothing playing · 30%". */
     fun summary(state: TvState): String {

@@ -1,10 +1,30 @@
 package io.github.guillaumeboileaupro.controltv
 
 import org.json.JSONObject
-import kotlin.math.roundToInt
 
-/** What a widget button asks for. */
-enum class WidgetAction { PLAY_PAUSE, STOP, MUTE, VOLUME_DOWN, VOLUME_UP, REFRESH }
+/**
+ * What a widget button asks for. A button with a [key] presses that key of the TV's own remote
+ * (`press_remote_key`): it needs no Cast session and no volume reported by the TV. The others
+ * pick a Cast command from the state the TV reported. New entries go last: a button's pending
+ * intent is numbered by its position.
+ */
+enum class WidgetAction(val key: String? = null) {
+    PLAY_PAUSE,
+    STOP,
+    MUTE("mute"),
+    VOLUME_DOWN("volume_down"),
+    VOLUME_UP("volume_up"),
+    REFRESH,
+    POWER("power"),
+    UP("up"),
+    DOWN("down"),
+    LEFT("left"),
+    RIGHT("right"),
+    OK("ok"),
+    BACK("back"),
+    HOME("home"),
+    ASSISTANT("assistant"),
+}
 
 /** The part of a status report the widget reads; `null` means not reported. */
 data class TvState(
@@ -29,6 +49,7 @@ sealed interface WidgetOutcome {
     data class Status(val state: TvState) : WidgetOutcome
     data class NoCommand(val reason: String, val state: TvState) : WidgetOutcome
     data class Sent(val command: String, val confirmation: String, val observed: TvState?) : WidgetOutcome
+    data class KeySent(val action: WidgetAction, val confirmation: String) : WidgetOutcome
     data class NotSent(val code: String) : WidgetOutcome
     data class MaybeSent(val command: String) : WidgetOutcome
 }
@@ -82,6 +103,7 @@ class WidgetActionRunner(
     ): WidgetOutcome {
         if (selection == null) return WidgetOutcome.NoSelection
         if (tapAgeMillis !in 0..MAX_TAP_AGE_MILLIS) return WidgetOutcome.Expired
+        action.key?.let { return pressKey(action, it, selection, tapId, mayCommand) }
         val state = when (val read = readStatus(selection.deviceId)) {
             is StatusRead.Read -> read.state
             is StatusRead.Failed -> return read.outcome
@@ -94,32 +116,83 @@ class WidgetActionRunner(
         if (!mayCommand()) return WidgetOutcome.Expired
         // Claimed durably before the send: a re-run of this tap never sends a second time.
         if (!guard.claim(tapId)) return WidgetOutcome.MaybeSent(command.method)
-        val requested = command.params.description
-        log("widget command: ${command.method} $requested".trimEnd() + " (TV reported ${reported(state)})")
-        val params = command.params.toJson().put("deviceId", selection.deviceId)
-        val response = try {
-            // The tap is this order's application request id: the bridge's acceptance trace
-            // correlates every send of it (C7). Status reads are separate messages.
-            JSONObject(bridge(request(command.method, params, requestId = tapId)))
-        } catch (error: PythonUnavailable) {
-            log("widget command result: ${command.method} -> not sent (control-TV unavailable)")
-            return WidgetOutcome.NotSent("backend_unavailable")
-        } catch (error: Exception) {
-            log("widget command result: ${command.method} -> no answer, may have been sent")
-            return WidgetOutcome.MaybeSent(command.method)
+        log("widget command: ${command.method} (TV reported ${reported(state)})")
+        val params = JSONObject().put("deviceId", selection.deviceId)
+        val result = when (val delivery = deliver(command.method, params, tapId)) {
+            is Delivery.Answered -> delivery.result
+            is Delivery.Failed -> return delivery.outcome
         }
-        if (!response.optBoolean("ok", false)) {
-            val code = response.optJSONObject("error")?.optString("code").orEmpty()
-            val sent = code !in NOT_SENT_CODES
-            log("widget command result: ${command.method} -> ${if (sent) "may have been sent" else "not sent"} ($code)")
-            return if (sent) WidgetOutcome.MaybeSent(command.method) else WidgetOutcome.NotSent(code)
-        }
-        val result = response.getJSONObject("result").getJSONObject("result")
         val observed = result.optJSONObject("observed")?.let(::parseState)
         val confirmation = result.getString("confirmation")
         val after = observed?.let { " (TV then reported ${reported(it)})" } ?: ""
         log("widget command result: ${command.method} -> sent, $confirmation$after")
         return WidgetOutcome.Sent(command.method, confirmation, observed)
+    }
+
+    /**
+     * One key of the TV's remote, claimed and sent at most once. A TV not known to this process
+     * yet (it may have just started) is refused before anything is sent: one read-only
+     * discovery, then the selected id only, and the key is sent then if the tap may still run.
+     */
+    private fun pressKey(
+        action: WidgetAction,
+        key: String,
+        selection: Selection,
+        tapId: String,
+        mayCommand: () -> Boolean,
+    ): WidgetOutcome {
+        if (!mayCommand()) return WidgetOutcome.Expired
+        if (!guard.claim(tapId)) return WidgetOutcome.MaybeSent(PRESS_KEY)
+        log("widget command: $PRESS_KEY key=$key")
+        val params = JSONObject().put("deviceId", selection.deviceId).put("key", key)
+        var delivery = deliver(PRESS_KEY, params, tapId)
+        if ((delivery as? Delivery.Failed)?.code == "device_not_found") {
+            val found = try {
+                discovered(selection.deviceId)
+            } catch (error: Exception) {
+                return WidgetOutcome.StatusUnreadable
+            }
+            if (found == null) return WidgetOutcome.StatusUnreadable
+            if (!found) return WidgetOutcome.NotFound
+            if (!mayCommand()) return WidgetOutcome.Expired
+            delivery = deliver(PRESS_KEY, params, tapId)
+        }
+        return when (delivery) {
+            is Delivery.Answered -> {
+                val confirmation = delivery.result.getString("confirmation")
+                log("widget command result: $PRESS_KEY -> sent, $confirmation")
+                WidgetOutcome.KeySent(action, confirmation)
+            }
+            is Delivery.Failed -> delivery.outcome
+        }
+    }
+
+    private sealed interface Delivery {
+        data class Answered(val result: JSONObject) : Delivery
+        data class Failed(val outcome: WidgetOutcome, val code: String?) : Delivery
+    }
+
+    /** One command line to the bridge, never retried here; what its answer proves. */
+    private fun deliver(method: String, params: JSONObject, tapId: String): Delivery {
+        val response = try {
+            // The tap is this order's application request id: the bridge's acceptance trace
+            // correlates every send of it (C7). Status reads are separate messages.
+            JSONObject(bridge(request(method, params, requestId = tapId)))
+        } catch (error: PythonUnavailable) {
+            log("widget command result: $method -> not sent (control-TV unavailable)")
+            return Delivery.Failed(WidgetOutcome.NotSent("backend_unavailable"), null)
+        } catch (error: Exception) {
+            log("widget command result: $method -> no answer, may have been sent")
+            return Delivery.Failed(WidgetOutcome.MaybeSent(method), null)
+        }
+        if (!response.optBoolean("ok", false)) {
+            val code = response.optJSONObject("error")?.optString("code").orEmpty()
+            val sent = code !in NOT_SENT_CODES
+            log("widget command result: $method -> ${if (sent) "may have been sent" else "not sent"} ($code)")
+            val outcome = if (sent) WidgetOutcome.MaybeSent(method) else WidgetOutcome.NotSent(code)
+            return Delivery.Failed(outcome, code)
+        }
+        return Delivery.Answered(response.getJSONObject("result").getJSONObject("result"))
     }
 
     /** The reported state a command was chosen from or checked against; no media title. */
@@ -140,17 +213,11 @@ class WidgetActionRunner(
             if (errorCode(response) == "device_not_found") {
                 // Not known to this process yet (it may have just started): one read-only
                 // discovery, then the selected id only. Another TV is never used instead.
-                val discovered = JSONObject(bridge(request("discover_devices", JSONObject())))
-                if (!discovered.optBoolean("ok", false)) return StatusRead.Failed(WidgetOutcome.StatusUnreadable)
-                val devices = discovered.getJSONObject("result").getJSONArray("devices")
-                var found = false
-                for (index in 0 until devices.length()) {
-                    if (devices.getJSONObject(index).optString("id") == deviceId) {
-                        found = true
-                        break
-                    }
+                when (discovered(deviceId)) {
+                    null -> return StatusRead.Failed(WidgetOutcome.StatusUnreadable)
+                    false -> return StatusRead.Failed(WidgetOutcome.NotFound)
+                    true -> {}
                 }
-                if (!found) return StatusRead.Failed(WidgetOutcome.NotFound)
                 response = JSONObject(bridge(request("get_status", JSONObject().put("deviceId", deviceId))))
             }
             if (!response.optBoolean("ok", false)) {
@@ -165,29 +232,17 @@ class WidgetActionRunner(
         }
     }
 
-    private sealed interface Choice {
-        data class Send(val method: String, val params: CommandParams = CommandParams.None) : Choice
-        data class Skip(val reason: String) : Choice
+    /** Whether one read-only discovery lists [deviceId]; null when the discovery failed. */
+    private fun discovered(deviceId: String): Boolean? {
+        val answer = JSONObject(bridge(request("discover_devices", JSONObject())))
+        if (!answer.optBoolean("ok", false)) return null
+        val devices = answer.getJSONObject("result").getJSONArray("devices")
+        return deviceId in (0 until devices.length()).map { devices.getJSONObject(it).optString("id") }
     }
 
-    private sealed interface CommandParams {
-        val description: String
-        fun toJson(): JSONObject
-
-        object None : CommandParams {
-            override val description = ""
-            override fun toJson() = JSONObject()
-        }
-
-        data class Muted(val value: Boolean) : CommandParams {
-            override val description = "muted=$value"
-            override fun toJson() = JSONObject().put("muted", value)
-        }
-
-        data class Volume(val level: Double) : CommandParams {
-            override val description = "level=$level"
-            override fun toJson() = JSONObject().put("level", level)
-        }
+    private sealed interface Choice {
+        data class Send(val method: String) : Choice
+        data class Skip(val reason: String) : Choice
     }
 
     private fun choose(action: WidgetAction, state: TvState): Choice {
@@ -204,23 +259,9 @@ class WidgetActionRunner(
                 null, "idle" -> Choice.Skip(REASON_NOTHING_PLAYING)
                 else -> Choice.Send("stop")
             }
-            // set_muted is an absolute state: the opposite of the one the TV reported.
-            WidgetAction.MUTE -> state.muted?.let { Choice.Send("set_muted", CommandParams.Muted(!it)) }
-                ?: Choice.Skip(REASON_MUTE_UNDETERMINED)
-            WidgetAction.VOLUME_DOWN -> volume(state, -VOLUME_STEP)
-            WidgetAction.VOLUME_UP -> volume(state, +VOLUME_STEP)
-            WidgetAction.REFRESH -> Choice.Skip("")
+            // REFRESH sends nothing; a remote key never gets here (see pressKey).
+            else -> Choice.Skip("")
         }
-    }
-
-    private fun volume(state: TvState, step: Double): Choice {
-        if (state.volumeFixed) return Choice.Skip(REASON_VOLUME_FIXED)
-        val level = state.volumeLevel ?: return Choice.Skip(REASON_VOLUME_UNDETERMINED)
-        // From the level the TV reported, never from a guess; one step is the window's own
-        // limit for one raise (10 points), applied the same way down.
-        val target = ((level + step).coerceIn(0.0, 1.0) * 100).roundToInt() / 100.0
-        if (target == level) return Choice.Skip(if (step > 0) REASON_VOLUME_MAX else REASON_VOLUME_MIN)
-        return Choice.Send("set_volume", CommandParams.Volume(target))
     }
 
     private fun request(method: String, params: JSONObject, requestId: String? = null): String {
@@ -236,8 +277,8 @@ class WidgetActionRunner(
         /** A tap older than this when its job starts sends and reads nothing. */
         const val MAX_TAP_AGE_MILLIS = 60_000L
 
-        /** One volume tap: the window's raise limit for one gesture, 10 points. */
-        const val VOLUME_STEP = 0.10
+        /** The bridge method of every remote key. */
+        const val PRESS_KEY = "press_remote_key"
 
         // Refused by the shared layer before anything was sent; every other failure of a
         // command may or may not have reached the TV.
@@ -248,17 +289,13 @@ class WidgetActionRunner(
             "unsupported_operation",
             "unsupported_media",
             "discovery_failed",
+            "pairing_required",
         )
 
         const val REASON_NOT_CONNECTED = "The TV isn't connected."
         const val REASON_NOTHING_PLAYING = "Nothing is playing."
         const val REASON_NO_PAUSE = "This media can't be paused."
         const val REASON_PLAYBACK_UNDETERMINED = "The TV didn't say what is playing."
-        const val REASON_MUTE_UNDETERMINED = "The TV didn't report its mute state."
-        const val REASON_VOLUME_UNDETERMINED = "The TV didn't report its volume."
-        const val REASON_VOLUME_FIXED = "This TV's volume can't be changed here."
-        const val REASON_VOLUME_MAX = "Already at full volume."
-        const val REASON_VOLUME_MIN = "Already at the lowest volume."
 
         fun parseState(status: JSONObject): TvState {
             val receiver = status.optJSONObject("receiver")

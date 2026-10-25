@@ -37,6 +37,11 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
+  Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
+  remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.
+  A key is claimed and sent once, with no Cast status read; a TV unknown to the process gets one read-only
+  discovery. JVM tests only; not yet seen on the phone.
 - [x] Owner request, 2026-10-25: the GNOME status-area menu offers Power, Google Assistant and Navigation,
   Channels and TV submenus besides Cast playback and the TV's volume; each item stays the window's own
   action (same TV, same single request), and a test keeps the Rust menu and the window's actions identical.

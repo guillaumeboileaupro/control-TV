@@ -401,7 +401,9 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 - [x] Conflits résolus et branche remise à jour avec `main` (2026-10-13, CI 4/4 verte) ; description de la PR actualisée ; revue Codex demandée.
 - [x] Documentation du Mute corrigée : mute Cast confirmé par le récepteur, volume fixe, aucun effet audible (le vrai mute passe par le canal télécommande).
 - [ ] Tester sur le téléphone, avec ton accord pour chaque commande : Lecture/Pause, Stop, Volume.
-- [ ] Suite possible : faire passer le Mute du widget par le canal télécommande (le son réellement entendu).
+- [x] Mute et Volume −/+ du widget passés par le canal télécommande (le son réellement entendu, 2026-10-25) ; ils ne dépendent plus d'un volume Cast que la TV ne rapporte pas. Validation automatisée seulement.
+- [x] **Widget enrichi (demande du propriétaire, 2026-10-25) :** sous la ligne lecture/volume, la télécommande de la TV : flèches autour d'OK, Retour et Accueil, Power et Google Assistant ; taille par défaut 4×4, réductible jusqu'à l'ancienne hauteur (les rangées de la télécommande sont alors masquées). Chaque touche est envoyée une seule fois, sans lecture Cast préalable ; TV non appairée : « Pair this TV in control-TV first ». Tests JVM ; pas encore vu sur le téléphone.
+- [ ] Essai réel du widget enrichi sur le téléphone (agrandir le widget existant, chaque touche une fois).
 - [x] Fusion de la #33 : faite le 2026-10-13, avant les essais sur téléphone (`1b86f47`). Mute sur volume Cast fixe affiché « Muted (Cast) · TV sound may not change ».
 
 ## 5. Phase 3 — livraison
