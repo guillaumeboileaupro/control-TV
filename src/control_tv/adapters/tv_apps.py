@@ -7,11 +7,12 @@ device: it resolves the selected TV's current address to exactly one ADB serial 
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,8 +166,37 @@ def parse_mdns_services(output: str) -> tuple[MdnsService, ...]:
     return tuple(found)
 
 
+def platform_tools_candidates(environ: Mapping[str, str], home: Path) -> list[Path]:
+    """Where an Android SDK's own `adb` usually is, most explicit first.
+
+    A desktop launcher does not read the shell's start-up files, so the SDK's `platform-tools`
+    is often missing from the application's `PATH`; the Ubuntu `adb` package found there instead
+    is too old for Wireless debugging (docs/ADB_PLATFORM_TOOLS.md). Nothing is downloaded.
+    """
+    candidates = [Path(explicit)] if (explicit := environ.get("CONTROL_TV_ADB")) else []
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if root := environ.get(variable):
+            candidates.append(Path(root) / "platform-tools" / "adb")
+    candidates.append(home / "Android" / "Sdk" / "platform-tools" / "adb")
+    return candidates
+
+
+def find_adb(
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+    which: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """The `adb` to use: an installed SDK's Platform Tools first, else the one on `PATH`."""
+    for candidate in platform_tools_candidates(
+        os.environ if environ is None else environ, Path.home() if home is None else home
+    ):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return (shutil.which if which is None else which)("adb")
+
+
 def apps_installed() -> bool:
-    return shutil.which("adb") is not None
+    return find_adb() is not None
 
 
 def _checked_host(host: str) -> str:

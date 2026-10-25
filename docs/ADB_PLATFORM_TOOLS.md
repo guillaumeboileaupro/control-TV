@@ -17,8 +17,11 @@ Google Platform Tools archive is **not bundled, downloaded or installed by Contr
 - an unversioned `platform-tools-latest-linux.zip` is never acceptable for a reproducible build.
 
 For the owner's local installation, the reliable current option is an independently installed
-Android SDK whose `platform-tools` directory is ahead of `/usr/bin` in the desktop application's
-`PATH`. ControlTV verifies `adb version >= 30.0.0`, then verifies that `adb help` advertises
+Android SDK. ControlTV looks for its `adb` before the one on `PATH`, in this order:
+`$CONTROL_TV_ADB`, `$ANDROID_HOME/platform-tools/adb`, `$ANDROID_SDK_ROOT/platform-tools/adb`,
+`~/Android/Sdk/platform-tools/adb` (issue #112: a GNOME launcher does not read `~/.bashrc`, so
+its `PATH` holds only Ubuntu's old `adb`). It runs that binary where it is; it never copies,
+downloads or installs it. ControlTV verifies `adb version >= 30.0.0`, then verifies that `adb help` advertises
 `pair`, before it sends the one-time code. This is a runtime prerequisite, not a `.deb` payload.
 Consequently a clean Ubuntu 22.04 `.deb` installation supports classic TCP but must not claim that
 Wireless pairing is included.

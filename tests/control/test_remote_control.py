@@ -389,10 +389,15 @@ def test_the_tv_apps_go_through_adb_where_it_exists_and_adb_shell_on_a_phone(
 
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setattr(shutil, "which", lambda name: adb if name == "adb" else None)
+    monkeypatch.setenv("HOME", str(tmp_path))  # no Android SDK in this home
+    for variable in ("CONTROL_TV_ADB", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(variable, raising=False)
 
     service = default_service()
 
     assert type(service._channels._apps).__name__ == expected
+    if adb is not None:
+        assert service._channels._apps._adb == adb  # type: ignore[union-attr]
 
 
 def test_every_remote_key_of_the_window_is_one_the_bridge_sends() -> None:

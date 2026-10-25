@@ -15,6 +15,7 @@ from control_tv.adapters.tv_apps import (
     LEGACY_LAUNCHER_QUERY,
     AdbAppInventory,
     apps_installed,
+    find_adb,
     parse_devices,
     parse_front_app,
     parse_launcher_apps,
@@ -499,6 +500,9 @@ def test_timeout_missing_binary_and_apps_capability(monkeypatch: pytest.MonkeyPa
     with pytest.raises(UnsupportedOperationError):
         AdbAppInventory(run=missing).list_apps(HOST)
     monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setenv("HOME", "/nonexistent-control-tv-home")
+    for variable in ("CONTROL_TV_ADB", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(variable, raising=False)
     assert apps_installed() is False
 
 
@@ -603,3 +607,41 @@ def test_a_tv_this_computer_cannot_reach_is_never_sent_the_port_request() -> Non
     with pytest.raises(PairingRequiredError):
         inventory(runner).open_classic_port(HOST)
     assert not any("tcpip" in call[0] for call in runner.calls)
+
+
+# Which adb (issue #112: the GNOME launcher's PATH has only Ubuntu's old adb) ---------------------
+
+
+def _executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_an_installed_sdk_adb_is_preferred_to_the_one_on_path(tmp_path: Path) -> None:
+    sdk = _executable(tmp_path / "Android" / "Sdk" / "platform-tools" / "adb")
+
+    assert find_adb({}, tmp_path, lambda _: "/usr/bin/adb") == str(sdk)
+
+
+def test_the_most_explicit_adb_wins(tmp_path: Path) -> None:
+    _executable(tmp_path / "Android" / "Sdk" / "platform-tools" / "adb")
+    android_home = _executable(tmp_path / "sdk-home" / "platform-tools" / "adb")
+    chosen = _executable(tmp_path / "chosen" / "adb")
+    environ = {"ANDROID_HOME": str(tmp_path / "sdk-home"), "CONTROL_TV_ADB": str(chosen)}
+
+    assert find_adb(environ, tmp_path, lambda _: None) == str(chosen)
+    assert find_adb({"ANDROID_HOME": str(tmp_path / "sdk-home")}, tmp_path, lambda _: None) == str(
+        android_home
+    )
+
+
+def test_without_an_sdk_the_adb_on_path_or_none(tmp_path: Path) -> None:
+    (tmp_path / "Android" / "Sdk" / "platform-tools").mkdir(parents=True)
+    (tmp_path / "Android" / "Sdk" / "platform-tools" / "adb").write_text("not executable")
+
+    assert find_adb(
+        {"CONTROL_TV_ADB": str(tmp_path / "missing")}, tmp_path, lambda _: "/usr/bin/adb"
+    ) == ("/usr/bin/adb")
+    assert find_adb({}, tmp_path, lambda _: None) is None

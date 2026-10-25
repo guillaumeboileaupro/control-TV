@@ -31,7 +31,17 @@ def adb_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     adb.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     adb.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ.get('PATH', '')}")
+    _no_sdk(tmp_path, monkeypatch)
     return adb
+
+
+def _no_sdk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No Android SDK `adb` either: control-TV prefers one to `PATH` (find_adb)."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    for variable in ("CONTROL_TV_ADB", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(variable, raising=False)
 
 
 @pytest.fixture
@@ -40,6 +50,7 @@ def no_adb_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
+    _no_sdk(tmp_path, monkeypatch)
 
 
 @pytest.fixture
