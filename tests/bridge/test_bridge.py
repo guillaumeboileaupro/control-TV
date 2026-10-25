@@ -83,6 +83,7 @@ def test_ping_reports_readiness_and_version(control: ControlService) -> None:
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
             "tvApps": True,
+            "tvAppsPort": True,
         },
     }
 
@@ -390,6 +391,7 @@ def test_ping_reports_tv_apps_on_a_phone_through_adb_shell(control: ControlServi
     response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
 
     assert response["result"]["tvApps"] is True
+    assert response["result"]["tvAppsPort"] is False  # the phone cannot open the TV's port
 
 
 @pytest.mark.usefixtures("adb_on_path")
@@ -422,6 +424,7 @@ def test_main_serves_a_ping_over_real_stdio() -> None:
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
             "tvApps": True,
+            "tvAppsPort": True,
         },
     }
 

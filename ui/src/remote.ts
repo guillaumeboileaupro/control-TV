@@ -197,7 +197,12 @@ export function startRemote(
   action: RemoteAction,
 ): { state: AppState; request: RemoteRequest | null } {
   const selected = state.selected;
-  const available = isAppAction(action) ? appsAvailable(state) : remoteAvailable(state);
+  const available =
+    action.kind === "open_apps_port"
+      ? appsAvailable(state) && state.tvAppsPortAvailable
+      : isAppAction(action)
+        ? appsAvailable(state)
+        : remoteAvailable(state);
   if (selected === null || !available || !idle(state)) {
     return { state, request: null };
   }
@@ -630,6 +635,8 @@ export interface RemoteDescription {
   // The TV's apps matching the filter, sorted by label; null until the TV listed them.
   apps: TvApp[] | null;
   appsNote: string | null;
+  // "Open to the phone" only where it can work: a computer with adb, never the phone.
+  openPortVisible: boolean;
   appsEnabled: boolean;
   listingApps: boolean;
   launchEnabled: boolean;
@@ -651,6 +658,7 @@ const HIDDEN: RemoteDescription = {
   sendingText: false,
   apps: null,
   appsNote: null,
+  openPortVisible: false,
   appsEnabled: false,
   listingApps: false,
   launchEnabled: false,
@@ -744,6 +752,7 @@ export function describeRemote(state: AppState): RemoteDescription {
     sendingText: pending !== null && pending.action.kind === "text",
     apps: filteredApps(remote.apps, remote.appFilter),
     appsNote: remote.appsNote,
+    openPortVisible: state.tvAppsPortAvailable,
     appsEnabled: appsAvailable(state) && !busy,
     listingApps: pending !== null && pending.action.kind === "list_apps",
     launchEnabled: appsAvailable(state) && !busy,

@@ -33,6 +33,7 @@ export interface RemotePanelElements {
   remoteAppsList: HTMLButtonElement;
   remoteAppsOpenPort: HTMLButtonElement;
   remoteAppsNote: HTMLElement;
+  remoteAppsPhoneHint: HTMLElement;
   remoteAppsPairing: HTMLElement;
   remoteAppsPairingForm: HTMLFormElement;
   remoteAppsPairingEndpoint: HTMLInputElement;
@@ -217,6 +218,8 @@ export function createRemotePanel(
     el.remoteAppsList.setAttribute("aria-busy", String(remote.listingApps));
     el.remoteAppsList.textContent = remote.apps === null ? "Show TV apps" : "List again";
     setBusy(el.remoteAppsOpenPort, !remote.appsEnabled);
+    el.remoteAppsOpenPort.hidden = !remote.openPortVisible;
+    el.remoteAppsPhoneHint.hidden = !remote.openPortVisible;
     el.remoteAppsNote.hidden = remote.appsNote === null;
     el.remoteAppsNote.textContent = remote.appsNote ?? "";
     el.remoteAppsFilter.hidden = remote.apps === null;

@@ -30,6 +30,7 @@ def test_ping_answers_with_this_package_version() -> None:
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
             "tvApps": True,
+            "tvAppsPort": True,
         },
     }
 

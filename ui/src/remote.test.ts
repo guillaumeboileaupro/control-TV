@@ -818,10 +818,17 @@ describe("app tiles", () => {
 // Issue #112: a TV with only Wireless debugging, which the phone cannot pair.
 describe("opening the TV to the phone", () => {
   const open = { kind: "open_apps_port" } as const;
+  const computer = (): AppState => ({ ...withTv(), tvAppsPortAvailable: true });
+
+  test("only a computer offers it, never the phone", () => {
+    assert.equal(describeRemote(withTv()).openPortVisible, false);
+    assert.equal(startRemote(withTv(), open).request, null);
+    assert.equal(describeRemote(computer()).openPortVisible, true);
+  });
 
   test("one request to the selected TV, even while its remote needs pairing", () => {
     const needsPairing = {
-      ...withTv(),
+      ...computer(),
       remote: { ...withTv().remote, pairing: "needed" as const },
     };
     const started = startRemote(needsPairing, open);
@@ -835,14 +842,14 @@ describe("opening the TV to the phone", () => {
   });
 
   test("done says what the phone does next and for how long", () => {
-    const { state } = run(withTv(), open, { ok: true, result: { port: 5555 } });
+    const { state } = run(computer(), open, { ok: true, result: { port: 5555 } });
 
     assert.equal(describeRemote(state).outcome?.tone, "done");
     assert.match(describeRemote(state).outcome?.text ?? "", /port 5555 until it restarts/);
   });
 
   test("the phone says it needs the computer, and debugging off says how to get there", () => {
-    const fromPhone = run(withTv(), open, failure("unsupported_operation")).state;
+    const fromPhone = run(computer(), open, failure("unsupported_operation")).state;
     const off = run(withTv(), { kind: "list_apps" }, failure("debugging_off")).state;
 
     assert.match(describeRemote(fromPhone).outcome?.text ?? "", /control-TV on the computer/);
@@ -850,7 +857,7 @@ describe("opening the TV to the phone", () => {
   });
 
   test("not offered without the TV's app capability", () => {
-    assert.equal(startRemote({ ...withTv(), tvAppsAvailable: false }, open).request, null);
+    assert.equal(startRemote({ ...computer(), tvAppsAvailable: false }, open).request, null);
   });
 });
 

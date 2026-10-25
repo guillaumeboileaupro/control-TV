@@ -234,6 +234,9 @@ def _handle_ping(control: TvControl, params: JsonObject) -> JsonObject:
         "controlTvVersion": control_tv.__version__,
         "tvRemote": channel_installed(),
         "tvApps": apps_installed() or adb_shell_installed(),
+        # Only a computer's adb, paired with the TV's Wireless debugging, can open its port
+        # 5555 to the phone; the phone itself never offers it.
+        "tvAppsPort": apps_installed(),
     }
 
 

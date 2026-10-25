@@ -81,6 +81,7 @@ interface PingResult {
   status: string;
   controlTvVersion: string;
   tvApps: boolean;
+  tvAppsPort?: boolean;
 }
 
 interface DiscoverDevicesResult {
@@ -775,7 +776,7 @@ function start(elements: Elements): void {
     const number = ++requestsStarted;
     try {
       const result = await invoke<PingResult>("bridge_ping");
-      update(setHostCapabilities(state, result.tvApps === true));
+      update(setHostCapabilities(state, result.tvApps === true, result.tvAppsPort === true));
       noteAnswer(number, null);
     } catch (error) {
       const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
@@ -943,6 +944,7 @@ window.addEventListener("DOMContentLoaded", () => {
       remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
       remoteAppsOpenPort: byId<HTMLButtonElement>("remote-apps-open-port"),
       remoteAppsNote: byId("remote-apps-note"),
+      remoteAppsPhoneHint: byId("remote-apps-phone-hint"),
       remoteAppsPairing: byId("remote-apps-pairing"),
       remoteAppsPairingForm: byId<HTMLFormElement>("remote-apps-pairing-form"),
       remoteAppsPairingEndpoint: byId<HTMLInputElement>("remote-apps-pairing-endpoint"),

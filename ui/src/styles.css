@@ -1137,11 +1137,9 @@ h2 {
   line-height: 1.2;
 }
 
-/* The outcome of the last remote action, kept in view at the bottom while the remote scrolls. */
+/* The outcome of the last remote action, in the page's flow: it never covers the apps or keys. */
 .remote-feedback {
-  position: sticky;
-  bottom: 12px;
-  z-index: 1;
+  margin-top: 12px;
 }
 
 .remote-feedback:empty {
