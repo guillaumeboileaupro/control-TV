@@ -27,6 +27,7 @@
     "src/remote-panel.ts",
     "src/remote-panel.test.ts",
     "src/dpad.test.ts",
+    "src/remote-keys.test.ts",
     "src/dom.ts",
     "src/tray.ts",
     "src/tray.test.ts",
