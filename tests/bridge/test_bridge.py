@@ -376,12 +376,20 @@ def test_run_serves_one_response_per_request_line_and_skips_blanks(
     assert all(json.loads(line)["ok"] is True for line in lines)
 
 
-@pytest.mark.usefixtures("no_adb_on_path")
-def test_ping_reports_no_tv_apps_without_adb(control: ControlService) -> None:
+@pytest.mark.usefixtures("no_app_backend")
+def test_ping_reports_no_tv_apps_without_any_adb(control: ControlService) -> None:
     response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
 
     assert response["ok"] is True
     assert response["result"]["tvApps"] is False
+
+
+@pytest.mark.usefixtures("no_adb_on_path")
+def test_ping_reports_tv_apps_on_a_phone_through_adb_shell(control: ControlService) -> None:
+    """A phone has no adb program: the pure-Python adb-shell still lists the TV's apps."""
+    response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
+
+    assert response["result"]["tvApps"] is True
 
 
 @pytest.mark.usefixtures("adb_on_path")

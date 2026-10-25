@@ -53,8 +53,9 @@ OUTPUT = REPO_ROOT / "dist" / "android-python"
 WHEELS = OUTPUT / "wheels"
 REQUIREMENTS = OUTPUT / "requirements.txt"
 PROJECT = "control-tv"
-# Built from source as pure Python: zeroconf's Cython extensions are optional.
-FROM_SDIST = {"zeroconf"}
+# Built from source as pure Python: the runtime dependencies that publish no pure wheel
+# (zeroconf, whose Cython extensions are optional; adb-shell, which publishes an sdist only).
+FROM_SDIST = {"zeroconf", "adb-shell"}
 COMPILED_SUFFIXES = (".so", ".pyd", ".dll", ".dylib")
 # The build backends of the two wheels built here, installed from the `android` group:
 # setuptools for control-tv (and for the distutils that zeroconf's build script imports),

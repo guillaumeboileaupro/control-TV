@@ -213,13 +213,14 @@ def _device_id_param(params: JsonObject) -> DeviceId:
 def _handle_ping(control: TvControl, params: JsonObject) -> JsonObject:
     del control, params
     from control_tv.adapters.tv_apps import apps_installed
+    from control_tv.adapters.tv_apps_adb_shell import adb_shell_installed
     from control_tv.adapters.tv_remote import channel_installed
 
     return {
         "status": "ready",
         "controlTvVersion": control_tv.__version__,
         "tvRemote": channel_installed(),
-        "tvApps": apps_installed(),
+        "tvApps": apps_installed() or adb_shell_installed(),
     }
 
 
@@ -863,7 +864,8 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     (`docs/COMMAND_TRACE.md`), or by the Android debug build through `tracing`. A configuration
     that names no valid role is refused rather than guessed."""
     from control_tv.adapters import PyChromecastTransport
-    from control_tv.adapters.tv_apps import AdbAppInventory
+    from control_tv.adapters.tv_apps import AdbAppInventory, apps_installed
+    from control_tv.adapters.tv_apps_adb_shell import AdbShellAppInventory
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
     from control_tv.trace_files import tracing_from_environment
 
@@ -872,7 +874,11 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     return ControlService(
         PyChromecastTransport(),
         remote=TvRemoteChannel(credentials),
-        apps=AdbAppInventory(credentials),
+        # The `adb` program where it exists (Ubuntu, with Wireless debugging pairing); the pure
+        # Python classic ADB of `adb-shell` where it does not (the phone).
+        apps=AdbAppInventory(credentials)
+        if apps_installed()
+        else AdbShellAppInventory(credentials),
         trace=active.recorder,
         gate=active.gate,
     )

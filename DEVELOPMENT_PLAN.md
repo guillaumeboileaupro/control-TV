@@ -37,6 +37,10 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Real trial, 2026-10-25: the phone listed no TV app, since #99 kept only the `adb` program;
+  the pure-Python `adb-shell` adapter of `main` is restored (`tv_apps_adb_shell`) and used where
+  `adb` is missing, and embedded again in the Android app. The TV receiver gets a name, an icon,
+  a banner and on-screen guidance. Automated validation; the real trial continues.
 - [x] The CI publishes the Android TV receiver debug APK; `main`'s `repository-lifecycle` skill
   (`baf9f68`) is linked for Claude (`.claude/skills/`), as `agent_config.py check` requires.
 - [x] **CI, 2026-10-25:** three bridge `ping` tests expected `tvApps: true`, which held only where

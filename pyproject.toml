@@ -23,6 +23,9 @@ mcp = [
 # tools so their ADB server owns TLS, mDNS and pairing keys; Android cannot host that server.
 tvremote = [
     "androidtvremote2==0.3.2",
+    # The phone has no adb program: there the TV's app list goes through this pure-Python
+    # classic ADB (port 5555) instead (`adapters/tv_apps_adb_shell.py`).
+    "adb-shell==0.4.4",
 ]
 
 [dependency-groups]
@@ -76,6 +79,11 @@ disallow_any_explicit = true
 [[tool.mypy.overrides]]
 # PyInstaller ships no type information and is installed only by `dev.py bridge-build`.
 module = ["PyInstaller", "PyInstaller.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# adb-shell (the TV's app list over network debugging on the phone) ships no type information.
+module = ["adb_shell", "adb_shell.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

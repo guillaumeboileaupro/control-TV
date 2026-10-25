@@ -121,8 +121,8 @@ def test_a_failed_startup_ping_is_reported_with_its_code_only(
     assert "detail" not in line
 
 
-@pytest.mark.usefixtures("no_adb_on_path")
-def test_ping_reports_no_tv_apps_without_adb() -> None:
+@pytest.mark.usefixtures("no_app_backend")
+def test_ping_reports_no_tv_apps_without_any_adb() -> None:
     response = json.loads(embedded.handle('{"id": 1, "method": "ping", "params": {}}'))
 
     assert response["result"]["tvApps"] is False

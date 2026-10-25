@@ -377,6 +377,24 @@ def test_every_host_runs_the_same_service_with_the_remote_channel(
     assert not (tmp_path / "control-tv").exists()  # nothing is written until it is used
 
 
+@pytest.mark.parametrize(
+    ("adb", "expected"), [("/usr/bin/adb", "AdbAppInventory"), (None, "AdbShellAppInventory")]
+)
+def test_the_tv_apps_go_through_adb_where_it_exists_and_adb_shell_on_a_phone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, adb: str | None, expected: str
+) -> None:
+    import shutil
+
+    from control_tv.bridge import default_service
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda name: adb if name == "adb" else None)
+
+    service = default_service()
+
+    assert type(service._channels._apps).__name__ == expected
+
+
 def test_without_xdg_data_home_credentials_go_to_the_users_local_share(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
