@@ -51,6 +51,30 @@ pub(crate) async fn remember_selection(device_id: String, name: String) -> Resul
     Ok(())
 }
 
+/// Refreshes only the GNOME menu presentation. TV and stream commands still run in the window.
+#[tauri::command]
+pub(crate) fn update_tray_state(
+    app: tauri::AppHandle,
+    selected_name: Option<String>,
+    connected: bool,
+    streaming: bool,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    return crate::tray::update(
+        &app,
+        crate::tray::TrayState {
+            selected_name,
+            connected,
+            streaming,
+        },
+    );
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, selected_name, connected, streaming);
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn bridge_ping(
     state: tauri::State<'_, SharedBridgeState>,

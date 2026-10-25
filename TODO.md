@@ -50,9 +50,10 @@
 - [x] **Tests du bon code (2026-10-25) :** pytest charge le `src/` du worktree en premier, y compris pour les
   processus Python lancés par les tests (`tests/conftest.py`) ; un environnement d'un autre worktree ne fait plus
   tester le mauvais code. Tests de Freebuff (carte des touches) intégrés.
-- [x] **Menu GNOME (demande du propriétaire, 2026-10-25) :** Power, Google Assistant, sous-menus Navigation
-  (flèches, OK, Retour, Accueil), Chaînes (±, Guide) et TV (Entrée, Paramètres, Info, Sous-titres), en plus de la
-  lecture Cast et du volume de la TV ; chaque entrée est l'action de la fenêtre. Validation automatisée.
+- [x] **Menu GNOME (demande du propriétaire, 2026-10-25) :** menu français synchronisé avec la fenêtre :
+  sélection/connexion d'une TV, lecture/pause, arrêt, muet, volume, duplication et arrêt de diffusion. Il affiche
+  l'état confirmé de la connexion et de la diffusion et désactive les actions indisponibles. Validation automatisée ;
+  validation visuelle sur le bureau GNOME installé encore requise.
 - [ ] **Validation matérielle (2026-10-25) :** à faire avec le propriétaire selon `docs/QUICK_ACCEPTANCE.md`
   (Ubuntu, téléphone, Liberté boîte, Chromecast) ; aucune fonctionnalité n'est déclarée validée par la seule CI.
 - [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone

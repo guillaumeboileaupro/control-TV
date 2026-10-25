@@ -78,6 +78,15 @@ export interface ScreenPanelPorts {
     set(callback: () => void, delayMs: number): number;
     clear(handle: number): void;
   };
+  stateChanged?(streaming: boolean): void;
+}
+
+export interface ScreenPanelController {
+  refresh(): void;
+  render(): void;
+  requestDuplicate(): void;
+  stop(): void;
+  streaming(): boolean;
 }
 
 function isMode(value: string | undefined): value is ScreenMode {
@@ -103,7 +112,7 @@ function isTransport(value: string): value is TransportChoice {
 export function createScreenPanel(
   el: ScreenPanelElements,
   ports: ScreenPanelPorts,
-): { refresh(): void; render(): void } {
+): ScreenPanelController {
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
   let operation = 0;
@@ -118,6 +127,7 @@ export function createScreenPanel(
     const before = state;
     state = next;
     render();
+    ports.stateChanged?.(isStreaming());
     if (follows(state) && followTimer === null) {
       followTimer = ports.timers.set(poll, FOLLOW_INTERVAL_MS);
     }
@@ -372,6 +382,18 @@ export function createScreenPanel(
     }
   }
 
+  function isStreaming(): boolean {
+    return state.stream.state !== "idle" && state.stream.state !== "failed";
+  }
+
+  function requestDuplicate(): void {
+    update(choose(state, { mode: "duplicate" }));
+    update(askConsent(state, ports.selectedTv() !== null));
+    if (state.confirming) {
+      el.confirm.focus();
+    }
+  }
+
   for (const button of el.mode.querySelectorAll<HTMLButtonElement>("[data-screen-mode]")) {
     const mode = button.dataset["screenMode"];
     if (isMode(mode)) {
@@ -414,5 +436,11 @@ export function createScreenPanel(
   el.confirm.addEventListener("click", () => void start());
   el.stop.addEventListener("click", () => void stop());
 
-  return { refresh: () => void refresh(), render };
+  return {
+    refresh: () => void refresh(),
+    render,
+    requestDuplicate,
+    stop: () => void stop(),
+    streaming: isStreaming,
+  };
 }

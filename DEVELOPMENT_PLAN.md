@@ -48,9 +48,11 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.
   A key is claimed and sent once, with no Cast status read; a TV unknown to the process gets one read-only
   discovery. JVM tests only; not yet seen on the phone.
-- [x] Owner request, 2026-10-25: the GNOME status-area menu offers Power, Google Assistant and Navigation,
-  Channels and TV submenus besides Cast playback and the TV's volume; each item stays the window's own
-  action (same TV, same single request), and a test keeps the Rust menu and the window's actions identical.
+- [x] Owner request, 2026-10-25: the GNOME status-area menu is in French and mirrors the current essentials:
+  TV selection/connection, playback, mute/volume, screen duplication and stream stop. It shows confirmed
+  connection/stream state, disables unavailable actions and delegates every action to the window's existing
+  command path. Rust/UI tests keep the two menu definitions and availability rules aligned; real GNOME visual
+  validation remains open.
 - [x] 2026-10-25: tests always run their own checkout's code: pytest puts `src/` first and `tests/conftest.py`
   puts it first in `PYTHONPATH` for the Python processes tests start (a virtual environment made in another
   worktree installs that worktree's `src/`); `tests/test_source_root.py` checks both. Freebuff's key map
@@ -450,13 +452,13 @@ A system tray / status indicator gives quick access to the essential controls wi
 Deliverables:
 - [ ] native system tray / status indicator for the desktop application, using the validated control-TV icon (`assets/logo.svg` and the existing `src-tauri/icons/`): implemented (Tauri `tray-icon`, the application's own icon); the `.deb` now depends on `libayatana-appindicator3-1`; without a status area the window works as before (the error is logged);
 - [ ] GNOME/Linux support, including the status-indicator (AppIndicator) behavior of a stock GNOME desktop, with the limits of the desktop environment documented;
-- [ ] "Open control-TV" reopens and focuses the main window: implemented, not seen on a desktop yet;
-- [ ] "Quit" really stops the application and its Python bridge: implemented (`app.exit`; ending the application closes the bridge's stdin, which ends the bridge), not observed yet;
+- [ ] « Ouvrir ControlTV » reopens and focuses the main window: implemented, not seen on a desktop yet;
+- [ ] « Quitter » really stops the application and its Python bridge: implemented (`app.exit`; ending the application closes the bridge's stdin, which ends the bridge), not observed yet;
 - [x] explicit, documented behavior for closing the main window versus quitting the application: closing the window quits (decision of 2026-10-13, above; the owner can ask for the other behavior);
-- [ ] quick controls for the selected device: play/pause, stop, and the TV's own mute (its remote channel, the sound actually heard) — implemented; each runs as the window's own action (`ui/src/tray.ts`), or brings the window to the front when it cannot run;
+- [ ] quick controls for the selected device: selection/connection, play/pause, stop, the TV's own mute and volume, duplicate screen and stop streaming — implemented in French; each runs as the window's own action (`ui/src/tray.ts`), or brings the window to the front when it cannot run;
 - [ ] volume control only if the platform tray integration allows an appropriate UX: implemented as two menu items, TV volume − and +, one remote key each (no slider in a menu);
 - [x] no Cast business logic in the Rust/Tauri tray code: the Rust tray only emits `tray-action` to the window, which runs its own commands (tests: Rust mapping, UI `tray.test.ts`);
-- [ ] tray labels and states follow the same evidence as the window: a command is shown as confirmed only when `confirmation` is `confirmed`; `unconfirmed`, `not_checked`, errors and unreported fields are never shown as success or as a default value; one command at a time, no automatic retry;
+- [ ] tray labels and states follow the same evidence as the window: connection and streaming state are implemented from the window's observed state, and actions requiring a connected TV are disabled; a real GNOME run still has to verify the rendered labels and enabled states;
 - [x] the selected device and state shared between the window and the tray have one owner: the window's state; the tray holds none;
 
 Exit criteria:

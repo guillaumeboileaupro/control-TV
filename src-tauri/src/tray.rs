@@ -1,61 +1,60 @@
-//! The status-area icon (tray) of the desktop application: a second view over the window.
+//! The GNOME status-area menu: a compact second view over the Ubuntu window.
 //!
-//! The tray owns no state and no control logic. "Open" and "Quit" act on the application; every
-//! TV action is handed to the window as a `tray-action` event, and the window runs it exactly
-//! like its own button (the same selected TV, the same single request in flight, the same
-//! wording of what the TV confirmed or not). Closing the window quits the application, as
-//! before: the tray is a quick-control companion while the application runs, not a background
-//! service.
+//! It owns no TV or streaming logic. The frontend publishes only display state (selected TV,
+//! confirmed connection and streaming), and every click is emitted back to the window so the
+//! existing commands and consent checks remain authoritative.
 
-/// The TV actions the tray offers, by the identifier the window handles, and their label.
-pub(crate) const ACTIONS: [(&str, &str); 21] = [
-    ("power", "Power"),
-    ("assistant", "Google Assistant"),
-    ("up", "Up"),
-    ("down", "Down"),
-    ("left", "Left"),
-    ("right", "Right"),
-    ("ok", "OK"),
-    ("back", "Back"),
-    ("home", "Home"),
-    ("play_pause", "Play / Pause"),
-    ("stop", "Stop"),
-    ("tv_volume_down", "TV volume −"),
-    ("tv_mute", "Mute the TV"),
-    ("tv_volume_up", "TV volume +"),
-    ("channel_up", "Channel +"),
-    ("channel_down", "Channel −"),
-    ("guide", "Guide"),
-    ("input", "Input"),
-    ("settings", "Settings"),
-    ("info", "Info"),
-    ("subtitles", "Subtitles"),
+/// Actions forwarded to the window, in menu order. Open and Quit are handled by Tauri itself.
+pub(crate) const ACTIONS: [(&str, &str); 8] = [
+    ("select_tv", "Sélectionner / connecter une TV"),
+    ("play_pause", "Lecture / Pause"),
+    ("stop", "Arrêter"),
+    ("tv_mute", "Muet"),
+    ("tv_volume_down", "Volume −"),
+    ("tv_volume_up", "Volume +"),
+    ("duplicate_screen", "Dupliquer l’écran"),
+    ("stop_stream", "Arrêter la diffusion"),
 ];
 
-/// How the menu shows `ACTIONS`: groups between separators, a group with a title being a
-/// submenu. Every action appears exactly once.
-pub(crate) const LAYOUT: [(Option<&str>, &[&str]); 6] = [
-    (None, &["power", "assistant"]),
-    (
-        Some("Navigation"),
-        &["up", "down", "left", "right", "ok", "back", "home"],
-    ),
-    (None, &["play_pause", "stop"]),
-    (None, &["tv_volume_down", "tv_mute", "tv_volume_up"]),
-    (Some("Channels"), &["channel_up", "channel_down", "guide"]),
-    (Some("TV"), &["input", "settings", "info", "subtitles"]),
-];
-
-fn label(id: &str) -> &'static str {
-    ACTIONS
-        .iter()
-        .find(|(action, _)| *action == id)
-        .map_or("", |(_, label)| label)
-}
 pub(crate) const OPEN: &str = "open";
 pub(crate) const QUIT: &str = "quit";
-/// The event the window listens to; its payload is one identifier of `ACTIONS`.
 pub(crate) const EVENT: &str = "tray-action";
+const CONNECTION_STATUS: &str = "connection_status";
+const STREAM_STATUS: &str = "stream_status";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TrayState {
+    pub(crate) selected_name: Option<String>,
+    pub(crate) connected: bool,
+    pub(crate) streaming: bool,
+}
+
+impl TrayState {
+    pub(crate) fn connection_label(&self) -> String {
+        match (&self.selected_name, self.connected) {
+            (Some(name), true) => format!("TV : {name} — connectée"),
+            (Some(name), false) => format!("TV : {name} — non connectée"),
+            (None, _) => "TV : aucune sélection".to_string(),
+        }
+    }
+
+    pub(crate) fn stream_label(&self) -> &'static str {
+        if self.streaming {
+            "Diffusion : active"
+        } else {
+            "Diffusion : arrêtée"
+        }
+    }
+
+    pub(crate) fn enabled(&self, id: &str) -> bool {
+        match id {
+            "select_tv" => true,
+            "stop_stream" => self.streaming,
+            "duplicate_screen" => self.connected && !self.streaming,
+            _ => self.connected,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TrayEvent {
@@ -65,7 +64,6 @@ pub(crate) enum TrayEvent {
     Unrecognized,
 }
 
-/// What a click on a tray menu item means. Pure, so it is tested without a desktop.
 pub(crate) fn event_for(id: &str) -> TrayEvent {
     match id {
         OPEN => TrayEvent::Open,
@@ -80,47 +78,59 @@ pub(crate) fn event_for(id: &str) -> TrayEvent {
 }
 
 #[cfg(desktop)]
-pub(crate) fn install(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-    use tauri::tray::TrayIconBuilder;
+fn menu(app: &tauri::AppHandle, state: &TrayState) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
-    let open = MenuItem::with_id(app, OPEN, "Open control-TV", true, None::<&str>)?;
-    let mut items: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = vec![Box::new(open)];
-    for (title, ids) in LAYOUT {
-        let mut group: Vec<MenuItem<tauri::Wry>> = Vec::new();
-        for id in ids {
-            group.push(MenuItem::with_id(app, *id, label(id), true, None::<&str>)?);
-        }
-        match title {
-            Some(title) => {
-                let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = group
-                    .iter()
-                    .map(|item| item as &dyn IsMenuItem<tauri::Wry>)
-                    .collect();
-                items.push(Box::new(Submenu::with_items(app, title, true, &refs)?));
-            }
-            None => {
-                items.push(Box::new(PredefinedMenuItem::separator(app)?));
-                for item in group {
-                    items.push(Box::new(item));
-                }
-            }
-        }
+    let open = MenuItem::with_id(app, OPEN, "Ouvrir ControlTV", true, None::<&str>)?;
+    let connection = MenuItem::with_id(
+        app,
+        CONNECTION_STATUS,
+        state.connection_label(),
+        false,
+        None::<&str>,
+    )?;
+    let stream = MenuItem::with_id(
+        app,
+        STREAM_STATUS,
+        state.stream_label(),
+        false,
+        None::<&str>,
+    )?;
+    let mut items: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = vec![
+        Box::new(open),
+        Box::new(connection),
+        Box::new(stream),
+        Box::new(PredefinedMenuItem::separator(app)?),
+    ];
+    for (id, item_label) in ACTIONS {
+        items.push(Box::new(MenuItem::with_id(
+            app,
+            id,
+            item_label,
+            state.enabled(id),
+            None::<&str>,
+        )?));
     }
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
     items.push(Box::new(MenuItem::with_id(
         app,
         QUIT,
-        "Quit control-TV",
+        "Quitter",
         true,
         None::<&str>,
     )?));
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
-        items.iter().map(|item| item.as_ref()).collect();
-    let menu = Menu::with_items(app, &refs)?;
+    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = items.iter().map(|item| item.as_ref()).collect();
+    Menu::with_items(app, &refs)
+}
+
+#[cfg(desktop)]
+pub(crate) fn install(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::tray::TrayIconBuilder;
+
+    let initial_menu = menu(app.handle(), &TrayState::default())?;
     let mut builder = TrayIconBuilder::with_id("control-tv")
-        .tooltip("control-TV")
-        .menu(&menu)
+        .tooltip("ControlTV")
+        .menu(&initial_menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle(app, event.id().as_ref()));
     if let Some(icon) = app.default_window_icon() {
@@ -131,12 +141,21 @@ pub(crate) fn install(app: &tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
+pub(crate) fn update(app: &tauri::AppHandle, state: TrayState) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("control-tv")
+        .ok_or_else(|| "the ControlTV status icon is unavailable".to_string())?;
+    let updated = menu(app, &state).map_err(|error| error.to_string())?;
+    tray.set_menu(Some(updated))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(desktop)]
 fn handle(app: &tauri::AppHandle, id: &str) {
     use tauri::{Emitter, Manager};
 
     match event_for(id) {
         TrayEvent::Open => show_main_window(app),
-        // Ending the application closes the bridge's stdin, which ends the bridge too.
         TrayEvent::Quit => app.exit(0),
         TrayEvent::Action(action) => {
             if app.get_webview_window("main").is_some() {

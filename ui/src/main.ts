@@ -57,7 +57,11 @@ import {
 import { describeSound } from "./sound.ts";
 import { byId, disclosure, icon, setBusy, setIcon, text } from "./dom.ts";
 import { createRemotePanel, type RemotePanelElements } from "./remote-panel.ts";
-import { createScreenPanel, type ScreenPanelElements } from "./screen-panel.ts";
+import {
+  createScreenPanel,
+  type ScreenPanelController,
+  type ScreenPanelElements,
+} from "./screen-panel.ts";
 import { isTrayAction, trayRequest } from "./tray.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
@@ -627,13 +631,30 @@ function start(elements: Elements): void {
     }
   }
 
-  // Drawn again when the selected TV changes: the stream needs one.
-  let screenPanel: { refresh(): void; render(): void } | null = null;
+  // The window remains authoritative; only this small presentation state is copied to GNOME.
+  let trayStreaming = false;
+  let trayStateKey = "";
+  let screenPanel: ScreenPanelController | null = null;
+
+  function syncTrayState(): void {
+    const selectedName = state.selected?.friendlyName ?? null;
+    const connected =
+      state.status.kind === "ready" && state.status.status.connection === "connected";
+    const key = JSON.stringify([selectedName, connected, trayStreaming]);
+    if (key === trayStateKey) {
+      return;
+    }
+    trayStateKey = key;
+    void invoke("update_tray_state", { selectedName, connected, streaming: trayStreaming }).catch(
+      () => undefined,
+    );
+  }
 
   function update(next: AppState): void {
     state = next;
     render();
     screenPanel?.render();
+    syncTrayState();
   }
 
   function onSelect(deviceId: string): void {
@@ -827,11 +848,20 @@ function start(elements: Elements): void {
     if (!isTrayAction(event.payload)) {
       return;
     }
-    const request = trayRequest(state, event.payload);
+    const request = trayRequest(state, event.payload, trayStreaming);
     if (request.kind === "transport") {
       onTransport(request.command);
     } else if (request.kind === "remote") {
       onRemote(request.action);
+    } else if (request.kind === "select_tv") {
+      elements.picker.open = true;
+      void invoke("show_main_window").catch(() => undefined);
+      elements.discoverButton.focus();
+    } else if (request.kind === "duplicate_screen") {
+      void invoke("show_main_window").catch(() => undefined);
+      screenPanel?.requestDuplicate();
+    } else if (request.kind === "stop_stream") {
+      screenPanel?.stop();
     } else {
       void invoke("show_main_window").catch(() => undefined);
     }
@@ -842,6 +872,10 @@ function start(elements: Elements): void {
   screenPanel = createScreenPanel(elements.screen, {
     call: (command, args) => invoke<JsonValue>(command, args),
     selectedTv: () => state.selected?.id ?? null,
+    stateChanged: (streaming) => {
+      trayStreaming = streaming;
+      syncTrayState();
+    },
     timers: {
       set: (callback, delayMs) => window.setTimeout(callback, delayMs),
       clear: (handle) => window.clearTimeout(handle),
@@ -849,6 +883,7 @@ function start(elements: Elements): void {
   });
 
   render();
+  syncTrayState();
   void checkBackend();
   screenPanel.refresh();
 }

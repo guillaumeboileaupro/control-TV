@@ -9,62 +9,37 @@
 import type { JsonValue } from "./json.ts";
 import { idle, type AppState } from "./model.ts";
 import { describeControls } from "./playback.ts";
-import { describeRemote, type RemoteAction, type RemoteKeyName } from "./remote.ts";
+import { describeRemote, type RemoteAction } from "./remote.ts";
 
 // The TV's own remote keys the tray offers, by tray identifier (the window's key names).
 const KEYS = {
-  power: "power",
-  assistant: "assistant",
-  up: "up",
-  down: "down",
-  left: "left",
-  right: "right",
-  ok: "ok",
-  back: "back",
-  home: "home",
   tv_mute: "mute",
   tv_volume_down: "volume_down",
   tv_volume_up: "volume_up",
-  channel_up: "channel_up",
-  channel_down: "channel_down",
-  guide: "guide",
-  input: "input",
-  settings: "settings",
-  info: "info",
-  subtitles: "subtitles",
-} as const satisfies Record<string, RemoteKeyName>;
+} as const;
 
 type TrayKey = keyof typeof KEYS;
-export type TrayAction = "play_pause" | "stop" | TrayKey;
+export type TrayAction =
+  "select_tv" | "play_pause" | "stop" | "duplicate_screen" | "stop_stream" | TrayKey;
 
 // Every action of the tray's menu (`src-tauri/src/tray.rs`, `ACTIONS`), in the same order.
 export const TRAY_ACTIONS: readonly TrayAction[] = [
-  "power",
-  "assistant",
-  "up",
-  "down",
-  "left",
-  "right",
-  "ok",
-  "back",
-  "home",
+  "select_tv",
   "play_pause",
   "stop",
-  "tv_volume_down",
   "tv_mute",
+  "tv_volume_down",
   "tv_volume_up",
-  "channel_up",
-  "channel_down",
-  "guide",
-  "input",
-  "settings",
-  "info",
-  "subtitles",
+  "duplicate_screen",
+  "stop_stream",
 ];
 
 export type TrayRequest =
   | { kind: "transport"; command: "play" | "pause" | "stop" }
   | { kind: "remote"; action: RemoteAction }
+  | { kind: "select_tv" }
+  | { kind: "duplicate_screen" }
+  | { kind: "stop_stream" }
   | { kind: "show"; reason: string };
 
 export function isTrayAction(value: JsonValue): value is TrayAction {
@@ -72,7 +47,10 @@ export function isTrayAction(value: JsonValue): value is TrayAction {
 }
 
 // What a tray click does now: the window's own action, or nothing and the window shown.
-export function trayRequest(state: AppState, action: TrayAction): TrayRequest {
+export function trayRequest(state: AppState, action: TrayAction, streaming = false): TrayRequest {
+  if (action === "select_tv") {
+    return { kind: "select_tv" };
+  }
   if (state.selected === null) {
     return { kind: "show", reason: "no TV is selected" };
   }
@@ -89,6 +67,16 @@ export function trayRequest(state: AppState, action: TrayAction): TrayRequest {
     return describeControls(state).stop
       ? { kind: "transport", command: "stop" }
       : { kind: "show", reason: "nothing to stop" };
+  }
+  if (action === "duplicate_screen") {
+    return streaming
+      ? { kind: "show", reason: "screen streaming is already active" }
+      : { kind: "duplicate_screen" };
+  }
+  if (action === "stop_stream") {
+    return streaming
+      ? { kind: "stop_stream" }
+      : { kind: "show", reason: "screen streaming is not active" };
   }
   const remote = describeRemote(state);
   if (!remote.remoteVisible || !remote.keysEnabled) {

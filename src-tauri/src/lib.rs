@@ -108,7 +108,8 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             webrtc_commands::get_webrtc_stream,
             commands::show_main_window,
-            remember_selection
+            remember_selection,
+            commands::update_tray_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1229,53 +1230,61 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     }
 
     #[test]
-    fn tray_actions_are_the_quick_controls_and_never_a_level_or_a_free_command() {
+    fn tray_actions_match_the_current_compact_menu() {
         let ids: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
 
-        assert_eq!(ids.len(), 21);
-        for quick in [
-            "play_pause",
-            "stop",
-            "tv_mute",
-            "tv_volume_down",
-            "tv_volume_up",
-        ] {
-            assert!(ids.contains(&quick), "{quick} stays in the tray");
-        }
-        for remote in [
-            "power",
-            "assistant",
-            "up",
-            "ok",
-            "back",
-            "home",
-            "channel_up",
-            "input",
-        ] {
-            assert!(ids.contains(&remote), "{remote} is in the tray");
-        }
-        assert!(!ids
-            .iter()
-            .any(|id| id.contains("volume_set") || id.contains("text")));
+        assert_eq!(
+            ids,
+            [
+                "select_tv",
+                "play_pause",
+                "stop",
+                "tv_mute",
+                "tv_volume_down",
+                "tv_volume_up",
+                "duplicate_screen",
+                "stop_stream",
+            ]
+        );
         assert_eq!(tray::EVENT, "tray-action");
     }
 
     #[test]
-    fn the_tray_layout_shows_every_action_once_in_named_submenus() {
-        let mut shown: Vec<&str> = tray::LAYOUT
-            .iter()
-            .flat_map(|(_, ids)| ids.iter().copied())
-            .collect();
-        shown.sort_unstable();
-        let mut actions: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
-        actions.sort_unstable();
-        assert_eq!(shown, actions);
-        let titles: Vec<&str> = tray::LAYOUT
-            .iter()
-            .filter_map(|(title, _)| *title)
-            .collect();
-        assert_eq!(titles, ["Navigation", "Channels", "TV"]);
-        assert_eq!(tray::LAYOUT[0].1, ["power", "assistant"]);
+    fn tray_labels_and_availability_follow_connection_and_streaming() {
+        let labels: Vec<&str> = tray::ACTIONS.iter().map(|(_, label)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "Sélectionner / connecter une TV",
+                "Lecture / Pause",
+                "Arrêter",
+                "Muet",
+                "Volume −",
+                "Volume +",
+                "Dupliquer l’écran",
+                "Arrêter la diffusion",
+            ]
+        );
+        let idle = tray::TrayState::default();
+        assert_eq!(idle.connection_label(), "TV : aucune sélection");
+        assert!(!idle.enabled("play_pause"));
+        assert!(idle.enabled("select_tv"));
+        let connected = tray::TrayState {
+            selected_name: Some("Salon".to_string()),
+            connected: true,
+            streaming: false,
+        };
+        assert_eq!(connected.connection_label(), "TV : Salon — connectée");
+        assert_eq!(connected.stream_label(), "Diffusion : arrêtée");
+        assert!(connected.enabled("duplicate_screen"));
+        assert!(!connected.enabled("stop_stream"));
+        let streaming = tray::TrayState {
+            streaming: true,
+            ..connected
+        };
+        assert_eq!(streaming.stream_label(), "Diffusion : active");
+        assert!(!streaming.enabled("duplicate_screen"));
+        assert!(streaming.enabled("stop_stream"));
     }
 
     #[test]
