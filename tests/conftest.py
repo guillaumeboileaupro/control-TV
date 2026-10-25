@@ -1,5 +1,11 @@
-"""Bridge test fixtures: whether `adb` is on PATH, so `ping`'s `tvApps` never depends on the
-host."""
+"""Shared test fixtures.
+
+Every test run, and every Python process a test starts, uses this checkout's own code.
+
+pytest's `pythonpath` puts `src/` first for the tests themselves; a test that starts `python -m
+control_tv...` gets a new interpreter, which reads `PYTHONPATH` but not pytest's path, and would
+otherwise import whatever the virtual environment installed (possibly another worktree's `src/`).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,12 @@ import os
 from pathlib import Path
 
 import pytest
+
+_SOURCE = str(Path(__file__).resolve().parents[1] / "src")
+_INHERITED = os.environ.get("PYTHONPATH", "")
+os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [_SOURCE, _INHERITED]))
+
+# Whether `adb` is on PATH, so `ping`'s `tvApps` never depends on the host (bridge tests).
 
 
 @pytest.fixture

@@ -37,6 +37,11 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] 2026-10-25: tests always run their own checkout's code: pytest puts `src/` first and `tests/conftest.py`
+  puts it first in `PYTHONPATH` for the Python processes tests start (a virtual environment made in another
+  worktree installs that worktree's `src/`); `tests/test_source_root.py` checks both. Freebuff's key map
+  (`tests/control/test_remote_control.py`) pins every button to its key code and replaces the duplicate
+  `tests/adapters/test_remote_keycodes.py`.
 - [x] 2026-10-25: the directional pad is four ring quarters and OK (no dead zone, no overlap), hit-tested on a
   101x101 grid and measured in Chromium and WebKitGTK; the TV receiver maps its session states to clear
   screens, ignores late callbacks of a replaced session (no ghost session), ends it on stop and keeps the

@@ -47,6 +47,9 @@
   (générations), session fermée à l'arrêt, écran maintenu allumé seulement pendant un flux. 13 tests JVM.
 - [x] **Touches de la télécommande (2026-10-25) :** chaque touche testée de bout en bout (requête, attente, issue) et
   chaque code vérifié dans le protocole de la TV (`androidtvremote2`).
+- [x] **Tests du bon code (2026-10-25) :** pytest charge le `src/` du worktree en premier, y compris pour les
+  processus Python lancés par les tests (`tests/conftest.py`) ; un environnement d'un autre worktree ne fait plus
+  tester le mauvais code. Tests de Freebuff (carte des touches) intégrés.
 - [ ] **Validation matérielle :** pavé au toucher sur le téléphone ; récepteur (attente, interruption, reprise) sur
   Liberté boîte et Chromecast.
 - [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone

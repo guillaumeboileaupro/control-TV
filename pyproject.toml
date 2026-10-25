@@ -61,7 +61,7 @@ control_tv = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
+pythonpath = ["src", "tests"]  # this checkout's own code first (tests/test_source_root.py)
 addopts = "-ra --strict-markers --strict-config"
 
 [tool.mypy]
