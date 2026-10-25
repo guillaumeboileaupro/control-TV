@@ -71,6 +71,7 @@ def status_request(device_id: object, request_id: int = 1) -> dict[str, object]:
     return {"id": request_id, "method": "get_status", "params": {"deviceId": device_id}}
 
 
+@pytest.mark.usefixtures("adb_on_path")
 def test_ping_reports_readiness_and_version(control: ControlService) -> None:
     response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
 
@@ -375,6 +376,15 @@ def test_run_serves_one_response_per_request_line_and_skips_blanks(
     assert all(json.loads(line)["ok"] is True for line in lines)
 
 
+@pytest.mark.usefixtures("no_adb_on_path")
+def test_ping_reports_no_tv_apps_without_adb(control: ControlService) -> None:
+    response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
+
+    assert response["ok"] is True
+    assert response["result"]["tvApps"] is False
+
+
+@pytest.mark.usefixtures("adb_on_path")
 def test_main_serves_a_ping_over_real_stdio() -> None:
     """End-to-end proof that `python -m control_tv.bridge` is what Rust will actually spawn."""
     process = subprocess.Popen(
