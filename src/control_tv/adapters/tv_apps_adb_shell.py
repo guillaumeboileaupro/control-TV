@@ -218,6 +218,14 @@ class AdbShellAppInventory:
             "TV's USB debugging on the network (port 5555) instead"
         )
 
+    def open_classic_port(self, host: str) -> None:
+        """Only a computer paired with the TV's Wireless debugging can open its port 5555."""
+        del host
+        raise UnsupportedOperationError(
+            "opening the TV's port 5555 needs control-TV on the computer, paired with the "
+            "TV's Wireless debugging"
+        )
+
     def _session(self, host: str, action: Callable[[AdbShellDevice], T]) -> T:
         """One short connection: connect (the owner may have to allow control-TV), act, close."""
         host = _checked_host(host)
@@ -238,9 +246,10 @@ class AdbShellAppInventory:
         except ConnectionRefusedError:
             # Nothing listens on the port: the classic network debugging is off.
             raise DebuggingOffError(
-                "the TV accepts no debugging connection on port 5555: turn on USB debugging "
-                "in the TV's developer options; a TV that only offers Wireless debugging (with a "
-                "pairing code) is reached from the computer, not from this phone"
+                "the TV accepts no debugging connection on port 5555: turn on its network "
+                "debugging in the TV's developer options, or, for a TV that only offers "
+                "Wireless debugging (with a pairing code), use control-TV on the computer: "
+                "pair it there, then Open to the phone"
             ) from None
         except (errors.adb_timeout, errors.tcp_timeout):
             # Connected and allowed, then a command was slow: for a launch it may have run.

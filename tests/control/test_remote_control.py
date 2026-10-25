@@ -676,6 +676,11 @@ class FakeApps:
         if self.error is not None:
             raise self.error
 
+    def open_classic_port(self, host: str) -> None:
+        self.calls.append(("open_port", host))
+        if self.error is not None:
+            raise self.error
+
 
 def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
     service = ControlService(transport or FakeTransport(), remote=FakeRemote(), apps=apps)
@@ -710,6 +715,17 @@ def test_wireless_debugging_pairing_needs_text_and_the_apps_channel() -> None:
         with_apps(FakeApps()).pair_tv_apps(DEVICE_ID, None, "123456")  # type: ignore[arg-type]
     with pytest.raises(UnsupportedOperationError):
         discovered(FakeRemote()).pair_tv_apps(DEVICE_ID, f"{HOST}:40123", "123456")
+
+
+def test_opening_the_tv_to_the_phone_targets_only_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    response = call(with_apps(apps), "open_tv_apps_port", deviceId=str(DEVICE_ID))
+
+    assert response["result"] == {"port": 5555}
+    assert apps.calls == [("open_port", HOST)]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).open_tv_apps_port(DEVICE_ID)
 
 
 def test_no_app_list_for_a_group_or_without_the_inventory() -> None:

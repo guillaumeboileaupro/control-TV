@@ -31,6 +31,7 @@ export interface RemotePanelElements {
   remoteText: HTMLInputElement;
   remoteTextSend: HTMLButtonElement;
   remoteAppsList: HTMLButtonElement;
+  remoteAppsOpenPort: HTMLButtonElement;
   remoteAppsPairing: HTMLElement;
   remoteAppsPairingForm: HTMLFormElement;
   remoteAppsPairingEndpoint: HTMLInputElement;
@@ -99,6 +100,7 @@ export function createRemotePanel(
   }
   el.remoteRead.addEventListener("click", () => actions.run({ kind: "status" }));
   el.remoteAppsList.addEventListener("click", () => actions.run({ kind: "list_apps" }));
+  el.remoteAppsOpenPort.addEventListener("click", () => actions.run({ kind: "open_apps_port" }));
   el.remoteAppsPairingForm.addEventListener("submit", (event) => {
     event.preventDefault();
     actions.run(
@@ -213,6 +215,7 @@ export function createRemotePanel(
     el.remoteAppsList.classList.toggle("is-loading", remote.listingApps);
     el.remoteAppsList.setAttribute("aria-busy", String(remote.listingApps));
     el.remoteAppsList.textContent = remote.apps === null ? "Show TV apps" : "List again";
+    setBusy(el.remoteAppsOpenPort, !remote.appsEnabled);
     el.remoteAppsFilter.hidden = remote.apps === null;
     // The field shows the filter the state holds: another TV starts with an empty one.
     if (el.remoteAppsFilter.value !== state.remote.appFilter) {

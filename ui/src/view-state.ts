@@ -99,6 +99,7 @@ export type RemoteAction =
   | { kind: "text"; text: string }
   | { kind: "list_apps" }
   | { kind: "pair_apps"; pairingEndpoint: string; code: string }
+  | { kind: "open_apps_port" }
   | { kind: "launch_app"; package: string; label: string };
 
 export type PairingStep = "not_tried" | "needed" | "code_shown" | "paired";

@@ -597,6 +597,9 @@ class ControlService:
     def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
         self._channels.pair_tv_apps(device_id, pairing_endpoint, code)
 
+    def open_tv_apps_port(self, device_id: DeviceId) -> None:
+        self._channels.open_tv_apps_port(device_id)
+
     def _discovered(self, device_id: DeviceId) -> Device | None:
         """The device of the last discovery with this id, or None."""
         return self._devices.get(_checked_id(device_id))

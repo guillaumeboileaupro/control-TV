@@ -389,3 +389,12 @@ def test_wireless_debugging_pairing_is_refused_with_what_to_do_instead(tmp_path:
 
     with pytest.raises(UnsupportedOperationError, match="port 5555"):
         inventory.pair(HOST, "192.0.2.10:37000", "123456")
+
+
+def test_only_the_computer_opens_the_tv_to_the_phone_and_the_phone_says_so(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(UnsupportedOperationError, match="control-TV on the computer"):
+        AdbAppInventory(tmp_path).open_classic_port(HOST)
+    with pytest.raises(DebuggingOffError, match="Open to the phone"):
+        inventory(tmp_path, {"connect_error": ConnectionRefusedError()}).list_apps(HOST)

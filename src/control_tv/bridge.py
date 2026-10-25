@@ -94,6 +94,11 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              Answers {"result": {"package", "deviceId", "confirmation",
                              "detail", "frontApp"}}: `confirmed` only when the TV then reports
                              that app in front, `not_checked` when it does not say.
+- `open_tv_apps_port`      -> {"port": 5555}: the TV, reached over this computer's debugging
+                             (Wireless debugging paired here), also accepts classic network
+                             debugging on port 5555 until it restarts, so the phone can list
+                             and open its apps. Sent once; `unsupported_operation` on the
+                             phone, which cannot do it.
 - `get_screen_receiver_capabilities` -> the selected TV's reachability, HLS availability and
                              exact ControlTV Receiver installation/access state. A failed app
                              inventory is returned as an explicit capability state and never
@@ -519,6 +524,13 @@ def _handle_pair_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
     return {"pairing": "paired"}
 
 
+def _handle_open_tv_apps_port(control: TvControl, params: JsonObject) -> JsonObject:
+    from control_tv.adapters.tv_apps import CLASSIC_PORT
+
+    control.open_tv_apps_port(_device_id_param(params))
+    return {"port": CLASSIC_PORT}
+
+
 # The screen stream (D3/D4): one controller per bridge process, created on first use (never on
 # Android or without X11), closed when the bridge exits so quitting the app stops the stream.
 _screen_controller: ScreenStreamController | None = None
@@ -813,6 +825,7 @@ _HANDLERS: dict[str, Handler] = {
     "get_screen_receiver_capabilities": _handle_get_screen_receiver_capabilities,
     "launch_tv_app": _handle_launch_tv_app,
     "pair_tv_apps": _handle_pair_tv_apps,
+    "open_tv_apps_port": _handle_open_tv_apps_port,
     "list_screens": _handle_list_screens,
     "start_screen_stream": _handle_start_screen_stream,
     "prepare_webrtc_capture": _handle_prepare_webrtc_capture,

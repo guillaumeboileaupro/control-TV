@@ -390,6 +390,22 @@ pub(crate) async fn bridge_pair_tv_apps(
     .await
 }
 
+/// Has the selected TV, reached over this computer's Wireless debugging, accept the phone's app
+/// list on port 5555 until it restarts. Sent once; the phone answers `unsupported_operation`.
+#[tauri::command]
+pub(crate) async fn bridge_open_tv_apps_port(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "open_tv_apps_port",
+        status_request(&device_id),
+        APPS_TIMEOUT,
+    )
+    .await
+}
+
 /// Where and how "extend" places the TV's screen: its refresh rate and its side of the primary
 /// screen ("left", "right", "above" or "below"), as the window's extension menu chose them.
 pub(crate) struct Placement<'a> {

@@ -906,6 +906,7 @@ window.addEventListener("DOMContentLoaded", () => {
       remoteText: byId<HTMLInputElement>("remote-text"),
       remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
       remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+      remoteAppsOpenPort: byId<HTMLButtonElement>("remote-apps-open-port"),
       remoteAppsPairing: byId("remote-apps-pairing"),
       remoteAppsPairingForm: byId<HTMLFormElement>("remote-apps-pairing-form"),
       remoteAppsPairingEndpoint: byId<HTMLInputElement>("remote-apps-pairing-endpoint"),

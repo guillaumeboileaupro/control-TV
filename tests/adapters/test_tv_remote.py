@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import stat
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -54,6 +55,9 @@ class FakeTv:
         self.texts: list[str] = []
         self.log: list[tuple[str, ...]] = []
         self.remotes: list[FakeRemote] = []
+        # Whether a connection stays open like the library's (a live transport and a pending
+        # "connection lost" future); by default the fake looks closed, so every call connects.
+        self.keeps_open = False
 
 
 class FakeRemote:
@@ -79,6 +83,13 @@ class FakeRemote:
         self.volume_info = None if self.tv.volume is None else dict(self.tv.volume)
         self.current_app = self.tv.current_app
         self._remote_message_protocol.ime_field_counter = self.tv.field_counter
+        if self.tv.keeps_open:
+            self._remote_message_protocol.on_con_lost = asyncio.get_running_loop().create_future()
+            self._remote_message_protocol.transport = SimpleNamespace(is_closing=lambda: False)
+
+    def lose_connection(self) -> None:
+        """The library noticed the connection was lost (TV gone, idle timeout)."""
+        self._remote_message_protocol.on_con_lost.set_result(None)
 
     def send_key_command(self, key_code: str) -> None:
         self.tv.log.append(("key", key_code))
@@ -616,3 +627,120 @@ def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, t
 
     assert "secret-123" not in str(excinfo.value)
     assert tv.texts == ["secret-123"]  # sent once, not resent
+
+
+# One open connection per TV -------------------------------------------------------------------
+
+
+def run_on(channel: TvRemoteChannel, action: Callable[[], None]) -> None:
+    """Run `action` on the channel's event loop, as the library's own callbacks would."""
+
+    async def call() -> None:
+        action()
+
+    asyncio.run_coroutine_threadsafe(call(), channel._event_loop()).result(1)
+
+
+def factory_for(tv: FakeTv) -> Callable[[str, str, str, str], FakeRemote]:
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+        tv.remotes.append(FakeRemote(tv, certfile, keyfile, host))
+        return tv.remotes[-1]
+
+    return factory
+
+
+def test_keys_in_a_row_share_one_open_connection_closed_with_the_channel(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+
+    channel.press(HOST, RemoteKey.DPAD_UP)
+    channel.press(HOST, RemoteKey.DPAD_CENTER)
+    observed = channel.observe(HOST)
+
+    assert tv.log == [("connect",), ("key", "KEYCODE_DPAD_UP"), ("key", "KEYCODE_DPAD_CENTER")]
+    assert observed.is_on is True
+    channel.close()
+    assert tv.log[-1] == ("disconnect",)
+    assert len(tv.remotes) == 1
+
+
+def test_a_lost_connection_is_never_reused(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.keeps_open = True
+    channel.press(HOST, RemoteKey.HOME)
+
+    run_on(channel, tv.remotes[0].lose_connection)
+    channel.press(HOST, RemoteKey.BACK)
+
+    assert tv.log == [
+        ("connect",),
+        ("key", "KEYCODE_HOME"),
+        ("disconnect",),
+        ("connect",),
+        ("key", "KEYCODE_BACK"),
+    ]
+
+
+def test_a_failed_call_closes_its_connection_and_the_next_one_connects_again(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    tv.send_error = ConnectionClosed("lost")
+    with pytest.raises(DeviceUnavailableError):
+        channel.press(HOST, RemoteKey.HOME)
+    tv.send_error = None
+
+    channel.press(HOST, RemoteKey.HOME)
+
+    assert [entry[0] for entry in tv.log] == ["connect", "key", "disconnect", "connect", "key"]
+    assert [entry for entry in tv.log if entry[0] == "key"] == [("key", "KEYCODE_HOME")] * 2
+
+
+def test_an_unused_connection_is_closed_after_its_keep_open_time(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    channel = TvRemoteChannel(
+        tmp_path / "remote",
+        settle=0.2,
+        keep_open=0.1,
+        remote_factory=factory_for(tv),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+    )
+    try:
+        channel.press(HOST, RemoteKey.HOME)
+        time.sleep(0.4)
+        assert tv.log == [("connect",), ("key", "KEYCODE_HOME"), ("disconnect",)]
+    finally:
+        channel.close()
+    assert tv.remotes[0].disconnected == 1
+
+
+def test_pairing_closes_the_open_connection(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.keeps_open = True
+    channel.press(HOST, RemoteKey.HOME)
+
+    channel.start_pairing(HOST)
+
+    assert tv.remotes[0].disconnected == 1
+
+
+def test_a_volume_key_on_a_tv_that_reports_no_volume_does_not_wait_for_one(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    tv.volume = None
+    channel = TvRemoteChannel(
+        tmp_path / "remote",
+        settle=1.0,
+        remote_factory=factory_for(tv),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+    )
+    try:
+        channel.press(HOST, RemoteKey.VOLUME_UP)  # a new connection: one settle at most
+        started = time.monotonic()
+        pressed = channel.press(HOST, RemoteKey.VOLUME_UP)  # reused: no wait at all
+        assert time.monotonic() - started < 0.5
+    finally:
+        channel.close()
+    assert pressed.before.volume is None and pressed.after.volume is None

@@ -186,6 +186,10 @@ def _endpoint_host(endpoint: str) -> str | None:
         return None
 
 
+# Classic network debugging's conventional port, the one the phone's adapter reaches.
+CLASSIC_PORT = 5555
+
+
 class AdbAppInventory:
     """Lists and opens apps through one unambiguous device of the local ADB server."""
 
@@ -238,6 +242,19 @@ class AdbAppInventory:
             if front == package:
                 break
         return AppLaunch(package=package, front_app=front)
+
+    def open_classic_port(self, host: str) -> None:
+        """Have the TV also accept classic network debugging on port 5555, for the phone.
+
+        Sent once over this computer's own debugging connection to the TV (Wireless debugging
+        paired here): the phone speaks only the classic protocol on port 5555. The TV keeps
+        the port open until it restarts; the TV then asks once to allow the phone.
+        """
+        serial = self._resolve(host)
+        result = self._command(["-s", serial, "tcpip", str(CLASSIC_PORT)])
+        output = (result.stdout + result.stderr).lower()
+        if result.returncode or "error" in output:
+            raise DeviceUnavailableError("the TV did not open its port for the phone")
 
     def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
         """Pair once without putting the temporary code in argv, logs or retained state."""
@@ -370,7 +387,7 @@ class AdbAppInventory:
         # Classic network debugging does not advertise mDNS. A fresh/restarted ADB server has
         # forgotten it, so make one bounded connection attempt on its conventional port. Never
         # apply this fallback to a host that advertised a TLS service with a dynamic port.
-        classic_endpoint = f"{host}:5555"
+        classic_endpoint = f"{host}:{CLASSIC_PORT}"
         result = self._command(["connect", classic_endpoint])
         if result.returncode == 0 and "failed" not in result.stdout.lower():
             devices = parse_devices(self._required(["devices", "-l"]).stdout)

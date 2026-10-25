@@ -176,6 +176,15 @@ class TvChannels:
             )
         self._apps.pair(host, pairing_endpoint, code)
 
+    def open_tv_apps_port(self, device_id: DeviceId) -> None:
+        """Have the selected TV accept the phone's app list on port 5555 (until it restarts)."""
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot reach the TV's debugging service", device_id=device_id
+            )
+        self._apps.open_classic_port(host)
+
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
         if self._remote is None:
             raise UnsupportedOperationError(

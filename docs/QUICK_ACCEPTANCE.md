@@ -45,6 +45,9 @@ addresses, kept apart from CI results.
   quarter, OK) and the keys as on Ubuntu.
 - [ ] **TV apps:** the TV's apps are listed from the phone (classic network debugging, port 5555);
   open one.
+- [ ] **Chambre parentale apps (#112):** on the computer, pair its Wireless debugging, press Open to the
+  phone; on the phone, Show TV apps, allow the phone on the TV, open one app. Then press keys for a minute
+  and read `adb logcat -s control-tv` for each request's duration.
 - [ ] **Widget:** add it (or enlarge the existing one to 4x4 to show its remote rows); use play/pause
   once, then Mute, Volume - and +, each arrow, OK, Back, Home, Power and Assistant once each: the TV
   acts once per tap and the widget says which key was sent.

@@ -152,6 +152,8 @@ export function remoteInvocation(request: RemoteRequest): {
       return { command: "bridge_type_remote_text", args: { deviceId, text: action.text } };
     case "list_apps":
       return { command: "bridge_list_tv_apps", args: { deviceId } };
+    case "open_apps_port":
+      return { command: "bridge_open_tv_apps_port", args: { deviceId } };
     case "pair_apps":
       return {
         command: "bridge_pair_tv_apps",
@@ -175,7 +177,12 @@ export function appsAvailable(state: AppState): boolean {
 }
 
 function isAppAction(action: RemoteAction): boolean {
-  return action.kind === "list_apps" || action.kind === "pair_apps" || action.kind === "launch_app";
+  return (
+    action.kind === "list_apps" ||
+    action.kind === "pair_apps" ||
+    action.kind === "open_apps_port" ||
+    action.kind === "launch_app"
+  );
 }
 
 function keysAllowed(state: AppState): boolean {
@@ -200,6 +207,7 @@ export function startRemote(
     action.kind !== "pair" &&
     action.kind !== "list_apps" &&
     action.kind !== "pair_apps" &&
+    action.kind !== "open_apps_port" &&
     action.kind !== "launch_app";
   if (needsRemote && !keysAllowed(state)) {
     return { state, request: null };
@@ -283,7 +291,7 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
     if (failure.code === "debugging_off") {
       return {
         tone: "failed",
-        text: "No debugging service matches this TV. In Developer options, turn on Wireless debugging (or classic network debugging), keep the TV on the same network, then refresh the app list.",
+        text: "No debugging service matches this TV. In Developer options, turn on Wireless debugging (or classic network debugging), keep the TV on the same network, then refresh the app list. On the phone, a TV with only Wireless debugging needs control-TV on the computer: pair it there, then Open to the phone.",
         technical,
       };
     }
@@ -298,6 +306,13 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
       return {
         tone: "failed",
         text: "That Wireless debugging code was refused or expired. Reopen the pairing-code screen and try the new code.",
+        technical,
+      };
+    }
+    if (action.kind === "open_apps_port" && failure.code === "unsupported_operation") {
+      return {
+        tone: "failed",
+        text: "Do this from control-TV on the computer, paired with the TV's Wireless debugging: the phone can't open the TV's port itself.",
         technical,
       };
     }
@@ -505,6 +520,18 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
           },
         },
       };
+    case "open_apps_port":
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          outcome: {
+            tone: "done",
+            text: "The TV accepts the phone on port 5555 until it restarts. On the phone, tap Show TV apps, then allow the phone on the TV.",
+            technical: null,
+          },
+        },
+      };
     case "launch_app": {
       const launched = isJsonObject(result["result"]) ? result["result"] : {};
       const label = action.label;
@@ -632,6 +659,8 @@ function progressOf(action: RemoteAction): string {
       return "Listing the TV's apps… If the TV asks, allow control-TV.";
     case "pair_apps":
       return "Pairing Wireless debugging…";
+    case "open_apps_port":
+      return "Opening the TV to the phone…";
     case "launch_app":
       return `Opening ${action.label}…`;
   }

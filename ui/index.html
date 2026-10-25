@@ -762,6 +762,20 @@
                 </form>
               </div>
               <ul id="remote-apps" class="app-grid" aria-label="Apps installed on the TV"></ul>
+              <!-- For a TV with only Wireless debugging (a pairing code), which the phone cannot
+                   pair: the computer, paired, opens the TV's port 5555 to the phone. -->
+              <p id="remote-apps-phone-hint" class="hint">
+                The phone can list this TV's apps only through port 5555. If the TV offers only
+                Wireless debugging, open it to the phone from here (until the TV restarts).
+              </p>
+              <button
+                id="remote-apps-open-port"
+                class="btn btn-small"
+                type="button"
+                aria-describedby="remote-apps-phone-hint"
+              >
+                Open to the phone
+              </button>
             </div>
 
             <!-- The outcome of the last remote action, kept in view while the remote scrolls. -->

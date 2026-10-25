@@ -814,3 +814,42 @@ describe("app tiles", () => {
     assert.notEqual(appHue("com.netflix.ninja"), hue);
   });
 });
+
+// Issue #112: a TV with only Wireless debugging, which the phone cannot pair.
+describe("opening the TV to the phone", () => {
+  const open = { kind: "open_apps_port" } as const;
+
+  test("one request to the selected TV, even while its remote needs pairing", () => {
+    const needsPairing = {
+      ...withTv(),
+      remote: { ...withTv().remote, pairing: "needed" as const },
+    };
+    const started = startRemote(needsPairing, open);
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest), {
+      command: "bridge_open_tv_apps_port",
+      args: { deviceId: TV.id },
+    });
+    assert.equal(startRemote(started.state, open).request, null);
+    assert.match(describeRemote(started.state).progress ?? "", /phone/);
+  });
+
+  test("done says what the phone does next and for how long", () => {
+    const { state } = run(withTv(), open, { ok: true, result: { port: 5555 } });
+
+    assert.equal(describeRemote(state).outcome?.tone, "done");
+    assert.match(describeRemote(state).outcome?.text ?? "", /port 5555 until it restarts/);
+  });
+
+  test("the phone says it needs the computer, and debugging off says how to get there", () => {
+    const fromPhone = run(withTv(), open, failure("unsupported_operation")).state;
+    const off = run(withTv(), { kind: "list_apps" }, failure("debugging_off")).state;
+
+    assert.match(describeRemote(fromPhone).outcome?.text ?? "", /control-TV on the computer/);
+    assert.match(describeRemote(off).outcome?.text ?? "", /Open to the phone/);
+  });
+
+  test("not offered without the TV's app capability", () => {
+    assert.equal(startRemote({ ...withTv(), tvAppsAvailable: false }, open).request, null);
+  });
+});

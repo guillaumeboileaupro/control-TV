@@ -562,3 +562,44 @@ def test_multiple_tls_services_for_selected_tv_are_refused() -> None:
     )
     with pytest.raises(DeviceUnavailableError, match="more than one Wireless"):
         inventory(runner).list_apps(HOST)
+
+
+# Opening the TV to the phone (issue #112) -------------------------------------------------------
+
+
+def test_the_tv_is_opened_to_the_phone_once_over_this_computers_tls_connection() -> None:
+    answers = listing_answers()
+    del answers[("-s", TLS_SERIAL, "shell", LAUNCHER_QUERY)]
+    answers[("-s", TLS_SERIAL, "tcpip", "5555")] = [done("restarting in TCP mode port: 5555\n")]
+    runner = FakeRunner(answers)
+
+    inventory(runner).open_classic_port(HOST)
+
+    commands = [call[0][1:] for call in runner.calls]
+    assert commands.count(("-s", TLS_SERIAL, "tcpip", "5555")) == 1
+
+
+@pytest.mark.parametrize("answer", [done("", "error: closed", 1), done("error: device offline")])
+def test_a_tv_that_does_not_open_its_port_is_reported_and_not_retried(
+    answer: subprocess.CompletedProcess[str],
+) -> None:
+    answers = listing_answers()
+    answers[("-s", TLS_SERIAL, "tcpip", "5555")] = [answer]
+    runner = FakeRunner(answers)
+
+    with pytest.raises(DeviceUnavailableError, match="did not open its port"):
+        inventory(runner).open_classic_port(HOST)
+    assert [call[0][1:] for call in runner.calls].count(("-s", TLS_SERIAL, "tcpip", "5555")) == 1
+
+
+def test_a_tv_this_computer_cannot_reach_is_never_sent_the_port_request() -> None:
+    runner = FakeRunner(
+        {
+            ("devices", "-l"): [done("List of devices attached\n")],
+            ("mdns", "services"): [done(f"adb-serial-ABC\t_adb-tls-pairing._tcp.\t{HOST}:40211\n")],
+        }
+    )
+
+    with pytest.raises(PairingRequiredError):
+        inventory(runner).open_classic_port(HOST)
+    assert not any("tcpip" in call[0] for call in runner.calls)

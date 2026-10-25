@@ -37,6 +37,12 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [ ] Issue #112 (phone slow with Chambre parentale, its apps not listed), implemented 2026-10-25, automated
+  checks only: one TV remote connection per TV reused while the library holds it open (closed after 30 s
+  unused, on any failure, on pairing), volume keys no longer wait for a volume the TV never reports, and the
+  phone logs each bridge request's method, duration and outcome; the computer's "Open to the phone" runs
+  `adb tcpip 5555` once over its paired Wireless debugging so the phone's port-5555 app list works until the
+  TV restarts. Open: hardware measurement of the latency and the end-to-end app list on the phone.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.
