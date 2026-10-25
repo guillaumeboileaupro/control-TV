@@ -32,6 +32,11 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   Rechecked 2026-10-25: still no `crypto-bigint` 0.5.x/0.6.x fix and no newer `dtls`; `rtc-dtls`
   0.21.1 depends on no RustCrypto curve crate (`rtc-crypto` uses `aws-lc-rs`/`ring`), so the
   `webrtc` 0.21 migration would remove the advisory, as a separate reviewed change.
+  Prepared 2026-10-25, **pending the owner's acceptance of the risk**: dated waivers until
+  2026-11-30 for RUSTSEC-2026-0387 (`crypto-bigint`, both Rust locks) and RUSTSEC-2025-0141
+  (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
+  `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
+  expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
 - [x] The CI publishes the Android TV receiver debug APK; `main`'s `repository-lifecycle` skill
   (`baf9f68`) is linked for Claude (`.claude/skills/`), as `agent_config.py check` requires.
 - [x] **CI, 2026-10-25:** three bridge `ping` tests expected `tvApps: true`, which held only where

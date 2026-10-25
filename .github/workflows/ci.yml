@@ -184,10 +184,11 @@ jobs:
         run: python3 scripts/dev.py rust-audit
 
       # The engine has its own lockfile. Keep this separate from the Tauri audit so a transitive
-      # WebRTC advisory cannot disappear behind a different workspace resolution.
+      # WebRTC advisory cannot disappear behind a different workspace resolution. Same policy as
+      # the Tauri audit: webrtc-engine/cargo-audit-waivers.json waives an advisory until a date
+      # (an expired waiver fails), and waived advisories are still printed.
       - name: Audit the WebRTC engine's Rust dependencies
-        working-directory: webrtc-engine
-        run: cargo audit
+        run: python3 scripts/dev.py webrtc-audit
 
       - name: Type-check and format-check the frontend
         run: python3 scripts/dev.py ui-check

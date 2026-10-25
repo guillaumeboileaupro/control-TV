@@ -171,7 +171,14 @@ def test_osv_audits_the_two_component_locks_and_fails_on_findings() -> None:
     assert "--lockfile=./webrtc-engine/Cargo.lock" in workflow
     assert "--lockfile=./android-tv-receiver/app/gradle.lockfile" in workflow
     assert "fail-on-vuln: true" in workflow
+    assert "--config=./osv-scanner.toml" in workflow
     assert "@b1d267aea5211fa648d9d442fa64b90dbdcbdd36" in workflow
+
+
+def test_the_engine_audit_applies_the_dated_waiver_policy() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "run: python3 scripts/dev.py webrtc-audit" in workflow
+    assert "run: cargo audit\n" not in workflow
 
 
 def test_deleting_python_and_rust_sources_runs_every_build(tmp_path: Path) -> None:

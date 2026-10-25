@@ -16,7 +16,10 @@ jobs:
     name: Audit WebRTC and Android TV receiver locks
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
     with:
+      # osv-scanner.toml waives named advisories until a date only (owner-approved, see
+      # SECURITY.md); after it, the scan fails again.
       scan-args: |-
+        --config=./osv-scanner.toml
         --lockfile=./webrtc-engine/Cargo.lock
         --lockfile=./android-tv-receiver/app/gradle.lockfile
       fail-on-vuln: true

@@ -10,7 +10,9 @@ import importlib.util
 import json
 import os
 import sys
+import tomllib
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -1002,6 +1004,13 @@ def test_python_and_rust_audits_block_every_advisory_unless_waived() -> None:
             _cargo_report(("time", "RUSTSEC-2020-0071")),
             "RUSTSEC-2020-0071",
         ),
+        (
+            "cmd_webrtc_audit",
+            "_webrtc_audit_report",
+            "webrtc-engine/cargo-audit-waivers.json",
+            _cargo_report(("time", "RUSTSEC-2020-0071")),
+            "RUSTSEC-2020-0071",
+        ),
     ],
 )
 def test_python_and_rust_audit_commands_fail_on_an_unwaived_advisory(
@@ -1059,27 +1068,69 @@ def test_an_unreadable_unsound_warning_fails_closed(unsound: object) -> None:
 GLIB_ADVISORY = "RUSTSEC-2024-0429"
 
 
-def _repo_rust_waivers() -> list[object]:
-    path = DEV_PATH.parents[1] / "src-tauri" / "cargo-audit-waivers.json"
+CRYPTO_BIGINT_ADVISORY = "RUSTSEC-2026-0387"
+LAST_WEBRTC_WAIVER_DAY = dev.date(2026, 11, 30)
+
+
+def _repo_rust_waivers(crate: str = "src-tauri") -> list[object]:
+    path = DEV_PATH.parents[1] / crate / "cargo-audit-waivers.json"
     return list(dev.audit_waivers(json.loads(path.read_text(encoding="utf-8"))))
 
 
-def test_the_rust_waiver_file_waives_only_glib_rustsec_2024_0429_until_2027_01_15() -> None:
-    waivers = _repo_rust_waivers()
+def _scope(waivers: list[object]) -> list[tuple[str, str | None, object]]:
+    scoped = []
+    for waiver in waivers:
+        assert isinstance(waiver, dev.AuditWaiver)
+        assert "SECURITY.md" in waiver.reason
+        scoped.append((waiver.advisory, waiver.package, waiver.expires))
+    return scoped
 
-    assert len(waivers) == 1
-    waiver = waivers[0]
-    assert isinstance(waiver, dev.AuditWaiver)
-    assert (waiver.advisory, waiver.package, waiver.expires) == (
-        GLIB_ADVISORY,
-        "glib",
-        dev.date(2027, 1, 15),
-    )
-    assert "SECURITY.md" in waiver.reason
+
+def test_the_rust_waiver_files_waive_only_glib_and_the_webrtc_crypto_bigint() -> None:
+    crypto_bigint = (CRYPTO_BIGINT_ADVISORY, "crypto-bigint", LAST_WEBRTC_WAIVER_DAY)
+    assert _scope(_repo_rust_waivers()) == [
+        (GLIB_ADVISORY, "glib", dev.date(2027, 1, 15)),
+        crypto_bigint,
+    ]
+    assert _scope(_repo_rust_waivers("webrtc-engine")) == [crypto_bigint]
+
+
+@pytest.mark.parametrize("crate", ["src-tauri", "webrtc-engine"])
+def test_the_crypto_bigint_waiver_ends_on_30_november_2026_and_covers_nothing_else(
+    crate: str,
+) -> None:
+    waivers = _repo_rust_waivers(crate)
+    finding = dev.AuditFinding("crypto-bigint", "vulnerability", CRYPTO_BIGINT_ADVISORY)
+    others = [
+        dev.AuditFinding("crypto-bigint", "vulnerability", "RUSTSEC-2099-0003"),
+        dev.AuditFinding("elliptic-curve", "vulnerability", CRYPTO_BIGINT_ADVISORY),
+    ]
+
+    last_day = dev.audit_verdict([finding, *others], waivers, LAST_WEBRTC_WAIVER_DAY, None)
+    expired = dev.audit_verdict([finding], waivers, dev.date(2026, 12, 1), None)
+
+    assert last_day.waived == (finding,) and last_day.blocking == tuple(others)
+    assert not expired.passed and expired.blocking == (finding,)
+    assert CRYPTO_BIGINT_ADVISORY in [w.advisory for w in expired.expired]
+
+
+def test_the_osv_waivers_name_only_the_two_webrtc_advisories_until_30_november_2026() -> None:
+    config = tomllib.loads((DEV_PATH.parents[1] / "osv-scanner.toml").read_text(encoding="utf-8"))
+
+    ignored = {entry["id"]: entry for entry in config["IgnoredVulns"]}
+
+    assert set(ignored) == {CRYPTO_BIGINT_ADVISORY, "RUSTSEC-2025-0141"}
+    assert set(config) == {"IgnoredVulns"}
+    for entry in ignored.values():
+        assert entry["ignoreUntil"] == datetime(2026, 11, 30, 23, 59, 59, tzinfo=UTC)
+        assert entry["reason"]
 
 
 def test_the_glib_waiver_lifts_that_advisory_until_it_expires() -> None:
-    waivers = _repo_rust_waivers()
+    # Only the glib waiver: by 2027 the crypto-bigint one has expired and fails by itself.
+    waivers = [
+        w for w in _repo_rust_waivers() if isinstance(w, dev.AuditWaiver) and w.package == "glib"
+    ]
     findings = [dev.AuditFinding("glib", "unsound", GLIB_ADVISORY)]
 
     last_day = dev.audit_verdict(findings, waivers, dev.date(2027, 1, 15), None)
