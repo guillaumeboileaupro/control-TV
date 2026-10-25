@@ -101,6 +101,29 @@
         <symbol id="i-home" viewBox="0 0 24 24">
           <path d="M4.5 10.5L12 4l7.5 6.5V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z" />
         </symbol>
+        <symbol id="i-previous" viewBox="0 0 24 24">
+          <path d="M7 6v12" />
+          <path d="M18 6.5v11L10 12z" />
+        </symbol>
+        <symbol id="i-rewind" viewBox="0 0 24 24">
+          <path d="M11.5 7v10L4.5 12z" />
+          <path d="M19.5 7v10l-7-5z" />
+        </symbol>
+        <symbol id="i-play-pause" viewBox="0 0 24 24">
+          <path d="M4.5 7v10l7-5z" />
+          <path d="M15.5 7v10M19.5 7v10" />
+        </symbol>
+        <symbol id="i-forward" viewBox="0 0 24 24">
+          <path d="M4.5 7v10l7-5z" />
+          <path d="M12.5 7v10l7-5z" />
+        </symbol>
+        <symbol id="i-next" viewBox="0 0 24 24">
+          <path d="M6 6.5v11l8-5.5z" />
+          <path d="M17 6v12" />
+        </symbol>
+        <symbol id="i-record" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="5.5" />
+        </symbol>
         <symbol id="i-mic" viewBox="0 0 24 24">
           <path
             d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"
@@ -473,7 +496,7 @@
                   <span></span>
                 </button>
               </div>
-              <div class="remote-grid remote-grid-4" role="group" aria-label="Media">
+              <div class="remote-grid remote-grid-7" role="group" aria-label="Media">
                 <button
                   class="btn-pill"
                   type="button"
@@ -481,7 +504,7 @@
                   aria-label="Previous"
                   title="Previous"
                 >
-                  <span>⏮</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-previous" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -490,7 +513,7 @@
                   aria-label="Rewind"
                   title="Rewind"
                 >
-                  <span>⏪</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-rewind" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -499,7 +522,7 @@
                   aria-label="Play or pause"
                   title="Play or pause"
                 >
-                  <span>⏯</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-play-pause" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -508,7 +531,7 @@
                   aria-label="Fast forward"
                   title="Fast forward"
                 >
-                  <span>⏩</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-forward" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -517,7 +540,7 @@
                   aria-label="Next"
                   title="Next"
                 >
-                  <span>⏭</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-next" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -526,7 +549,7 @@
                   aria-label="Stop"
                   title="Stop"
                 >
-                  <span>⏹</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
                 </button>
                 <button
                   class="btn-pill"
@@ -535,7 +558,7 @@
                   aria-label="Record"
                   title="Record"
                 >
-                  <span>⏺</span>
+                  <svg class="icon" aria-hidden="true"><use href="#i-record" /></svg>
                 </button>
               </div>
               <details class="keyboard">

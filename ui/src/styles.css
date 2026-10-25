@@ -1455,6 +1455,15 @@ h2 {
   --cols: 4;
 }
 
+.remote-grid-7 {
+  --cols: 7;
+  gap: 6px;
+}
+
+.remote-grid-7 .btn-pill {
+  padding: 0;
+}
+
 .remote-grid .btn-pill {
   min-width: 0;
   padding: 0 8px;
