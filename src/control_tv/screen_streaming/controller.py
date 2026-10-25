@@ -20,6 +20,7 @@ from typing import Protocol
 
 from control_tv.domain import DeviceId
 from control_tv.ports import TvControl
+from control_tv.screen_streaming.audio_route import PulseAudioRoute
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
 from control_tv.screen_streaming.d1 import (
     MAX_D1_SECONDS,
@@ -127,6 +128,7 @@ class WebRtcCaptureLease:
     offset_y: int
     source_width: int
     source_height: int
+    audio_device: str
 
 
 Connect = Callable[[str], tuple[TvControl, str]]
@@ -152,6 +154,7 @@ class ScreenStreamController:
         connect: Connect = tv_and_route,
         capture: Callable[[], X11Capture] = X11Capture,
         extension: Callable[[], XrandrVirtualMonitor] = XrandrVirtualMonitor,
+        audio_route: Callable[[], PulseAudioRoute] = PulseAudioRoute,
         build: Assemble = assemble,
         seconds: int = MAX_D1_SECONDS,
         clock: Callable[[], float] = time.monotonic,
@@ -160,6 +163,7 @@ class ScreenStreamController:
         self._connect = connect
         self._capture = capture
         self._extension = extension
+        self._audio_route = audio_route
         self._build = build
         self._seconds = seconds
         self._clock = clock
@@ -169,6 +173,7 @@ class ScreenStreamController:
         self._thread: threading.Thread | None = None
         self._webrtc_lease: WebRtcCaptureLease | None = None
         self._webrtc_extension: XrandrVirtualMonitor | None = None
+        self._webrtc_audio_route: PulseAudioRoute | None = None
         self._webrtc_generation = 0
         self._webrtc_preparing = False
         self._webrtc_prepare_done = threading.Event()
@@ -262,6 +267,7 @@ class ScreenStreamController:
                 checked.fps,
             )
         extension: XrandrVirtualMonitor | None = None
+        audio_route: PulseAudioRoute | None = None
         try:
             control, address = self._connect(checked.device_id)
             installed = control.list_tv_apps(DeviceId(checked.device_id))
@@ -294,6 +300,8 @@ class ScreenStreamController:
                 if output is None:
                     raise InvalidStreamConfiguration("that screen output is not connected")
             assert output is not None
+            audio_route = self._audio_route()
+            audio_device = audio_route.start()
             lease = WebRtcCaptureLease(
                 address,
                 capture.display,
@@ -301,28 +309,40 @@ class ScreenStreamController:
                 output.y,
                 output.width - output.width % 2,
                 output.height - output.height % 2,
+                audio_device,
             )
             with self._lock:
                 if generation != self._webrtc_generation:
                     raise InvalidStreamConfiguration("WebRTC preparation was cancelled")
                 self._webrtc_lease = lease
                 self._webrtc_extension = extension
+                self._webrtc_audio_route = audio_route
             return lease
         except BaseException as caught:
-            cleanup_error: ScreenStreamError | None = None
+            cleanup_errors: list[str] = []
+            if audio_route is not None:
+                try:
+                    audio_route.stop()
+                except ScreenStreamError as cleanup:
+                    cleanup_errors.append(f"the computer sound was not restored: {cleanup.message}")
+                    with self._lock:
+                        self._webrtc_audio_route = audio_route
             if extension is not None:
                 try:
                     extension.remove()
                 except ScreenStreamError as cleanup:
-                    cleanup_error = cleanup
+                    cleanup_errors.append(
+                        f"the extended screen was not restored: {cleanup.message}"
+                    )
+                    with self._lock:
+                        self._webrtc_extension = extension
             with self._lock:
                 detail = "WebRTC preparation failed"
-                if cleanup_error is not None:
-                    detail += f"; the extended screen was not restored: {cleanup_error.message}"
-                    self._webrtc_extension = extension
-                if generation == self._webrtc_generation or cleanup_error is not None:
+                if cleanup_errors:
+                    detail += "; " + "; ".join(cleanup_errors)
+                if generation == self._webrtc_generation or cleanup_errors:
                     self._status = ScreenStatus(StreamState.FAILED, error=detail)
-            if cleanup_error is not None:
+            if cleanup_errors:
                 raise StreamCleanupError(detail) from caught
             raise
         finally:
@@ -340,7 +360,11 @@ class ScreenStreamController:
     def release_webrtc_capture(self, error: str | None = None) -> ScreenStatus:
         with self._lock:
             self._webrtc_generation += 1
-            if self._webrtc_lease is None and self._webrtc_extension is None:
+            if (
+                self._webrtc_lease is None
+                and self._webrtc_extension is None
+                and self._webrtc_audio_route is None
+            ):
                 if self._status.state in (StreamState.STARTING, StreamState.STOPPING):
                     self._status = (
                         ScreenStatus(StreamState.IDLE)
@@ -349,17 +373,30 @@ class ScreenStreamController:
                     )
                 return self._status
             extension = self._webrtc_extension
-        cleanup_error: str | None = None
+            audio_route = self._webrtc_audio_route
+        cleanup_errors: list[str] = []
+        audio_restored = audio_route is None
+        if audio_route is not None:
+            try:
+                audio_route.stop()
+                audio_restored = True
+            except ScreenStreamError as caught:
+                cleanup_errors.append(f"the computer sound was not restored: {caught.message}")
+        extension_restored = extension is None
         if extension is not None:
             try:
                 extension.remove()
+                extension_restored = True
             except ScreenStreamError as caught:
-                cleanup_error = f"the extended screen was not restored: {caught.message}"
+                cleanup_errors.append(f"the extended screen was not restored: {caught.message}")
         with self._lock:
-            if cleanup_error is None:
+            if audio_restored:
+                self._webrtc_audio_route = None
+            if extension_restored:
                 self._webrtc_extension = None
+            if audio_restored and extension_restored:
                 self._webrtc_lease = None
-            failure = "; ".join(detail for detail in (error, cleanup_error) if detail) or None
+            failure = "; ".join(detail for detail in (error, *cleanup_errors) if detail) or None
             self._status = (
                 ScreenStatus(StreamState.IDLE)
                 if failure is None

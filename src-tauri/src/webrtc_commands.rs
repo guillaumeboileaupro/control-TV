@@ -75,6 +75,7 @@ struct CaptureLease {
     offset_y: u32,
     source_width: u32,
     source_height: u32,
+    audio_device: String,
 }
 
 #[derive(Deserialize)]
@@ -92,13 +93,7 @@ struct ReleaseReply {
     stream: ReleaseStatus,
 }
 
-fn capture_config(
-    lease: CaptureLease,
-    width: u32,
-    height: u32,
-    fps: u32,
-    audio_device: Option<String>,
-) -> CaptureConfig {
+fn capture_config(lease: CaptureLease, width: u32, height: u32, fps: u32) -> CaptureConfig {
     CaptureConfig {
         display: lease.display,
         offset_x: lease.offset_x,
@@ -112,8 +107,8 @@ fn capture_config(
             bitrate_kbps: 4_000,
         },
         audio: AudioConfig {
-            enabled: audio_device.is_some(),
-            device: audio_device,
+            enabled: true,
+            device: Some(lease.audio_device),
             bitrate_kbps: 128,
         },
     }
@@ -416,7 +411,6 @@ pub(crate) async fn start_webrtc_stream(
     width: u32,
     height: u32,
     fps: u32,
-    audio_device: Option<String>,
     consent: bool,
     refresh: Option<u32>,
     position: Option<String>,
@@ -456,7 +450,7 @@ pub(crate) async fn start_webrtc_stream(
             return Err(release_start_failure(bridge.inner().clone(), detail).await);
         }
     };
-    let capture = capture_config(lease, width, height, fps, audio_device);
+    let capture = capture_config(lease, width, height, fps);
     let config = SessionConfig {
         bind_address,
         capture: capture.clone(),
@@ -752,11 +746,11 @@ mod tests {
                 offset_y: 24,
                 source_width: 2560,
                 source_height: 1440,
+                audio_device: "pulse.monitor".into(),
             },
             1920,
             1080,
             30,
-            Some("pulse.monitor".into()),
         );
 
         assert_eq!(capture.display, ":7");

@@ -10,7 +10,7 @@ authorization, step by step (skill `hardware-safety`).
 
 | Phase | Delivered | Validated by |
 | ----- | --------- | ------------ |
-| D1 duplication | X11 output capture (`x11grab`, scaled to 1280x720 or 1920x1080, 25/30 fps, with the system sound in AAC) → D0 live encoder (libx264, VA-API optional) → HLS publisher (the TV is loaded once four 2 s segments exist) → Cast default media receiver | automated tests; real FFmpeg on loopback (synthetic picture and private Xvfb output) |
+| D1 duplication | X11 output capture (`x11grab`, scaled to 1280x720 or 1920x1080, 25/30 fps, with system sound) → WebRTC H.264/Opus when its receiver is confirmed, otherwise HLS AAC with two 1 s startup segments → TV receiver | automated tests; real FFmpeg on loopback (synthetic picture and private Xvfb output); TV latency and WebRTC audio still to remeasure |
 | D2 extension | virtual monitor `control-tv-virtual` added to the right of the X screen with `xrandr` (runtime only, no configuration file), streamed, then removed and the screen size restored | automated tests with a fake `xrandr`; refusals on Xvfb |
 | D3 interface | "Screen to TV" card in the Ubuntu window: Duplicate a screen / Extend the desktop, screen, resolution, frame rate, consent step, Stop/Dismiss, state and error text | TypeScript and Rust unit tests; Python bridge tests |
 | D4 protections | consent required by the bridge for every start; one stream at a time; one-hour bound; stop on Stop, on failure and when the application quits; LAN-only publication with a random port and token | automated tests |
@@ -67,8 +67,9 @@ Application (Ubuntu, development build): `npx --prefix ui tauri dev`, choose the
 1. **RD1 duplication** — in the card: Duplicate a screen, choose the screen, 1920×1080, 30 fps,
    "Duplicate on the TV", read the consent text, "Show on the TV". Expected: state "Streaming to
    the TV."; the picture on the TV within 10 s. Record the time from the click.
-2. **RD2 latency** — film a clock or pointer on the screen and the TV together; expected ≤ 6 s
-   (HLS path A).
+2. **RD2 latency** — confirm that the status names the active transport, then film a clock or
+   pointer on the screen and the TV together. WebRTC acceptance is < 500 ms; report HLS separately
+   because its segmented fallback cannot meet that criterion.
 3. **RD3 fluidity/resolution** — keep the stream 10 minutes with video in a window; note stalls
    and the resolution the TV reports. Repeat once at 1280×720 and once at 25 fps.
 4. **RD5 extension** — with the prerequisite done: Stop, then Extend the desktop, choose the
@@ -92,10 +93,10 @@ Application (Ubuntu, development build): `npx --prefix ui tauri dev`, choose the
 
 - If the application is killed (SIGKILL), its bridge cannot clean up: FFmpeg ends at its own
   bound (one hour), and a leftover extension mode is removed by the next Extend.
-- Latency: about 9–11 s measured (HLS path A with the TV's default Cast receiver, which starts
-  three segments behind the live edge); 1 s segments and 60 fps were not played smoothly by the
-  Freebox's receiver. A strong reduction needs another path (Cast mirroring or a dedicated
-  receiver).
+- Historical latency: about 9–11 s on HLS path A, before the 2026-10-25 queue/startup correction.
+  HLS now retains at most 4 video/8 audio input packets and starts after two 1 s segments; this is
+  automation-validated but not a new TV measurement. WebRTC is the dedicated sub-second path and
+  still requires a filmed post-change measurement before the < 500 ms criterion can be claimed.
 - The TV's Cast receiver stays open after a stream; the next stream can then play without
   showing (seen twice); closing the receiver (or restarting the player) restores it.
 - Only X11: Wayland sessions are refused, and only local displays are captured.

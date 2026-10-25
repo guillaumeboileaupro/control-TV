@@ -162,7 +162,7 @@ def test_the_live_encoder_grabs_the_capture_region(tmp_path: Path) -> None:
     assert sound == ("-map", "1:a:0", "-af", "aresample=async=1000", "-c:a", "aac")
     # The grab has its own queue, so reading the sound never makes it miss frames.
     grab = argv.index("x11grab")
-    assert argv[grab + 1 : grab + 3] == ("-thread_queue_size", "1024")
+    assert argv[grab + 1 : grab + 3] == ("-thread_queue_size", "4")
     live.stop(stream)
 
 

@@ -36,6 +36,25 @@ from x11_fakes import X11, FakeXrandr
 DUPLICATE = ScreenRequest(str(DEVICE_ID), d1.Mode.DUPLICATE, "eDP-1", 1280, 720, 30, True)
 
 
+class FakeAudioRoute:
+    def __init__(self, *, fail_stops: int = 0) -> None:
+        self.started = 0
+        self.stopped = 0
+        self.fail_stops = fail_stops
+        self.active = False
+
+    def start(self) -> str:
+        self.started += 1
+        self.active = True
+        return "controltv_tv.monitor"
+
+    def stop(self) -> None:
+        self.stopped += 1
+        if self.stopped <= self.fail_stops:
+            raise StreamCleanupError("stuck")
+        self.active = False
+
+
 @pytest.fixture(autouse=True)
 def no_stream_left() -> Iterator[None]:
     yield
@@ -57,6 +76,7 @@ class Rig:
         self.runner = FakeRunner()
         self.tmp_path = tmp_path
         self.sessions: list[d1.D1Session] = []
+        self.audio = FakeAudioRoute()
 
     def connect(self, device_id: str) -> tuple[TvControl, str]:
         assert device_id == str(DEVICE_ID)
@@ -94,11 +114,13 @@ class Rig:
     def controller(self, **options: object) -> ScreenStreamController:
         connect = options.pop("connect", self.connect)
         extension = options.pop("extension", lambda: XrandrVirtualMonitor(X11, self.xrandr))
+        audio_route = options.pop("audio_route", lambda: self.audio)
         return ScreenStreamController(
             connect=connect,  # type: ignore[arg-type]
             capture=self.capture,
             build=self.build,
             extension=extension,  # type: ignore[arg-type]
+            audio_route=audio_route,  # type: ignore[arg-type]
             sleep=lambda seconds: time.sleep(0.01),
             **options,  # type: ignore[arg-type]
         )
@@ -163,11 +185,30 @@ def test_webrtc_duplicate_uses_the_existing_capture_and_releases_its_lease(tmp_p
     assert lease.bind_address == "127.0.0.1"
     assert (lease.display, lease.offset_x, lease.offset_y) == (":0", 0, 0)
     assert (lease.source_width, lease.source_height) == (1920, 1080)
+    assert lease.audio_device == "controltv_tv.monitor"
+    assert rig.audio.active
     assert controller.activate_webrtc_capture().state is StreamState.RUNNING
     assert controller.release_webrtc_capture().state is StreamState.IDLE
+    assert not rig.audio.active
     controller.prepare_webrtc_capture(DUPLICATE)  # a second session can acquire it
     controller.close()
     assert controller.status().state is StreamState.IDLE
+
+
+def test_webrtc_audio_cleanup_failure_is_retained_and_retryable(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    audio = FakeAudioRoute(fail_stops=1)
+    controller = rig.controller(audio_route=lambda: audio)
+    controller.prepare_webrtc_capture(DUPLICATE)
+
+    failed = controller.release_webrtc_capture("the Rust engine stopped")
+
+    assert failed.state is StreamState.FAILED
+    assert failed.error == "the Rust engine stopped; the computer sound was not restored: stuck"
+    assert audio.active
+    assert controller.release_webrtc_capture().state is StreamState.IDLE
+    assert audio.stopped == 2 and not audio.active
 
 
 def test_webrtc_extension_is_restored_on_release_and_bridge_close(tmp_path: Path) -> None:
@@ -509,6 +550,7 @@ def test_the_bridge_acquires_activates_and_releases_one_webrtc_capture(screen: R
             "offsetY": 0,
             "sourceWidth": 1920,
             "sourceHeight": 1080,
+            "audioDevice": "controltv_tv.monitor",
         }
     }
     assert stream("activate_webrtc_capture")["state"] == "running"

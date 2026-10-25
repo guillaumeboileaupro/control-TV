@@ -6,11 +6,12 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
 
 const READ_BUFFER: usize = 64 * 1024;
-const VIDEO_QUEUE: usize = 2;
-const AUDIO_QUEUE: usize = 16;
+const VIDEO_QUEUE: usize = 1;
+const AUDIO_QUEUE: usize = 4;
 const MAX_H264_ACCESS_UNIT: usize = 8 * 1024 * 1024;
 const MAX_OGG_BUFFER: usize = 1024 * 1024;
 
@@ -251,7 +252,9 @@ async fn read_h264(
         match reader.read(&mut chunk).await {
             Ok(0) => {
                 if let Some(frame) = parser.finish(duration) {
-                    let _ = sender.try_send(Ok(frame));
+                    if !send_without_lag(&sender, frame) {
+                        return;
+                    }
                 }
                 break;
             }
@@ -290,8 +293,10 @@ async fn read_ogg_opus(
             Ok(count) => match parser.push(&chunk[..count]) {
                 Ok(packets) => {
                     for frame in packets {
-                        // Audio is never discarded: bounded send applies backpressure to its reader.
-                        if sender.send(Ok(frame)).await.is_err() {
+                        // Keep draining FFmpeg when the transport is late. Backpressure here would
+                        // accumulate old Opus packets in the pipe and turn a transient stall into
+                        // seconds of audible lag.
+                        if !send_without_lag(&sender, frame) {
                             return;
                         }
                     }
@@ -308,6 +313,16 @@ async fn read_ogg_opus(
                 break;
             }
         }
+    }
+}
+
+fn send_without_lag(
+    sender: &mpsc::Sender<Result<MediaFrame, EngineError>>,
+    frame: MediaFrame,
+) -> bool {
+    match sender.try_send(Ok(frame)) {
+        Ok(()) | Err(TrySendError::Full(_)) => true,
+        Err(TrySendError::Closed(_)) => false,
     }
 }
 
@@ -528,6 +543,38 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|item| item == ["-application", "lowdelay"]));
+    }
+
+    #[tokio::test]
+    async fn a_lagging_transport_never_accumulates_more_than_one_video_frame() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let frame = |value| MediaFrame {
+            data: Bytes::from_static(value),
+            duration: Duration::from_millis(33),
+            keyframe: false,
+        };
+
+        assert!(send_without_lag(&sender, frame(b"old")));
+        assert!(send_without_lag(&sender, frame(b"discarded-while-late")));
+        assert_eq!(
+            receiver
+                .recv()
+                .await
+                .expect("old frame")
+                .expect("media")
+                .data,
+            b"old"[..]
+        );
+        assert!(send_without_lag(&sender, frame(b"fresh")));
+        assert_eq!(
+            receiver
+                .recv()
+                .await
+                .expect("fresh frame")
+                .expect("media")
+                .data,
+            b"fresh"[..]
+        );
     }
 
     #[test]

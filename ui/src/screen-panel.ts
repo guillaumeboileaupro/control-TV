@@ -350,7 +350,7 @@ export function createScreenPanel(
       state = { ...state, transportUsed: used };
       const reply = await answer(
         used === "webrtc" ? "start_webrtc_stream" : next.request.command,
-        used === "webrtc" ? { ...next.request.args, audioDevice: null } : { ...next.request.args },
+        { ...next.request.args },
       );
       if (generation !== operation) {
         return;

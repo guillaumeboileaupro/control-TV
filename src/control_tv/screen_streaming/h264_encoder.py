@@ -65,7 +65,9 @@ _DEFAULT_SEGMENTING = HlsSegmenting()
 SYSTEM_AUDIO = "@DEFAULT_MONITOR@"
 # A receiver loaded before the playlist holds a few segments starts at the live edge with no
 # buffer and stalls at every segment (seen on the TV): start returns once this many are listed.
-_READY_SEGMENTS = 4
+# Two one-second segments are enough for the HLS receiver to start without deliberately putting
+# it eight seconds behind the live edge. WebRTC remains the sub-second transport.
+_READY_SEGMENTS = 2
 _READY_MARGIN_SECONDS = 15.0
 _READY_POLL_SECONDS = 0.1
 

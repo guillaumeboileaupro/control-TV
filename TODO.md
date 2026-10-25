@@ -23,10 +23,15 @@
 - [x] **Applis TV sur le téléphone (2026-10-25) :** #99 ne gardait que le programme `adb`, absent du téléphone ;
   l'adaptateur Python `adb-shell` de `main` est rétabli et choisi quand `adb` manque. Récepteur TV : nom,
   icône et bannière, consigne claire à l'écran. Validation automatisée ; essai réel en cours.
-- [x] **Son pendant l'écran vers la TV (2026-10-25) :** le son jouait sur la TV et sur l'ordinateur ; une sortie
-  virtuelle PulseAudio le reçoit pendant le flux HLS (le haut-parleur se tait), rétablie à l'arrêt. Validé
-  sur le PulseAudio du propriétaire (capture d'un son test) et par tests automatisés. Le flux WebRTC
-  n'envoie toujours aucun son (`audioDevice: null`) : à traiter.
+- [x] **Son pendant l'écran vers la TV (2026-10-25) :** HLS et WebRTC acquièrent désormais la même
+  route PulseAudio temporaire ; le bail WebRTC transmet sa source monitor au moteur Opus et la libère,
+  avec reprise du nettoyage si la restauration échoue. Tests automatisés PASS ; lecture audio WebRTC
+  sur TV et retour réel des haut-parleurs Ubuntu restent à valider sur matériel.
+- [x] **Retard de diffusion (2026-10-25) :** les files FFmpeg HLS de 1 024 entrées (jusqu'à des dizaines
+  de secondes de vieilles images) sont bornées à 4 images/8 paquets audio, et le démarrage HLS passe de
+  4×2 s à 2×1 s. WebRTC ne bloque plus la lecture FFmpeg quand ses files 1/4 sont pleines : les nouveaux
+  paquets sont abandonnés jusqu'au retour du transport, au lieu d'accumuler dans les pipes. Validation
+  automatisée uniquement ; la cible bout-en-bout < 500 ms exige encore une mesure réelle sur TV.
 - [x] **Télécommande complète (demande du propriétaire, 2026-10-25) :** pavé numérique, Input, Settings, Info,
   Guide, chaînes, sous-titres, piste audio, touches de couleur, touches média et touche Google Assistant
   (ouvre l'Assistant de la TV). Validation automatisée ; essai réel à faire.

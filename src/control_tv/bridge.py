@@ -735,6 +735,7 @@ def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> Js
                 "offsetY": lease.offset_y,
                 "sourceWidth": lease.source_width,
                 "sourceHeight": lease.source_height,
+                "audioDevice": lease.audio_device,
             }
         }
 

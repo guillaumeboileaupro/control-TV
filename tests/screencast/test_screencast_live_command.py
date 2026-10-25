@@ -38,7 +38,7 @@ def test_the_system_sound_is_recorded_only_with_a_captured_screen() -> None:
         "-f",
         "pulse",
         "-thread_queue_size",
-        "1024",
+        "8",
         "-i",
         "@DEFAULT_MONITOR@",
     )

@@ -31,6 +31,12 @@ from control_tv.screencast.model import (
     require_d0_source,
 )
 
+# At 30 fps these retain at most 133 ms of video. PulseAudio normally supplies 20 ms packets,
+# so eight packets retain about 160 ms. A live stream must drop work before it can drift by
+# seconds; the former value (1024 for both inputs) could retain tens of seconds of old media.
+LIVE_VIDEO_QUEUE = 4
+LIVE_AUDIO_QUEUE = 8
+
 
 class FrameFormat(Protocol):
     """Picture size and rate, as both the bounded D0 `VideoProfile` and the D1 live
@@ -55,7 +61,7 @@ def source_arguments(source: LiveSource, profile: FrameFormat) -> tuple[str, ...
             # A second live input (the system sound) shares FFmpeg's reading: without a queue the
             # grab misses frames while the sound is read (31 of 600 lost in 20 s, measured).
             "-thread_queue_size",
-            "1024",
+            str(LIVE_VIDEO_QUEUE),
             "-draw_mouse",
             "1",
             "-framerate",
@@ -175,7 +181,9 @@ def live_hls_command(
             f"system sound needs a captured screen and a source: {audio!r}"
         )
     sound_input = (
-        () if audio is None else ("-f", "pulse", "-thread_queue_size", "1024", "-i", audio)
+        ()
+        if audio is None
+        else ("-f", "pulse", "-thread_queue_size", str(LIVE_AUDIO_QUEUE), "-i", audio)
     )
     sound = (
         ()

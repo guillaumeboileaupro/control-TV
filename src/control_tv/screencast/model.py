@@ -280,8 +280,8 @@ class HlsSegmenting:
     """How a live encode is cut for HLS: segment length and how many segments the playlist keeps
     (older segments are deleted, so the output stays bounded however long the session runs)."""
 
-    segment_seconds: int = 2
-    playlist_size: int = 6
+    segment_seconds: int = 1
+    playlist_size: int = 3
 
     def __post_init__(self) -> None:
         _require_int("segment_seconds", self.segment_seconds, 1, 10)
