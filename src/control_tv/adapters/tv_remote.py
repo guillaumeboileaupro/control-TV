@@ -10,7 +10,9 @@ Rules this adapter keeps:
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
-  field (`type_text`), never logged or echoed. App launch and voice are not exposed here.
+  field (`type_text`), never logged or echoed. An app is opened by its package name
+  (`launch`, the TV's own `market://launch` link): no debugging setting is needed on the TV.
+  Voice is not exposed here.
 - One connection per TV, reused only while it is demonstrably open: the library has not
   reported it lost and its transport is not closing (the TV pings it every 5 s and the
   library closes it after 16 s without a message). It is closed after `KEEP_OPEN` seconds
@@ -37,6 +39,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
+from control_tv.adapters.tv_apps import checked_package
 from control_tv.domain import (
     CommandRejectedError,
     ControlError,
@@ -49,6 +52,7 @@ from control_tv.domain import (
 from control_tv.domain.remote import (
     MAX_TEXT_LENGTH,
     VOLUME_KEYS,
+    AppLaunch,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -88,6 +92,7 @@ class RemoteClient(Protocol):
     def disconnect(self) -> None: ...
     def send_key_command(self, key: str) -> None: ...
     def send_text(self, text: str) -> None: ...
+    def send_launch_app_command(self, app_link_or_app_id: str) -> None: ...
 
 
 RemoteFactory = Callable[[str, str, str, str], RemoteClient]
@@ -349,6 +354,25 @@ class TvRemoteChannel:
             if reported:
                 remote.send_text(text)
             return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
+
+        return self._run(lambda: self._session(host, send))
+
+    def launch(self, host: str, package: str) -> AppLaunch:
+        """Open an app by its package name, once, through the TV's own remote.
+
+        The adapter then waits a short time for the TV to report that app in front, and
+        returns the app the TV reported, whichever it is (`None` when it did not say).
+        """
+        host = _checked_host(host)
+        package = checked_package(package)
+
+        async def send(remote: RemoteClient, fresh: bool) -> AppLaunch:
+            del fresh
+            remote.send_launch_app_command(package)
+            await self._wait_for(
+                lambda: _observe(remote).current_app == package, self._power_settle
+            )
+            return AppLaunch(package=package, front_app=_observe(remote).current_app)
 
         return self._run(lambda: self._session(host, send))
 

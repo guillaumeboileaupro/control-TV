@@ -12,6 +12,7 @@ from typing import Protocol
 from control_tv.domain import (
     AppLaunch,
     AppLaunchResult,
+    AppListing,
     CommandResult,
     Device,
     DeviceId,
@@ -83,6 +84,8 @@ class TvRemote(Protocol):
 
     def type_text(self, host: str, text: str) -> TextEntry: ...
 
+    def launch(self, host: str, package: str) -> AppLaunch: ...
+
 
 class TvApps(Protocol):
     """The apps installed on a TV, reached by the TV's IP address.
@@ -99,6 +102,15 @@ class TvApps(Protocol):
     def pair(self, host: str, pairing_endpoint: str, code: str) -> None: ...
 
     def open_classic_port(self, host: str) -> None: ...
+
+
+class AppMemory(Protocol):
+    """The last app list each TV gave, kept on this device. Best effort: a list that cannot
+    be read is `None`, one that cannot be written is not kept."""
+
+    def recall(self, device_id: DeviceId) -> tuple[TvApp, ...] | None: ...
+
+    def remember(self, device_id: DeviceId, apps: tuple[TvApp, ...]) -> None: ...
 
 
 class TvControl(Protocol):
@@ -143,6 +155,8 @@ class TvControl(Protocol):
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult: ...
 
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]: ...
+
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing: ...
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult: ...
 

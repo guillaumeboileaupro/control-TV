@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
     AppLaunchResult,
+    AppListing,
     Command,
     CommandRejectedError,
     CommandResult,
@@ -43,7 +44,7 @@ from control_tv.domain import (
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import CastTransport, TvApps, TvRemote
+from control_tv.ports import AppMemory, CastTransport, TvApps, TvRemote
 from control_tv.tv_channels import TvChannels
 
 
@@ -350,6 +351,8 @@ class ControlService:
         sleep: Callable[[float], None] = time.sleep,
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
+        app_memory: AppMemory | None = None,
+        known_apps: tuple[TvApp, ...] = (),
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
     ) -> None:
@@ -385,7 +388,13 @@ class ControlService:
         # Acceptance only (C6): holds a sent playback command's confirmation until an
         # independent observer has recorded the session change. None in normal use.
         self._gate = gate
-        self._channels = TvChannels(self._discovered, remote=remote, apps=apps)
+        self._channels = TvChannels(
+            self._discovered,
+            remote=remote,
+            apps=apps,
+            memory=app_memory,
+            known_apps=known_apps,
+        )
         self._devices: dict[DeviceId, Device] = {}
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
@@ -590,6 +599,9 @@ class ControlService:
 
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         return self._channels.list_tv_apps(device_id)
+
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
+        return self._channels.browse_tv_apps(device_id)
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         return self._channels.launch_tv_app(device_id, package)

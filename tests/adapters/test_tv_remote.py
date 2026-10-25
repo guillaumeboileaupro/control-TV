@@ -21,6 +21,7 @@ from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
 from control_tv.adapters.tv_remote import CERT_FILE, KEY_FILE, TvRemoteChannel
 from control_tv.domain import (
+    AppLaunch,
     AudibleVolume,
     CommandRejectedError,
     DeviceUnavailableError,
@@ -58,6 +59,7 @@ class FakeTv:
         # Whether a connection stays open like the library's (a live transport and a pending
         # "connection lost" future); by default the fake looks closed, so every call connects.
         self.keeps_open = False
+        self.opens_launched_app = True
 
 
 class FakeRemote:
@@ -107,6 +109,13 @@ class FakeRemote:
     def _power_toggled(self) -> None:
         self.tv.is_on = not self.tv.is_on
         self.is_on = self.tv.is_on
+
+    def send_launch_app_command(self, app_link_or_app_id: str) -> None:
+        self.tv.log.append(("launch", app_link_or_app_id))
+        if self.tv.send_error is not None:
+            raise self.tv.send_error
+        if self.tv.opens_launched_app:
+            self.current_app = app_link_or_app_id
 
     def send_text(self, text: str) -> None:
         self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
@@ -744,3 +753,36 @@ def test_a_volume_key_on_a_tv_that_reports_no_volume_does_not_wait_for_one(
     finally:
         channel.close()
     assert pressed.before.volume is None and pressed.after.volume is None
+
+
+# Opening an app without the TV's debugging --------------------------------------------------------
+
+
+def test_an_app_is_opened_once_by_its_package_and_the_app_in_front_is_reported(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    launched = channel.launch(HOST, "com.netflix.ninja")
+
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
+    assert launched == AppLaunch(package="com.netflix.ninja", front_app="com.netflix.ninja")
+
+
+def test_a_tv_that_does_not_report_the_app_returns_what_it_said(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.opens_launched_app = False
+    tv.current_app = "com.google.android.tvlauncher"
+
+    launched = channel.launch(HOST, "com.netflix.ninja")
+
+    assert launched.front_app == "com.google.android.tvlauncher"
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
+
+
+@pytest.mark.parametrize("package", ["", "market://launch?id=x", "a b", None])
+def test_only_a_package_name_is_ever_sent_as_an_app(
+    channel: TvRemoteChannel, tv: FakeTv, package: Any
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        channel.launch(HOST, package)
+    assert tv.log == []

@@ -853,3 +853,38 @@ describe("opening the TV to the phone", () => {
     assert.equal(startRemote({ ...withTv(), tvAppsAvailable: false }, open).request, null);
   });
 });
+
+// Issue #112: the TV's debugging turns itself off; the window still offers apps.
+describe("an app list without the TV's debugging", () => {
+  const listed = (source: string, reason: string | null): RemoteAnswer => ({
+    ok: true,
+    result: { apps: [{ package: "com.netflix.ninja", name: "Netflix" }], source, reason },
+  });
+
+  test("its last list is shown and says it opens through the remote", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed("remembered", "debugging_off"));
+    const remote = describeRemote(state);
+
+    assert.deepEqual(
+      remote.apps?.map((app) => app.package),
+      ["com.netflix.ninja"],
+    );
+    assert.match(remote.outcome?.text ?? "", /listed last time.*remote/);
+    assert.match(remote.outcome?.technical ?? "", /^debugging_off/);
+    assert.equal(remote.appsPairingNeeded, false);
+  });
+
+  test("the usual apps are shown when the TV never listed its own", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed("known", "pairing_required"));
+    const remote = describeRemote(state);
+
+    assert.match(remote.outcome?.text ?? "", /usual ones.*Play Store/);
+    assert.equal(remote.appsPairingNeeded, true); // the computer can still pair for the real list
+  });
+
+  test("the TV's own list needs no word", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed("tv", null));
+
+    assert.equal(describeRemote(state).outcome, null);
+  });
+});

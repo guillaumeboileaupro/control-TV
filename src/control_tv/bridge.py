@@ -82,15 +82,18 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              back); `fieldReported` says whether the TV reported an active
                              field. The text is never echoed in an answer or an error: it may
                              be a password.
-- `list_tv_apps`          -> {"apps": [{"package", "name"}]}: the apps installed on the TV
-                             that its home screen can launch, as the TV lists them over its
-                             network debugging (ADB), which the owner turns on; `name` is a
-                             display name control-TV knows, or `null`. `debugging_off` when
-                             the TV's debugging is off, `pairing_required` until the owner
-                             allows control-TV on the TV, `unsupported_operation` for a Cast
-                             group or a build without the app list. Read-only.
-- `launch_tv_app`         -> also requires `package`: opens that app once, over the same
-                             network debugging as the list (the app's home-screen activity).
+- `list_tv_apps`          -> {"apps": [{"package", "name"}], "source", "reason"}: the apps to
+                             offer for the TV. `source` `tv`: the TV listed them now over its
+                             network debugging (ADB), kept on this device for next time;
+                             `remembered`: its last list, because its debugging did not answer
+                             (`reason` is that error's code: `debugging_off`,
+                             `pairing_required`, ...); `known`: apps control-TV knows, the TV
+                             never listed its own. `name` is a display name control-TV knows,
+                             or `null`. Only a TV not found or a Cast group is an error.
+                             Read-only.
+- `launch_tv_app`         -> also requires `package`: opens that app once, through the TV's
+                             own remote when paired (no debugging needed), else over its
+                             network debugging (the app's home-screen activity).
                              Answers {"result": {"package", "deviceId", "confirmation",
                              "detail", "frontApp"}}: `confirmed` only when the TV then reports
                              that app in front, `not_checked` when it does not say.
@@ -422,8 +425,12 @@ def _app_launch_to_json(result: AppLaunchResult) -> JsonObject:
 
 
 def _handle_list_tv_apps(control: TvControl, params: JsonObject) -> JsonObject:
-    apps = control.list_tv_apps(_device_id_param(params))
-    return {"apps": [_app_to_json(app) for app in apps]}
+    listing = control.browse_tv_apps(_device_id_param(params))
+    return {
+        "apps": [_app_to_json(app) for app in listing.apps],
+        "source": listing.source,
+        "reason": listing.reason,
+    }
 
 
 def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObject) -> JsonObject:
@@ -915,6 +922,7 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     from control_tv.adapters import PyChromecastTransport
     from control_tv.adapters.tv_apps import AdbAppInventory, find_adb
     from control_tv.adapters.tv_apps_adb_shell import AdbShellAppInventory
+    from control_tv.adapters.tv_apps_memory import FileAppMemory, known_apps
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
     from control_tv.trace_files import tracing_from_environment
 
@@ -929,6 +937,8 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
         apps=AdbAppInventory(credentials, adb=adb)
         if adb is not None
         else AdbShellAppInventory(credentials),
+        app_memory=FileAppMemory(credentials.parent / "tv-apps"),
+        known_apps=known_apps(),
         trace=active.recorder,
         gate=active.gate,
     )

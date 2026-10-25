@@ -155,6 +155,21 @@ class TvApp:
 
 
 @dataclass(frozen=True, slots=True)
+class AppListing:
+    """The apps the window offers for one TV, and where the list comes from.
+
+    `source` is `tv` (the TV listed them now), `remembered` (the TV's last list, kept on this
+    device because its debugging cannot be reached now) or `known` (apps control-TV knows,
+    since this TV never listed its own); `reason` is the error code of the TV's listing when
+    it is not `tv`. Opening an app goes through the TV's remote, which needs no list.
+    """
+
+    apps: tuple[TvApp, ...]
+    source: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AppLaunch:
     """An app launch that was sent once, and the app the TV reported in front afterwards
     (`None` when the TV did not say)."""

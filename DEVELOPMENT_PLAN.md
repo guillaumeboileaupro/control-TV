@@ -45,6 +45,10 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   TV restarts. Open: hardware measurement of the latency and the end-to-end app list on the phone.
   Also on Ubuntu: the app started from GNOME found only Ubuntu's `adb` 28 (no Wireless debugging), the
   SDK's being on `PATH` through `~/.bashrc` only; `find_adb` now prefers an installed SDK's `adb`.
+  Owner direction (2026-10-25): no TV setting to touch in normal use. An app opens through the TV's
+  paired remote (`launch`, the TV's `market://launch` link), the TV's debugging only lists the apps; when it
+  does not answer, the window shows the TV's last list (kept per TV on the device) or the known apps, saying so.
+  The receiver check for screen sharing stays strict.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.

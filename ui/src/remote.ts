@@ -494,16 +494,15 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
     }
     case "list_apps": {
       const apps = toApps(result["apps"]);
+      const reason = typeof result["reason"] === "string" ? result["reason"] : null;
       return {
         ...state,
         remote: {
           ...remote,
           apps,
-          appsPairingNeeded: false,
-          outcome:
-            apps.length === 0
-              ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
-              : null,
+          // The computer can still pair the TV's Wireless debugging to get its own list.
+          appsPairingNeeded: reason === "pairing_required",
+          outcome: listingOutcome(result["source"], reason, apps.length),
         },
       };
     }
@@ -574,6 +573,33 @@ function withFrontApp(
 }
 
 // An app list as the control layer sends it; malformed entries are left out, never guessed.
+// Where the app list comes from. Only the TV's own list needs no word; a list from memory or
+// the usual apps says why, and that opening still works (through the TV's remote).
+function listingOutcome(
+  source: JsonValue | undefined,
+  reason: string | null,
+  count: number,
+): RemoteOutcome | null {
+  const technical = reason === null ? null : `${reason}: the TV's debugging did not list its apps`;
+  if (source === "remembered") {
+    return {
+      tone: "sent",
+      text: "The TV's debugging didn't answer: these are the apps it listed last time. They open through the TV's remote.",
+      technical,
+    };
+  }
+  if (source === "known") {
+    return {
+      tone: "sent",
+      text: "The TV's debugging didn't answer and it never listed its apps: here are the usual ones. They open through the TV's remote; one that isn't installed opens its Play Store page.",
+      technical,
+    };
+  }
+  return count === 0
+    ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
+    : null;
+}
+
 export function toApps(value: JsonValue | undefined): TvApp[] {
   if (!Array.isArray(value)) {
     return [];

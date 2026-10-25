@@ -28,6 +28,7 @@ from control_tv.domain import (
     DeviceNotFoundError,
     InvalidArgumentError,
     KeyPress,
+    OperationTimeoutError,
     PairingRequiredError,
     RemoteKey,
     RemoteObservation,
@@ -89,6 +90,17 @@ class FakeRemote:
         self.calls.append(("type_text", host, text))
         self._maybe_fail()
         return TextEntry(length=len(text), field_reported=self.field_reported, observed=self.before)
+
+    # Not paired for apps by default: a launch then falls back to the TV's debugging.
+    launches: bool = False
+    front: str | None = None
+
+    def launch(self, host: str, package: str) -> AppLaunch:
+        self.calls.append(("launch", host, package))
+        self._maybe_fail()
+        if not self.launches:
+            raise PairingRequiredError("this TV must be paired with control-TV first")
+        return AppLaunch(package=package, front_app=self.front)
 
 
 class GroupTransport(FakeTransport):
@@ -771,8 +783,32 @@ def test_a_launch_needs_a_package_name_string_and_the_inventory() -> None:
 
     with pytest.raises(InvalidArgumentError):
         with_apps(apps).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
-    with pytest.raises(UnsupportedOperationError):
+    with pytest.raises(PairingRequiredError):  # neither a paired remote nor the inventory
         discovered(FakeRemote()).launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == []
+
+
+def test_a_launch_goes_through_the_tvs_remote_without_its_debugging() -> None:
+    apps = FakeApps(error=DebuggingOffError("debugging off"))
+    remote = FakeRemote(launches=True, front="com.example.video")
+    service = ControlService(FakeTransport(), remote=remote, apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    result = service.launch_tv_app(DEVICE_ID, "com.example.video")
+
+    assert remote.calls == [("launch", HOST, "com.example.video")]
+    assert apps.calls == []
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_remote_that_fails_after_sending_is_not_retried_through_the_debugging() -> None:
+    apps = FakeApps()
+    remote = FakeRemote(launches=True, error=OperationTimeoutError("no answer"))
+    service = ControlService(FakeTransport(), remote=remote, apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    with pytest.raises(OperationTimeoutError):
+        service.launch_tv_app(DEVICE_ID, "com.example.video")
     assert apps.calls == []
 
 
@@ -783,32 +819,83 @@ def test_bridge_lists_apps_with_their_known_names() -> None:
         "apps": [
             {"package": "com.example.video", "name": "Video"},
             {"package": "org.example.music", "name": None},
-        ]
+        ],
+        "source": "tv",
+        "reason": None,
     }
 
 
-def test_bridge_app_list_errors_keep_their_codes() -> None:
+KNOWN = (TvApp("com.netflix.ninja", "Netflix"),)
+
+
+class MemoryApps:
+    def __init__(self) -> None:
+        self.kept: dict[DeviceId, tuple[TvApp, ...]] = {}
+
+    def recall(self, device_id: DeviceId) -> tuple[TvApp, ...] | None:
+        return self.kept.get(device_id)
+
+    def remember(self, device_id: DeviceId, apps: tuple[TvApp, ...]) -> None:
+        self.kept[device_id] = apps
+
+
+def remembering(apps: FakeApps, memory: MemoryApps) -> ControlService:
+    service = ControlService(
+        FakeTransport(), remote=FakeRemote(), apps=apps, app_memory=memory, known_apps=KNOWN
+    )
+    service.discover_devices(timeout=1.0)
+    return service
+
+
+def test_without_the_tvs_debugging_the_window_gets_its_last_list_then_known_apps() -> None:
+    memory = MemoryApps()
+    apps = FakeApps()
+    service = remembering(apps, memory)
+    call(service, "list_tv_apps", deviceId=str(DEVICE_ID))  # the TV answers: kept
+
+    apps.error = DebuggingOffError("debugging off")
+    remembered = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
+    memory.kept.clear()
+    known = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
+
+    assert remembered["source"] == "remembered" and remembered["reason"] == "debugging_off"
+    assert [app["package"] for app in remembered["apps"]] == [a.package for a in apps.apps]
+    assert known == {
+        "apps": [{"package": "com.netflix.ninja", "name": "Netflix"}],
+        "source": "known",
+        "reason": "debugging_off",
+    }
+
+
+def test_the_strict_list_still_reports_the_tvs_error() -> None:
     apps = FakeApps(error=PairingRequiredError("allow control-TV on the TV"))
 
-    response = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
+    with pytest.raises(PairingRequiredError):
+        remembering(apps, MemoryApps()).list_tv_apps(DEVICE_ID)
 
-    assert response["error"]["code"] == "pairing_required"
 
-
-@pytest.mark.parametrize("method", ["list_tv_apps", "launch_tv_app"])
-def test_bridge_says_when_the_tv_debugging_is_off(method: str) -> None:
+def test_bridge_says_when_the_tv_debugging_is_off() -> None:
     apps = FakeApps(error=DebuggingOffError("turn on USB debugging"))
-    params = {"package": "com.example.video"} if method == "launch_tv_app" else {}
 
-    response = call(with_apps(apps), method, deviceId=str(DEVICE_ID), **params)
+    listed = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
+    launched = call(
+        with_apps(apps), "launch_tv_app", deviceId=str(DEVICE_ID), package="com.example.video"
+    )
 
-    assert response["error"]["code"] == "debugging_off"
+    assert listed["result"]["reason"] == "debugging_off"
+    assert launched["error"]["code"] == "debugging_off"
 
 
 def test_bridge_app_list_without_the_channel_is_not_reported_as_debugging_off() -> None:
     response = call(discovered(FakeRemote()), "list_tv_apps", deviceId=str(DEVICE_ID))
 
-    assert response["error"]["code"] == "unsupported_operation"
+    assert response["result"]["reason"] == "unsupported_operation"
+
+
+def test_a_group_or_an_unknown_tv_is_still_refused() -> None:
+    response = call(with_apps(FakeApps()), "list_tv_apps", deviceId="not-a-discovered-tv")
+
+    assert "error" in response
 
 
 def test_bridge_launches_an_app_and_answers_with_what_the_tv_reported() -> None:

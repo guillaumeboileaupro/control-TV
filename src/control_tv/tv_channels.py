@@ -12,14 +12,18 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from control_tv.domain import (
+    AppLaunch,
     AppLaunchResult,
+    AppListing,
     Confirmation,
+    ControlError,
     Device,
     DeviceId,
     DeviceKind,
     DeviceNotFoundError,
     InvalidArgumentError,
     KeyPress,
+    PairingRequiredError,
     RemoteKey,
     RemoteKeyResult,
     RemoteObservation,
@@ -27,7 +31,7 @@ from control_tv.domain import (
     TvApp,
     UnsupportedOperationError,
 )
-from control_tv.ports import TvApps, TvRemote
+from control_tv.ports import AppMemory, TvApps, TvRemote
 
 
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
@@ -73,10 +77,14 @@ class TvChannels:
         *,
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
+        memory: AppMemory | None = None,
+        known_apps: tuple[TvApp, ...] = (),
     ) -> None:
         self._discovered = discovered
         self._remote = remote
         self._apps = apps
+        self._memory = memory
+        self._known_apps = known_apps
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
         remote, host = self._remote_target(device_id)
@@ -136,17 +144,31 @@ class TvChannels:
             )
         return list(self._apps.list_apps(host))
 
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
+        """The apps to offer in the window, whatever the state of the TV's debugging.
+
+        The TV's own list when it answers (then kept for next time); otherwise its last list,
+        or the apps control-TV knows, with the reason the TV did not list them. A TV not found
+        or a Cast group is still refused: there is nothing to open there.
+        """
+        self._tv_host(device_id)
+        try:
+            apps = tuple(self.list_tv_apps(device_id))
+        except ControlError as error:
+            remembered = None if self._memory is None else self._memory.recall(device_id)
+            if remembered:
+                return AppListing(apps=remembered, source="remembered", reason=error.code)
+            return AppListing(apps=self._known_apps, source="known", reason=error.code)
+        if self._memory is not None and apps:
+            self._memory.remember(device_id, apps)
+        return AppListing(apps=apps, source="tv")
+
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports
         that app in front; `NOT_CHECKED` when it does not say."""
         if not isinstance(package, str):
             raise InvalidArgumentError("the app must be a package name", device_id=device_id)
-        host = self._tv_host(device_id)
-        if self._apps is None:
-            raise UnsupportedOperationError(
-                "this application cannot open the TV's apps", device_id=device_id
-            )
-        launch = self._apps.launch_app(host, package)
+        launch = self._launch(device_id, package)
         front = launch.front_app
         if front == launch.package:
             confirmation, detail = Confirmation.CONFIRMED, "the TV reports the app in front"
@@ -191,6 +213,23 @@ class TvChannels:
                 "this application has no TV remote channel", device_id=device_id
             )
         return self._remote, self._tv_host(device_id, remote=True)
+
+    def _launch(self, device_id: DeviceId, package: str) -> AppLaunch:
+        """Through the TV's own remote when it offers one: nothing to turn on in the TV's
+        settings. Through its debugging otherwise, or when the remote refused before sending
+        anything (not paired, or no remote library in this build)."""
+        if self._remote is not None:
+            try:
+                remote, host = self._remote_target(device_id)
+                return remote.launch(host, package)
+            except (PairingRequiredError, UnsupportedOperationError):
+                if self._apps is None:
+                    raise
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot open the TV's apps", device_id=device_id
+            )
+        return self._apps.launch_app(self._tv_host(device_id), package)
 
     def _tv_host(self, device_id: DeviceId, *, remote: bool = False) -> str:
         """The address of a TV found by the last discovery, never a group or a guess.

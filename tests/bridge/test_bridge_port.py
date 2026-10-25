@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from control_tv.bridge import dispatch, handle_line
 from control_tv.domain import (
     AppLaunchResult,
+    AppListing,
     CommandResult,
     ConnectionState,
     DebuggingOffError,
@@ -91,6 +92,10 @@ class StubControl:
         self.calls.append(("list_tv_apps", device_id))
         return list(self.apps)
 
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
+        self.calls.append(("browse_tv_apps", device_id))
+        return AppListing(apps=tuple(self.apps), source="tv")
+
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         raise _unexpected("launch_tv_app")
 
@@ -111,8 +116,12 @@ def test_the_bridge_dispatches_to_any_implementation_of_the_port() -> None:
     )
 
     assert devices == {"id": 1, "ok": True, "result": {"devices": []}}
-    assert apps["result"] == {"apps": [{"package": "com.example.video", "name": "Video"}]}
-    assert stub.calls == [("discover_devices", "5.0"), ("list_tv_apps", str(DEVICE_ID))]
+    assert apps["result"] == {
+        "apps": [{"package": "com.example.video", "name": "Video"}],
+        "source": "tv",
+        "reason": None,
+    }
+    assert stub.calls == [("discover_devices", "5.0"), ("browse_tv_apps", str(DEVICE_ID))]
 
 
 def test_an_error_of_the_port_keeps_its_code_through_the_bridge() -> None:
