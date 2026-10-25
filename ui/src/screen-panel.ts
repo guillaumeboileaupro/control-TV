@@ -348,10 +348,9 @@ export function createScreenPanel(
         return;
       }
       state = { ...state, transportUsed: used };
-      const reply = await answer(
-        used === "webrtc" ? "start_webrtc_stream" : next.request.command,
-        { ...next.request.args },
-      );
+      const reply = await answer(used === "webrtc" ? "start_webrtc_stream" : next.request.command, {
+        ...next.request.args,
+      });
       if (generation !== operation) {
         return;
       }
