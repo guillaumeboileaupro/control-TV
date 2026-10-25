@@ -41,8 +41,18 @@
 - [x] **Noms et logos des applis TV (demande du propriétaire, 2026-10-25) :** RMC BFM Play, Aktu Free, M6+, OQEE,
   Diagnostic Freebox, ControlTV Récepteur (avec le logo de control-TV) et l'entrée Disney+ de la Freebox (logo Disney+).
   Pas de logo à licence libre pour RMC BFM Play, OQEE, M6+, TFOU MAX, Aktu Free : initiale conservée.
+- [x] **Pavé directionnel (2026-10-25) :** quatre quarts d'anneau et OK, sans zone morte ni chevauchement ; grille de
+  101×101 points (bords, angles, frontières) testée, et 3 285 points mesurés dans Chromium et WebKitGTK.
+- [x] **Récepteur TV (2026-10-25) :** écrans attente/connexion/diffusion/interruption/erreur, plus de session fantôme
+  (générations), session fermée à l'arrêt, écran maintenu allumé seulement pendant un flux. 13 tests JVM.
+- [x] **Touches de la télécommande (2026-10-25) :** chaque touche testée de bout en bout (requête, attente, issue) et
+  chaque code vérifié dans le protocole de la TV (`androidtvremote2`).
+- [ ] **Validation matérielle :** pavé au toucher sur le téléphone ; récepteur (attente, interruption, reprise) sur
+  Liberté boîte et Chromecast.
 - [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
   ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
+  Fait côté Android : `VoiceCapture` (capture à la demande, permission, arrêt garanti, 8 tests). Reste : session
+  vocale dans l'adaptateur de télécommande et le bridge, puis permission `RECORD_AUDIO` et bouton.
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
   correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou
