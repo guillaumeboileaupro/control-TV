@@ -295,8 +295,7 @@ class AdbAppInventory:
         endpoints = {
             service.endpoint
             for service in parse_mdns_services(result.stdout)
-            if service.kind == "_adb-tls-pairing._tcp"
-            and _endpoint_host(service.endpoint) == host
+            if service.kind == "_adb-tls-pairing._tcp" and _endpoint_host(service.endpoint) == host
         }
         if len(endpoints) == 1:
             return endpoints.pop()
