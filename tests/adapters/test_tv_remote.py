@@ -320,8 +320,11 @@ def test_only_allowlisted_keys_can_be_sent(channel: TvRemoteChannel, tv: FakeTv,
     assert tv.log == []
 
 
-def test_the_allowlist_has_no_text_launch_voice_or_microphone_key() -> None:
-    assert {key.name for key in RemoteKey} == {
+def test_the_allowlist_is_exactly_the_keys_of_a_google_tv_remote() -> None:
+    # Owner decision of 2026-10-25: the keys of a Google TV remote, including its Assistant key;
+    # still no microphone mute (KEYCODE_MUTE) and no free launch or text key.
+    digits = {f"DIGIT_{n}" for n in range(10)}
+    assert {key.name for key in RemoteKey} == digits | {
         "VOLUME_UP",
         "VOLUME_DOWN",
         "VOLUME_MUTE",
@@ -335,7 +338,28 @@ def test_the_allowlist_has_no_text_launch_voice_or_microphone_key() -> None:
         "HOME",
         "DELETE",
         "ENTER",
+        "INFO",
+        "GUIDE",
+        "TV_INPUT",
+        "CAPTIONS",
+        "AUDIO_TRACK",
+        "SETTINGS",
+        "CHANNEL_UP",
+        "CHANNEL_DOWN",
+        "RED",
+        "GREEN",
+        "YELLOW",
+        "BLUE",
+        "PLAY_PAUSE",
+        "STOP",
+        "REWIND",
+        "FAST_FORWARD",
+        "PREVIOUS",
+        "NEXT",
+        "RECORD",
+        "ASSISTANT",
     }
+    assert "KEYCODE_MUTE" not in {key.value for key in RemoteKey}
 
 
 def test_a_failure_after_the_key_was_handed_over_is_reported_and_never_resent(

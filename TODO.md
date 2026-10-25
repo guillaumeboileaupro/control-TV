@@ -27,6 +27,11 @@
   virtuelle PulseAudio le reçoit pendant le flux HLS (le haut-parleur se tait), rétablie à l'arrêt. Validé
   sur le PulseAudio du propriétaire (capture d'un son test) et par tests automatisés. Le flux WebRTC
   n'envoie toujours aucun son (`audioDevice: null`) : à traiter.
+- [x] **Télécommande complète (demande du propriétaire, 2026-10-25) :** pavé numérique, Input, Settings, Info,
+  Guide, chaînes, sous-titres, piste audio, touches de couleur, touches média et touche Google Assistant
+  (ouvre l'Assistant de la TV). Validation automatisée ; essai réel à faire.
+- [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
+  ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
 - [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
   correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou

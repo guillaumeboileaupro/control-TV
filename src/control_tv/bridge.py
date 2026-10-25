@@ -65,7 +65,12 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
 - `press_remote_key`      -> also requires `key`, one of `volume_up`, `volume_down`, `mute`
                              (the speaker), `power`, `up`, `down`, `left`, `right`, `ok`,
                              `back`, `home`, `delete` (Backspace in the TV's text field),
-                             `enter` (submits it). The key is sent once, never resent. Answers
+                             `enter` (submits it), `digit_0`..`digit_9`, `info`, `guide`,
+                             `input`, `subtitles`, `audio_track`, `settings`, `channel_up`,
+                             `channel_down`, `red`, `green`, `yellow`, `blue`, `play_pause`,
+                             `stop`, `rewind`, `fast_forward`, `previous`, `next`, `record`,
+                             `assistant` (the TV's Google Assistant). The key is sent once,
+                             never resent. Answers
                              {"result": {"key", "deviceId", "confirmation", "detail", "before",
                              "after"}}: `confirmed` only when the TV reported the expected
                              volume or mute change (its report, not a person hearing it);
@@ -295,6 +300,36 @@ REMOTE_KEYS: dict[str, RemoteKey] = {
     "home": RemoteKey.HOME,
     "delete": RemoteKey.DELETE,
     "enter": RemoteKey.ENTER,
+    "digit_0": RemoteKey.DIGIT_0,
+    "digit_1": RemoteKey.DIGIT_1,
+    "digit_2": RemoteKey.DIGIT_2,
+    "digit_3": RemoteKey.DIGIT_3,
+    "digit_4": RemoteKey.DIGIT_4,
+    "digit_5": RemoteKey.DIGIT_5,
+    "digit_6": RemoteKey.DIGIT_6,
+    "digit_7": RemoteKey.DIGIT_7,
+    "digit_8": RemoteKey.DIGIT_8,
+    "digit_9": RemoteKey.DIGIT_9,
+    "info": RemoteKey.INFO,
+    "guide": RemoteKey.GUIDE,
+    "input": RemoteKey.TV_INPUT,
+    "subtitles": RemoteKey.CAPTIONS,
+    "audio_track": RemoteKey.AUDIO_TRACK,
+    "settings": RemoteKey.SETTINGS,
+    "channel_up": RemoteKey.CHANNEL_UP,
+    "channel_down": RemoteKey.CHANNEL_DOWN,
+    "red": RemoteKey.RED,
+    "green": RemoteKey.GREEN,
+    "yellow": RemoteKey.YELLOW,
+    "blue": RemoteKey.BLUE,
+    "play_pause": RemoteKey.PLAY_PAUSE,
+    "stop": RemoteKey.STOP,
+    "rewind": RemoteKey.REWIND,
+    "fast_forward": RemoteKey.FAST_FORWARD,
+    "previous": RemoteKey.PREVIOUS,
+    "next": RemoteKey.NEXT,
+    "record": RemoteKey.RECORD,
+    "assistant": RemoteKey.ASSISTANT,
 }
 _KEY_NAMES = {key: name for name, key in REMOTE_KEYS.items()}
 

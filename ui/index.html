@@ -101,6 +101,11 @@
         <symbol id="i-home" viewBox="0 0 24 24">
           <path d="M4.5 10.5L12 4l7.5 6.5V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z" />
         </symbol>
+        <symbol id="i-mic" viewBox="0 0 24 24">
+          <path
+            d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"
+          />
+        </symbol>
         <symbol id="i-minus" viewBox="0 0 24 24">
           <path d="M6 12h12" />
         </symbol>
@@ -335,6 +340,302 @@
                   <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
                 </button>
               </div>
+
+              <!-- The rest of a Google TV remote (owner request, 2026-10-25): each key is sent once,
+                   as the TV's own remote sends it. -->
+              <div class="remote-row">
+                <button
+                  class="btn-pill btn-assistant"
+                  type="button"
+                  data-remote-key="assistant"
+                  aria-label="Google Assistant on the TV"
+                  title="Google Assistant on the TV"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg
+                  ><span>Google Assistant</span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-4" role="group" aria-label="TV functions">
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="input"
+                  aria-label="TV input source"
+                  title="TV input source"
+                >
+                  <span>Input</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="settings"
+                  aria-label="TV settings"
+                  title="TV settings"
+                >
+                  <span>Settings</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="info"
+                  aria-label="Information"
+                  title="Information"
+                >
+                  <span>Info</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="guide"
+                  aria-label="Programme guide"
+                  title="Programme guide"
+                >
+                  <span>Guide</span>
+                </button>
+              </div>
+              <div
+                class="remote-grid remote-grid-4"
+                role="group"
+                aria-label="Channels, subtitles and audio"
+              >
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="channel_down"
+                  aria-label="Channel down"
+                  title="Channel down"
+                >
+                  <span>Ch −</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="channel_up"
+                  aria-label="Channel up"
+                  title="Channel up"
+                >
+                  <span>Ch +</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="subtitles"
+                  aria-label="Subtitles"
+                  title="Subtitles"
+                >
+                  <span>Subtitles</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="audio_track"
+                  aria-label="Audio track"
+                  title="Audio track"
+                >
+                  <span>Audio</span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-4" role="group" aria-label="Colour keys">
+                <button
+                  class="btn-pill color-key color-red"
+                  type="button"
+                  data-remote-key="red"
+                  aria-label="Red key"
+                  title="Red key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-green"
+                  type="button"
+                  data-remote-key="green"
+                  aria-label="Green key"
+                  title="Green key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-yellow"
+                  type="button"
+                  data-remote-key="yellow"
+                  aria-label="Yellow key"
+                  title="Yellow key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-blue"
+                  type="button"
+                  data-remote-key="blue"
+                  aria-label="Blue key"
+                  title="Blue key"
+                >
+                  <span></span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-4" role="group" aria-label="Media">
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="previous"
+                  aria-label="Previous"
+                  title="Previous"
+                >
+                  <span>⏮</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="rewind"
+                  aria-label="Rewind"
+                  title="Rewind"
+                >
+                  <span>⏪</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="play_pause"
+                  aria-label="Play or pause"
+                  title="Play or pause"
+                >
+                  <span>⏯</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="fast_forward"
+                  aria-label="Fast forward"
+                  title="Fast forward"
+                >
+                  <span>⏩</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="next"
+                  aria-label="Next"
+                  title="Next"
+                >
+                  <span>⏭</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="stop"
+                  aria-label="Stop"
+                  title="Stop"
+                >
+                  <span>⏹</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="record"
+                  aria-label="Record"
+                  title="Record"
+                >
+                  <span>⏺</span>
+                </button>
+              </div>
+              <details class="keyboard">
+                <summary class="keyboard-summary">
+                  <span>Numbers</span>
+                  <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron" /></svg>
+                </summary>
+                <div class="remote-grid remote-grid-3" role="group" aria-label="Number keys">
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_1"
+                    aria-label="Number 1"
+                    title="Number 1"
+                  >
+                    <span>1</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_2"
+                    aria-label="Number 2"
+                    title="Number 2"
+                  >
+                    <span>2</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_3"
+                    aria-label="Number 3"
+                    title="Number 3"
+                  >
+                    <span>3</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_4"
+                    aria-label="Number 4"
+                    title="Number 4"
+                  >
+                    <span>4</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_5"
+                    aria-label="Number 5"
+                    title="Number 5"
+                  >
+                    <span>5</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_6"
+                    aria-label="Number 6"
+                    title="Number 6"
+                  >
+                    <span>6</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_7"
+                    aria-label="Number 7"
+                    title="Number 7"
+                  >
+                    <span>7</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_8"
+                    aria-label="Number 8"
+                    title="Number 8"
+                  >
+                    <span>8</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_9"
+                    aria-label="Number 9"
+                    title="Number 9"
+                  >
+                    <span>9</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_0"
+                    aria-label="Number 0"
+                    title="Number 0"
+                  >
+                    <span>0</span>
+                  </button>
+                </div>
+              </details>
 
               <!-- The TV's active text field: the text replaces what the field holds; it is
                    sent once and never kept or logged (it may be a password). -->

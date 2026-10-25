@@ -1439,3 +1439,60 @@ h2 {
 #display-arrangement [aria-pressed="true"] {
   background: var(--accent-tint);
 }
+
+/* The rest of a Google TV remote: compact rows of equal keys. */
+.remote-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-grid-3 {
+  --cols: 3;
+}
+
+.remote-grid-4 {
+  --cols: 4;
+}
+
+.remote-grid .btn-pill {
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 0.875rem;
+}
+
+.btn-assistant .icon {
+  color: var(--accent);
+}
+
+.color-key {
+  min-height: 40px;
+}
+
+.color-red,
+.color-red:hover {
+  background: #d93025;
+}
+
+.color-green,
+.color-green:hover {
+  background: #188038;
+}
+
+.color-yellow,
+.color-yellow:hover {
+  background: #f9ab00;
+}
+
+.color-blue,
+.color-blue:hover {
+  background: #1a73e8;
+}
+
+.remote-grid-3 [data-remote-key="digit_0"] {
+  grid-column: 2;
+}
+
+.btn-assistant {
+  font-weight: 600;
+}

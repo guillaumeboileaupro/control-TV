@@ -30,6 +30,37 @@ class RemoteKey(StrEnum):
     HOME = "KEYCODE_HOME"
     DELETE = "KEYCODE_DEL"  # the keyboard's Backspace, in the TV's active text field
     ENTER = "KEYCODE_ENTER"  # the keyboard's Enter: submits the TV's active text field
+    # The rest of a Google TV remote: as the TV's own remote sends them, each once.
+    DIGIT_0 = "KEYCODE_0"
+    DIGIT_1 = "KEYCODE_1"
+    DIGIT_2 = "KEYCODE_2"
+    DIGIT_3 = "KEYCODE_3"
+    DIGIT_4 = "KEYCODE_4"
+    DIGIT_5 = "KEYCODE_5"
+    DIGIT_6 = "KEYCODE_6"
+    DIGIT_7 = "KEYCODE_7"
+    DIGIT_8 = "KEYCODE_8"
+    DIGIT_9 = "KEYCODE_9"
+    INFO = "KEYCODE_INFO"
+    GUIDE = "KEYCODE_GUIDE"
+    TV_INPUT = "KEYCODE_TV_INPUT"
+    CAPTIONS = "KEYCODE_CAPTIONS"  # subtitles
+    AUDIO_TRACK = "KEYCODE_MEDIA_AUDIO_TRACK"
+    SETTINGS = "KEYCODE_SETTINGS"
+    CHANNEL_UP = "KEYCODE_CHANNEL_UP"
+    CHANNEL_DOWN = "KEYCODE_CHANNEL_DOWN"
+    RED = "KEYCODE_PROG_RED"
+    GREEN = "KEYCODE_PROG_GREEN"
+    YELLOW = "KEYCODE_PROG_YELLOW"
+    BLUE = "KEYCODE_PROG_BLUE"
+    PLAY_PAUSE = "KEYCODE_MEDIA_PLAY_PAUSE"
+    STOP = "KEYCODE_MEDIA_STOP"
+    REWIND = "KEYCODE_MEDIA_REWIND"
+    FAST_FORWARD = "KEYCODE_MEDIA_FAST_FORWARD"
+    PREVIOUS = "KEYCODE_MEDIA_PREVIOUS"
+    NEXT = "KEYCODE_MEDIA_NEXT"
+    RECORD = "KEYCODE_MEDIA_RECORD"
+    ASSISTANT = "KEYCODE_ASSIST"  # opens the TV's Google Assistant
 
 
 VOLUME_KEYS = frozenset({RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE})

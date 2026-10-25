@@ -37,6 +37,10 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   (`bincode`, OSV only), the engine audit moved to `dev.py webrtc-audit` (same waiver policy as
   `rust-audit`), OSV-Scanner reading `osv-scanner.toml`; waived advisories stay printed and an
   expired waiver fails the audit. Residual risk and local-network-only use in `SECURITY.md`.
+- [x] Owner request, 2026-10-25: the window offers the whole Google TV remote (digits, Input, Settings,
+  Info, Guide, channels, subtitles, audio track, colour keys, media keys, Google Assistant key); every
+  window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone":
+  streaming the voice to the TV's Assistant (`androidtvremote2.start_voice`) is the next step.
 - [x] Real trial, 2026-10-25: the sound of a screen sent with it played on both the TV and the computer;
   muting the speakers also silences their monitor (checked), so `audio_route.PulseAudioRoute` makes a
   null sink the default output for the stream and restores it at stop (retryable). WebRTC still sends

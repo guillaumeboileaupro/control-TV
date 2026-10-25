@@ -395,6 +395,16 @@ def test_the_tv_apps_go_through_adb_where_it_exists_and_adb_shell_on_a_phone(
     assert type(service._channels._apps).__name__ == expected
 
 
+def test_every_remote_key_of_the_window_is_one_the_bridge_sends() -> None:
+    import re
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parents[2] / "ui" / "index.html").read_text(encoding="utf-8")
+    keys = set(re.findall(r'data-remote-key="([a-z0-9_]+)"', html))
+
+    assert keys == set(REMOTE_KEYS)  # every key the bridge accepts has its button, and back
+
+
 def test_without_xdg_data_home_credentials_go_to_the_users_local_share(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
