@@ -1,5 +1,13 @@
 # Development plan
 
+## Consolidation finale — 2026-10-25
+
+La pile #106 → #107 → #108 → #109 est validée avec les corrections indépendantes #104, #103 et
+#105. Leur intégration a conservé les frontières de modules UI et les états ADB/D1/D2/WebRTC. Le
+contrôle de sécurité Python a détecté GHSA-xmj3-9gf7-h52w dans `setuptools` 84.0.0 ; la dépendance
+de construction et son verrou sont mis à jour vers la première version corrigée, 84.1.0. Les
+validations restent logicielles et ne constituent pas un essai Android TV.
+
 ## Rust/WebRTC — état logiciel au 2026-10-21
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.

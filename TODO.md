@@ -1,5 +1,8 @@
 # control-TV — TODO
 
+- [x] **Consolidation sécurité Python :** `setuptools` est verrouillé en 84.1.0, première
+  version corrigeant GHSA-xmj3-9gf7-h52w détecté par l'audit de la pile intégrée.
+
 - [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
   réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
   `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.
