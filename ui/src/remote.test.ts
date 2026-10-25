@@ -653,7 +653,7 @@ describe("the TV's apps", () => {
 
     assert.equal(
       describeRemote(state).outcome?.text,
-      "Allow this computer if the TV shows an authorization prompt. For Wireless debugging, open the pairing-code screen and enter its pairing address and temporary code here.",
+      "Enter the temporary code shown by Wireless debugging. The pairing address is discovered automatically when the TV advertises it.",
     );
     assert.equal(describeRemote(state).appsPairingNeeded, true);
     assert.equal(state.remote.pairing, "not_tried");
@@ -675,6 +675,36 @@ describe("the TV's apps", () => {
     );
     assert.equal(paired.request.action.kind, "pair_apps");
     assert.equal(paired.state.remote.appsPairingNeeded, false);
+  });
+
+  test("Wireless debugging accepts the TV code with automatic address discovery", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const started = startRemote(needed, {
+      kind: "pair_apps",
+      pairingEndpoint: "",
+      code: "123456",
+    });
+
+    assert.deepEqual(started.request?.action, {
+      kind: "pair_apps",
+      pairingEndpoint: "",
+      code: "123456",
+    });
+  });
+
+  test("an expired Wireless debugging code keeps pairing open and explains the retry", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const refused = run(
+      needed,
+      { kind: "pair_apps", pairingEndpoint: "", code: "123456" },
+      failure("command_rejected"),
+    ).state;
+
+    assert.equal(describeRemote(refused).appsPairingNeeded, true);
+    assert.equal(
+      describeRemote(refused).outcome?.text,
+      "That Wireless debugging code was refused or expired. Reopen the pairing-code screen and try the new code.",
+    );
   });
 
   test("apps are listed and opened even while the remote still needs pairing", () => {

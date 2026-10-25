@@ -37,6 +37,10 @@ LAUNCHER_QUERY = (
     "cmd package query-activities --brief -a android.intent.action.MAIN "
     "-c android.intent.category.LEANBACK_LAUNCHER"
 )
+LEGACY_LAUNCHER_QUERY = (
+    "pm query-activities --brief -a android.intent.action.MAIN "
+    "-c android.intent.category.LEANBACK_LAUNCHER"
+)
 LAUNCH_COMMAND = "monkey -p {package} -c android.intent.category.LEANBACK_LAUNCHER 1"
 FRONT_QUERY = "dumpsys activity activities"
 PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
@@ -208,7 +212,12 @@ class AdbAppInventory:
         self._pair_connect_interval = max(0.0, pair_connect_interval)
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
-        return parse_launcher_apps(self._shell(self._resolve(host), LAUNCHER_QUERY).stdout)
+        serial = self._resolve(host)
+        try:
+            output = self._shell(serial, LAUNCHER_QUERY).stdout
+        except UnsupportedOperationError:
+            output = self._shell(serial, LEGACY_LAUNCHER_QUERY).stdout
+        return parse_launcher_apps(output)
 
     def launch_app(self, host: str, package: str) -> AppLaunch:
         package, serial = checked_package(package), self._resolve(host)
@@ -233,9 +242,9 @@ class AdbAppInventory:
     def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
         """Pair once without putting the temporary code in argv, logs or retained state."""
         host = _checked_host(host)
-        endpoint = self._checked_endpoint(pairing_endpoint, expected_host=host)
         if not isinstance(code, str) or _PAIRING_CODE.fullmatch(code) is None:
             raise InvalidArgumentError("the Wireless debugging pairing code must have 6 digits")
+        endpoint = self._pairing_endpoint(host, pairing_endpoint)
         self._require_wireless_pairing_version()
         help_result = self._command(["help"])
         if help_result.returncode != 0 or not re.search(
@@ -267,6 +276,39 @@ class AdbAppInventory:
         raise DeviceUnavailableError(
             "Wireless debugging paired, but its connection service was not advertised in time"
         ) from last_error
+
+    def _pairing_endpoint(self, host: str, requested: str) -> str:
+        """Use an explicit pairing address, or the TV's one unambiguous mDNS service.
+
+        Android shows the temporary code and advertises the matching ephemeral port at the same
+        time.  Keeping discovery here lets the window ask only for that code while retaining the
+        address field as a fallback for Android builds whose mDNS advertisement is unavailable.
+        """
+        if requested.strip():
+            return self._checked_endpoint(requested.strip(), expected_host=host)
+        result = self._command(["mdns", "services"])
+        if result.returncode:
+            raise UnsupportedOperationError(
+                "this adb cannot discover the Wireless debugging pairing address; enter it "
+                "from the TV"
+            )
+        endpoints = {
+            service.endpoint
+            for service in parse_mdns_services(result.stdout)
+            if service.kind == "_adb-tls-pairing._tcp"
+            and _endpoint_host(service.endpoint) == host
+        }
+        if len(endpoints) == 1:
+            return endpoints.pop()
+        if not endpoints:
+            raise PairingRequiredError(
+                "the TV is not advertising a Wireless debugging pairing address; reopen its "
+                "pairing-code screen"
+            )
+        raise DeviceUnavailableError(
+            "more than one Wireless debugging pairing service matches the selected TV; enter "
+            "the address shown by the TV"
+        )
 
     def _require_wireless_pairing_version(self) -> None:
         result = self._command(["version"])
@@ -374,6 +416,8 @@ class AdbAppInventory:
                 raise DeviceUnavailableError("the selected TV's ADB connection was lost")
             if "permission denied" in detail:
                 raise CommandRejectedError("the TV refused the ADB operation")
+            if "unknown command" in detail or "not implemented" in detail:
+                raise UnsupportedOperationError("the TV does not provide this package query")
             raise DeviceUnavailableError("the selected TV did not accept the ADB operation")
         return result
 

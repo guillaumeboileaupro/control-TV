@@ -12,6 +12,7 @@ import pytest
 
 from control_tv.adapters.tv_apps import (
     LAUNCHER_QUERY,
+    LEGACY_LAUNCHER_QUERY,
     AdbAppInventory,
     apps_installed,
     parse_devices,
@@ -242,6 +243,52 @@ def test_pairing_code_uses_stdin_and_is_never_an_argument() -> None:
     assert pair_call[1] == "123456\n"
 
 
+def test_pairing_code_discovers_the_ephemeral_address() -> None:
+    answers: Answers = {
+        ("mdns", "services"): [done(MDNS_TLS), done(MDNS_TLS)],
+        ("version",): [done(ADB_VERSION)],
+        ("help",): [done("adb pair HOST[:PORT] [PAIRING CODE]")],
+        ("pair", f"{HOST}:40211"): [done("Successfully paired")],
+        ("devices", "-l"): [done(DEVICES_TLS)],
+    }
+    runner = FakeRunner(answers)
+
+    inventory(runner).pair(HOST, "", "123456")
+
+    pair_call = next(call for call in runner.calls if call[0][1] == "pair")
+    assert pair_call[0] == ("adb", "pair", f"{HOST}:40211")
+    assert pair_call[1] == "123456\n"
+
+
+def test_automatic_pairing_address_requires_the_tvs_active_code_screen() -> None:
+    runner = FakeRunner({("mdns", "services"): [done("")]})
+
+    with pytest.raises(PairingRequiredError, match="reopen"):
+        inventory(runner).pair(HOST, "", "123456")
+
+    assert all("pair" not in call[0][1:] for call in runner.calls)
+
+
+def test_automatic_pairing_address_refuses_ambiguous_services() -> None:
+    duplicate = MDNS_TLS + f"adb-other\t_adb-tls-pairing._tcp.\t{HOST}:40212\n"
+    runner = FakeRunner({("mdns", "services"): [done(duplicate)]})
+
+    with pytest.raises(DeviceUnavailableError, match="more than one"):
+        inventory(runner).pair(HOST, "", "123456")
+
+
+def test_launcher_listing_falls_back_when_cmd_package_lacks_the_query() -> None:
+    answers = listing_answers()
+    answers[("-s", TLS_SERIAL, "shell", LAUNCHER_QUERY)] = [
+        done("", "Unknown command: query-activities", 1)
+    ]
+    answers[("-s", TLS_SERIAL, "shell", LEGACY_LAUNCHER_QUERY)] = [done(QUERY_OUTPUT)]
+
+    apps = inventory(FakeRunner(answers)).list_apps(HOST)
+
+    assert [app.package for app in apps] == ["com.example.video", "com.netflix.ninja"]
+
+
 def test_pairing_is_never_replayed_while_waiting_for_the_connect_service() -> None:
     pairing_only = MDNS_TLS.replace("_adb-tls-connect", "_ignored")
     answers: Answers = {
@@ -265,6 +312,15 @@ def test_invalid_or_expired_pairing_is_rejected(code: str) -> None:
     runner = FakeRunner({})
     with pytest.raises(InvalidArgumentError):
         inventory(runner).pair(HOST, f"{HOST}:40211", code)
+    assert runner.calls == []
+
+
+def test_invalid_code_does_not_even_discover_an_automatic_address() -> None:
+    runner = FakeRunner({})
+
+    with pytest.raises(InvalidArgumentError):
+        inventory(runner).pair(HOST, "", "12345")
+
     assert runner.calls == []
 
 

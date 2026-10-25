@@ -733,17 +733,17 @@
               />
               <div id="remote-apps-pairing" class="remote-pairing" hidden>
                 <p id="remote-apps-pairing-hint">
-                  On the TV, open Wireless debugging › Pair device with pairing code. Enter the
-                  pairing IP address and port shown there; this is not the connection port.
+                  On the TV, open Wireless debugging › Pair device with pairing code, then enter
+                  its temporary code. The pairing address is discovered automatically.
                 </p>
                 <form id="remote-apps-pairing-form" class="remote-pair-form">
-                  <label for="remote-apps-pairing-endpoint">Pairing address</label>
+                  <label for="remote-apps-pairing-endpoint">Pairing address (optional)</label>
                   <input
                     id="remote-apps-pairing-endpoint"
                     class="field"
                     inputmode="decimal"
                     autocomplete="off"
-                    placeholder="192.0.2.10:40000"
+                    placeholder="Automatic discovery"
                     aria-describedby="remote-apps-pairing-hint"
                   />
                   <label for="remote-apps-pairing-code">Temporary 6-digit code</label>

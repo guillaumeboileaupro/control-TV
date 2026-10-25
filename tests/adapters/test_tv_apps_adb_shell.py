@@ -17,7 +17,12 @@ import adb_shell.exceptions as adb
 import pytest
 
 from control_tv.adapters import tv_apps_adb_shell as tv_apps
-from control_tv.adapters.tv_apps import LAUNCHER_QUERY, parse_front_app, parse_launcher_apps
+from control_tv.adapters.tv_apps import (
+    LAUNCHER_QUERY,
+    LEGACY_LAUNCHER_QUERY,
+    parse_front_app,
+    parse_launcher_apps,
+)
 from control_tv.adapters.tv_apps_adb_shell import KEY_FILE
 from control_tv.adapters.tv_apps_adb_shell import AdbShellAppInventory as AdbAppInventory
 from control_tv.adapters.tv_apps_adb_shell import adb_shell_installed as apps_installed
@@ -108,6 +113,14 @@ def test_the_list_is_the_tvs_answer_to_one_read_only_query(tmp_path: Path) -> No
     assert record["commands"] == [LAUNCHER_QUERY]
     assert record["closed"] == 1
     assert record["connect"][1] == 30.0  # time for the owner to allow control-TV on the TV
+
+
+def test_an_older_tv_uses_the_legacy_read_only_launcher_query(tmp_path: Path) -> None:
+    record: dict[str, Any] = {"output": "Unknown command: query-activities"}
+
+    assert inventory(tmp_path, record).list_apps(HOST) == ()
+
+    assert record["commands"] == [LAUNCHER_QUERY, LEGACY_LAUNCHER_QUERY]
 
 
 def test_the_query_only_reads_the_launcher_activities() -> None:

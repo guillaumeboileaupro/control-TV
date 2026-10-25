@@ -231,10 +231,13 @@ export function startRemote(
   if (action.kind === "pair_apps") {
     const pairingEndpoint = action.pairingEndpoint.trim();
     const code = action.code.trim();
-    if (!ADB_PAIRING_ENDPOINT.test(pairingEndpoint) || !ADB_PAIRING_CODE.test(code)) {
+    if (
+      (pairingEndpoint !== "" && !ADB_PAIRING_ENDPOINT.test(pairingEndpoint)) ||
+      !ADB_PAIRING_CODE.test(code)
+    ) {
       const outcome: RemoteOutcome = {
         tone: "failed",
-        text: "Type the pairing IP address and port shown by the TV, and its 6-digit code.",
+        text: "Type the TV's 6-digit code. Its pairing address is optional unless automatic discovery fails.",
         technical: null,
       };
       return { state: { ...state, remote: { ...state.remote, outcome } }, request: null };
@@ -287,7 +290,14 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
     if (failure.code === "pairing_required") {
       return {
         tone: "failed",
-        text: "Allow this computer if the TV shows an authorization prompt. For Wireless debugging, open the pairing-code screen and enter its pairing address and temporary code here.",
+        text: "Enter the temporary code shown by Wireless debugging. The pairing address is discovered automatically when the TV advertises it.",
+        technical,
+      };
+    }
+    if (action.kind === "pair_apps" && failure.code === "command_rejected") {
+      return {
+        tone: "failed",
+        text: "That Wireless debugging code was refused or expired. Reopen the pairing-code screen and try the new code.",
         technical,
       };
     }

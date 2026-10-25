@@ -54,6 +54,14 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   after two one-second segments instead of four two-second segments. WebRTC queues are 1 video/4 audio
   packets and readers keep draining FFmpeg during transport stalls instead of accumulating old media.
   Automated tests only: TV audio and the <500 ms end-to-end criterion remain hardware acceptance work.
+- [x] Wireless-debugging pairing correction, 2026-10-25: when the selected TV reports that its
+  application inventory needs pairing, the UI asks for the six-digit code immediately and leaves
+  the ephemeral address optional. The Ubuntu ADB adapter resolves exactly one matching mDNS
+  pairing service, refuses zero or ambiguous matches without sending `adb pair`, keeps the code on
+  stdin only, and retains explicit-address fallback. App listing falls back from the modern
+  read-only `cmd package query-activities` form to the older `pm query-activities` form only when
+  the former is unsupported. Automated validation only; candidate installation and TV acceptance
+  remain required.
 - [x] Real trial, 2026-10-25: the phone listed no TV app, since #99 kept only the `adb` program;
   the pure-Python `adb-shell` adapter of `main` is restored (`tv_apps_adb_shell`) and used where
   `adb` is missing, and embedded again in the Android app. The TV receiver gets a name, an icon,

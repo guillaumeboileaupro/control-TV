@@ -103,6 +103,14 @@ Le cycle de vie Tauri sérialise maintenant démarrage, arrêt et lecture termin
 
 **Sélecteur graphique et pairage automatique (2026-10-22) :** la carte « Screen to TV » existante propose Auto, WebRTC et HLS. Auto lit les capacités réelles du téléviseur sélectionné et préfère WebRTC uniquement lorsque le récepteur exact et le canal Remote appairé sont confirmés, sinon HLS ; WebRTC explicite échoue sans repli silencieux. L'état indique le transport effectivement utilisé et une génération d'opération empêche une réponse de polling antérieure de dépasser Start/Stop. Le shell exige que le gestionnaire existant confirme le paquet exact au premier plan, puis transmet un paquet éphémère compact uniquement si Android Remote signale un champ actif ; aucun secret ne passe dans ADB, le DOM, la réponse Tauri, une autre application ou les logs. Le récepteur masque, valide et efface le champ avant connexion. Validation automatisée uniquement ; ce transfert et le focus du champ restent à confirmer sur chaque TV.
 
+**Appairage ADB simplifié et inventaire compatible (2026-10-25) :** après une demande
+`pairing_required`, le formulaire accepte directement le code temporaire à six chiffres et le
+bridge sélectionne l'unique service `_adb-tls-pairing._tcp` annoncé par la TV ; l'adresse reste
+un secours facultatif et aucune commande d'appairage n'est rejouée. La liste essaie la requête
+Package Manager moderne puis son équivalent historique seulement si la première est absente.
+Tests Python/UI uniquement : saisie et validation matérielles restent à effectuer avec le
+binaire candidat installé après autorisation.
+
 ---
 
 ## État des travaux — 2026-10-19

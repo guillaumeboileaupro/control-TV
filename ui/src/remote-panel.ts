@@ -90,6 +90,7 @@ export function createRemotePanel(
   let feedbackKey = "";
   let appsKey = "";
   let pairingDeviceId: string | null = null;
+  let appsPairingWasVisible = false;
 
   for (const button of el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
     button.addEventListener("click", () =>
@@ -150,10 +151,15 @@ export function createRemotePanel(
     setBusy(el.remoteTextSend, !remote.keysEnabled);
     el.remoteTextSend.classList.toggle("is-loading", remote.sendingText);
     renderApps(state, remote);
+    const appsPairingJustOpened = remote.appsPairingNeeded && !appsPairingWasVisible;
     el.remoteAppsPairing.hidden = !remote.appsPairingNeeded;
+    appsPairingWasVisible = remote.appsPairingNeeded;
     setBusy(el.remoteAppsPair, remote.busy);
     el.remoteAppsPairingEndpoint.disabled = remote.busy;
     el.remoteAppsPairingCode.disabled = remote.busy;
+    if (appsPairingJustOpened && !remote.busy) {
+      el.remoteAppsPairingCode.focus();
+    }
     el.remoteTextSend.setAttribute("aria-busy", String(remote.sendingText));
 
     el.remotePairing.hidden = remote.pairing === null;

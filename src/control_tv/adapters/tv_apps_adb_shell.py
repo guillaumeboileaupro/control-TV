@@ -34,6 +34,7 @@ from control_tv.adapters.tv_apps import (
     FRONT_QUERY,
     LAUNCH_COMMAND,
     LAUNCHER_QUERY,
+    LEGACY_LAUNCHER_QUERY,
     _checked_host,
     checked_package,
     parse_front_app,
@@ -170,6 +171,10 @@ class AdbShellAppInventory:
             output = device.shell(LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
             if not isinstance(output, str):
                 raise DeviceUnavailableError("the TV returned no list of apps")
+            if "unknown command" in output.lower() or "not implemented" in output.lower():
+                output = device.shell(LEGACY_LAUNCHER_QUERY, read_timeout_s=self._read_timeout)
+                if not isinstance(output, str):
+                    raise DeviceUnavailableError("the TV returned no list of apps")
             return parse_launcher_apps(output)
 
         return self._session(host, query)
