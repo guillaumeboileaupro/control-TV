@@ -1,5 +1,14 @@
 # Development plan
 
+Sprint 1 T-04 observability (2026-10-26): every command entering the Tauri-to-Python boundary now
+gets a correlation id that is also sent as the Python `requestId`. A bounded non-blocking channel
+writes durable JSONL events for receipt, bridge dispatch and terminal completion, failure or
+timeout, including duration and stable error code. Logs rotate at 2 MiB with private permissions;
+they deliberately exclude arguments, free-form errors, device data, pairing codes, text and
+credentials. This makes post-freeze diagnosis possible without making disk I/O part of the UI hot
+path. `bridge_dispatched` is only a local attempt count for the future T-05 receiver counter, not
+evidence that a TV received or applied a command. Automated validation only; no device was used.
+
 Security maintenance (2026-10-23): the Tauri lockfile pins Tokio 1.53.3, the minimal patched
 release for RUSTSEC-2026-0386 on the existing 1.53 LTS line. No audit waiver was added; validation
 is automated only and does not imply any TV or Android hardware result.

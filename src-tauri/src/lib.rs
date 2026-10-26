@@ -8,6 +8,7 @@
 
 mod bridge;
 mod commands;
+mod diagnostics;
 #[cfg(target_os = "linux")]
 mod webrtc_commands;
 // A phone has no status area: only the desktop and the tests use this module.
@@ -59,6 +60,10 @@ pub fn run() {
     let builder = builder.plugin(android::plugin());
     builder
         .setup(|app| {
+            match app.path().app_log_dir() {
+                Ok(directory) => diagnostics::install(directory.join(diagnostics::LOG_FILE)),
+                Err(error) => eprintln!("control-tv: command diagnostic path unavailable: {error}"),
+            }
             let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
             #[cfg(target_os = "linux")]

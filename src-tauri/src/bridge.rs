@@ -8,12 +8,15 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 // `app.path()`, used only by the packaged (release) bridge resolution.
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
+
+use crate::diagnostics::{self, CommandDiagnostic};
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -552,8 +555,17 @@ pub(crate) async fn call_bridge(
 ) -> Result<Value, BridgeFailure> {
     // This call is one order: its id is made once, here, and travels with the request.
     let order = ApplicationRequestId::new();
+    let started = Instant::now();
+    diagnostics::record(CommandDiagnostic::new(
+        order.as_str(),
+        "command_received",
+        method,
+        None,
+        None,
+    ));
     let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
     let worker_claim = Arc::clone(&claim);
+    let worker_order = order.clone();
     // The process this request is written to, set before the claim, so a caller that loses
     // the claim race to the worker can stop that process (and only that one).
     let written_to: Arc<OnceLock<Arc<BridgeProcess>>> = Arc::new(OnceLock::new());
@@ -594,7 +606,14 @@ pub(crate) async fn call_bridge(
                 "the request was abandoned before it was sent",
             ));
         }
-        let result = bridge.call_as(&order, method, params);
+        diagnostics::record(CommandDiagnostic::new(
+            worker_order.as_str(),
+            "bridge_dispatched",
+            method,
+            Some(started.elapsed()),
+            None,
+        ));
+        let result = bridge.call_as(&worker_order, method, params);
         if let Err(failure) = &result {
             if failure.code == CODE_BRIDGE_TRANSPORT {
                 slot.retire(failure.message.clone());
@@ -603,7 +622,7 @@ pub(crate) async fn call_bridge(
         result
     });
 
-    match tokio::time::timeout(timeout, task).await {
+    let result = match tokio::time::timeout(timeout, task).await {
         Ok(Ok(result)) => result,
         Ok(Err(join_error)) => Err(BridgeFailure::transport(format!(
             "bridge worker thread failed: {join_error}"
@@ -642,7 +661,22 @@ pub(crate) async fn call_bridge(
                 ))
             }
         }
-    }
+    };
+    let (phase, error_code) = match &result {
+        Ok(_) => ("command_completed", None),
+        Err(failure) if failure.code == CODE_BRIDGE_TIMEOUT || failure.code == CODE_BRIDGE_BUSY => {
+            ("command_timed_out", Some(failure.code.as_str()))
+        }
+        Err(failure) => ("command_failed", Some(failure.code.as_str())),
+    };
+    diagnostics::record(CommandDiagnostic::new(
+        order.as_str(),
+        phase,
+        method,
+        Some(started.elapsed()),
+        error_code,
+    ));
+    result
 }
 
 /// The failure of an embedded (Android) bridge call. The Android side rejects with

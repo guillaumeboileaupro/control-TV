@@ -1,5 +1,11 @@
 # control-TV — TODO
 
+- [x] **T-04 — observabilité des commandes (2026-10-26) :** chaque appel Tauri reçoit un identifiant
+  transmis au bridge Python et produit des événements JSONL structurés (réception, remise au bridge,
+  issue, durée, code d'erreur ou timeout) dans un journal privé, persistant, borné et écrit hors du
+  thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
+  Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
+  automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
