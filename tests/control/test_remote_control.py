@@ -825,9 +825,6 @@ def test_bridge_lists_apps_with_their_known_names() -> None:
     }
 
 
-KNOWN = (TvApp("com.netflix.ninja", "Netflix"),)
-
-
 class MemoryApps:
     def __init__(self) -> None:
         self.kept: dict[DeviceId, tuple[TvApp, ...]] = {}
@@ -840,14 +837,12 @@ class MemoryApps:
 
 
 def remembering(apps: FakeApps, memory: MemoryApps) -> ControlService:
-    service = ControlService(
-        FakeTransport(), remote=FakeRemote(), apps=apps, app_memory=memory, known_apps=KNOWN
-    )
+    service = ControlService(FakeTransport(), remote=FakeRemote(), apps=apps, app_memory=memory)
     service.discover_devices(timeout=1.0)
     return service
 
 
-def test_without_the_tvs_debugging_the_window_gets_its_last_list_then_known_apps() -> None:
+def test_without_the_tvs_debugging_the_window_gets_its_last_list_never_other_apps() -> None:
     memory = MemoryApps()
     apps = FakeApps()
     service = remembering(apps, memory)
@@ -856,15 +851,11 @@ def test_without_the_tvs_debugging_the_window_gets_its_last_list_then_known_apps
     apps.error = DebuggingOffError("debugging off")
     remembered = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
     memory.kept.clear()
-    known = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
+    nothing = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
 
     assert remembered["source"] == "remembered" and remembered["reason"] == "debugging_off"
     assert [app["package"] for app in remembered["apps"]] == [a.package for a in apps.apps]
-    assert known == {
-        "apps": [{"package": "com.netflix.ninja", "name": "Netflix"}],
-        "source": "known",
-        "reason": "debugging_off",
-    }
+    assert nothing == {"apps": [], "source": "none", "reason": "debugging_off"}
 
 
 def test_the_strict_list_still_reports_the_tvs_error() -> None:
@@ -883,7 +874,7 @@ def test_bridge_says_when_the_tv_debugging_is_off() -> None:
     )
 
     assert listed["result"]["reason"] == "debugging_off"
-    assert launched["error"]["code"] == "debugging_off"
+    assert launched["error"]["code"] == "pairing_required"  # the remote is what to fix
 
 
 def test_bridge_app_list_without_the_channel_is_not_reported_as_debugging_off() -> None:
@@ -960,7 +951,6 @@ def with_receiver(apps: FakeApps, receiver: ReceiverApps, memory: MemoryApps) ->
         remote=FakeRemote(),
         apps=apps,
         app_memory=memory,
-        known_apps=KNOWN,
         receiver_apps=receiver,
     )
     service.discover_devices(timeout=1.0)
@@ -986,7 +976,7 @@ def test_when_neither_answers_the_debuggings_reason_is_given() -> None:
 
     listing = service.browse_tv_apps(DEVICE_ID)
 
-    assert (listing.source, listing.reason) == ("known", "debugging_off")
+    assert (listing.source, listing.reason, listing.apps) == ("none", "debugging_off", ())
 
 
 def test_the_receiver_is_not_asked_when_the_debugging_answers() -> None:
@@ -995,3 +985,13 @@ def test_the_receiver_is_not_asked_when_the_debugging_answers() -> None:
 
     assert service.browse_tv_apps(DEVICE_ID).source == "tv"
     assert receiver.hosts == []
+
+
+def test_an_unpaired_remote_asks_for_pairing_even_when_the_debugging_is_off() -> None:
+    apps = FakeApps(error=DebuggingOffError("debugging off"))
+    service = ControlService(FakeTransport(), remote=FakeRemote(), apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    with pytest.raises(PairingRequiredError):
+        service.launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == [("launch", HOST, "com.example.video")]  # tried, refused, not resent

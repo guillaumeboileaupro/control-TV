@@ -159,8 +159,8 @@ class AppListing:
     """The apps the window offers for one TV, and where the list comes from.
 
     `source` is `tv` (the TV listed them now), `remembered` (the TV's last list, kept on this
-    device because its debugging cannot be reached now) or `known` (apps control-TV knows,
-    since this TV never listed its own); `reason` is the error code of the TV's listing when
+    device because its debugging cannot be reached now) or `none` (no list read from this TV
+    yet: `apps` is empty); `reason` is the error code of the TV's listing when
     it is not `tv`. Opening an app goes through the TV's remote, which needs no list.
     """
 

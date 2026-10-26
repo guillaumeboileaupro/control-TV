@@ -429,6 +429,21 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
   if (!answer.ok) {
     const failure = answer.failure;
     let pairing = remote.pairing;
+    // An app opens through the TV's remote: its pairing is the remote's, shown with the keys.
+    if (action.kind === "launch_app" && failure.code === "pairing_required") {
+      return {
+        ...state,
+        remote: {
+          ...remote,
+          pairing: "needed",
+          outcome: {
+            tone: "failed",
+            text: "Pair control-TV with this TV's remote first (the TV shows a code), then open the app again.",
+            technical: `${failure.code}: ${failure.message}`,
+          },
+        },
+      };
+    }
     if (isAppAction(action)) {
       // The apps' own "allow control-TV on the TV" is not the remote's pairing.
       return {
@@ -509,7 +524,7 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
           appsPairingNeeded: reason === "pairing_required",
           appsNote: listingNote(result["source"]),
           outcome:
-            apps.length === 0
+            apps.length === 0 && result["source"] !== "none"
               ? { tone: "sent", text: "The TV listed no app it can open.", technical: null }
               : null,
         },
@@ -588,8 +603,8 @@ function listingNote(source: JsonValue | undefined): string | null {
   if (source === "remembered") {
     return "The TV's debugging didn't answer: these are the apps it listed last time. They open through the TV's remote.";
   }
-  if (source === "known") {
-    return "The TV didn't list its apps: here are the usual ones. They open through the TV's remote; one that isn't installed opens its Play Store page.";
+  if (source === "none") {
+    return "control-TV hasn't read this TV's apps yet. Install the latest ControlTV Récepteur on the TV once (or turn on its debugging), then List again.";
   }
   return null;
 }

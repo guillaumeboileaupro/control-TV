@@ -78,14 +78,12 @@ class TvChannels:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         memory: AppMemory | None = None,
-        known_apps: tuple[TvApp, ...] = (),
         receiver_apps: AppLister | None = None,
     ) -> None:
         self._discovered = discovered
         self._remote = remote
         self._apps = apps
         self._memory = memory
-        self._known_apps = known_apps
         self._receiver_apps = receiver_apps
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
@@ -150,8 +148,9 @@ class TvChannels:
         """The apps to offer in the window, whatever the state of the TV's debugging.
 
         The TV's own list when its debugging or ControlTV Receiver answers (then kept for next
-        time); otherwise its last list, or the apps control-TV knows, with the reason the TV's
-        debugging did not list them. A TV not found or a Cast group is still refused.
+        time); otherwise its last list, or none, with the reason the TV's debugging did not
+        list them: apps not read from this TV are never offered. A TV not found or a Cast
+        group is still refused.
         """
         host = self._tv_host(device_id)
         try:
@@ -160,7 +159,7 @@ class TvChannels:
             remembered = None if self._memory is None else self._memory.recall(device_id)
             if remembered:
                 return AppListing(apps=remembered, source="remembered", reason=error.code)
-            return AppListing(apps=self._known_apps, source="known", reason=error.code)
+            return AppListing(apps=(), source="none", reason=error.code)
         if self._memory is not None and apps:
             self._memory.remember(device_id, apps)
         return AppListing(apps=apps, source="tv")
@@ -237,9 +236,14 @@ class TvChannels:
             try:
                 remote, host = self._remote_target(device_id)
                 return remote.launch(host, package)
-            except (PairingRequiredError, UnsupportedOperationError):
+            except (PairingRequiredError, UnsupportedOperationError) as refused:
                 if self._apps is None:
                     raise
+                try:
+                    return self._apps.launch_app(self._tv_host(device_id), package)
+                except ControlError:
+                    # Neither way: what to do is the remote's (pair it), not the debugging's.
+                    raise refused from None
         if self._apps is None:
             raise UnsupportedOperationError(
                 "this application cannot open the TV's apps", device_id=device_id

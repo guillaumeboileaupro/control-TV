@@ -881,12 +881,28 @@ describe("an app list without the TV's debugging", () => {
     assert.equal(remote.appsPairingNeeded, false);
   });
 
-  test("the usual apps are shown when the TV never listed its own", () => {
-    const { state } = run(withTv(), { kind: "list_apps" }, listed("known", "pairing_required"));
+  test("no other TV's apps: without a list read from this TV, none is shown", () => {
+    const none: RemoteAnswer = {
+      ok: true,
+      result: { apps: [], source: "none", reason: "pairing_required" },
+    };
+    const { state } = run(withTv(), { kind: "list_apps" }, none);
     const remote = describeRemote(state);
 
-    assert.match(remote.appsNote ?? "", /usual ones.*Play Store/);
+    assert.deepEqual(remote.apps, []);
+    assert.match(remote.appsNote ?? "", /hasn't read this TV's apps.*ControlTV Récepteur/);
+    assert.equal(remote.outcome, null);
     assert.equal(remote.appsPairingNeeded, true); // the computer can still pair for the real list
+  });
+
+  test("an app refused for an unpaired remote asks to pair the remote", () => {
+    const open = { kind: "launch_app" as const, package: "com.netflix.ninja", label: "Netflix" };
+    const { state } = run(withTv(), open, failure("pairing_required"));
+    const remote = describeRemote(state);
+
+    assert.match(remote.outcome?.text ?? "", /Pair control-TV with this TV's remote/);
+    assert.notEqual(remote.pairing, null);
+    assert.equal(remote.appsPairingNeeded, false);
   });
 
   test("the TV's own list needs no word", () => {

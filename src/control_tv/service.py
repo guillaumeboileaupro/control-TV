@@ -352,7 +352,6 @@ class ControlService:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         app_memory: AppMemory | None = None,
-        known_apps: tuple[TvApp, ...] = (),
         receiver_apps: AppLister | None = None,
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
@@ -394,7 +393,6 @@ class ControlService:
             remote=remote,
             apps=apps,
             memory=app_memory,
-            known_apps=known_apps,
             receiver_apps=receiver_apps,
         )
         self._devices: dict[DeviceId, Device] = {}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
-from control_tv.adapters.tv_apps_memory import FileAppMemory, known_apps
+from control_tv.adapters.tv_apps_memory import FileAppMemory
 from control_tv.domain import DeviceId, TvApp
 
 TV = DeviceId("uuid-living-room")
@@ -38,11 +38,3 @@ def test_a_damaged_or_unwritable_list_is_simply_not_used(tmp_path: Path) -> None
     blocked.write_text("")
     FileAppMemory(blocked / "tv-apps").remember(TV, APPS)  # no exception, nothing kept
     assert FileAppMemory(blocked / "tv-apps").recall(TV) is None
-
-
-def test_known_apps_are_named_and_never_the_home_screen_itself() -> None:
-    apps = known_apps()
-
-    assert TvApp("com.netflix.ninja", "Netflix") in apps
-    assert all(app.name for app in apps)
-    assert "com.google.android.apps.tv.launcherx" not in {app.package for app in apps}

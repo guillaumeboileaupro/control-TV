@@ -87,8 +87,9 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              network debugging (ADB), kept on this device for next time;
                              `remembered`: its last list, because its debugging did not answer
                              (`reason` is that error's code: `debugging_off`,
-                             `pairing_required`, ...); `known`: apps control-TV knows, the TV
-                             never listed its own. `name` is a display name control-TV knows,
+                             `pairing_required`, ...); `none`: no list read from this TV yet
+                             (`apps` empty): apps not read from the TV are never offered.
+                             `name` is the TV's label or a display name control-TV knows,
                              or `null`. Only a TV not found or a Cast group is an error.
                              Read-only.
 - `launch_tv_app`         -> also requires `package`: opens that app once, through the TV's
@@ -926,7 +927,7 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     from control_tv.adapters.receiver_apps import ReceiverAppList
     from control_tv.adapters.tv_apps import AdbAppInventory, find_adb
     from control_tv.adapters.tv_apps_adb_shell import AdbShellAppInventory
-    from control_tv.adapters.tv_apps_memory import FileAppMemory, known_apps
+    from control_tv.adapters.tv_apps_memory import FileAppMemory
     from control_tv.adapters.tv_remote import TvRemoteChannel, default_credentials_dir
     from control_tv.trace_files import tracing_from_environment
 
@@ -943,7 +944,6 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
         if adb is not None
         else AdbShellAppInventory(credentials),
         app_memory=FileAppMemory(credentials.parent / "tv-apps"),
-        known_apps=known_apps(),
         receiver_apps=ReceiverAppList(remote),
         trace=active.recorder,
         gate=active.gate,

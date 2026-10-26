@@ -18,18 +18,6 @@ from pathlib import Path
 from control_tv.adapters.tv_apps import KNOWN_NAMES, checked_package
 from control_tv.domain import ControlError, DeviceId, TvApp
 
-# Not apps to open from a list: the home screen itself and its recommendations service.
-_NOT_OFFERED = {"com.google.android.apps.tv.launcherx", "com.google.android.tvrecommendations"}
-
-
-def known_apps() -> tuple[TvApp, ...]:
-    """The apps control-TV knows by name, offered when a TV never listed its own."""
-    return tuple(
-        TvApp(package=package, name=name)
-        for package, name in sorted(KNOWN_NAMES.items(), key=lambda item: item[1].lower())
-        if package not in _NOT_OFFERED
-    )
-
 
 class FileAppMemory:
     def __init__(self, directory: Path) -> None:

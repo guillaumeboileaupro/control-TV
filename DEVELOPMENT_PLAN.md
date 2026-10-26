@@ -47,12 +47,13 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   SDK's being on `PATH` through `~/.bashrc` only; `find_adb` now prefers an installed SDK's `adb`.
   Owner direction (2026-10-25): no TV setting to touch in normal use. An app opens through the TV's
   paired remote (`launch`, the TV's `market://launch` link), the TV's debugging only lists the apps; when it
-  does not answer, the window shows the TV's last list (kept per TV on the device) or the known apps, saying so.
+  does not answer, the window shows the TV's last list (kept per TV on the device), saying so, and never apps not
+  read from that TV (the generic known-apps list was removed on 2026-10-26 after the owner's trial).
   The receiver check for screen sharing stays strict.
   ControlTV Receiver now reads the TV's launcher apps itself (`AppListActivity`, no visible screen): the paired
   remote opens `controltv-receiver://apps?reply=<this device>&token=<random>`, the receiver posts the list once
   to a one-request local listener (8 s, private addresses only), then closes. Order: debugging, receiver, last
-  list, known apps. Needs this receiver version installed once per TV; hardware validation open.
+  list, else none. Needs this receiver version installed once per TV; hardware validation open.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.
