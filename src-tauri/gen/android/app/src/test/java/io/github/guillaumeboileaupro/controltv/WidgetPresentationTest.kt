@@ -120,9 +120,11 @@ class WidgetPresentationTest {
             WidgetOutcome.StatusUnreadable,
             WidgetOutcome.NotSent("unsupported_operation"),
             WidgetOutcome.NotSent("invalid_argument"),
+            WidgetOutcome.NotSent("pairing_required"),
             WidgetOutcome.MaybeSent("set_volume"),
-            WidgetOutcome.NoCommand(WidgetActionRunner.REASON_VOLUME_MAX, state()),
-        )
+            WidgetOutcome.MaybeSent(WidgetActionRunner.PRESS_KEY),
+            WidgetOutcome.NoCommand(WidgetActionRunner.REASON_NOTHING_PLAYING, state()),
+        ) + WidgetAction.entries.filter { it.key != null }.map { WidgetOutcome.KeySent(it, "not_checked") }
         for (outcome in outcomes) {
             val view = WidgetPresentation.present(outcome, SELECTED)
             assertFalse(view.line, Regex("[a-z]+_[a-z]+|python|bridge|cast|exception", RegexOption.IGNORE_CASE).containsMatchIn(view.line))
@@ -147,5 +149,17 @@ class WidgetPresentationTest {
             WidgetView("Living room", "Working…", playing = true, muted = false, busy = true, deviceId = TV),
             busy,
         )
+    }
+
+    @Test
+    fun aKeyIsWordedAsSentWithItsNameNeverAsDoneAndAnUnpairedTvSaysSo() {
+        assertEquals("Volume + sent.", WidgetPresentation.present(WidgetOutcome.KeySent(WidgetAction.VOLUME_UP, "confirmed"), SELECTED).line)
+        assertEquals("Google Assistant sent.", WidgetPresentation.present(WidgetOutcome.KeySent(WidgetAction.ASSISTANT, "not_checked"), SELECTED).line)
+        assertEquals(
+            "Pair this TV in control-TV first. Nothing was sent.",
+            WidgetPresentation.present(WidgetOutcome.NotSent("pairing_required"), SELECTED).line,
+        )
+        val labels = WidgetAction.entries.filter { it.key != null }.map(WidgetPresentation::keyLabel)
+        assertEquals(labels.size, labels.toSet().size)
     }
 }

@@ -101,6 +101,34 @@
         <symbol id="i-home" viewBox="0 0 24 24">
           <path d="M4.5 10.5L12 4l7.5 6.5V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z" />
         </symbol>
+        <symbol id="i-previous" viewBox="0 0 24 24">
+          <path d="M7 6v12" />
+          <path d="M18 6.5v11L10 12z" />
+        </symbol>
+        <symbol id="i-rewind" viewBox="0 0 24 24">
+          <path d="M11.5 7v10L4.5 12z" />
+          <path d="M19.5 7v10l-7-5z" />
+        </symbol>
+        <symbol id="i-play-pause" viewBox="0 0 24 24">
+          <path d="M4.5 7v10l7-5z" />
+          <path d="M15.5 7v10M19.5 7v10" />
+        </symbol>
+        <symbol id="i-forward" viewBox="0 0 24 24">
+          <path d="M4.5 7v10l7-5z" />
+          <path d="M12.5 7v10l7-5z" />
+        </symbol>
+        <symbol id="i-next" viewBox="0 0 24 24">
+          <path d="M6 6.5v11l8-5.5z" />
+          <path d="M17 6v12" />
+        </symbol>
+        <symbol id="i-record" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="5.5" />
+        </symbol>
+        <symbol id="i-mic" viewBox="0 0 24 24">
+          <path
+            d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"
+          />
+        </symbol>
         <symbol id="i-minus" viewBox="0 0 24 24">
           <path d="M6 12h12" />
         </symbol>
@@ -336,6 +364,302 @@
                 </button>
               </div>
 
+              <!-- The rest of a Google TV remote (owner request, 2026-10-25): each key is sent once,
+                   as the TV's own remote sends it. -->
+              <div class="remote-row">
+                <button
+                  class="btn-pill btn-assistant"
+                  type="button"
+                  data-remote-key="assistant"
+                  aria-label="Google Assistant on the TV"
+                  title="Google Assistant on the TV"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-mic" /></svg
+                  ><span>Google Assistant</span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-4" role="group" aria-label="TV functions">
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="input"
+                  aria-label="TV input source"
+                  title="TV input source"
+                >
+                  <span>Input</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="settings"
+                  aria-label="TV settings"
+                  title="TV settings"
+                >
+                  <span>Settings</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="info"
+                  aria-label="Information"
+                  title="Information"
+                >
+                  <span>Info</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="guide"
+                  aria-label="Programme guide"
+                  title="Programme guide"
+                >
+                  <span>Guide</span>
+                </button>
+              </div>
+              <div
+                class="remote-grid remote-grid-4"
+                role="group"
+                aria-label="Channels, subtitles and audio"
+              >
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="channel_down"
+                  aria-label="Channel down"
+                  title="Channel down"
+                >
+                  <span>Ch −</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="channel_up"
+                  aria-label="Channel up"
+                  title="Channel up"
+                >
+                  <span>Ch +</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="subtitles"
+                  aria-label="Subtitles"
+                  title="Subtitles"
+                >
+                  <span>Subtitles</span>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="audio_track"
+                  aria-label="Audio track"
+                  title="Audio track"
+                >
+                  <span>Audio</span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-4" role="group" aria-label="Colour keys">
+                <button
+                  class="btn-pill color-key color-red"
+                  type="button"
+                  data-remote-key="red"
+                  aria-label="Red key"
+                  title="Red key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-green"
+                  type="button"
+                  data-remote-key="green"
+                  aria-label="Green key"
+                  title="Green key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-yellow"
+                  type="button"
+                  data-remote-key="yellow"
+                  aria-label="Yellow key"
+                  title="Yellow key"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="btn-pill color-key color-blue"
+                  type="button"
+                  data-remote-key="blue"
+                  aria-label="Blue key"
+                  title="Blue key"
+                >
+                  <span></span>
+                </button>
+              </div>
+              <div class="remote-grid remote-grid-7" role="group" aria-label="Media">
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="previous"
+                  aria-label="Previous"
+                  title="Previous"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-previous" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="rewind"
+                  aria-label="Rewind"
+                  title="Rewind"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-rewind" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="play_pause"
+                  aria-label="Play or pause"
+                  title="Play or pause"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-play-pause" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="fast_forward"
+                  aria-label="Fast forward"
+                  title="Fast forward"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-forward" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="next"
+                  aria-label="Next"
+                  title="Next"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-next" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="stop"
+                  aria-label="Stop"
+                  title="Stop"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
+                </button>
+                <button
+                  class="btn-pill"
+                  type="button"
+                  data-remote-key="record"
+                  aria-label="Record"
+                  title="Record"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-record" /></svg>
+                </button>
+              </div>
+              <details class="keyboard">
+                <summary class="keyboard-summary">
+                  <span>Numbers</span>
+                  <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron" /></svg>
+                </summary>
+                <div class="remote-grid remote-grid-3" role="group" aria-label="Number keys">
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_1"
+                    aria-label="Number 1"
+                    title="Number 1"
+                  >
+                    <span>1</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_2"
+                    aria-label="Number 2"
+                    title="Number 2"
+                  >
+                    <span>2</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_3"
+                    aria-label="Number 3"
+                    title="Number 3"
+                  >
+                    <span>3</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_4"
+                    aria-label="Number 4"
+                    title="Number 4"
+                  >
+                    <span>4</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_5"
+                    aria-label="Number 5"
+                    title="Number 5"
+                  >
+                    <span>5</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_6"
+                    aria-label="Number 6"
+                    title="Number 6"
+                  >
+                    <span>6</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_7"
+                    aria-label="Number 7"
+                    title="Number 7"
+                  >
+                    <span>7</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_8"
+                    aria-label="Number 8"
+                    title="Number 8"
+                  >
+                    <span>8</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_9"
+                    aria-label="Number 9"
+                    title="Number 9"
+                  >
+                    <span>9</span>
+                  </button>
+                  <button
+                    class="btn-pill"
+                    type="button"
+                    data-remote-key="digit_0"
+                    aria-label="Number 0"
+                    title="Number 0"
+                  >
+                    <span>0</span>
+                  </button>
+                </div>
+              </details>
+
               <!-- The TV's active text field: the text replaces what the field holds; it is
                    sent once and never kept or logged (it may be a password). -->
               <details class="keyboard">
@@ -407,7 +731,53 @@
                 aria-label="Find an app"
                 hidden
               />
+              <div id="remote-apps-pairing" class="remote-pairing" hidden>
+                <p id="remote-apps-pairing-hint">
+                  On the TV, open Wireless debugging › Pair device with pairing code, then enter its
+                  temporary code. The pairing address is discovered automatically.
+                </p>
+                <form id="remote-apps-pairing-form" class="remote-pair-form">
+                  <label for="remote-apps-pairing-endpoint">Pairing address (optional)</label>
+                  <input
+                    id="remote-apps-pairing-endpoint"
+                    class="field"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    placeholder="Automatic discovery"
+                    aria-describedby="remote-apps-pairing-hint"
+                  />
+                  <label for="remote-apps-pairing-code">Temporary 6-digit code</label>
+                  <input
+                    id="remote-apps-pairing-code"
+                    class="field remote-code"
+                    type="password"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    pattern="[0-9]{6}"
+                  />
+                  <button id="remote-apps-pair" class="btn btn-primary" type="submit">
+                    Pair Wireless debugging
+                  </button>
+                </form>
+              </div>
+              <p id="remote-apps-note" class="hint" hidden></p>
               <ul id="remote-apps" class="app-grid" aria-label="Apps installed on the TV"></ul>
+              <!-- For a TV with only Wireless debugging (a pairing code), which the phone cannot
+                   pair: the computer, paired, opens the TV's port 5555 to the phone. -->
+              <p id="remote-apps-phone-hint" class="hint" hidden>
+                The phone can list this TV's apps only through port 5555. If the TV offers only
+                Wireless debugging, open it to the phone from here (until the TV restarts).
+              </p>
+              <button
+                id="remote-apps-open-port"
+                class="btn btn-small"
+                type="button"
+                hidden
+                aria-describedby="remote-apps-phone-hint"
+              >
+                Open to the phone
+              </button>
             </div>
 
             <!-- The outcome of the last remote action, kept in view while the remote scrolls. -->
@@ -474,7 +844,22 @@
               Extend the desktop
             </button>
           </div>
+          <svg
+            id="screen-preview"
+            class="display-preview"
+            viewBox="0 0 600 260"
+            role="group"
+            aria-label="Current display arrangement"
+          ></svg>
           <div class="screen-options">
+            <label class="screen-option">
+              <span>Transport</span>
+              <select id="screen-transport" class="field">
+                <option value="auto">Auto</option>
+                <option value="webrtc">WebRTC</option>
+                <option value="hls">HLS</option>
+              </select>
+            </label>
             <label id="screen-field" class="screen-option">
               <span>Screen</span>
               <select id="screen-select" class="field"></select>
@@ -482,6 +867,7 @@
             <label class="screen-option">
               <span>Resolution</span>
               <select id="screen-size" class="field">
+                <option value="auto">Auto (1920×1080)</option>
                 <option value="1280x720">1280×720</option>
                 <option value="1920x1080">1920×1080</option>
               </select>
@@ -491,11 +877,99 @@
               <select id="screen-fps" class="field">
                 <option value="25">25 fps</option>
                 <option value="30">30 fps</option>
-                <option value="60">60 fps</option>
               </select>
             </label>
           </div>
-          <button id="screen-ask" class="btn btn-primary" type="button">Duplicate on the TV</button>
+          <!-- The extension menu: the TV becomes a second screen of the desktop. The sizes and
+               refresh rates are the ones the desktop accepted; the arrangement places the TV's
+               screen around the main one (click a side). -->
+          <div id="screen-extension" class="screen-extension" hidden>
+            <label class="screen-option">
+              <span>TV refresh rate</span>
+              <select id="screen-refresh" class="field">
+                <option value="60">60 Hz</option>
+                <option value="50">50 Hz</option>
+              </select>
+            </label>
+            <!-- The display manager, like Settings > Displays: drag the numbered screens (edges
+                 stick together), set the selected one, then Apply; a change must be kept within
+                 the countdown or it is reverted by itself. Before the extension starts, the TV's
+                 screen-to-be is shown too and can be dragged into place. -->
+            <div id="display-manager" class="display-manager">
+              <div
+                id="display-scene"
+                class="display-scene"
+                role="group"
+                aria-label="Screens: drag one to arrange them, or use the arrow keys"
+              ></div>
+              <div
+                id="display-arrangement"
+                class="screen-actions"
+                role="group"
+                aria-label="How the screens are used"
+              >
+                <button class="btn btn-small" type="button" data-arrangement="join">
+                  Join displays
+                </button>
+                <button class="btn btn-small" type="button" data-arrangement="clone">Mirror</button>
+                <button class="btn btn-small" type="button" data-arrangement="single">
+                  Single display
+                </button>
+              </div>
+              <fieldset id="display-settings" class="display-settings" hidden>
+                <legend id="display-title"></legend>
+                <div class="display-checks">
+                  <label class="display-check">
+                    <input id="display-enabled" type="checkbox" />
+                    On
+                  </label>
+                  <label class="display-check">
+                    <input id="display-primary" type="checkbox" />
+                    Main display
+                  </label>
+                </div>
+                <div class="screen-options">
+                  <label class="screen-option">
+                    <span>Resolution</span>
+                    <select id="display-resolution" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Refresh rate</span>
+                    <select id="display-rate" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Orientation</span>
+                    <select id="display-rotation" class="field"></select>
+                  </label>
+                  <label class="screen-option">
+                    <span>Scale</span>
+                    <select id="display-scale" class="field"></select>
+                  </label>
+                </div>
+              </fieldset>
+              <div class="screen-actions">
+                <button id="display-apply" class="btn btn-primary" type="button">Apply</button>
+                <button id="display-cancel" class="btn" type="button">Cancel</button>
+              </div>
+              <div
+                id="display-keep"
+                class="screen-consent"
+                role="alertdialog"
+                aria-labelledby="display-keep-text"
+                hidden
+              >
+                <p id="display-keep-text"></p>
+                <div class="screen-actions">
+                  <button id="display-keep-button" class="btn btn-primary" type="button">
+                    Keep changes
+                  </button>
+                  <button id="display-revert" class="btn" type="button">Revert</button>
+                </div>
+              </div>
+              <p id="display-message" class="note" role="status" hidden></p>
+            </div>
+          </div>
+          <button id="screen-ask" class="btn btn-primary" type="button">Apply</button>
           <div
             id="screen-consent"
             class="screen-consent"

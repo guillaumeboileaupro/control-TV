@@ -10,9 +10,14 @@ Rules this adapter keeps:
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
-  field (`type_text`), never logged or echoed. App launch and voice are not exposed here.
-- One short connection per operation: connect, act, flush, close. No connection stays open
-  and nothing listens, so there is no background session that could drop a key silently.
+  field (`type_text`), never logged or echoed. An app is opened by its package name
+  (`launch`, the TV's own `market://launch` link): no debugging setting is needed on the TV.
+  Voice is not exposed here.
+- One connection per TV, reused only while it is demonstrably open: the library has not
+  reported it lost and its transport is not closing (the TV pings it every 5 s and the
+  library closes it after 16 s without a message). It is closed after `KEEP_OPEN` seconds
+  without use, on any failure, on pairing and on `close()`; a new one is made on the next
+  call. Reconnecting for every key cost a TLS session and the TV's remote handshake per key.
 - A key is sent once. A failure after the key was handed to the connection is ambiguous: the
   TV may have acted. The adapter never resends; it reports what the TV said afterwards.
 - What the TV reports (power, audible volume level and mute) is returned as observed;
@@ -34,6 +39,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
+from control_tv.adapters.tv_apps import checked_package
 from control_tv.domain import (
     CommandRejectedError,
     ControlError,
@@ -46,6 +52,7 @@ from control_tv.domain import (
 from control_tv.domain.remote import (
     MAX_TEXT_LENGTH,
     VOLUME_KEYS,
+    AppLaunch,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -61,6 +68,13 @@ DEFAULT_SETTLE = 1.0
 # A TV that wakes or goes to standby reports its new power state later than a volume change;
 # bounded well under DEFAULT_TIMEOUT, which also covers connecting.
 DEFAULT_POWER_SETTLE = 4.0
+# How long a connection stays open after its last use, for the next key to reuse it.
+KEEP_OPEN = 30.0
+# The only link besides an app's package this adapter opens: ControlTV Receiver's app list.
+RECEIVER_LINK = re.compile(
+    r"controltv-receiver://apps\?reply=http://\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}/apps"
+    r"&token=[A-Za-z0-9_-]{16,64}"
+)
 PAIRING_CODE = re.compile(r"[0-9A-Fa-f]{6}")
 _SETTLE_STEP = 0.05
 
@@ -83,6 +97,7 @@ class RemoteClient(Protocol):
     def disconnect(self) -> None: ...
     def send_key_command(self, key: str) -> None: ...
     def send_text(self, text: str) -> None: ...
+    def send_launch_app_command(self, app_link_or_app_id: str) -> None: ...
 
 
 RemoteFactory = Callable[[str, str, str, str], RemoteClient]
@@ -132,6 +147,21 @@ def _observe(remote: RemoteClient) -> RemoteObservation:
         volume=_volume(remote.volume_info),
         current_app=app if isinstance(app, str) and app else None,
     )
+
+
+def _open(remote: RemoteClient) -> bool:
+    """Whether the library still holds this connection open (lost or closing: not open).
+
+    Read from the library's protocol object, like `_field_reported`; a missing attribute
+    reads as "not open", so the next call connects again.
+    """
+    protocol = getattr(remote, "_remote_message_protocol", None)
+    lost = getattr(protocol, "on_con_lost", None)
+    transport = getattr(protocol, "transport", None)
+    if not isinstance(lost, asyncio.Future) or lost.done() or transport is None:
+        return False
+    closing = getattr(transport, "is_closing", None)
+    return callable(closing) and closing() is False
 
 
 def _field_reported(remote: RemoteClient) -> bool:
@@ -199,8 +229,9 @@ def _default_cert_generator(client_name: str) -> tuple[bytes, bytes]:
 class TvRemoteChannel:
     """A synchronous facade over the Android TV Remote protocol, one TV address per call.
 
-    Calls are serialized on one private event loop thread. The facade itself holds no
-    connection between calls, except a pairing that was started and not yet finished.
+    Calls are serialized on one private event loop thread. Between calls the facade keeps at
+    most one open connection per TV, for `keep_open` seconds, and a pairing that was started
+    and not yet finished.
     """
 
     def __init__(
@@ -211,6 +242,7 @@ class TvRemoteChannel:
         timeout: float = DEFAULT_TIMEOUT,
         settle: float = DEFAULT_SETTLE,
         power_settle: float = DEFAULT_POWER_SETTLE,
+        keep_open: float = KEEP_OPEN,
         remote_factory: RemoteFactory = _default_remote_factory,
         cert_generator: CertGenerator = _default_cert_generator,
     ) -> None:
@@ -219,11 +251,14 @@ class TvRemoteChannel:
         self._timeout = timeout
         self._settle = settle
         self._power_settle = power_settle
+        self._keep_open = keep_open
         self._remote_factory = remote_factory
         self._cert_generator = cert_generator
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pairing: dict[str, RemoteClient] = {}
+        self._connections: dict[str, RemoteClient] = {}
+        self._expiry: dict[str, asyncio.TimerHandle] = {}
 
     # Public operations ---------------------------------------------------------------------
 
@@ -233,6 +268,7 @@ class TvRemoteChannel:
 
         async def start() -> None:
             self._discard_pairing(host)
+            self._drop_connection(host)
             remote = self._remote_factory(self._client_name, *self._credentials(), host)
             try:
                 await remote.async_start_pairing()
@@ -260,6 +296,8 @@ class TvRemoteChannel:
                 raise CommandRejectedError("the TV refused the pairing code") from None
             finally:
                 remote.disconnect()
+                # A connection made before pairing may carry the old identity.
+                self._drop_connection(host)
 
         self._run(finish)
 
@@ -267,8 +305,9 @@ class TvRemoteChannel:
         """Connect, read what the TV reports (power, audible volume), and close."""
         host = _checked_host(host)
 
-        async def read(remote: RemoteClient) -> RemoteObservation:
-            await self._wait_for(lambda: remote.volume_info is not None)
+        async def read(remote: RemoteClient, fresh: bool) -> RemoteObservation:
+            if fresh:
+                await self._wait_for(lambda: remote.volume_info is not None)
             return _observe(remote)
 
         return self._run(lambda: self._session(host, read))
@@ -284,15 +323,17 @@ class TvRemoteChannel:
         if not isinstance(key, RemoteKey):
             raise InvalidArgumentError(f"not an allowed key: {key!r}")
 
-        async def send(remote: RemoteClient) -> KeyPress:
-            # What the key changes is read first; navigation keys are not delayed.
-            if key in VOLUME_KEYS:
+        async def send(remote: RemoteClient, fresh: bool) -> KeyPress:
+            # What the key changes is read first, on a new connection only (an open one has
+            # already received what the TV reports); navigation keys are not delayed.
+            if fresh and key in VOLUME_KEYS:
                 await self._wait_for(lambda: remote.volume_info is not None)
-            elif key is RemoteKey.POWER:
+            elif fresh and key is RemoteKey.POWER:
                 await self._wait_for(lambda: _observe(remote).is_on is not None)
             before = _observe(remote)
             remote.send_key_command(key.value)
-            if key in VOLUME_KEYS:
+            # A TV that reported no volume is not waited for: it would not report a change.
+            if key in VOLUME_KEYS and before.volume is not None:
                 await self._wait_for(lambda: _observe(remote).volume != before.volume)
             elif key is RemoteKey.POWER:
                 await self._wait_for(
@@ -305,20 +346,55 @@ class TvRemoteChannel:
     def type_text(self, host: str, text: str) -> TextEntry:
         """Send `text` once to the TV's active text field, replacing what the field holds.
 
-        The adapter waits a short time for the TV to report an active field, then sends the
-        text once either way and says whether a field was reported. The text never appears
-        in an error or a result.
+        The adapter waits a short time for the TV to report an active field. It sends the text
+        exactly once only when that field exists. The text never appears in an error or a result.
         """
         host = _checked_host(host)
         text = _checked_text(text)
 
-        async def send(remote: RemoteClient) -> TextEntry:
+        async def send(remote: RemoteClient, fresh: bool) -> TextEntry:
+            del fresh
             await self._wait_for(lambda: _field_reported(remote))
             reported = _field_reported(remote)
-            remote.send_text(text)
+            if reported:
+                remote.send_text(text)
             return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
 
         return self._run(lambda: self._session(host, send))
+
+    def launch(self, host: str, package: str) -> AppLaunch:
+        """Open an app by its package name, once, through the TV's own remote.
+
+        The adapter then waits a short time for the TV to report that app in front, and
+        returns the app the TV reported, whichever it is (`None` when it did not say).
+        """
+        host = _checked_host(host)
+        package = checked_package(package)
+
+        async def send(remote: RemoteClient, fresh: bool) -> AppLaunch:
+            del fresh
+            remote.send_launch_app_command(package)
+            await self._wait_for(
+                lambda: _observe(remote).current_app == package, self._power_settle
+            )
+            return AppLaunch(package=package, front_app=_observe(remote).current_app)
+
+        return self._run(lambda: self._session(host, send))
+
+    def open_receiver_link(self, host: str, link: str) -> None:
+        """Open ControlTV Receiver's app-list link on the TV, once (see `receiver_apps`).
+
+        Only that link's exact shape is sent: a reply address on this network and a token.
+        """
+        host = _checked_host(host)
+        if not isinstance(link, str) or RECEIVER_LINK.fullmatch(link) is None:
+            raise InvalidArgumentError("not a ControlTV Receiver app-list link")
+
+        async def send(remote: RemoteClient, fresh: bool) -> None:
+            del fresh
+            remote.send_launch_app_command(link)
+
+        self._run(lambda: self._session(host, send))
 
     def close(self) -> None:
         """Drop a pending pairing and stop the event loop thread."""
@@ -330,18 +406,54 @@ class TvRemoteChannel:
         async def drop() -> None:
             for host in list(self._pairing):
                 self._discard_pairing(host)
+            for host in list(self._connections):
+                self._drop_connection(host)
 
         asyncio.run_coroutine_threadsafe(drop(), loop).result(self._timeout)
         loop.call_soon_threadsafe(loop.stop)
 
     # Internals ---------------------------------------------------------------------------
 
-    async def _session(self, host: str, action: Callable[[RemoteClient], Awaitable[T]]) -> T:
-        remote = self._remote_factory(self._client_name, *self._credentials(), host)
+    async def _session(self, host: str, action: Callable[[RemoteClient, bool], Awaitable[T]]) -> T:
+        """Run `action` on the TV's open connection, or on a new one (`fresh`)."""
+        remote = self._connections.get(host)
+        if remote is not None and not _open(remote):
+            self._drop_connection(host)
+            remote = None
+        fresh = remote is None
+        if remote is None:
+            remote = self._remote_factory(self._client_name, *self._credentials(), host)
+            try:
+                await remote.async_connect()
+            except BaseException:
+                remote.disconnect()
+                raise
+            self._connections[host] = remote
         try:
-            await remote.async_connect()
-            return await action(remote)
-        finally:
+            result = await action(remote, fresh)
+        except BaseException:
+            # A failed or cancelled call never leaves its connection for the next one.
+            self._drop_connection(host)
+            raise
+        if _open(remote):
+            self._expire_later(host)
+        else:
+            self._drop_connection(host)
+        return result
+
+    def _expire_later(self, host: str) -> None:
+        handle = self._expiry.pop(host, None)
+        if handle is not None:
+            handle.cancel()
+        loop = asyncio.get_running_loop()
+        self._expiry[host] = loop.call_later(self._keep_open, self._drop_connection, host)
+
+    def _drop_connection(self, host: str) -> None:
+        handle = self._expiry.pop(host, None)
+        if handle is not None:
+            handle.cancel()
+        remote = self._connections.pop(host, None)
+        if remote is not None:
             # Closing the connection flushes what was written to it before closing.
             remote.disconnect()
 

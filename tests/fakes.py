@@ -59,6 +59,8 @@ class TvState:
     """False mimics a receiver that reports no media session at all (as opposed to an
     explicit idle state) - the case a real adapter must not paper over with a fabricated
     `PlaybackState.IDLE`."""
+    app_id: str | None = None
+    app_session_id: str | None = None
 
 
 @dataclass
@@ -101,6 +103,7 @@ class FakeTransport:
     command_attempts: list[str] = field(default_factory=list)
     media_session_targets: list[tuple[str, int]] = field(default_factory=list)
     _pending: tuple[int, Callable[[], None]] | None = None
+    _app_session_counter: int = 1
 
     def sent(self) -> list[str]:
         """Names of the commands delivered to the TV (status reads excluded)."""
@@ -168,12 +171,21 @@ class FakeTransport:
             device_id=device_id,
             connection=tv.connection,
             observed_at=OBSERVED_AT,
-            receiver=ReceiverStatus(volume_level=tv.volume, muted=tv.muted),
+            receiver=ReceiverStatus(
+                app_id=tv.app_id,
+                app_session_id=tv.app_session_id,
+                volume_level=tv.volume,
+                muted=tv.muted,
+            ),
             media=media,
         )
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> None:
         def effect() -> None:
+            self._app_session_counter += 1
+            self.tv.app_id = "CC1AD845"
+            self.tv.app_session_id = f"receiver-session-{self._app_session_counter}"
+            self.tv.has_media = True
             self.tv.content_id = request.url
             self.tv.playback = PlaybackState.PLAYING
             self.tv.position = 0.0
@@ -198,6 +210,16 @@ class FakeTransport:
                 self.tv.playback = PlaybackState.IDLE
 
         self._command("stop", (device_id,), effect)
+
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> None:
+        def effect() -> None:
+            if self.tv.app_session_id != receiver_session_id:
+                return
+            self.tv.app_id = None
+            self.tv.app_session_id = None
+            self.tv.has_media = False
+
+        self._command("close_app", (device_id, receiver_session_id), effect)
 
     def seek(
         self,

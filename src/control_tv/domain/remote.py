@@ -30,6 +30,37 @@ class RemoteKey(StrEnum):
     HOME = "KEYCODE_HOME"
     DELETE = "KEYCODE_DEL"  # the keyboard's Backspace, in the TV's active text field
     ENTER = "KEYCODE_ENTER"  # the keyboard's Enter: submits the TV's active text field
+    # The rest of a Google TV remote: as the TV's own remote sends them, each once.
+    DIGIT_0 = "KEYCODE_0"
+    DIGIT_1 = "KEYCODE_1"
+    DIGIT_2 = "KEYCODE_2"
+    DIGIT_3 = "KEYCODE_3"
+    DIGIT_4 = "KEYCODE_4"
+    DIGIT_5 = "KEYCODE_5"
+    DIGIT_6 = "KEYCODE_6"
+    DIGIT_7 = "KEYCODE_7"
+    DIGIT_8 = "KEYCODE_8"
+    DIGIT_9 = "KEYCODE_9"
+    INFO = "KEYCODE_INFO"
+    GUIDE = "KEYCODE_GUIDE"
+    TV_INPUT = "KEYCODE_TV_INPUT"
+    CAPTIONS = "KEYCODE_CAPTIONS"  # subtitles
+    AUDIO_TRACK = "KEYCODE_MEDIA_AUDIO_TRACK"
+    SETTINGS = "KEYCODE_SETTINGS"
+    CHANNEL_UP = "KEYCODE_CHANNEL_UP"
+    CHANNEL_DOWN = "KEYCODE_CHANNEL_DOWN"
+    RED = "KEYCODE_PROG_RED"
+    GREEN = "KEYCODE_PROG_GREEN"
+    YELLOW = "KEYCODE_PROG_YELLOW"
+    BLUE = "KEYCODE_PROG_BLUE"
+    PLAY_PAUSE = "KEYCODE_MEDIA_PLAY_PAUSE"
+    STOP = "KEYCODE_MEDIA_STOP"
+    REWIND = "KEYCODE_MEDIA_REWIND"
+    FAST_FORWARD = "KEYCODE_MEDIA_FAST_FORWARD"
+    PREVIOUS = "KEYCODE_MEDIA_PREVIOUS"
+    NEXT = "KEYCODE_MEDIA_NEXT"
+    RECORD = "KEYCODE_MEDIA_RECORD"
+    ASSISTANT = "KEYCODE_ASSIST"  # opens the TV's Google Assistant
 
 
 VOLUME_KEYS = frozenset({RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE})
@@ -88,9 +119,9 @@ MAX_TEXT_LENGTH = 256
 
 @dataclass(frozen=True, slots=True)
 class TextEntry:
-    """Text that was sent once to the TV's active text field.
+    """A guarded attempt to send text once to the TV's active text field.
 
-    `field_reported`: whether the TV reported an active text field when the text was sent.
+    `field_reported`: whether the TV reported an active field and the text was sent.
     The text itself is never kept here: it may be a password.
     """
 
@@ -101,8 +132,8 @@ class TextEntry:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RemoteTextResult:
-    """Text sent to the TV's active field. The TV does not echo it back, so its effect is
-    never confirmed by the TV: only the person in front of it can check."""
+    """Guarded text entry into the TV's active field. The TV does not echo text back, so a
+    send's effect is never confirmed by the TV: only the person in front of it can check."""
 
     device_id: DeviceId
     confirmation: Confirmation
@@ -121,6 +152,21 @@ class TvApp:
 
     package: str
     name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AppListing:
+    """The apps the window offers for one TV, and where the list comes from.
+
+    `source` is `tv` (the TV listed them now), `remembered` (the TV's last list, kept on this
+    device because its debugging cannot be reached now) or `none` (no list read from this TV
+    yet: `apps` is empty); `reason` is the error code of the TV's listing when
+    it is not `tv`. Opening an app goes through the TV's remote, which needs no list.
+    """
+
+    apps: tuple[TvApp, ...]
+    source: str
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

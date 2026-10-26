@@ -25,8 +25,9 @@ from control_tv.screen_streaming.model import (
 )
 from control_tv.screencast.model import InvalidScreenCastOption, X11GrabSource
 
-# " 0: +*eDP-1 1920/344x1080/194+0+0  eDP-1" (name, width/mm x height/mm + x + y, outputs)
-_MONITOR = re.compile(r"\s*\d+:\s+[+*]*(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)(?:\s.*)?")
+# " 0: +*eDP-1 1920/344x1080/194+0+0  eDP-1" (name, width/mm x height/mm + x + y, outputs).
+# RandR uses signed coordinates when a monitor sits left of or above the primary one.
+_MONITOR = re.compile(r"\s*\d+:\s+[+*]*(\S+)\s+(\d+)/\d+x(\d+)/\d+([+-]\d+)([+-]\d+)(?:\s.*)?")
 _LIST_TIMEOUT = 5.0
 
 Runner = Callable[[Sequence[str], Mapping[str, str]], "subprocess.CompletedProcess[str]"]

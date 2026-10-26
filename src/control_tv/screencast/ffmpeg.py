@@ -9,6 +9,7 @@ command is bounded in time (`-t`) and output size (`-fs`).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +30,12 @@ from control_tv.screencast.model import (
     X11GrabSource,
     require_d0_source,
 )
+
+# At 30 fps these retain at most 133 ms of video. PulseAudio normally supplies 20 ms packets,
+# so eight packets retain about 160 ms. A live stream must drop work before it can drift by
+# seconds; the former value (1024 for both inputs) could retain tens of seconds of old media.
+LIVE_VIDEO_QUEUE = 4
+LIVE_AUDIO_QUEUE = 8
 
 
 class FrameFormat(Protocol):
@@ -51,6 +58,10 @@ def source_arguments(source: LiveSource, profile: FrameFormat) -> tuple[str, ...
         return (
             "-f",
             "x11grab",
+            # A second live input (the system sound) shares FFmpeg's reading: without a queue the
+            # grab misses frames while the sound is read (31 of 600 lost in 20 s, measured).
+            "-thread_queue_size",
+            str(LIVE_VIDEO_QUEUE),
             "-draw_mouse",
             "1",
             "-framerate",
@@ -136,6 +147,7 @@ def live_hls_command(
     output_directory: Path,
     segmenting: HlsSegmenting,
     session_seconds: int,
+    audio: str | None = None,
 ) -> tuple[str, ...]:
     """A live H.264 encode cut into HLS segments in `output_directory` (playlist `index.m3u8`):
     the same source and encoder arguments as the bounded encode, plus a key frame at the start of
@@ -144,7 +156,10 @@ def live_hls_command(
 
     The synthetic picture is read at its own frame rate (`-re`): without it FFmpeg generates it
     as fast as it can, so a "live" session would be produced in a fraction of its duration. A
-    captured X11 region is real time already (no `-re`) and is scaled to `frame`'s size."""
+    captured X11 region is real time already (no `-re`) and is scaled to `frame`'s size.
+
+    `audio` names a PulseAudio source (the system sound, `@DEFAULT_MONITOR@`) recorded with a
+    captured screen and encoded as AAC in the same segments; the synthetic picture has none."""
     if (
         isinstance(session_seconds, bool)
         or not isinstance(session_seconds, int)
@@ -161,6 +176,37 @@ def live_hls_command(
     captured = type(source) is X11GrabSource
     pacing = () if captured else ("-re",)
     scale = (frame.width, frame.height) if captured else None
+    if audio is not None and (not captured or _PULSE_SOURCE.fullmatch(audio) is None):
+        raise InvalidScreenCastOption(
+            f"system sound needs a captured screen and a source: {audio!r}"
+        )
+    sound_input = (
+        ()
+        if audio is None
+        else ("-f", "pulse", "-thread_queue_size", str(LIVE_AUDIO_QUEUE), "-i", audio)
+    )
+    sound = (
+        ()
+        if audio is None
+        else (
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            # The sound follows the grab's clock, so the TV's player (driven by the sound) never
+            # has to skip or repeat pictures.
+            "-af",
+            "aresample=async=1000",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+        )
+    )
     return (
         ffmpeg,
         "-hide_banner",
@@ -170,9 +216,11 @@ def live_hls_command(
         *device,
         *pacing,
         *source_arguments(source, frame),
+        *sound_input,
         "-t",
         str(session_seconds),
         *encoder_arguments(plan, scale),
+        *sound,
         "-profile:v",
         "high",
         "-g",
@@ -197,6 +245,9 @@ def live_hls_command(
         "-y",
         str(output_directory / HLS_PLAYLIST),
     )
+
+
+_PULSE_SOURCE = re.compile(r"[@A-Za-z0-9_.:-]{1,128}")
 
 
 def encoders_listing_command(ffmpeg: str) -> tuple[str, ...]:

@@ -39,8 +39,15 @@ const TV: Device = { ...DEVICE, androidTvRemote: true };
 
 function withTv(device: Device = TV): AppState {
   const ready = readyWith(statusOf());
-  return { ...ready, selected: device, devices: [device] };
+  return { ...ready, tvAppsAvailable: true, selected: device, devices: [device] };
 }
+
+test("TV app controls stay hidden when this host has no adb capability", () => {
+  const state = { ...withTv(), tvAppsAvailable: false };
+  assert.equal(describeRemote(state).visible, true); // the TV remote itself remains available
+  assert.equal(describeRemote(state).appsEnabled, false);
+  assert.equal(startRemote(state, { kind: "list_apps" }).request, null);
+});
 
 function run(
   state: AppState,
@@ -133,6 +140,16 @@ describe("requests", () => {
       command: "bridge_finish_remote_pairing",
       args: { deviceId: "a", code: "A1B2C3" },
     });
+    assert.deepEqual(
+      remoteInvocation({
+        ...base,
+        action: { kind: "pair_apps", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      }),
+      {
+        command: "bridge_pair_tv_apps",
+        args: { deviceId: "a", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      },
+    );
   });
 
   test("one request at a time, shared with every other request of the app", () => {
@@ -612,10 +629,10 @@ describe("the TV's apps", () => {
     assert.equal(setAppFilter(byName, "net"), byName);
   });
 
-  test("debugging off explains how to turn it on, and does not touch the remote's pairing", () => {
+  test("debugging off explains Wireless debugging and does not touch remote pairing", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("debugging_off"));
 
-    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+    assert.match(describeRemote(state).outcome?.text ?? "", /Wireless debugging/);
     assert.equal(state.remote.pairing, "not_tried");
   });
 
@@ -631,15 +648,63 @@ describe("the TV's apps", () => {
     }
   });
 
-  test("a TV that asks to allow control-TV says to allow it, and is not a remote pairing", () => {
+  test("ADB pairing is offered separately from remote pairing", () => {
     const { state } = run(withTv(), { kind: "list_apps" }, failure("pairing_required"));
 
     assert.equal(
       describeRemote(state).outcome?.text,
-      "Allow control-TV on the TV when it asks about debugging, then try again.",
+      "Enter the temporary code shown by Wireless debugging. The pairing address is discovered automatically when the TV advertises it.",
     );
+    assert.equal(describeRemote(state).appsPairingNeeded, true);
     assert.equal(state.remote.pairing, "not_tried");
     assert.equal(describeRemote(state).keysEnabled, true);
+  });
+
+  test("Wireless debugging pairing validates, sends once and clears the temporary state", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const invalid = startRemote(needed, {
+      kind: "pair_apps",
+      pairingEndpoint: "192.0.2.10:40000",
+      code: "12ab56",
+    });
+    assert.equal(invalid.request, null);
+    const paired = run(
+      needed,
+      { kind: "pair_apps", pairingEndpoint: "192.0.2.10:40000", code: "123456" },
+      { ok: true, result: { pairing: "paired" } },
+    );
+    assert.equal(paired.request.action.kind, "pair_apps");
+    assert.equal(paired.state.remote.appsPairingNeeded, false);
+  });
+
+  test("Wireless debugging accepts the TV code with automatic address discovery", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const started = startRemote(needed, {
+      kind: "pair_apps",
+      pairingEndpoint: "",
+      code: "123456",
+    });
+
+    assert.deepEqual(started.request?.action, {
+      kind: "pair_apps",
+      pairingEndpoint: "",
+      code: "123456",
+    });
+  });
+
+  test("an expired Wireless debugging code keeps pairing open and explains the retry", () => {
+    const needed = run(withTv(), { kind: "list_apps" }, failure("pairing_required")).state;
+    const refused = run(
+      needed,
+      { kind: "pair_apps", pairingEndpoint: "", code: "123456" },
+      failure("command_rejected"),
+    ).state;
+
+    assert.equal(describeRemote(refused).appsPairingNeeded, true);
+    assert.equal(
+      describeRemote(refused).outcome?.text,
+      "That Wireless debugging code was refused or expired. Reopen the pairing-code screen and try the new code.",
+    );
   });
 
   test("apps are listed and opened even while the remote still needs pairing", () => {
@@ -708,7 +773,7 @@ describe("the TV's apps", () => {
   test("opening while the TV's debugging is off explains how to turn it on", () => {
     const { state } = run(withTv(), open, failure("debugging_off"));
 
-    assert.match(describeRemote(state).outcome?.text ?? "", /USB debugging/);
+    assert.match(describeRemote(state).outcome?.text ?? "", /Wireless debugging/);
   });
 
   test("another TV starts without the previous TV's apps", () => {
@@ -747,5 +812,103 @@ describe("app tiles", () => {
     assert.equal(appHue("com.google.android.youtube.tv"), hue);
     assert.ok(Number.isInteger(hue) && hue >= 0 && hue < 360);
     assert.notEqual(appHue("com.netflix.ninja"), hue);
+  });
+});
+
+// Issue #112: a TV with only Wireless debugging, which the phone cannot pair.
+describe("opening the TV to the phone", () => {
+  const open = { kind: "open_apps_port" } as const;
+  const computer = (): AppState => ({ ...withTv(), tvAppsPortAvailable: true });
+
+  test("only a computer offers it, never the phone", () => {
+    assert.equal(describeRemote(withTv()).openPortVisible, false);
+    assert.equal(startRemote(withTv(), open).request, null);
+    assert.equal(describeRemote(computer()).openPortVisible, true);
+  });
+
+  test("one request to the selected TV, even while its remote needs pairing", () => {
+    const needsPairing = {
+      ...computer(),
+      remote: { ...withTv().remote, pairing: "needed" as const },
+    };
+    const started = startRemote(needsPairing, open);
+
+    assert.deepEqual(remoteInvocation(started.request as RemoteRequest), {
+      command: "bridge_open_tv_apps_port",
+      args: { deviceId: TV.id },
+    });
+    assert.equal(startRemote(started.state, open).request, null);
+    assert.match(describeRemote(started.state).progress ?? "", /phone/);
+  });
+
+  test("done says what the phone does next and for how long", () => {
+    const { state } = run(computer(), open, { ok: true, result: { port: 5555 } });
+
+    assert.equal(describeRemote(state).outcome?.tone, "done");
+    assert.match(describeRemote(state).outcome?.text ?? "", /port 5555 until it restarts/);
+  });
+
+  test("the phone says it needs the computer, and debugging off says how to get there", () => {
+    const fromPhone = run(computer(), open, failure("unsupported_operation")).state;
+    const off = run(withTv(), { kind: "list_apps" }, failure("debugging_off")).state;
+
+    assert.match(describeRemote(fromPhone).outcome?.text ?? "", /control-TV on the computer/);
+    assert.match(describeRemote(off).outcome?.text ?? "", /Open to the phone/);
+  });
+
+  test("not offered without the TV's app capability", () => {
+    assert.equal(startRemote({ ...computer(), tvAppsAvailable: false }, open).request, null);
+  });
+});
+
+// Issue #112: the TV's debugging turns itself off; the window still offers apps.
+describe("an app list without the TV's debugging", () => {
+  const listed = (source: string, reason: string | null): RemoteAnswer => ({
+    ok: true,
+    result: { apps: [{ package: "com.netflix.ninja", name: "Netflix" }], source, reason },
+  });
+
+  test("its last list is shown and says it opens through the remote", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed("remembered", "debugging_off"));
+    const remote = describeRemote(state);
+
+    assert.deepEqual(
+      remote.apps?.map((app) => app.package),
+      ["com.netflix.ninja"],
+    );
+    assert.match(remote.appsNote ?? "", /listed last time.*remote/);
+    assert.equal(remote.outcome, null); // nothing floats over the list
+    assert.equal(remote.appsPairingNeeded, false);
+  });
+
+  test("no other TV's apps: without a list read from this TV, none is shown", () => {
+    const none: RemoteAnswer = {
+      ok: true,
+      result: { apps: [], source: "none", reason: "pairing_required" },
+    };
+    const { state } = run(withTv(), { kind: "list_apps" }, none);
+    const remote = describeRemote(state);
+
+    assert.deepEqual(remote.apps, []);
+    assert.match(remote.appsNote ?? "", /hasn't read this TV's apps.*ControlTV Récepteur/);
+    assert.equal(remote.outcome, null);
+    assert.equal(remote.appsPairingNeeded, true); // the computer can still pair for the real list
+  });
+
+  test("an app refused for an unpaired remote asks to pair the remote", () => {
+    const open = { kind: "launch_app" as const, package: "com.netflix.ninja", label: "Netflix" };
+    const { state } = run(withTv(), open, failure("pairing_required"));
+    const remote = describeRemote(state);
+
+    assert.match(remote.outcome?.text ?? "", /Pair control-TV with this TV's remote/);
+    assert.notEqual(remote.pairing, null);
+    assert.equal(remote.appsPairingNeeded, false);
+  });
+
+  test("the TV's own list needs no word", () => {
+    const { state } = run(withTv(), { kind: "list_apps" }, listed("tv", null));
+
+    assert.equal(describeRemote(state).outcome, null);
+    assert.equal(describeRemote(state).appsNote, null);
   });
 });

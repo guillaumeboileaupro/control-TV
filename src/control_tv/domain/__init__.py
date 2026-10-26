@@ -35,6 +35,7 @@ from control_tv.domain.models import (
 from control_tv.domain.remote import (
     AppLaunch,
     AppLaunchResult,
+    AppListing,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -50,6 +51,7 @@ __all__ = [
     "AmbiguousTargetError",
     "AppLaunch",
     "AppLaunchResult",
+    "AppListing",
     "AudibleVolume",
     "Command",
     "CommandRejectedError",

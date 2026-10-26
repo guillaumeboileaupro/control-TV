@@ -67,7 +67,7 @@ def test_stop_stops_this_stream_once_and_is_idempotent() -> None:
     receiver.stop(session)
     receiver.stop(session)  # already released: nothing more is sent
 
-    assert commands(transport) == ["load_media", "stop"]
+    assert commands(transport) == ["load_media", "stop", "close_app"]
     assert held(receiver) == ()
     with pytest.raises(StreamCleanupError, match="owns no such session"):
         receiver.stop(ReceiverSession("cast-hls-never"))
@@ -83,13 +83,78 @@ def test_content_started_since_is_never_stopped() -> None:
     assert commands(transport) == ["load_media"] and held(receiver) == ()
 
 
-def test_no_media_any_more_is_released_without_a_command() -> None:
+def test_no_media_but_same_receiver_session_closes_the_application() -> None:
     receiver, transport = rig()
     session = receiver.start(TARGET, PUBLISHED, timeout=10.0)
     transport.tv.has_media = False
 
     receiver.stop(session)
+    assert commands(transport) == ["load_media", "close_app"] and held(receiver) == ()
+
+
+def test_no_media_from_a_replaced_receiver_session_is_never_closed() -> None:
+    receiver, transport = rig()
+    session = receiver.start(TARGET, PUBLISHED, timeout=10.0)
+    transport.tv.has_media = False
+    transport.tv.app_session_id = "receiver-session-replacement"
+
+    receiver.stop(session)
+
     assert commands(transport) == ["load_media"] and held(receiver) == ()
+
+
+def test_a_receiver_application_close_failure_is_retained_for_retry() -> None:
+    receiver, transport = rig()
+    session = receiver.start(TARGET, PUBLISHED, timeout=10.0)
+    transport.tv.has_media = False
+    transport.fail_commands_with = DeviceUnavailableError("link lost")
+
+    with pytest.raises(StreamCleanupError, match="application could not be closed"):
+        receiver.stop(session)
+    assert held(receiver) == (session.handle,)
+
+    transport.fail_commands_with = None
+    receiver.stop(session)
+    assert commands(transport) == ["load_media", "close_app", "close_app"]
+    assert held(receiver) == ()
+
+
+def test_an_unconfirmed_receiver_application_close_is_retained_for_retry() -> None:
+    receiver, transport = rig()
+    session = receiver.start(TARGET, PUBLISHED, timeout=10.0)
+    transport.tv.has_media = False
+    transport.ignore_commands = True
+
+    with pytest.raises(StreamCleanupError, match="application close was not confirmed"):
+        receiver.stop(session)
+
+    assert commands(transport) == ["load_media", "close_app"]
+    assert held(receiver) == (session.handle,)
+
+
+def test_repeated_sessions_close_only_their_captured_receiver_session() -> None:
+    receiver, transport = rig()
+    captured: list[str] = []
+
+    for _ in range(3):
+        session = receiver.start(TARGET, PUBLISHED, timeout=10.0)
+        assert transport.tv.app_session_id is not None
+        captured.append(transport.tv.app_session_id)
+        receiver.stop(session)
+
+    close_targets = [str(args[1]) for name, args in transport.calls if name == "close_app"]
+    assert close_targets == captured
+    assert len(set(close_targets)) == 3 and held(receiver) == ()
+
+
+def test_a_confirmed_load_without_a_receiver_session_is_cleaned_and_refused() -> None:
+    receiver, transport = rig()
+    transport.status_effects.append(lambda: setattr(transport.tv, "app_session_id", None))
+
+    with pytest.raises(StreamStartError, match="did not report its application session"):
+        receiver.start(TARGET, PUBLISHED, timeout=10.0)
+
+    assert commands(transport) == ["load_media", "stop"] and held(receiver) == ()
 
 
 def test_a_load_that_cannot_be_sent_is_a_start_error_and_owns_nothing() -> None:
@@ -148,7 +213,7 @@ def test_a_status_that_cannot_be_read_keeps_the_session_for_a_retry() -> None:
 
     transport.status_errors.clear()
     receiver.stop(session)
-    assert held(receiver) == () and commands(transport) == ["load_media", "stop"]
+    assert held(receiver) == () and commands(transport) == ["load_media", "stop", "close_app"]
 
 
 def test_a_stop_that_fails_or_is_not_confirmed_keeps_the_session() -> None:
@@ -206,7 +271,8 @@ def test_concurrent_stops_send_one_stop() -> None:
         worker.start()
     for worker in workers:
         worker.join(5)
-    assert errors == [] and commands(transport).count("stop") == 1 and held(receiver) == ()
+    assert errors == [] and commands(transport).count("stop") == 1
+    assert commands(transport).count("close_app") == 1 and held(receiver) == ()
 
 
 class BlockingStatus(ControlService):
@@ -243,4 +309,5 @@ def test_a_stop_waiting_behind_another_confirms_its_release() -> None:
     second.join(5)
 
     assert not first.is_alive() and not second.is_alive()
-    assert commands(transport).count("stop") == 1 and held(receiver) == ()
+    assert commands(transport).count("stop") == 1
+    assert commands(transport).count("close_app") == 1 and held(receiver) == ()

@@ -84,7 +84,8 @@ h2 {
   margin: 0;
 }
 
-/* Layout: a single column, the same model on a desktop window and a phone. */
+/* Layout: a single column on a phone; on a computer (see "Desktop layout" at the end) the
+   context on the left and the remote with the TV's apps as the main area. */
 
 .app {
   max-width: 560px;
@@ -830,40 +831,66 @@ h2 {
   padding: 4px 0;
 }
 
-/* The pad: one ring, four identical round keys on its axes and OK exactly in the middle. All
-   positions are fractions of one size, so the pad is symmetric at any width: each key spans
-   3%-31% of its axis, OK 32%-68%, and nothing overlaps. */
+/* The pad: a ring split into four equal quarters (up, right, down, left) and OK in the middle,
+   as on a Google TV remote. The quarters tile the whole ring, so every point of the pad belongs
+   to exactly one key: no dead zone between the arrows and no overlap. Each arrow is a full-size
+   square clipped to its quarter (from the centre to two corners); the pad itself is clipped to a
+   disc, and OK sits above the quarters. Clipping also bounds what a click or a touch can hit. */
 .dpad {
   --pad: min(240px, 68vw);
-  --key: 28%;
-  --key-edge: 3%;
-  --key-across: 36%; /* (100% - --key) / 2 */
   --ok: 36%;
   --ok-edge: 32%; /* (100% - --ok) / 2 */
   position: relative;
   width: var(--pad);
   height: var(--pad);
   border-radius: 50%;
+  clip-path: circle(50%);
   background: var(--surface-2);
+  touch-action: manipulation;
 }
 
 .dpad-key {
   position: absolute;
+  inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--key);
-  height: var(--key);
-  padding: 0;
+  width: 100%;
+  height: 100%;
+  padding: 7%;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   background: transparent;
   color: var(--text);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .dpad-key .icon {
   width: 28px;
   height: 28px;
+  border-radius: 50%;
+}
+
+.dpad-up {
+  clip-path: polygon(50% 50%, 0% 0%, 100% 0%);
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.dpad-right {
+  clip-path: polygon(50% 50%, 100% 0%, 100% 100%);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.dpad-down {
+  clip-path: polygon(50% 50%, 100% 100%, 0% 100%);
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.dpad-left {
+  clip-path: polygon(50% 50%, 0% 100%, 0% 0%);
+  align-items: center;
+  justify-content: flex-start;
 }
 
 .dpad-key:hover {
@@ -875,33 +902,21 @@ h2 {
   color: var(--accent);
 }
 
-/* Inside the key, so the focus ring never reaches OK. */
+/* The quarter's clipping would cut an outline: the focused quarter is tinted and its arrow
+   ringed instead, so keyboard focus stays visible without reaching OK. */
 .dpad-key:focus-visible {
-  outline-offset: -3px;
+  outline: none;
+  background: var(--accent-tint);
 }
 
-.dpad-up {
-  top: var(--key-edge);
-  left: var(--key-across);
-}
-
-.dpad-down {
-  bottom: var(--key-edge);
-  left: var(--key-across);
-}
-
-.dpad-left {
-  top: var(--key-across);
-  left: var(--key-edge);
-}
-
-.dpad-right {
-  top: var(--key-across);
-  right: var(--key-edge);
+.dpad-key:focus-visible .icon {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }
 
 .dpad-ok {
   position: absolute;
+  z-index: 1;
   top: var(--ok-edge);
   left: var(--ok-edge);
   width: var(--ok);
@@ -914,6 +929,7 @@ h2 {
   font-size: 1.125rem;
   font-weight: 700;
   box-shadow: var(--shadow);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .dpad-ok:hover {
@@ -932,6 +948,14 @@ h2 {
 
 .dpad-ok[aria-disabled="true"]:hover {
   background: var(--accent);
+}
+
+/* A quarter being sent: the inset ring of other keys would be clipped away, so the whole
+   quarter takes the accent tint instead. */
+.dpad-key.is-loading {
+  box-shadow: none;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .remote-row {
@@ -1113,11 +1137,9 @@ h2 {
   line-height: 1.2;
 }
 
-/* The outcome of the last remote action, kept in view at the bottom while the remote scrolls. */
+/* The outcome of the last remote action, in the page's flow: it never covers the apps or keys. */
 .remote-feedback {
-  position: sticky;
-  bottom: 12px;
-  z-index: 1;
+  margin-top: 12px;
 }
 
 .remote-feedback:empty {
@@ -1207,6 +1229,56 @@ h2 {
   background: var(--accent-tint);
 }
 
+.display-preview {
+  width: 100%;
+  min-height: 160px;
+  max-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.display-preview-screen {
+  cursor: pointer;
+  outline: none;
+}
+
+.display-preview-screen.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.display-preview-screen.is-draggable:active {
+  cursor: grabbing;
+}
+
+.display-preview-screen rect {
+  fill: var(--surface-3);
+  stroke: var(--line);
+  stroke-width: 3px;
+}
+
+.display-preview-screen text {
+  fill: var(--text);
+  font-size: 36px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.display-preview-screen:hover rect,
+.display-preview-screen:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
+.display-preview-screen.is-selected rect {
+  fill: var(--accent-tint);
+  stroke: var(--accent);
+  stroke-width: 5px;
+}
+
 .screen-option {
   display: flex;
   flex: 1 1 10rem;
@@ -1238,6 +1310,277 @@ h2 {
   cursor: not-allowed;
 }
 
+.screen-extension {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.screen-extension .screen-option {
+  flex: none;
+}
+
+.display-capabilities {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.display-capabilities div {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.display-capabilities dt {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.display-capabilities dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.screen-extension[hidden] {
+  display: none;
+}
+
 .screen-consent[hidden] {
   display: none;
+}
+
+/* The display manager: screens drawn to scale on a scene, numbered like Settings > Displays. */
+
+.display-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.display-scene {
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  touch-action: none;
+}
+
+.display-tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: grab;
+  user-select: none;
+}
+
+.display-tile.is-primary {
+  border-color: var(--muted);
+}
+
+.display-tile.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+.display-tile.is-pending {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.display-tile.is-dragging {
+  z-index: 1;
+  cursor: grabbing;
+  opacity: 0.85;
+}
+
+.display-number {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.display-name {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.display-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.display-settings[hidden] {
+  display: none;
+}
+
+.display-settings legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.display-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.display-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.display-preview[hidden],
+#display-arrangement [aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.display-preview[hidden] {
+  display: none;
+}
+
+#display-arrangement [aria-pressed="true"] {
+  background: var(--accent-tint);
+}
+
+/* The rest of a Google TV remote: compact rows of equal keys. */
+.remote-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-grid-3 {
+  --cols: 3;
+}
+
+.remote-grid-4 {
+  --cols: 4;
+}
+
+.remote-grid-7 {
+  --cols: 7;
+  gap: 6px;
+}
+
+.remote-grid-7 .btn-pill {
+  padding: 0;
+}
+
+.remote-grid .btn-pill {
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 0.875rem;
+}
+
+.btn-assistant .icon {
+  color: var(--accent);
+}
+
+.color-key {
+  min-height: 40px;
+}
+
+.color-red,
+.color-red:hover {
+  background: #d93025;
+}
+
+.color-green,
+.color-green:hover {
+  background: #188038;
+}
+
+.color-yellow,
+.color-yellow:hover {
+  background: #f9ab00;
+}
+
+.color-blue,
+.color-blue:hover {
+  background: #1a73e8;
+}
+
+.remote-grid-3 [data-remote-key="digit_0"] {
+  grid-column: 2;
+}
+
+.btn-assistant {
+  font-weight: 600;
+}
+
+/* Desktop layout: a computer window is not a stretched phone. The context (which TV, what it
+   plays, its Cast sound, the screen sent to it) stays in a left column; the remote, the main
+   action, takes the rest, with the TV's apps beside it on a wide window. Same elements, same
+   order for keyboard and screen readers; only the placement changes. */
+@media (min-width: 960px) {
+  .app {
+    max-width: 1440px;
+    padding: 0 24px 32px;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    grid-template-rows: auto auto auto 1fr;
+    grid-template-areas:
+      "picker remote"
+      "now remote"
+      "sound remote"
+      "screen remote";
+    align-items: start;
+    gap: 16px 24px;
+  }
+
+  .context:not([hidden]) {
+    display: contents;
+  }
+
+  .picker {
+    grid-area: picker;
+  }
+
+  .now-card {
+    grid-area: now;
+  }
+
+  .sound {
+    grid-area: sound;
+  }
+
+  .screen-panel {
+    grid-area: screen;
+  }
+
+  .tv-remote {
+    grid-area: remote;
+  }
+}
+
+@media (min-width: 1180px) {
+  .tv-remote:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px 24px;
+  }
 }

@@ -23,8 +23,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from control_tv.ports import TvControl
+from control_tv.screen_streaming.audio_route import PulseAudioRoute
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
-from control_tv.screen_streaming.h264_encoder import D0LiveEncoder, LiveEncoderSettings
+from control_tv.screen_streaming.h264_encoder import (
+    SYSTEM_AUDIO,
+    D0LiveEncoder,
+    LiveEncoderSettings,
+)
 from control_tv.screen_streaming.hls_publisher import HlsPublisher, home_network_address
 from control_tv.screen_streaming.model import (
     MAX_SESSION_SECONDS,
@@ -44,7 +49,7 @@ from control_tv.screen_streaming.model import (
 )
 from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.service import StreamingSessionService, StreamRequest
-from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.screencast.capabilities import FfmpegCapabilityProbe
 from control_tv.screencast.model import EncoderPreference
@@ -111,6 +116,8 @@ class D1Session:
     capture: X11Capture | None = None
     capture_handle: CaptureHandle | None = None
     virtual: XrandrVirtualMonitor | None = None
+    # The computer's sound routed to the TV only, for a captured screen sent with its sound.
+    audio_route: PulseAudioRoute | None = None
 
     def start(self) -> None:
         """Start the encoder, the publication and the receiver; on failure everything this
@@ -136,21 +143,25 @@ class D1Session:
 
     def stop(self) -> None:
         """Stop the receiver, the publication and the encoder, then forget the capture and
-        remove the virtual monitor. Every step is attempted; the first failure is raised."""
-        failures: list[ScreenStreamError] = []
+        remove the virtual monitor. Every step is attempted, even after an interrupt; then an
+        interrupt (`KeyboardInterrupt`, `SystemExit`) is raised first, else the first failure."""
+        failures: list[BaseException] = []
         steps: list[Callable[[], None]] = [self.service.close]
         if self.capture is not None and self.capture_handle is not None:
             capture, handle = self.capture, self.capture_handle
             steps.append(lambda: capture.stop(handle))
         if self.virtual is not None:
             steps.append(self.virtual.remove)
+        if self.audio_route is not None:
+            steps.append(self.audio_route.stop)
         for step in steps:
             try:
                 step()
-            except ScreenStreamError as error:
+            except BaseException as error:  # the next steps still run
                 failures.append(error)
-        if failures:
-            raise failures[0]
+        interrupts = [error for error in failures if not isinstance(error, Exception)]
+        if interrupts or failures:
+            raise (interrupts or failures)[0]
 
     def run(
         self,
@@ -186,6 +197,10 @@ class Picture:
     height: int = 1080
     fps: int = 30
     consent: bool = False  # the owner's explicit agreement to change the display (EXTEND)
+    refresh: int = 60  # the extended screen's refresh rate (EXTEND)
+    position: Position = Position.RIGHT  # where the extended screen sits (EXTEND)
+    x: int | None = None
+    y: int | None = None
 
 
 def assemble(
@@ -199,6 +214,7 @@ def assemble(
     encoder: D0LiveEncoder | None = None,
     capture: X11Capture | None = None,
     virtual: XrandrVirtualMonitor | None = None,
+    audio_route: PulseAudioRoute | None = None,
 ) -> D1Session:
     """The composition root: one duration for the encoder and (with a margin) the publication;
     the picture is the test pattern, a duplicated output or a new virtual monitor."""
@@ -217,7 +233,15 @@ def assemble(
         capture = capture or X11Capture()
         if chosen.mode is Mode.EXTEND:
             used_virtual = virtual or XrandrVirtualMonitor()
-            output = used_virtual.create(chosen.width, chosen.height, consent=chosen.consent)
+            output = used_virtual.create(
+                chosen.width,
+                chosen.height,
+                consent=chosen.consent,
+                refresh=chosen.refresh,
+                position=chosen.position,
+                x=chosen.x,
+                y=chosen.y,
+            )
             screen = output.name
         elif chosen.screen is None:
             raise InvalidStreamConfiguration("choose the screen output to duplicate")
@@ -230,12 +254,28 @@ def assemble(
                 used_virtual.remove()
             raise
         source = CapturedVideo(handle)
-    live = encoder or D0LiveEncoder(
-        SubprocessRunner(),
-        FfmpegCapabilityProbe(),
-        LiveEncoderSettings(preference=preference, max_session_seconds=seconds),
-        capture_region=None if capture is None else capture.region,
+    # A captured screen goes with the computer's sound, which then plays on the TV only.
+    route = audio_route or (
+        PulseAudioRoute() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
     )
+    try:
+        sound = route.start() if route is not None else SYSTEM_AUDIO
+        live = encoder or D0LiveEncoder(
+            SubprocessRunner(),
+            FfmpegCapabilityProbe(),
+            LiveEncoderSettings(
+                preference=preference, max_session_seconds=seconds, system_audio=sound
+            ),
+            capture_region=None if capture is None else capture.region,
+        )
+    except BaseException:
+        if route is not None:
+            route.stop()
+        if capture is not None and handle is not None:
+            capture.stop(handle)
+        if used_virtual is not None:
+            used_virtual.remove()
+        raise
     publisher = HlsPublisher(live.output, bind_address=bind_address)
     publication = PublicationConfig(
         PublicationKind.HLS, max_session_seconds=float(seconds + PUBLICATION_MARGIN_SECONDS)
@@ -244,7 +284,9 @@ def assemble(
         source, profile, publication, ReceiverTarget(device_id), receiver_timeout=30.0
     )
     service = StreamingSessionService(live, publisher, receiver)
-    return D1Session(live, publisher, service, request, seconds, capture, handle, used_virtual)
+    return D1Session(
+        live, publisher, service, request, seconds, capture, handle, used_virtual, route
+    )
 
 
 def tv_and_route(device_id: str) -> tuple[TvControl, str]:  # pragma: no cover - a real TV
@@ -257,6 +299,14 @@ def tv_and_route(device_id: str) -> tuple[TvControl, str]:  # pragma: no cover -
         if str(device.id) == device_id:
             return control, lan_address_towards(device.host)
     raise InvalidStreamConfiguration("that TV was not found on the home network")
+
+
+_POSITIONS = {
+    "left": Position.LEFT,
+    "right": Position.RIGHT,
+    "above": Position.ABOVE,
+    "below": Position.BELOW,
+}
 
 
 def _size(value: str) -> tuple[int, int]:
@@ -279,6 +329,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--size", type=_size, default=(1920, 1080), help="encoded WIDTHxHEIGHT")
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--refresh", type=int, default=60, help="extended screen: 60 or 50 Hz")
+    parser.add_argument(
+        "--position",
+        choices=sorted(_POSITIONS),
+        default="right",
+        help="extended screen: where it sits next to the primary screen",
+    )
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--encoder", choices=sorted(_ENCODERS), default="software")
     parser.add_argument(
@@ -308,6 +365,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             height,
             arguments.fps,
             consent=arguments.yes_change_display,
+            refresh=arguments.refresh,
+            position=_POSITIONS[arguments.position],
         )
         if arguments.no_tv:
             receiver: StreamReceiver = NoReceiver(lambda uri: print(f"playlist: {uri}", flush=True))

@@ -37,6 +37,7 @@ def test_the_debug_screen_and_its_provider_share_only_the_acceptance_directory()
     assert 'android:name=".AcceptanceTraceProvider"' in manifest
     assert 'android:authorities="${applicationId}.acceptance"' in manifest
     assert 'android:exported="false"' in manifest  # the provider
+    assert "LAUNCHER" not in manifest  # one control-TV icon on the phone, not two
     assert re.findall(r"<(\w+-path)\b[^>]*>", paths) == ["files-path"]
     assert 'path="acceptance/"' in paths
 

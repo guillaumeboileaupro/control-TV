@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
     AppLaunchResult,
+    AppListing,
     Command,
     CommandRejectedError,
     CommandResult,
@@ -43,7 +44,7 @@ from control_tv.domain import (
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import CastTransport, TvApps, TvRemote
+from control_tv.ports import AppLister, AppMemory, CastTransport, TvApps, TvRemote
 from control_tv.tv_channels import TvChannels
 
 
@@ -271,6 +272,20 @@ def _loaded(url: str) -> ExpectedState:
     return check
 
 
+def _receiver_session_ended(receiver_session_id: str) -> ExpectedState:
+    def check(status: DeviceStatus) -> Observation:
+        receiver = status.receiver
+        current = None if receiver is None else receiver.app_session_id
+        return Observation(
+            current != receiver_session_id,
+            "the receiver application ended"
+            if current != receiver_session_id
+            else "the same receiver application is still running",
+        )
+
+    return check
+
+
 def _position_near(
     target: float, tolerance: float, expected: _MediaIdentity | None
 ) -> ExpectedState:
@@ -336,6 +351,8 @@ class ControlService:
         sleep: Callable[[float], None] = time.sleep,
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
+        app_memory: AppMemory | None = None,
+        receiver_apps: AppLister | None = None,
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
     ) -> None:
@@ -371,7 +388,13 @@ class ControlService:
         # Acceptance only (C6): holds a sent playback command's confirmation until an
         # independent observer has recorded the session change. None in normal use.
         self._gate = gate
-        self._channels = TvChannels(self._discovered, remote=remote, apps=apps)
+        self._channels = TvChannels(
+            self._discovered,
+            remote=remote,
+            apps=apps,
+            memory=app_memory,
+            receiver_apps=receiver_apps,
+        )
         self._devices: dict[DeviceId, Device] = {}
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
@@ -459,6 +482,27 @@ class ControlService:
             deadline=deadline,
             trace=trace,
             target_session_id=target.media_session_id,
+        )
+
+    def close_app(self, device_id: DeviceId, receiver_session_id: str) -> CommandResult:
+        """Close one captured Cast application session without ever targeting the current cache."""
+        device_id = _checked_id(device_id)
+        _require(
+            isinstance(receiver_session_id, str) and bool(receiver_session_id.strip()),
+            "receiver app session id must be a non-blank string",
+            device_id,
+        )
+        trace = self._trace.command(Command.CLOSE_APP)
+        self._send(
+            trace,
+            lambda: self._transport.close_app(device_id, receiver_session_id),
+        )
+        return self._verify(
+            Command.CLOSE_APP,
+            device_id,
+            _receiver_session_ended(receiver_session_id),
+            "the receiver application to end",
+            trace=trace,
         )
 
     def seek(self, device_id: DeviceId, position_seconds: float) -> CommandResult:
@@ -556,8 +600,17 @@ class ControlService:
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         return self._channels.list_tv_apps(device_id)
 
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
+        return self._channels.browse_tv_apps(device_id)
+
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         return self._channels.launch_tv_app(device_id, package)
+
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        self._channels.pair_tv_apps(device_id, pairing_endpoint, code)
+
+    def open_tv_apps_port(self, device_id: DeviceId) -> None:
+        self._channels.open_tv_apps_port(device_id)
 
     def _discovered(self, device_id: DeviceId) -> Device | None:
         """The device of the last discovery with this id, or None."""

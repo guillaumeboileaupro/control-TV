@@ -78,8 +78,8 @@ class WidgetActionRunnerTest {
         }
         val statusFails = FakeBridge { _, _ -> errorAnswer("device_unavailable") }
 
-        assertEquals(WidgetOutcome.StatusUnreadable, runner(discoveryFails).run(WidgetAction.MUTE, SELECTED, "a"))
-        assertEquals(WidgetOutcome.StatusUnreadable, runner(statusFails).run(WidgetAction.MUTE, SELECTED, "b"))
+        assertEquals(WidgetOutcome.StatusUnreadable, runner(discoveryFails).run(WidgetAction.STOP, SELECTED, "a"))
+        assertEquals(WidgetOutcome.StatusUnreadable, runner(statusFails).run(WidgetAction.STOP, SELECTED, "b"))
         assertEquals(emptyList<Pair<String, JSONObject>>(), discoveryFails.commands + statusFails.commands)
     }
 
@@ -144,57 +144,128 @@ class WidgetActionRunnerTest {
         assertEquals(emptyList<Pair<String, JSONObject>>(), idle.commands + empty.commands)
     }
 
+    // --- TV remote keys: the TV's own channel, no Cast state needed -------------------------
+
+    private val keyActions = WidgetAction.entries.filter { it.key != null }
+
+    private fun keyAnswer(key: String, confirmation: String = "not_checked"): String {
+        val silent = JSONObject().put("isOn", JSONObject.NULL).put("currentApp", JSONObject.NULL).put("volume", JSONObject.NULL)
+        return JSONObject().put("id", 1).put("ok", true).put(
+            "result",
+            JSONObject().put(
+                "result",
+                JSONObject().put("key", key).put("deviceId", TV).put("confirmation", confirmation)
+                    .put("detail", "").put("before", silent).put("after", silent),
+            ),
+        ).toString()
+    }
+
+    private fun remote(reply: (JSONObject) -> String = { keyAnswer(it.getString("key")) }) =
+        FakeBridge { method, params ->
+            when (method) {
+                "discover_devices" -> devicesAnswer(TV)
+                "press_remote_key" -> reply(params)
+                else -> error("a remote key reads no Cast status: $method")
+            }
+        }
+
     @Test
-    fun muteSendsTheAbsoluteOppositeOfTheReportedStateAndNothingWhenItIsUnknown() {
-        val unmuted = tv(status(muted = false))
-        val muted = tv(status(muted = true))
-        val unknown = tv(status(muted = null))
-
-        runner(unmuted).run(WidgetAction.MUTE, SELECTED, "a")
-        runner(muted).run(WidgetAction.MUTE, SELECTED, "b")
-        val outcome = runner(unknown).run(WidgetAction.MUTE, SELECTED, "c")
-
-        assertEquals(true, commandOf(unmuted)?.second?.getBoolean("muted"))
-        assertEquals(false, commandOf(muted)?.second?.getBoolean("muted"))
-        assertTrue(outcome is WidgetOutcome.NoCommand)
-        assertEquals(emptyList<Pair<String, JSONObject>>(), unknown.commands)
+    fun theWidgetPressesTheVolumeMuteArrowsOkBackHomePowerAndAssistantKeys() {
+        assertEquals(
+            listOf("mute", "volume_down", "volume_up", "power", "up", "down", "left", "right", "ok", "back", "home", "assistant"),
+            keyActions.map { it.key },
+        )
     }
 
     @Test
-    fun volumeMovesTenPointsFromTheReportedLevelWithinZeroToOne() {
-        val cases = listOf(
-            Triple(0.47, WidgetAction.VOLUME_UP, 0.57),
-            Triple(0.47, WidgetAction.VOLUME_DOWN, 0.37),
-            Triple(0.95, WidgetAction.VOLUME_UP, 1.0),
-            Triple(0.05, WidgetAction.VOLUME_DOWN, 0.0),
-        )
-        for ((level, action, expected) in cases) {
-            val bridge = tv(status(level = level))
+    fun eachKeyIsOnePressOfExactlyThatKeyWithoutReadingTheCastStatus() {
+        for (action in keyActions) {
+            val bridge = remote()
 
-            runner(bridge).run(action, SELECTED, "tap-$level-$action")
+            val outcome = runner(bridge).run(action, SELECTED, "tap-$action")
 
-            val (method, params) = commandOf(bridge)!!
-            assertEquals("set_volume", method)
-            assertEquals("$level $action", expected, params.getDouble("level"), 1e-9)
+            assertEquals(listOf("press_remote_key"), bridge.methods)
+            val params = commandOf(bridge)!!.second
+            assertEquals(action.key, params.getString("key"))
+            assertEquals(TV, params.getString("deviceId"))
+            assertEquals(WidgetOutcome.KeySent(action, "not_checked"), outcome)
         }
     }
 
     @Test
-    fun volumeSendsNothingWithoutAReportedAdjustableLevelOrAtTheLimit() {
-        val cases = listOf(
-            status(level = null) to WidgetAction.VOLUME_UP,
-            status(controlType = "fixed") to WidgetAction.VOLUME_DOWN,
-            status(level = 1.0) to WidgetAction.VOLUME_UP,
-            status(level = 0.0) to WidgetAction.VOLUME_DOWN,
-        )
-        for ((state, action) in cases) {
-            val bridge = tv(state)
-
-            val outcome = runner(bridge).run(action, SELECTED, "tap")
-
-            assertTrue(outcome is WidgetOutcome.NoCommand)
-            assertEquals(emptyList<Pair<String, JSONObject>>(), bridge.commands)
+    fun aKeyForATvUnknownToThisProcessIsPressedAfterOneReadOnlyDiscovery() {
+        var known = false
+        val bridge = remote { if (known) keyAnswer("ok") else errorAnswer("device_not_found") }
+        val discovering = FakeBridge { method, params ->
+            if (method == "discover_devices") devicesAnswer(OTHER_TV, TV).also { known = true } else bridge(
+                JSONObject().put("id", 1).put("method", method).put("params", params).toString(),
+            )
         }
+
+        val outcome = runner(discovering).run(WidgetAction.OK, SELECTED, "tap")
+
+        assertEquals(listOf("press_remote_key", "discover_devices", "press_remote_key"), discovering.methods)
+        assertEquals(WidgetOutcome.KeySent(WidgetAction.OK, "not_checked"), outcome)
+    }
+
+    @Test
+    fun aKeyForATvMissingFromDiscoveryOrWhenDiscoveryFailsIsNeverPressed() {
+        val missing = FakeBridge { method, _ ->
+            if (method == "discover_devices") devicesAnswer(OTHER_TV) else errorAnswer("device_not_found")
+        }
+        val failing = FakeBridge { method, _ ->
+            if (method == "discover_devices") errorAnswer("discovery_failed") else errorAnswer("device_not_found")
+        }
+        val crashing = FakeBridge { method, _ ->
+            if (method == "discover_devices") error("no network") else errorAnswer("device_not_found")
+        }
+
+        assertEquals(WidgetOutcome.NotFound, runner(missing).run(WidgetAction.HOME, SELECTED, "a"))
+        assertEquals(WidgetOutcome.StatusUnreadable, runner(failing).run(WidgetAction.HOME, SELECTED, "b"))
+        assertEquals(WidgetOutcome.StatusUnreadable, runner(crashing).run(WidgetAction.HOME, SELECTED, "c"))
+        for (bridge in listOf(missing, failing, crashing)) {
+            assertEquals(listOf("press_remote_key", "discover_devices"), bridge.methods)
+        }
+    }
+
+    @Test
+    fun aKeyWhoseTapAgedDuringTheDiscoveryIsNotPressed() {
+        var asked = 0
+        val bridge = FakeBridge { method, _ ->
+            if (method == "discover_devices") devicesAnswer(TV) else errorAnswer("device_not_found")
+        }
+
+        val outcome = runner(bridge).run(WidgetAction.UP, SELECTED, "tap", mayCommand = { ++asked == 1 })
+
+        assertEquals(WidgetOutcome.Expired, outcome)
+        assertEquals(listOf("press_remote_key", "discover_devices"), bridge.methods)
+    }
+
+    @Test
+    fun aKeyRefusedOrUnansweredIsNeverPressedAgain() {
+        val unpaired = remote { errorAnswer("pairing_required") }
+        val timedOut = remote { errorAnswer("timeout") }
+        val crashed = remote { error("process died while the key was sent") }
+        val noPython = remote { throw PythonUnavailable(IllegalStateException("no Python")) }
+
+        assertEquals(WidgetOutcome.NotSent("pairing_required"), runner(unpaired).run(WidgetAction.POWER, SELECTED, "a"))
+        assertEquals(WidgetOutcome.MaybeSent("press_remote_key"), runner(timedOut).run(WidgetAction.POWER, SELECTED, "b"))
+        assertEquals(WidgetOutcome.MaybeSent("press_remote_key"), runner(crashed).run(WidgetAction.POWER, SELECTED, "c"))
+        assertEquals(WidgetOutcome.NotSent("backend_unavailable"), runner(noPython).run(WidgetAction.POWER, SELECTED, "d"))
+        for (bridge in listOf(unpaired, timedOut, crashed, noPython)) {
+            assertEquals(listOf("press_remote_key"), bridge.methods)
+        }
+        val rerun = remote()
+        assertEquals(WidgetOutcome.MaybeSent("press_remote_key"), runner(rerun).run(WidgetAction.POWER, SELECTED, "b"))
+        assertEquals(emptyList<String>(), rerun.methods)
+    }
+
+    @Test
+    fun aKeyIsNotPressedWhenTheTapMayNoLongerRun() {
+        val bridge = remote()
+
+        assertEquals(WidgetOutcome.Expired, runner(bridge).run(WidgetAction.LEFT, SELECTED, "tap", mayCommand = { false }))
+        assertEquals(emptyList<String>(), bridge.methods)
     }
 
     // --- Command outcomes: one send, never a retry ------------------------------------------
@@ -255,26 +326,26 @@ class WidgetActionRunnerTest {
     @Test
     fun aTapRunAgainAfterItsCommandWasHandedOverSendsNothing() {
         val crashing = tv { throw IllegalStateException("process died while the command ran") }
-        runner(crashing).run(WidgetAction.MUTE, SELECTED, "tap-1")
+        runner(crashing).run(WidgetAction.STOP, SELECTED, "tap-1")
         val rerun = tv()
 
-        val outcome = runner(rerun).run(WidgetAction.MUTE, SELECTED, "tap-1")
+        val outcome = runner(rerun).run(WidgetAction.STOP, SELECTED, "tap-1")
 
         assertEquals(1, crashing.commands.size)
-        assertEquals(WidgetOutcome.MaybeSent("set_muted"), outcome)
+        assertEquals(WidgetOutcome.MaybeSent("stop"), outcome)
         assertEquals(listOf("get_status"), rerun.methods)
     }
 
     @Test
     fun aTapRunAgainBeforeItsCommandWasHandedOverStillSendsItOnce() {
         val readFailed = FakeBridge { _, _ -> throw IllegalStateException("process died during the read") }
-        runner(readFailed).run(WidgetAction.MUTE, SELECTED, "tap-1")
+        runner(readFailed).run(WidgetAction.STOP, SELECTED, "tap-1")
         val rerun = tv()
 
-        runner(rerun).run(WidgetAction.MUTE, SELECTED, "tap-1")
+        runner(rerun).run(WidgetAction.STOP, SELECTED, "tap-1")
 
         assertEquals(emptyList<Pair<String, JSONObject>>(), readFailed.commands)
-        assertEquals(listOf("set_muted"), rerun.commands.map { it.first })
+        assertEquals(listOf("stop"), rerun.commands.map { it.first })
     }
 
     @Test

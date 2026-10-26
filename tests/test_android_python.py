@@ -317,7 +317,7 @@ def test_the_app_embeds_the_tv_remote_extra_and_never_the_mcp_server() -> None:
 
     assert android.EXTRAS == ("tvremote",)
     assert {"androidtvremote2", "aiofiles", "cryptography", "cffi", "pycparser"} <= names
-    assert {"adb-shell", "rsa", "pyasn1"} <= names
+    assert {"adb-shell", "rsa", "pyasn1"} <= names  # the phone's TV app list
     assert {"pychromecast", "zeroconf", "protobuf"} <= names
     assert not names & {"mcp", "starlette", "uvicorn", "pydantic", "pyjwt"}
 

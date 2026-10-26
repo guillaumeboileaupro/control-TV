@@ -28,6 +28,7 @@ from control_tv.domain import (
     DeviceNotFoundError,
     InvalidArgumentError,
     KeyPress,
+    OperationTimeoutError,
     PairingRequiredError,
     RemoteKey,
     RemoteObservation,
@@ -89,6 +90,17 @@ class FakeRemote:
         self.calls.append(("type_text", host, text))
         self._maybe_fail()
         return TextEntry(length=len(text), field_reported=self.field_reported, observed=self.before)
+
+    # Not paired for apps by default: a launch then falls back to the TV's debugging.
+    launches: bool = False
+    front: str | None = None
+
+    def launch(self, host: str, package: str) -> AppLaunch:
+        self.calls.append(("launch", host, package))
+        self._maybe_fail()
+        if not self.launches:
+            raise PairingRequiredError("this TV must be paired with control-TV first")
+        return AppLaunch(package=package, front_app=self.front)
 
 
 class GroupTransport(FakeTransport):
@@ -377,6 +389,39 @@ def test_every_host_runs_the_same_service_with_the_remote_channel(
     assert not (tmp_path / "control-tv").exists()  # nothing is written until it is used
 
 
+@pytest.mark.parametrize(
+    ("adb", "expected"), [("/usr/bin/adb", "AdbAppInventory"), (None, "AdbShellAppInventory")]
+)
+def test_the_tv_apps_go_through_adb_where_it_exists_and_adb_shell_on_a_phone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, adb: str | None, expected: str
+) -> None:
+    import shutil
+
+    from control_tv.bridge import default_service
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda name: adb if name == "adb" else None)
+    monkeypatch.setenv("HOME", str(tmp_path))  # no Android SDK in this home
+    for variable in ("CONTROL_TV_ADB", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.delenv(variable, raising=False)
+
+    service = default_service()
+
+    assert type(service._channels._apps).__name__ == expected
+    if adb is not None:
+        assert service._channels._apps._adb == adb  # type: ignore[union-attr]
+
+
+def test_every_remote_key_of_the_window_is_one_the_bridge_sends() -> None:
+    import re
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parents[2] / "ui" / "index.html").read_text(encoding="utf-8")
+    keys = set(re.findall(r'data-remote-key="([a-z0-9_]+)"', html))
+
+    assert keys == set(REMOTE_KEYS)  # every key the bridge accepts has its button, and back
+
+
 def test_without_xdg_data_home_credentials_go_to_the_users_local_share(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -401,10 +446,10 @@ def test_text_goes_once_to_the_discovered_tv_and_is_never_confirmed_by_it() -> N
     assert result.detail == "sent to the TV's active text field; check the TV"
 
 
-def test_text_sent_without_an_active_field_reported_says_so() -> None:
+def test_text_is_not_sent_without_an_active_field_reported() -> None:
     result = discovered(FakeRemote(field_reported=False)).type_remote_text(DEVICE_ID, "abc")
 
-    assert result.detail == "sent, but the TV did not report an active text field; check the TV"
+    assert result.detail == "not sent because the TV did not report an active text field"
     assert result.field_reported is False
 
 
@@ -455,6 +500,172 @@ def test_bridge_keyboard_keys_are_backspace_and_enter() -> None:
     assert REMOTE_KEYS["enter"] is RemoteKey.ENTER
 
 
+# The key map: every button, and the exact key the TV receives ----------------------------------
+#
+# Each name on the left is the one `press_remote_key` takes and the window's button carries
+# (`data-remote-key`, `ui/src/remote.ts`); each code on the right is the Android key code the TV
+# receives on its own remote channel. Both are written out by hand, independently of the
+# implementation, so renaming a key on one side, or pointing a button at another key code, fails
+# here instead of silently sending something else to the TV.
+KEY_CODES: dict[str, str] = {
+    # Sound, power and the D-pad.
+    "volume_down": "KEYCODE_VOLUME_DOWN",
+    "volume_up": "KEYCODE_VOLUME_UP",
+    # The speaker's mute: `KEYCODE_MUTE` silences the microphone, not the sound.
+    "mute": "KEYCODE_VOLUME_MUTE",
+    "power": "KEYCODE_POWER",
+    "up": "KEYCODE_DPAD_UP",
+    "down": "KEYCODE_DPAD_DOWN",
+    "left": "KEYCODE_DPAD_LEFT",
+    "right": "KEYCODE_DPAD_RIGHT",
+    # The D-pad's own OK, not `KEYCODE_ENTER`, which submits the TV's active text field.
+    "ok": "KEYCODE_DPAD_CENTER",
+    "back": "KEYCODE_BACK",
+    "home": "KEYCODE_HOME",
+    # The keyboard's Backspace and Enter, for the TV's active text field.
+    "delete": "KEYCODE_DEL",
+    "enter": "KEYCODE_ENTER",
+    # The digits, by the number keys' own codes.
+    "digit_0": "KEYCODE_0",
+    "digit_1": "KEYCODE_1",
+    "digit_2": "KEYCODE_2",
+    "digit_3": "KEYCODE_3",
+    "digit_4": "KEYCODE_4",
+    "digit_5": "KEYCODE_5",
+    "digit_6": "KEYCODE_6",
+    "digit_7": "KEYCODE_7",
+    "digit_8": "KEYCODE_8",
+    "digit_9": "KEYCODE_9",
+    # The TV's own menus and information panels.
+    "info": "KEYCODE_INFO",
+    "guide": "KEYCODE_GUIDE",
+    "input": "KEYCODE_TV_INPUT",
+    "settings": "KEYCODE_SETTINGS",
+    # Subtitles and the audio track, the two switches a player offers.
+    "subtitles": "KEYCODE_CAPTIONS",
+    "audio_track": "KEYCODE_MEDIA_AUDIO_TRACK",
+    # Channel surfing.
+    "channel_up": "KEYCODE_CHANNEL_UP",
+    "channel_down": "KEYCODE_CHANNEL_DOWN",
+    # The four colour keys are the programmed keys, not `KEYCODE_RED` and friends.
+    "red": "KEYCODE_PROG_RED",
+    "green": "KEYCODE_PROG_GREEN",
+    "yellow": "KEYCODE_PROG_YELLOW",
+    "blue": "KEYCODE_PROG_BLUE",
+    # Playback on the TV's own remote: play and pause are one toggle key, and stop is its own.
+    "play_pause": "KEYCODE_MEDIA_PLAY_PAUSE",
+    "stop": "KEYCODE_MEDIA_STOP",
+    "rewind": "KEYCODE_MEDIA_REWIND",
+    "fast_forward": "KEYCODE_MEDIA_FAST_FORWARD",
+    "previous": "KEYCODE_MEDIA_PREVIOUS",
+    "next": "KEYCODE_MEDIA_NEXT",
+    "record": "KEYCODE_MEDIA_RECORD",
+    # Google Assistant, from the TV's own microphone.
+    "assistant": "KEYCODE_ASSIST",
+}
+
+# Names a person may reasonably try, or misremember, that this remote does not send. Each must be
+# refused by name, before anything reaches the TV, and never mapped to the nearest key the channel
+# happens to know: someone asking for "pause" is told ControlTV cannot, instead of being sent
+# another key's effect.
+UNSUPPORTED_KEYS: tuple[str, ...] = (
+    "mic",
+    "microphone",
+    "voice",
+    "search",
+    "menu",
+    "audio",
+    "audio_language",
+    "caption",
+    "subtitle",
+    "play",
+    "pause",
+    "record_stop",
+    "channel_plus",
+    "channel_minus",
+    "channels_up",
+    "channelup",
+    "volume_plus",
+    "vol_up",
+    "power_toggle",
+    "digit",
+    "0",
+    "5",
+    "google_assistant",
+    "assistant_key",
+    "dpad_up",
+    "UP",
+    "PLAY_PAUSE",
+    "KEYCODE_ASSIST",
+    " up",
+    "up ",
+    "up\n",
+    "text:hi",
+)
+
+
+@pytest.mark.parametrize(("name", "code"), sorted(KEY_CODES.items()))
+def test_each_button_sends_its_exact_key_code_to_the_tv(name: str, code: str) -> None:
+    remote = FakeRemote()
+
+    response = call(discovered(remote), "press_remote_key", deviceId=str(DEVICE_ID), key=name)
+
+    assert response["ok"] is True
+    assert response["result"]["result"]["key"] == name
+    assert remote.calls == [("press", HOST, code)]  # once, and nothing else
+
+
+def test_the_key_map_matches_every_key_the_bridge_accepts() -> None:
+    assert {name: key.value for name, key in REMOTE_KEYS.items()} == KEY_CODES
+    assert set(KEY_CODES.values()) == {key.value for key in RemoteKey}
+    assert len(set(KEY_CODES.values())) == len(KEY_CODES)  # no two buttons share a key code
+
+
+def test_no_key_code_turns_on_the_microphone_the_voice_assist_or_the_search() -> None:
+    sent = set(KEY_CODES.values())
+
+    for forbidden in (
+        "KEYCODE_MUTE",  # the microphone's mute, not the speaker's
+        "KEYCODE_VOICE_ASSIST",
+        "KEYCODE_SEARCH",
+    ):
+        assert forbidden not in sent
+
+
+@pytest.mark.parametrize("code", sorted(KEY_CODES.values()))
+def test_each_key_code_is_one_the_tv_library_knows(code: str) -> None:
+    # The library resolves the name to the protocol's own key code and raises for an unknown one,
+    # so a plausible but wrong name (KEYCODE_RED for the red colour key) fails here, not on the TV.
+    from androidtvremote2.remotemessage_pb2 import RemoteKeyCode
+
+    assert RemoteKeyCode.Value(code) > 0
+
+
+@pytest.mark.parametrize("name", UNSUPPORTED_KEYS)
+def test_a_button_controltv_cannot_send_is_refused_by_name_before_anything_is_sent(
+    name: str,
+) -> None:
+    remote = FakeRemote()
+
+    response = call(discovered(remote), "press_remote_key", deviceId=str(DEVICE_ID), key=name)
+
+    assert response["error"]["code"] == "invalid_argument"
+    assert remote.calls == []
+
+
+def test_the_refusal_names_every_button_that_can_be_sent() -> None:
+    service = discovered(FakeRemote())
+
+    response = call(service, "press_remote_key", deviceId=str(DEVICE_ID), key="pause")
+
+    message: str = response["error"]["message"]
+    listing, _, refused = message.partition(": ")
+    assert listing.startswith("key must be one of ")
+    assert listing.removeprefix("key must be one of ").split(", ") == list(REMOTE_KEYS)
+    assert refused == repr("pause")
+    assert set(KEY_CODES) == set(REMOTE_KEYS)  # the map covers every listed button, and no other
+
+
 # Apps ------------------------------------------------------------------------------------------
 
 
@@ -477,6 +688,16 @@ class FakeApps:
             raise self.error
         return AppLaunch(package=package, front_app=self.front)
 
+    def pair(self, host: str, pairing_endpoint: str, code: str) -> None:
+        self.calls.append(("pair", host, pairing_endpoint, code))
+        if self.error is not None:
+            raise self.error
+
+    def open_classic_port(self, host: str) -> None:
+        self.calls.append(("open_port", host))
+        if self.error is not None:
+            raise self.error
+
 
 def with_apps(apps: FakeApps, transport: FakeTransport | None = None) -> ControlService:
     service = ControlService(transport or FakeTransport(), remote=FakeRemote(), apps=apps)
@@ -489,6 +710,39 @@ def test_the_app_list_comes_from_the_discovered_tv() -> None:
 
     assert with_apps(apps).list_tv_apps(DEVICE_ID) == list(apps.apps)
     assert apps.calls == [("list", HOST)]
+
+
+def test_wireless_debugging_pairing_targets_only_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    response = call(
+        with_apps(apps),
+        "pair_tv_apps",
+        deviceId=str(DEVICE_ID),
+        pairingEndpoint=f"{HOST}:40123",
+        code="123456",
+    )
+
+    assert response["result"] == {"pairing": "paired"}
+    assert apps.calls == [("pair", HOST, f"{HOST}:40123", "123456")]
+
+
+def test_wireless_debugging_pairing_needs_text_and_the_apps_channel() -> None:
+    with pytest.raises(InvalidArgumentError):
+        with_apps(FakeApps()).pair_tv_apps(DEVICE_ID, None, "123456")  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).pair_tv_apps(DEVICE_ID, f"{HOST}:40123", "123456")
+
+
+def test_opening_the_tv_to_the_phone_targets_only_the_discovered_tv() -> None:
+    apps = FakeApps()
+
+    response = call(with_apps(apps), "open_tv_apps_port", deviceId=str(DEVICE_ID))
+
+    assert response["result"] == {"port": 5555}
+    assert apps.calls == [("open_port", HOST)]
+    with pytest.raises(UnsupportedOperationError):
+        discovered(FakeRemote()).open_tv_apps_port(DEVICE_ID)
 
 
 def test_no_app_list_for_a_group_or_without_the_inventory() -> None:
@@ -529,8 +783,32 @@ def test_a_launch_needs_a_package_name_string_and_the_inventory() -> None:
 
     with pytest.raises(InvalidArgumentError):
         with_apps(apps).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
-    with pytest.raises(UnsupportedOperationError):
+    with pytest.raises(PairingRequiredError):  # neither a paired remote nor the inventory
         discovered(FakeRemote()).launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == []
+
+
+def test_a_launch_goes_through_the_tvs_remote_without_its_debugging() -> None:
+    apps = FakeApps(error=DebuggingOffError("debugging off"))
+    remote = FakeRemote(launches=True, front="com.example.video")
+    service = ControlService(FakeTransport(), remote=remote, apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    result = service.launch_tv_app(DEVICE_ID, "com.example.video")
+
+    assert remote.calls == [("launch", HOST, "com.example.video")]
+    assert apps.calls == []
+    assert result.confirmation is Confirmation.CONFIRMED
+
+
+def test_a_remote_that_fails_after_sending_is_not_retried_through_the_debugging() -> None:
+    apps = FakeApps()
+    remote = FakeRemote(launches=True, error=OperationTimeoutError("no answer"))
+    service = ControlService(FakeTransport(), remote=remote, apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    with pytest.raises(OperationTimeoutError):
+        service.launch_tv_app(DEVICE_ID, "com.example.video")
     assert apps.calls == []
 
 
@@ -541,32 +819,74 @@ def test_bridge_lists_apps_with_their_known_names() -> None:
         "apps": [
             {"package": "com.example.video", "name": "Video"},
             {"package": "org.example.music", "name": None},
-        ]
+        ],
+        "source": "tv",
+        "reason": None,
     }
 
 
-def test_bridge_app_list_errors_keep_their_codes() -> None:
+class MemoryApps:
+    def __init__(self) -> None:
+        self.kept: dict[DeviceId, tuple[TvApp, ...]] = {}
+
+    def recall(self, device_id: DeviceId) -> tuple[TvApp, ...] | None:
+        return self.kept.get(device_id)
+
+    def remember(self, device_id: DeviceId, apps: tuple[TvApp, ...]) -> None:
+        self.kept[device_id] = apps
+
+
+def remembering(apps: FakeApps, memory: MemoryApps) -> ControlService:
+    service = ControlService(FakeTransport(), remote=FakeRemote(), apps=apps, app_memory=memory)
+    service.discover_devices(timeout=1.0)
+    return service
+
+
+def test_without_the_tvs_debugging_the_window_gets_its_last_list_never_other_apps() -> None:
+    memory = MemoryApps()
+    apps = FakeApps()
+    service = remembering(apps, memory)
+    call(service, "list_tv_apps", deviceId=str(DEVICE_ID))  # the TV answers: kept
+
+    apps.error = DebuggingOffError("debugging off")
+    remembered = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
+    memory.kept.clear()
+    nothing = call(service, "list_tv_apps", deviceId=str(DEVICE_ID))["result"]
+
+    assert remembered["source"] == "remembered" and remembered["reason"] == "debugging_off"
+    assert [app["package"] for app in remembered["apps"]] == [a.package for a in apps.apps]
+    assert nothing == {"apps": [], "source": "none", "reason": "debugging_off"}
+
+
+def test_the_strict_list_still_reports_the_tvs_error() -> None:
     apps = FakeApps(error=PairingRequiredError("allow control-TV on the TV"))
 
-    response = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
+    with pytest.raises(PairingRequiredError):
+        remembering(apps, MemoryApps()).list_tv_apps(DEVICE_ID)
 
-    assert response["error"]["code"] == "pairing_required"
 
-
-@pytest.mark.parametrize("method", ["list_tv_apps", "launch_tv_app"])
-def test_bridge_says_when_the_tv_debugging_is_off(method: str) -> None:
+def test_bridge_says_when_the_tv_debugging_is_off() -> None:
     apps = FakeApps(error=DebuggingOffError("turn on USB debugging"))
-    params = {"package": "com.example.video"} if method == "launch_tv_app" else {}
 
-    response = call(with_apps(apps), method, deviceId=str(DEVICE_ID), **params)
+    listed = call(with_apps(apps), "list_tv_apps", deviceId=str(DEVICE_ID))
+    launched = call(
+        with_apps(apps), "launch_tv_app", deviceId=str(DEVICE_ID), package="com.example.video"
+    )
 
-    assert response["error"]["code"] == "debugging_off"
+    assert listed["result"]["reason"] == "debugging_off"
+    assert launched["error"]["code"] == "pairing_required"  # the remote is what to fix
 
 
 def test_bridge_app_list_without_the_channel_is_not_reported_as_debugging_off() -> None:
     response = call(discovered(FakeRemote()), "list_tv_apps", deviceId=str(DEVICE_ID))
 
-    assert response["error"]["code"] == "unsupported_operation"
+    assert response["result"]["reason"] == "unsupported_operation"
+
+
+def test_a_group_or_an_unknown_tv_is_still_refused() -> None:
+    response = call(with_apps(FakeApps()), "list_tv_apps", deviceId="not-a-discovered-tv")
+
+    assert "error" in response
 
 
 def test_bridge_launches_an_app_and_answers_with_what_the_tv_reported() -> None:
@@ -612,3 +932,66 @@ def test_the_tv_channels_need_only_a_device_lookup_not_the_cast_service() -> Non
     assert remote.calls == [("observe", HOST)]
     with pytest.raises(DeviceNotFoundError):
         channels.get_remote_status(DeviceId("uuid-other"))
+
+
+class ReceiverApps:
+    def __init__(self, apps: tuple[TvApp, ...] = (), error: Exception | None = None) -> None:
+        self.apps, self.error, self.hosts = apps, error, list[str]()
+
+    def list_apps(self, host: str) -> tuple[TvApp, ...]:
+        self.hosts.append(host)
+        if self.error is not None:
+            raise self.error
+        return self.apps
+
+
+def with_receiver(apps: FakeApps, receiver: ReceiverApps, memory: MemoryApps) -> ControlService:
+    service = ControlService(
+        FakeTransport(),
+        remote=FakeRemote(),
+        apps=apps,
+        app_memory=memory,
+        receiver_apps=receiver,
+    )
+    service.discover_devices(timeout=1.0)
+    return service
+
+
+def test_without_the_tvs_debugging_its_receiver_lists_the_apps_and_they_are_kept() -> None:
+    memory = MemoryApps()
+    receiver = ReceiverApps((TvApp("fr.free.oqee", "OQEE by Free"),))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, memory)
+
+    listing = service.browse_tv_apps(DEVICE_ID)
+
+    assert (listing.source, listing.reason) == ("tv", None)
+    assert listing.apps == receiver.apps
+    assert receiver.hosts == [HOST]
+    assert memory.kept[DEVICE_ID] == receiver.apps
+
+
+def test_when_neither_answers_the_debuggings_reason_is_given() -> None:
+    receiver = ReceiverApps(error=OperationTimeoutError("no receiver"))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, MemoryApps())
+
+    listing = service.browse_tv_apps(DEVICE_ID)
+
+    assert (listing.source, listing.reason, listing.apps) == ("none", "debugging_off", ())
+
+
+def test_the_receiver_is_not_asked_when_the_debugging_answers() -> None:
+    receiver = ReceiverApps()
+    service = with_receiver(FakeApps(), receiver, MemoryApps())
+
+    assert service.browse_tv_apps(DEVICE_ID).source == "tv"
+    assert receiver.hosts == []
+
+
+def test_an_unpaired_remote_asks_for_pairing_even_when_the_debugging_is_off() -> None:
+    apps = FakeApps(error=DebuggingOffError("debugging off"))
+    service = ControlService(FakeTransport(), remote=FakeRemote(), apps=apps)
+    service.discover_devices(timeout=1.0)
+
+    with pytest.raises(PairingRequiredError):
+        service.launch_tv_app(DEVICE_ID, "com.example.video")
+    assert apps.calls == [("launch", HOST, "com.example.video")]  # tried, refused, not resent

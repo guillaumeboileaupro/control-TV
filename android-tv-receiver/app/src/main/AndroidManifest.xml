@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 11+ shows an app only the launcher apps it declares it looks for. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <uses-feature android:name="android.software.leanback" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <application
+        android:allowBackup="false"
+        android:banner="@drawable/banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="ControlTV Récepteur"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ControlTVReceiver"
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:banner="@drawable/banner"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="ControlTV Récepteur"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- The TV's app list for control-TV, opened by its paired remote; no visible screen. -->
+        <activity
+            android:name=".AppListActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="controltv-receiver" android:host="apps" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+

@@ -1,23 +1,33 @@
-"""D2: an independent virtual monitor on the local X11 screen, for "Étendre".
+"""D2: the TV as a second screen of the local X11 desktop, for "Étendre".
 
-`create` enlarges the X framebuffer to the right of the current screen (`xrandr --fb`) and
-declares a logical monitor there (`xrandr --setmonitor control-tv-virtual ... none`): the
-desktop treats it as one more monitor (windows can be moved onto it) and the capture grabs it
-like any output. `remove` deletes that monitor and restores the framebuffer's original size.
+GNOME (Mutter) treats only real RandR outputs as monitors: a logical `xrandr --setmonitor`
+monitor over an enlarged framebuffer is undone within half a second (seen on the owner's
+desktop), so windows cannot go there and the capture falls outside the screen. `create` therefore
+turns a free video output of the computer into an extra screen: a mode of the chosen size and
+refresh rate is defined (`cvt`), added to that output and enabled to the left, right, above or
+below the primary screen. GNOME extends the desktop onto it like a plugged monitor; the capture
+grabs it like any output. GNOME ignores an output that reports "disconnected" (the area stays
+black and windows cannot go there, seen on the owner's desktop): the output must first be
+reported connected with no screen behind it, which the owner does once per boot with
+`echo on-digital | sudo tee /sys/class/drm/<card>-HDMI-A-<n>/status` (root, not done here).
+
 Nothing is written to a configuration file: these are runtime changes of the running X server
-only, gone at the latest when the session ends, and undone by `remove` (idempotent). A monitor
-left by an interrupted run is removed before a new one is created. Changing the display needs
-the owner's explicit consent: the caller asks for it, this module only refuses without it.
+only. `remove` turns the output off and deletes the mode (idempotent); a mode left by an
+interrupted run is deleted before a new one is defined. Changing the display needs the owner's
+explicit consent: the caller asks for it, this module only refuses without it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
 import threading
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 
 from control_tv.screen_streaming.model import (
     InvalidStreamConfiguration,
@@ -32,83 +42,197 @@ from control_tv.screen_streaming.x11_capture import (
     run_command,
 )
 
-VIRTUAL_MONITOR = "control-tv-virtual"
-_SCREEN = re.compile(r"Screen \d+: minimum \d+ x \d+, current (\d+) x (\d+), maximum (\d+) x (\d+)")
-_SIZES = {(1280, 720), (1920, 1080)}
+MODE_PREFIX = "control-tv-"
+# Measured on the owner's desktop (2026-10-20): every size at 60 and 50 Hz, in every position, was
+# accepted; 1920x1080 at 30 Hz was not, so 30 Hz is not offered.
+SIZES = ((1280, 720), (1920, 1080))
+REFRESH_RATES = (60, 50)
+_OUTPUT = re.compile(
+    r"^(\S+) (connected|disconnected)( primary)?(?:.*\) (\d+)mm x (\d+)mm)?", re.MULTILINE
+)
+_MODELINE = re.compile(r'^Modeline "[^"]+"\s+(.+)$', re.MULTILINE)
+_ACCEPT_SECONDS = 3.0
+_ACCEPT_POLL_SECONDS = 0.1
+
+
+class Position(StrEnum):
+    """Where the extra screen sits next to the primary one (xrandr's own words)."""
+
+    LEFT = "left-of"
+    RIGHT = "right-of"
+    ABOVE = "above"
+    BELOW = "below"
 
 
 @dataclass(frozen=True)
-class _Framebuffer:
-    width: int
-    height: int
+class _Extension:
+    output: str
+    mode: str
+    # The desktop's screens moved to make room on the left or above, at their former places.
+    moved: tuple[tuple[str, int, int], ...] = ()
 
 
 class XrandrVirtualMonitor:
-    """One virtual monitor at a time, created and removed with `xrandr` (runtime only)."""
+    """One extra screen at a time on a free video output, enabled and removed with `xrandr`."""
 
-    def __init__(self, environ: Mapping[str, str] | None = None, run: Runner = run_command) -> None:
+    def __init__(
+        self,
+        environ: Mapping[str, str] | None = None,
+        run: Runner = run_command,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._environ = dict(os.environ if environ is None else environ)
         self._run = run
-        self._original: _Framebuffer | None = None
+        self._sleep = sleep
+        self._extension: _Extension | None = None
+        # Removal steps of the extension already done: a retry resumes after them, since xrandr
+        # refuses to delete a mode that is already gone.
+        self._removed = 0
         self._lock = threading.Lock()
 
     @property
     def active(self) -> bool:
         with self._lock:
-            return self._original is not None
+            return self._extension is not None
 
-    def create(self, width: int, height: int, *, consent: bool) -> X11Output:
-        """Add the virtual monitor (`width` x `height`, one of 1280x720 or 1920x1080) to the
-        right of the screen; `consent` is the owner's explicit agreement to change the display."""
+    def free_output(self) -> str | None:
+        """The output an extension would use (read only), or None when none is enabled."""
+        return _outputs(self._xrandr("--query"))[1]
+
+    def create(
+        self,
+        width: int,
+        height: int,
+        *,
+        consent: bool,
+        refresh: int = 60,
+        position: Position = Position.RIGHT,
+        x: int | None = None,
+        y: int | None = None,
+    ) -> X11Output:
+        """Extend the desktop onto a free output (`width` x `height` at `refresh` Hz, placed at
+        `position` of the primary screen); `consent` is the owner's explicit agreement."""
         if consent is not True:
             raise StreamStartError("extending the display needs the owner's explicit consent")
-        if (width, height) not in _SIZES:
-            raise InvalidStreamConfiguration("the virtual monitor is 1280x720 or 1920x1080")
+        if (width, height) not in SIZES:
+            raise InvalidStreamConfiguration("the extended screen is 1280x720 or 1920x1080")
+        if refresh not in REFRESH_RATES:
+            raise InvalidStreamConfiguration("the extended screen refreshes at 60 or 50 Hz")
+        if type(position) is not Position:
+            raise InvalidStreamConfiguration("the extended screen is left, right, above or below")
+        if (x is None) != (y is None) or any(
+            isinstance(value, bool) or not isinstance(value, int) or not -32768 <= value <= 32767
+            for value in (x, y)
+            if value is not None
+        ):
+            raise InvalidStreamConfiguration("the extended screen coordinates are invalid")
+        mode = f"{MODE_PREFIX}{width}x{height}-{refresh}"
         with self._lock:
-            if self._original is not None:
-                raise StreamStartError("a virtual monitor already exists: stop it first")
-            if any(output.name == VIRTUAL_MONITOR for output in self._monitors()):
-                self._xrandr("--delmonitor", VIRTUAL_MONITOR)  # left by an interrupted run
-            current, maximum = self._framebuffer()
-            grown = _Framebuffer(current.width + width, max(current.height, height))
-            if grown.width > maximum.width or grown.height > maximum.height:
-                raise StreamStartError("the X screen cannot grow enough for a virtual monitor")
-            self._xrandr("--fb", f"{grown.width}x{grown.height}")
-            try:
-                millimetres = f"{width}/{width * 254 // 960}x{height}/{height * 254 // 960}"
-                self._xrandr(
-                    "--setmonitor", VIRTUAL_MONITOR, f"{millimetres}+{current.width}+0", "none"
+            if self._extension is not None:
+                raise StreamStartError("the display is already extended: stop it first")
+            listing = self._xrandr("--query")
+            primary, free = _outputs(listing)
+            if primary is None:
+                raise StreamStartError("the primary screen cannot be found")
+            if free is None:
+                raise StreamStartError(
+                    "no free video output is enabled for the extension: enable one first "
+                    "(echo on-digital | sudo tee /sys/class/drm/<card>-HDMI-A-<n>/status)"
                 )
+            extension = _Extension(free, mode)
+            if mode in listing:
+                self._forget(extension)  # left by an interrupted run
+            try:
+                self._xrandr("--newmode", mode, *self._modeline(width, height, refresh))
+                self._xrandr("--addmode", free, mode)
+                if x is not None and y is not None:
+                    placement, extension = self._place(extension, x, y)
+                else:
+                    placement = (f"--{position.value}", primary)
+                self._xrandr("--output", free, "--mode", mode, *placement)
+                output = self._accepted(free, width, height)
             except BaseException:
-                self._restore(current)
+                self._forget(extension)
                 raise
-            self._original = current
-        return X11Output(VIRTUAL_MONITOR, width, height, current.width, 0, False)
+            self._extension = extension
+            self._removed = 0
+        return output
 
     def remove(self) -> None:
-        """Delete the virtual monitor and restore the screen size. Idempotent; a failure keeps
-        it for a retry."""
+        """Turn the extra screen off, delete its mode and put the desktop back. Idempotent; a
+        failure keeps it for a retry, which resumes after the steps already done."""
         with self._lock:
-            original = self._original
-            if original is None:
+            extension = self._extension
+            if extension is None:
                 return
-            if any(output.name == VIRTUAL_MONITOR for output in self._monitors()):
-                self._xrandr("--delmonitor", VIRTUAL_MONITOR, cleanup=True)
-            self._restore(original)
-            self._original = None
+            steps: tuple[Callable[[], object], ...] = (
+                lambda: self._xrandr("--output", extension.output, "--off", cleanup=True),
+                lambda: self._xrandr("--delmode", extension.output, extension.mode, cleanup=True),
+                lambda: self._xrandr("--rmmode", extension.mode, cleanup=True),
+                lambda: self._put_back(extension, cleanup=True),
+            )
+            for step in steps[self._removed :]:
+                step()
+                self._removed += 1
+            self._extension = None
 
-    def _restore(self, framebuffer: _Framebuffer) -> None:
-        self._xrandr("--fb", f"{framebuffer.width}x{framebuffer.height}", cleanup=True)
+    def _place(self, extension: _Extension, x: int, y: int) -> tuple[tuple[str, ...], _Extension]:
+        """The arguments placing the TV at desktop coordinates `x`, `y`. X has no negative
+        coordinates: a TV on the left of or above the desktop moves the desktop's screens by as
+        much, in the same command, and they go back when the TV is removed."""
+        shift_x, shift_y = max(0, -x), max(0, -y)
+        arguments: list[str] = ["--pos", f"{x + shift_x}x{y + shift_y}"]
+        if shift_x == 0 and shift_y == 0:
+            return tuple(arguments), extension
+        moved = tuple(
+            (monitor.name, monitor.x, monitor.y)
+            for monitor in parse_monitors(self._xrandr("--listmonitors"))
+            if monitor.name != extension.output
+        )
+        for name, old_x, old_y in moved:
+            arguments += ["--output", name, "--pos", f"{old_x + shift_x}x{old_y + shift_y}"]
+        return tuple(arguments), _Extension(extension.output, extension.mode, moved)
 
-    def _monitors(self) -> tuple[X11Output, ...]:
-        return parse_monitors(self._xrandr("--listmonitors"))
+    def _put_back(self, extension: _Extension, *, cleanup: bool) -> None:
+        if extension.moved:
+            arguments: list[str] = []
+            for name, x, y in extension.moved:
+                arguments += ["--output", name, "--pos", f"{x}x{y}"]
+            self._xrandr(*arguments, cleanup=cleanup)
 
-    def _framebuffer(self) -> tuple[_Framebuffer, _Framebuffer]:
-        match = _SCREEN.search(self._xrandr("--current"))
+    def _accepted(self, output: str, width: int, height: int) -> X11Output:
+        """The new screen once the desktop lists it; GNOME may refuse a mode silently."""
+        waited = 0.0
+        while True:
+            for monitor in parse_monitors(self._xrandr("--listmonitors")):
+                if monitor.name == output and (monitor.width, monitor.height) == (width, height):
+                    return monitor
+            if waited >= _ACCEPT_SECONDS:
+                raise StreamStartError("the desktop did not accept the extended screen")
+            self._sleep(_ACCEPT_POLL_SECONDS)
+            waited += _ACCEPT_POLL_SECONDS
+
+    def _forget(self, extension: _Extension) -> None:
+        """Best-effort undo of a partial or leftover extension (each step may already be gone)."""
+        with contextlib.suppress(StreamCleanupError):
+            self._put_back(extension, cleanup=True)
+        for arguments in (
+            ("--output", extension.output, "--off"),
+            ("--delmode", extension.output, extension.mode),
+            ("--rmmode", extension.mode),
+        ):
+            with contextlib.suppress(StreamCleanupError):
+                self._xrandr(*arguments, cleanup=True)
+
+    def _modeline(self, width: int, height: int, refresh: int) -> tuple[str, ...]:
+        try:
+            done = self._run(("cvt", str(width), str(height), str(refresh)), self._environ)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise StreamStartError(f"cvt failed: {type(error).__name__}") from None
+        match = _MODELINE.search(done.stdout) if done.returncode == 0 else None
         if match is None:
-            raise StreamStartError("the X screen size cannot be read")
-        width, height, maximum_width, maximum_height = (int(value) for value in match.groups())
-        return _Framebuffer(width, height), _Framebuffer(maximum_width, maximum_height)
+            raise StreamStartError("cvt gave no mode for the extended screen")
+        return tuple(match.group(1).split())
 
     def _xrandr(self, *arguments: str, cleanup: bool = False) -> str:
         error_type = StreamCleanupError if cleanup else StreamStartError
@@ -120,3 +244,23 @@ class XrandrVirtualMonitor:
         if done.returncode != 0:
             raise error_type(f"xrandr {arguments[0]} failed")
         return done.stdout
+
+
+def _outputs(listing: str) -> tuple[str | None, str | None]:
+    """The primary connected output and the output to extend onto: a connector reported
+    connected with no physical size (forced on, no screen behind it), HDMI before DisplayPort.
+    A disconnected output is never used: the desktop would ignore it."""
+    primary: str | None = None
+    first_connected: str | None = None
+    forced: list[str] = []
+    for name, state, is_primary, width_mm, height_mm in _OUTPUT.findall(listing):
+        if state != "connected":
+            continue
+        if not is_primary and (width_mm, height_mm) == ("0", "0"):
+            forced.append(name)
+        else:
+            first_connected = first_connected or name
+            if is_primary:
+                primary = name
+    forced.sort(key=lambda name: not name.startswith("HDMI"))
+    return primary or first_connected, (forced[0] if forced else None)

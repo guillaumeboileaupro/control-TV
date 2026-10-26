@@ -75,3 +75,52 @@ class EmbeddedHandlerTest {
         relay.shutdown()
     }
 }
+
+/** What each request leaves in the log (issue #112: measure the phone's slowness). */
+class EmbeddedHandlerLogTest {
+    private val logs = mutableListOf<String>()
+    private var now = 0L
+
+    private fun handler(answer: (String) -> String) = EmbeddedHandler(
+        load = { { line -> now += 1_250_000_000L; answer(line) } },
+        log = { logs += it },
+        clock = { now },
+    )
+
+    @Test
+    fun eachRequestLogsItsMethodItsDurationAndHowItEnded() {
+        handler { """{"id":1,"ok":true,"result":{}}""" }(
+            """{"id":1,"method":"press_remote_key","params":{"deviceId":"tv-1","key":"up"}}""",
+        )
+        handler { """{"id":2,"ok":false,"error":{"code":"pairing_required","message":"10.0.0.5"}}""" }(
+            """{"id":2,"method":"list_tv_apps","params":{"deviceId":"tv-1"}}""",
+        )
+
+        assertEquals(
+            listOf("bridge press_remote_key: 1250 ms, ok", "bridge list_tv_apps: 1250 ms, pairing_required"),
+            logs,
+        )
+    }
+
+    @Test
+    fun aFailureIsLoggedAndPassedOnAndNothingPrivateIsLogged() {
+        val failing = handler { throw IllegalStateException("tv-1 at 10.0.0.5") }
+
+        val error = runCatching { failing("""{"id":3,"method":"get_status","params":{"deviceId":"tv-1"}}""") }
+            .exceptionOrNull()
+        handler { "not json" }("""{"method":"Living room 10.0.0.5"}""")
+
+        assertTrue(error is IllegalStateException)
+        assertEquals(listOf("bridge get_status: 1250 ms, failed", "bridge ?: 1250 ms, unreadable"), logs)
+        assertTrue(logs.none { "tv-1" in it || "10.0.0.5" in it || "Living" in it })
+    }
+
+    @Test
+    fun aPythonThatCannotStartIsLoggedAsUnavailable() {
+        val unavailable = EmbeddedHandler(load = { error("no Python") }, log = { logs += it }, clock = { now })
+
+        runCatching { unavailable("""{"id":4,"method":"discover_devices","params":{}}""") }
+
+        assertEquals(listOf("bridge discover_devices: 0 ms, $CODE_BACKEND_UNAVAILABLE"), logs)
+    }
+}

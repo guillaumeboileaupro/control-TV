@@ -21,6 +21,8 @@ Commands:
   rust-audit   cargo audit of src-tauri/ (network, needs cargo-audit): any vulnerability or
                unsound crate fails unless src-tauri/cargo-audit-waivers.json waives it; other
                warnings (unmaintained, yanked) are printed
+  webrtc-audit the same cargo audit of webrtc-engine/ (its own lock), with
+               webrtc-engine/cargo-audit-waivers.json
   bridge-build freeze the Python bridge release packages ship into dist/python-bridge/
   bridge-smoke run that frozen bridge outside the checkout (ping, no network, end of input)
   release-deb  bridge-build, the strict isolated smoke, then the release .deb, its notices and
@@ -95,6 +97,7 @@ TARGETS: tuple[Target, ...] = (
     Target("temp", CLEAN, "project scratch directory"),
     Target("target", CLEAN, "Rust build output"),
     Target("src-tauri/target", CLEAN, "Tauri/Rust build output"),
+    Target("webrtc-engine/target", CLEAN, "WebRTC engine Rust build output"),
     Target("src-tauri/gen/schemas", CLEAN, "Tauri capability schema (auto-generated)"),
     Target("src-tauri/gen/android/.gradle", CLEAN, "Android project-local Gradle state"),
     Target("src-tauri/gen/android/build", CLEAN, "Android build output"),
@@ -102,6 +105,9 @@ TARGETS: tuple[Target, ...] = (
     Target("src-tauri/gen/android/buildSrc/build", CLEAN, "Android build plugin output"),
     Target("src-tauri/gen/android/buildSrc/.gradle", CLEAN, "Android build plugin Gradle state"),
     Target("src-tauri/gen/android/app/src/main/jniLibs", CLEAN, "Android Rust libraries (copied)"),
+    Target("android-tv-receiver/.gradle", CLEAN, "TV receiver Gradle state"),
+    Target("android-tv-receiver/build", CLEAN, "TV receiver build output"),
+    Target("android-tv-receiver/app/build", CLEAN, "TV receiver app build output"),
     Target(".gradle", CLEAN, "project-local Gradle state"),
     Target("ui/dist", CLEAN, "frontend build output"),
     Target(".venv", DIST_CLEAN, "development virtual environment"),
@@ -538,6 +544,7 @@ BLOCKING_SEVERITIES = ("high", "critical")  # npm; pip-audit and cargo audit: ev
 NPM_AUDIT_WAIVERS = Path("ui") / "npm-audit-waivers.json"
 PYTHON_AUDIT_WAIVERS = Path("python-audit-waivers.json")
 RUST_AUDIT_WAIVERS = Path("src-tauri") / "cargo-audit-waivers.json"
+WEBRTC_AUDIT_WAIVERS = Path("webrtc-engine") / "cargo-audit-waivers.json"
 PIP_AUDIT = "pip-audit==2.10.1"
 
 
@@ -796,6 +803,10 @@ def _rust_audit_report(root: Path) -> object:
     return _json_output(["cargo", "audit", "--json"], root / "src-tauri")
 
 
+def _webrtc_audit_report(root: Path) -> object:
+    return _json_output(["cargo", "audit", "--json"], root / "webrtc-engine")
+
+
 def _audit(
     name: str,
     read: Callable[[], object],
@@ -862,16 +873,20 @@ def cmd_python_audit(root: Path) -> int:
 def cmd_rust_audit(root: Path) -> int:
     """Fail on any RustSec vulnerability or unsound crate of the Tauri crate that no in-date
     waiver covers; cargo audit's other warnings (unmaintained, yanked) are printed only."""
+    return _cargo_audit("rust audit", lambda: _rust_audit_report(root), root / RUST_AUDIT_WAIVERS)
+
+
+def cmd_webrtc_audit(root: Path) -> int:
+    """The same policy for the WebRTC engine, which has its own lock and its own waivers."""
+    return _cargo_audit(
+        "webrtc audit", lambda: _webrtc_audit_report(root), root / WEBRTC_AUDIT_WAIVERS
+    )
+
+
+def _cargo_audit(name: str, read: Callable[[], object], waivers: Path) -> int:
     if shutil.which("cargo") is None:
         return _missing_tool("cargo", "https://rustup.rs/")
-    return _audit(
-        "rust audit",
-        lambda: _rust_audit_report(root),
-        cargo_audit_findings,
-        root / RUST_AUDIT_WAIVERS,
-        None,
-        cargo_audit_warnings,
-    )
+    return _audit(name, read, cargo_audit_findings, waivers, None, cargo_audit_warnings)
 
 
 def _run_bridge_packaging(root: Path, *action: str) -> int:
@@ -941,6 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
         "npm-audit",
         "python-audit",
         "rust-audit",
+        "webrtc-audit",
         "bridge-build",
         "bridge-smoke",
         "release-deb",
@@ -977,6 +993,7 @@ def main(argv: Sequence[str] | None = None, root: Path = REPO_ROOT) -> int:
         "npm-audit": cmd_npm_audit,
         "python-audit": cmd_python_audit,
         "rust-audit": cmd_rust_audit,
+        "webrtc-audit": cmd_webrtc_audit,
         "bridge-build": cmd_bridge_build,
         "bridge-smoke": cmd_bridge_smoke,
         "release-deb": cmd_release_deb,

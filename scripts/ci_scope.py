@@ -66,6 +66,9 @@ def select_scope(paths: Iterable[str], *, event: str) -> Scope:
             else:
                 tauri = linux = android = True
             continue
+        if _under(path, "android-tv-receiver"):
+            android = True
+            continue
         if _under(path, "ui"):
             tauri = linux = android = True
             continue

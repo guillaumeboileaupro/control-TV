@@ -1,6 +1,12 @@
 import type { Thrown } from "./json.ts";
-import type { CommandView } from "./playback.ts";
-import { REMOTE_IDLE, type RemoteView } from "./remote.ts";
+import {
+  REMOTE_IDLE,
+  type BridgeFailure,
+  type CommandView,
+  type RemoteView,
+} from "./view-state.ts";
+
+export type { BridgeFailure } from "./view-state.ts";
 
 // Application state and presentation logic for the manual UI, as plain functions.
 //
@@ -60,11 +66,6 @@ export interface DeviceStatus {
 // What a rejected Tauri command carries: a stable `code` (a control-layer error code such
 // as `device_unavailable`, or one of the shell's own `backend_unavailable`,
 // `bridge_timeout`, `bridge_transport`) plus a human-readable `message`.
-export interface BridgeFailure {
-  code: string;
-  message: string;
-}
-
 export type DiscoveryView =
   | { kind: "idle" }
   | { kind: "running" }
@@ -78,6 +79,10 @@ export type StatusView =
   | { kind: "failed"; failure: BridgeFailure };
 
 export interface AppState {
+  // Host capability reported by the bridge ping. False on Android builds without adb.
+  tvAppsAvailable: boolean;
+  // Whether this host can open the TV's port 5555 to the phone (a computer with adb).
+  tvAppsPortAvailable: boolean;
   devices: Device[];
   discovery: DiscoveryView;
   // The whole discovered device, not just its id, so the selected-device panel does not
@@ -205,6 +210,8 @@ export function describeDevicesMessage(state: AppState): DevicesMessage {
 
 export function initialState(): AppState {
   return {
+    tvAppsAvailable: false,
+    tvAppsPortAvailable: false,
     devices: [],
     discovery: { kind: "idle" },
     selected: null,
@@ -216,6 +223,18 @@ export function initialState(): AppState {
     notice: null,
     nextRequestId: 1,
   };
+}
+
+// Records only capabilities reported by the local bridge; it sends nothing to a device.
+export function setHostCapabilities(
+  state: AppState,
+  tvAppsAvailable: boolean,
+  tvAppsPortAvailable = false,
+): AppState {
+  return state.tvAppsAvailable === tvAppsAvailable &&
+    state.tvAppsPortAvailable === tvAppsPortAvailable
+    ? state
+    : { ...state, tvAppsAvailable, tvAppsPortAvailable };
 }
 
 // The backend is single-flight (one request at a time) and every request's timeout starts

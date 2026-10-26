@@ -1,12 +1,92 @@
 # control-TV — TODO
 
+- [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
+  premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
+  dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
+- [x] **Sécurité Python — GHSA-xmj3-9gf7-h52w (2026-10-24) :** `setuptools` 84.0.0 → 84.1.0
+  (groupe `android`, backend des roues embarquées) ; l'audit Python échouait sur toutes les branches.
+  Aucune dérogation. Validation automatisée uniquement.
+- [x] **Nettoyage D1/D2 (2026-10-24, défauts signalés sur #97) :** un retrait D2 dont une étape
+  tardive échoue reprend après les étapes déjà faites (le bureau est remis en place) ; l'arrêt D1
+  retire l'écran virtuel même après `KeyboardInterrupt`, `SystemExit` ou une erreur imprévue.
+  Validation automatisée uniquement ; à reporter dans #97/#106 par leur auteur.
+- [x] **CI (2026-10-25) :** tests `ping`/`tvApps` indépendants de la présence d'`adb` sur la machine ;
+  tests d'interaction du pavé directionnel (5 zones câblées, disjointes, symétriques). Aucun défaut
+  de zone reproduit (Chromium et WebKitGTK). Validation automatisée uniquement.
+- [x] **Configuration agents (2026-10-25) :** le skill `repository-lifecycle` ajouté sur `main` (`baf9f68`)
+  n'avait pas son lien `.claude/skills/` ; lien ajouté, `agent_config.py check` revient à 0 erreur.
+- [x] **Artefacts CI :** l'APK de debug du récepteur Android TV est publié avec le `.deb` et l'APK
+  télécommande.
+- [x] **Dérogations WebRTC — risque accepté par le propriétaire le 2026-10-25 :** RUSTSEC-2026-0387 et
+  RUSTSEC-2025-0141 jusqu'au 30/11/2026, essais en réseau local uniquement (voir `SECURITY.md`).
+- [ ] **Avant le 30/11/2026 :** migrer vers `webrtc` 0.21 (pile `rtc`) et retirer les trois dérogations.
+- [x] **Applis TV sur le téléphone (2026-10-25) :** #99 ne gardait que le programme `adb`, absent du téléphone ;
+  l'adaptateur Python `adb-shell` de `main` est rétabli et choisi quand `adb` manque. Récepteur TV : nom,
+  icône et bannière, consigne claire à l'écran. Validation automatisée ; essai réel en cours.
+- [x] **Son pendant l'écran vers la TV (2026-10-25) :** HLS et WebRTC acquièrent désormais la même
+  route PulseAudio temporaire ; le bail WebRTC transmet sa source monitor au moteur Opus et la libère,
+  avec reprise du nettoyage si la restauration échoue. Tests automatisés PASS ; lecture audio WebRTC
+  sur TV et retour réel des haut-parleurs Ubuntu restent à valider sur matériel.
+- [x] **Retard de diffusion (2026-10-25) :** les files FFmpeg HLS de 1 024 entrées (jusqu'à des dizaines
+  de secondes de vieilles images) sont bornées à 4 images/8 paquets audio, et le démarrage HLS passe de
+  4×2 s à 2×1 s. WebRTC ne bloque plus la lecture FFmpeg quand ses files 1/4 sont pleines : les nouveaux
+  paquets sont abandonnés jusqu'au retour du transport, au lieu d'accumuler dans les pipes. Validation
+  automatisée uniquement ; la cible bout-en-bout < 500 ms exige encore une mesure réelle sur TV.
+- [x] **Télécommande complète (demande du propriétaire, 2026-10-25) :** pavé numérique, Input, Settings, Info,
+  Guide, chaînes, sous-titres, piste audio, touches de couleur, touches média et touche Google Assistant
+  (ouvre l'Assistant de la TV). Validation automatisée ; essai réel à faire.
+- [x] **Fenêtre Ubuntu adaptée à l'ordinateur (demande du propriétaire, 2026-10-25) :** à partir de 960 px, le contexte
+  à gauche et la télécommande au centre, avec les applis TV à côté à partir de 1180 px ; fenêtre par défaut 1280×820.
+  Le téléphone garde sa colonne unique. Vérifié par capture ; essai réel à faire.
+- [x] **Noms et logos des applis TV (demande du propriétaire, 2026-10-25) :** RMC BFM Play, Aktu Free, M6+, OQEE,
+  Diagnostic Freebox, ControlTV Récepteur (avec le logo de control-TV) et l'entrée Disney+ de la Freebox (logo Disney+).
+  Pas de logo à licence libre pour RMC BFM Play, OQEE, M6+, TFOU MAX, Aktu Free : initiale conservée.
+- [x] **Pavé directionnel (2026-10-25) :** quatre quarts d'anneau et OK, sans zone morte ni chevauchement ; grille de
+  101×101 points (bords, angles, frontières) testée, et 3 285 points mesurés dans Chromium et WebKitGTK.
+- [x] **Récepteur TV (2026-10-25) :** écrans attente/connexion/diffusion/interruption/erreur, plus de session fantôme
+  (générations), session fermée à l'arrêt, écran maintenu allumé seulement pendant un flux. 13 tests JVM.
+- [x] **Touches de la télécommande (2026-10-25) :** chaque touche testée de bout en bout (requête, attente, issue) et
+  chaque code vérifié dans le protocole de la TV (`androidtvremote2`).
+- [x] **Tests du bon code (2026-10-25) :** pytest charge le `src/` du worktree en premier, y compris pour les
+  processus Python lancés par les tests (`tests/conftest.py`) ; un environnement d'un autre worktree ne fait plus
+  tester le mauvais code. Tests de Freebuff (carte des touches) intégrés.
+- [x] **Menu GNOME (demande du propriétaire, 2026-10-25) :** menu français synchronisé avec la fenêtre :
+  sélection/connexion d'une TV, lecture/pause, arrêt, muet, volume, duplication et arrêt de diffusion. Il affiche
+  l'état confirmé de la connexion et de la diffusion et désactive les actions indisponibles. Validation automatisée ;
+  validation visuelle sur le bureau GNOME installé encore requise.
+- [ ] **Validation matérielle (2026-10-25) :** à faire avec le propriétaire selon `docs/QUICK_ACCEPTANCE.md`
+  (Ubuntu, téléphone, Liberté boîte, Chromecast) ; aucune fonctionnalité n'est déclarée validée par la seule CI.
+- [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
+  ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
+  Fait côté Android : `VoiceCapture` (capture à la demande, permission, arrêt garanti, 8 tests). Reste : session
+  vocale dans l'adaptateur de télécommande et le bridge, puis permission `RECORD_AUDIO` et bouton.
+- [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
+  `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
+  correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou
+  approuver explicitement une dérogation datée et ciblée. Les audits restent bloquants et aucune
+  dérogation n'a été ajoutée.
+- [x] **CI :** `webrtc-engine` exécute fmt, Clippy, tests de reconnexion/décodage et son propre
+  audit Cargo ; `android-tv-receiver` exécute ses tests JVM avec verrou Gradle. Un audit OSV
+  bloquant couvre les deux verrous sans ajouter un second build Android coûteux.
+- [x] **Hygiène de build (2026-10-24) :** `webrtc-engine/target/` et `android-tv-receiver/` ignorés et
+  nettoyés par `dev.py clean` ; test d'expiration du jeton d'appairage WebRTC ajouté.
+- [x] **Réconciliation #99 :** les protections ADB sans fil/TLS sont conservées sur la base D1/D2
+  réconciliée et le paquet Debian déclare ensemble `adb`, `ffmpeg`,
+  `libayatana-appindicator3-1` et `x11-xserver-utils`. Validation automatisée uniquement.
+
 ## Priorité — moteur Rust WebRTC à faible latence et récepteur Android TV (décision propriétaire, 2026-10-21)
 
 **Objectif :** remplacer, pour D1 (duplication) et D2 (extension), la latence HLS mesurée de 9 à 11 secondes par un flux interactif. Cible de recette : latence bout-en-bout < 500 ms ; objectif ambitieux 150–250 ms, à mesurer sur matériel et non à présenter comme acquis. Les deux équipements de réception sont traités uniformément comme **Android TV**, sans branchement produit ou marque dans l'architecture.
 
+- [x] **Frontière frontend vérifiée par Graphify :** les cycles réels `model.ts` ↔ `remote.ts`
+  et `model.ts` ↔ `playback.ts` ont été supprimés en déplaçant uniquement leurs formes d'état
+  partagées dans le module feuille `view-state.ts`. Un test fondé sur l'AST TypeScript vérifie
+  désormais tout le graphe des modules de production, son absence de cycle, la frontière du
+  modèle racine et le caractère feuille de `view-state.ts`. Validation automatisée uniquement.
+
 **Architecture décidée :** conserver l'interface Tauri 2 et le `ControlService` Python/PyChromecast pour découverte et commandes ; créer un **moteur émetteur Rust** pour sessions, capture D1/D2, audio, encodage et transport WebRTC (RTP/RTCP/ICE) ; installer avec accord du propriétaire une **application réceptrice Android TV** avec décodage matériel et rendu plein écran (Kotlin autorisé pour l'intégration Android). Ne pas prétendre que le récepteur Cast/HLS natif sait recevoir WebRTC. Conserver HLS en repli temporaire, avec modes WebRTC / HLS / Auto sélectionnés selon les capacités réellement vérifiées. Aucun serveur permanent ni exposition Internet ; réseau local, authentification et consentement explicite.
 
-- [ ] **Conception :** documenter les ports typés source D1/D2, capture audio/vidéo, encodeur, transport, récepteur, négociation, capacités et cycle de vie ; comparer les bibliothèques Rust WebRTC et les chemins d'encodage/décodage Android, mesurer les contraintes réelles avant choix.
+- [x] **Conception :** ports typés, cycle de vie et choix `webrtc-rs` 0.14 / libwebrtc Android documentés dans `docs/WEBRTC_STREAMING.md` ; les mesures matérielles restent séparées.
 - [ ] **Émetteur Rust :** prototype isolé D1, capture écran + audio système, H.264 temps réel avec accélération matérielle si disponible et repli explicite ; contrôle des buffers, horodatage A/V, arrêt propre, reconnexion bornée et absence de rejeu des commandes TV.
 - [ ] **Récepteur Android TV :** APK installable avec consentement, signalisation WebRTC locale, décodage matériel, audio synchronisé, affichage plein écran, diagnostics et fermeture/nettoyage sûrs ; vérifier la compatibilité sur les **deux appareils Android TV**.
 - [ ] **D2 :** brancher le même moteur Rust sur l'écran étendu et le gestionnaire d'affichage de #98 ; conserver et restaurer exactement la configuration d'écrans après arrêt/erreur.
@@ -17,6 +97,36 @@
 - [ ] **Mise à jour documentaire après preuves :** réconcilier TODO, DEVELOPMENT_PLAN, checklist et README, distinguer simulation/CI/matériel. Aucun délai ou budget horaire dans TODO.
 
 **État initial :** chantier décidé mais **non implémenté ni validé** en Rust/WebRTC ; D1 HLS a montré 9–11 s sur matériel dans #97 ; la fluidité D2 et le parcours complet depuis la fenêtre restent à valider. Les valeurs WebRTC annoncées sont des objectifs, pas des résultats.
+
+**État logiciel du 2026-10-21 (branche `feat/rust-webrtc-streaming`) :** moteur Rust, capture/encodage FFmpeg X11 + PulseAudio, transport H.264/Opus WebRTC, signalisation locale TLS authentifiée à usage unique, commandes Tauri dédiées et récepteur Android TV compilable sont implémentés. Le certificat éphémère de chaque session est épinglé par empreinte SHA-256 côté Android ; le jeton client reste dans le canal chiffré et l'écoute disparaît après un échange. Les sorties FFmpeg sont maintenant découpées en unités d'accès H.264 (AUD, images clés) et paquets Opus Ogg horodatés, avec files bornées, vidéo obsolète éliminée sans accumuler de latence, audio soumis à contre-pression et pompage concurrent. L'arrêt média coopératif garantit le nettoyage de FFmpeg. Un test d'intégration local a réellement négocié ICE/DTLS/SRTP et reçu du RTP H.264. L'interface graphique Auto/WebRTC/HLS, la découverte de capacité du récepteur, les scénarios réseau/reconnexion, D2 complet et toute recette matérielle restent ouverts ; aucun objectif de latence n'est déclaré atteint.
+
+**Robustesse logicielle :** Stop annule l'attente, la négociation ou la reconnexion avant fermeture du transport ; une fin FFmpeg prématurée devient un état d'échec explicite et déclenche le nettoyage. Une perte WebRTC persistante pendant la diffusion arrête et récolte FFmpeg, ferme le transport, puis reprend au plus deux fois dans l'échéance absolue de la session avec un pair, un certificat et un jeton neufs. Le bail D1/D2 reste détenu entre les essais et la commande TV n'est pas rejouée ; Stop attend l'annulation de la tâche avant de restaurer le bail.
+
+**Nettoyage renforcé (2026-10-24) :** un enfant FFmpeg n'est plus retiré du suivi avant confirmation de sa récolte ; un timeout ou une erreur conserve le handle pour une nouvelle tentative. Les erreurs simultanées du pipeline média, du transport WebRTC et de la restauration D1/D2 sont toutes conservées dans le diagnostic. Une négociation sans réponse ou une perte persistante en streaming est retentée au plus deux fois, avec un nouveau transport, certificat, port et jeton ; un watchdog récepteur de 20 s rouvre le champ sécurisé avant le timeout hôte de 30 s, et l'état demeure visible et annulable par Stop pendant l'attente entre essais. Tests automatisés uniquement ; la preuve d'absence de processus orphelin sur la plateforme réelle reste à faire.
+
+**Pipeline simulé :** deux pairs WebRTC locaux négocient ICE/DTLS/SRTP, transmettent simultanément plusieurs échantillons H.264 et les paquets Opus bruts produits par le framing de production, les dépaquetisent côté réception, remuxent seulement l'Opus reçu puis font réellement décoder les deux flux par FFmpeg. Une épreuve synthétique séparée maintient pendant deux minutes les pistes vidéo/audio, force et vérifie les maxima de files 2/16 et borne l'écart des chronologies média. Ces preuves ne valent pas décodage Android matériel, synchronisation audible/visible ni validation TV.
+
+**Revue indépendante du 2026-10-21 :** les blocages sur le nettoyage après échec partiel, la conservation conjointe des erreurs média/nettoyage, l'échéance d'une piste silencieuse, la réponse Android après ICE complet et la documentation obsolète ont été corrigés après les verdicts `CHANGES REQUESTED`. La revue finale du SHA `acefef9` est `APPROVED`, sans P0/P1/P2/P3 nouveau ; elle reste strictement logicielle. Les écarts fonctionnels UI/capacités, perte réseau/reconnexion et D2 restent ouverts.
+
+**Détection logicielle du récepteur (2026-10-22) :** le pont expose maintenant les capacités du seul équipement sélectionné. Une lecture d'état Cast réussie confirme équipement joignable et repli HLS ; l'inventaire d'applications existant confirme séparément l'installation et l'accessibilité du paquet exact `ControlTV Receiver`, puis une lecture Android Remote confirme le canal appairé requis pour le transfert secret. Paquet absent, inventaire ADB inaccessible, canal Remote indisponible et équipement indisponible restent des états distincts ; aucune compatibilité WebRTC n'est déduite du seul type Android TV. Cette capacité alimente le sélecteur AUTO/WEBRTC/HLS.
+
+**Bail de capture WebRTC (2026-10-22) :** le contrôleur D1/D2 Python existant prépare désormais une géométrie X11 pour le moteur Rust, après revalidation du paquet récepteur exact. En duplication il réserve l'écran sélectionné ; en extension il utilise le `XrandrVirtualMonitor` existant et le libère sur arrêt ou fermeture du bridge. Le moteur Rust distingue maintenant la taille de la source de la taille encodée et applique une mise à l'échelle explicite. Le sélecteur graphique reste ouvert.
+
+**Robustesse du bail (2026-10-22) :** une fermeture concurrente annule maintenant une préparation WebRTC avant publication du bail et attend son nettoyage borné. Une restauration D2 échouée conserve la ressource pour une nouvelle tentative, et le diagnostic réunit l'erreur moteur et l'erreur de restauration au lieu d'en masquer une. Tests automatisés sur fakes uniquement ; l'orchestration Tauri complète reste ouverte.
+
+**Transaction Tauri/Rust (2026-10-22) :** la commande de démarrage WebRTC acquiert désormais elle-même le bail Python autoritatif, consomme sa géométrie source réelle, active le bail seulement après négociation et démarrage média, puis le libère sur erreur, fin de média ou arrêt. La commande ne reçoit plus de coordonnées X11 fournies par l'interface. Le choix AUTO/HLS et le sélecteur graphique restent ouverts.
+
+Le cycle de vie Tauri sérialise maintenant démarrage, arrêt et lecture terminale afin qu'un arrêt concurrent ne puisse pas être dépassé par une publication tardive. Tous les chemins conservent la cause WebRTC initiale et une éventuelle panne du RPC de restauration, sans dupliquer un diagnostic déjà combiné par Python.
+
+**Sélecteur graphique et pairage automatique (2026-10-22) :** la carte « Screen to TV » existante propose Auto, WebRTC et HLS. Auto lit les capacités réelles du téléviseur sélectionné et préfère WebRTC uniquement lorsque le récepteur exact et le canal Remote appairé sont confirmés, sinon HLS ; WebRTC explicite échoue sans repli silencieux. L'état indique le transport effectivement utilisé et une génération d'opération empêche une réponse de polling antérieure de dépasser Start/Stop. Le shell exige que le gestionnaire existant confirme le paquet exact au premier plan, puis transmet un paquet éphémère compact uniquement si Android Remote signale un champ actif ; aucun secret ne passe dans ADB, le DOM, la réponse Tauri, une autre application ou les logs. Le récepteur masque, valide et efface le champ avant connexion. Validation automatisée uniquement ; ce transfert et le focus du champ restent à confirmer sur chaque TV.
+
+**Appairage ADB simplifié et inventaire compatible (2026-10-25) :** après une demande
+`pairing_required`, le formulaire accepte directement le code temporaire à six chiffres et le
+bridge sélectionne l'unique service `_adb-tls-pairing._tcp` annoncé par la TV ; l'adresse reste
+un secours facultatif et aucune commande d'appairage n'est rejouée. La liste essaie la requête
+Package Manager moderne puis son équivalent historique seulement si la première est absente.
+Tests Python/UI uniquement : saisie et validation matérielles restent à effectuer avec le
+binaire candidat installé après autorisation.
 
 ---
 
@@ -29,10 +139,11 @@ Les validations automatisées et matérielles sont distinctes. Aucun essai TV, G
 | Chantier | Travail logiciel livré | Reste à faire / preuve attendue |
 |---|---|---|
 | D0 — encodage H.264 | Socle et intégration automatisée (#79, #81, #91) ; flux H.264 logiciel réel exécuté via #92 | Validation VA-API/GPU autorisée et intégrité réelle selon protocole ; ne pas confondre avec la réception TV |
-| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92), essais locaux sans TV (boucle locale, Xvfb privé) ; surveillance complémentaire de l'arrêt spontané du publisher dans #95 | Revue et intégration de #95, puis réception Cast/Freebox réelle (RD1–RD3) uniquement sur décision du propriétaire |
+| D1 — duplication | Ports et orchestration (#83, #86) ; publisher HLS, récepteur Cast, CLI et capture X11 réelle (#92) ; surveillance de l'arrêt spontané du publisher (#95). **Recette 2026-10-19 (TV réelle)** : bureau affiché, image fluide au 1er essai, latence mesurée 10,3 s ; saccades reproduites quand le récepteur est chargé avant d'avoir assez de segments ; segments de 1 s non lus par le récepteur Cast de la Freebox. Branche `fix/screencast-d1-d2-hardware` : chargement après 4 segments de 2 s, son système (PulseAudio, AAC) et fermeture de la session Cast possédée — tests automatisés verts | **2026-10-20 (TV réelle)** : fluide, son présent et synchronisé ; latence mesurée 9–11 s (plancher HLS du récepteur par défaut). Réduction forte de la latence : autre chemin (recopie Cast ou récepteur dédié). Revalider sur TV les sessions successives et la fermeture du lecteur distant après le correctif #97 |
+| D2 — extension | **2026-10-20** : extension sur un connecteur libre forcé « connecté » ; essai réel : fenêtre déplacée sur l'écran étendu et visible sur la TV. PR #97 : topologie X11 réelle, modes relus via `xrandr --verbose`, coordonnées libres, orientation, échelle, écran principal, Joindre/Cloner/Écran unique, application atomique et restauration temporisée — tests automatisés uniquement pour le gestionnaire | Forçage du connecteur par l'utilisateur (`sudo`, une fois par démarrage) ou règle système durable à décider ; gestionnaire, fluidité et restauration à valider dans l'application installée ; aucune nouvelle preuve matérielle pour le gestionnaire |
 | D2 — extension | Moniteur virtuel `xrandr` à l'exécution, diffusé puis retiré (#92), validé avec un faux `xrandr` | Moniteur virtuel vu sur le bureau X11 et sur la TV (RD5), avec accord |
-| D3 — interface | Carte « Screen to TV » (Dupliquer / Étendre / Arrêter, écran, résolution, FPS, consentement, états) et commandes Tauri, tests unitaires (PR D3/D4) | Utilisation de la carte avec la TV lors de la recette autorisée |
-| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` | Vérification RD1–RD8 sur matériel, sans compter deux fois les essais D1 |
+| D3 — interface | Carte « Screen to TV » et gestionnaire inspiré de GNOME : Dupliquer / Étendre / Arrêter, écrans numérotés, sélection, glisser-déposer magnétique, réglages réellement annoncés par X11, Appliquer/Annuler/Garder/Rétablir ; relais Tauri et tests unitaires dans #97 | Utilisation du nouveau gestionnaire avec la TV et vérification visuelle/réelle de chaque mode |
+| D4 — sécurité | Consentement exigé par le bridge, un flux à la fois, borne d'une heure, arrêt à la fermeture, LAN + jeton ; procédure `docs/SCREENCAST_TV_TEST_PROCEDURE.md` ; #97 conserve le cliché précédent tant que la restauration n'a pas réussi et permet une nouvelle tentative | Vérification RD1–RD8 et de la fermeture distante sur matériel, sans compter deux fois les essais D1 |
 | Packaging | Provenance et automatisation (#84) ; dépendances Ubuntu complètes ; mécanisme de signature Android stable prêt | Propriétaire : créer et sauvegarder la clé Android, publier son empreinte, définir les deux secrets CI, puis identifier les artefacts de la première CI signée |
 | Recette des télécommandes | Traces C6/C7 (#85), classification K1/K2 (#90), tests automatisés | Essais Ubuntu/Android, R1–R4, C1–C7, K1–K3, tray/logos et rapport sur matériel après accord |
 
@@ -67,6 +178,35 @@ contrôles Python et UI réussis localement. Validation automatisée uniquement.
 - [x] CI (PR #89 fusionnée) : une PR ne lance que les builds de plateforme que ses fichiers peuvent affecter, calculés sur tous les chemins depuis la base de fusion (suppressions et deux côtés d'un renommage compris ; chemin inconnu = tous les builds) ; `main` lance toujours tout ; caches Rust par job et `Cargo.lock`, sans les paquets `.deb`/`.apk`.
 
 ### B. Anomalie visuelle : logos et grille d'applications — priorité immédiate
+
+- [x] **ADB sans fil Ubuntu (2026-10-21, validation automatisée)** : serveur ADB existant,
+  appareils TCP et TLS, services mDNS, ports dynamiques, reconnexion, refus des correspondances
+  absentes/ambiguës et ciblage explicite par `adb -s`. L'interface propose l'association par
+  adresse/port et code temporaire, sans conserver le code. Correctifs de revue : une cible TCP
+  classique oubliée après redémarrage du serveur reçoit une seule reconnexion bornée sur 5555 ;
+  `adb pair` est vérifié avant usage ; l'UI masque les applications quand le bridge annonce
+  `tvApps: false` (notamment Android).
+- [x] **Correctifs de revue ADB #99 (simulation)** : l'absence de `adb mdns` ne bloque plus une
+  cible TCP classique déjà connectée ou reconnectable sur 5555 ; après une association acceptée,
+  l'apparition du service de connexion est attendue de façon bornée sans rejouer
+  `adb pair` ; la version Platform Tools est analysée avant association (ancienne, invalide,
+  bloquée ou défaillante refusée) ; le code à usage unique est masqué, consommé à la soumission et
+  effacé si le formulaire ferme ou si la TV change. Un service TLS annoncé qui refuse la connexion
+  n'est jamais remplacé par une tentative non-TLS sur 5555. Aucun appareil n'a été contacté.
+- [x] **Politique de packaging ADB moderne (audit sans installation)** : conserver `adb` Jammy
+  pour TCP classique ; ne pas redistribuer l'archive Google tant que ses conditions SDK n'ont pas
+  reçu de validation juridique explicite ; traiter Platform Tools >= 30 comme prérequis externe
+  pour l'association TLS. La candidate 37.0.1 est épinglée par URL officielle versionnée, taille
+  et SHA-256 dans `packaging/adb-platform-tools.json`, avec procédure de licence et mise à jour
+  dans `docs/ADB_PLATFORM_TOOLS.md`. L'archive n'entre ni dans Git ni dans le `.deb`.
+- [ ] **Fourniture ADB moderne sur installation propre** : le paquet `adb` d'Ubuntu 22.04 ne
+  fournit pas `adb pair`. Tant qu'une source redistribuable validée ou une baseline système plus
+  récente n'est pas décidée, ne pas présenter l'association sans fil comme incluse dans le `.deb`.
+- [ ] **Recette matérielle restante** : depuis l'interface Ubuntu, relister, actualiser, lancer une
+  application, observer son ouverture, puis redémarrer ControlTV et vérifier la réutilisation de
+  la connexion. Aucun nouvel essai matériel n'a été exécuté par cette branche.
+- [ ] **Android** : définir un chemin TLS sans serveur permanent dans l'application ; le serveur
+  ADB platform-tools utilisé ici est disponible sur Ubuntu seulement.
 
 - [x] **Codex — diagnostic sans supposition :** le paquet installé est `control-tv` 0.1.0 amd64, mais son binaire du 15 octobre (`84186c3ea194052587595fa59accf96c012256fc5fc508d3b0661d4ec7140a53`) diffère du binaire extrait sans installation du `.deb` final du 17 octobre (`f4678ae03c13999a180b48442056359ab087b7c989fe34a1b22ed5ddb6e5149f`). La capture utilisait donc un ancien bundle, antérieur à #71. Le bundle frontend reconstruit contient l'identifiant Apple TV, son SVG et l'appel `appLogo`; la CSP reste validée par la recette statique.
 - [x] **Codex — correspondances :** le backend n'émet le libellé « Apple TV » que pour l'identifiant exact `com.apple.atve.androidtv.appletv`, ce qui établit l'identifiant reçu dans la capture sans nouvelle connexion TV. Il correspond exactement à `ui/src/app-logos.ts`; aucun alias ou logo approximatif n'a été ajouté. L'identifiant exact de chaque tuile est désormais conservé dans son infobulle et son nom accessible.
@@ -184,8 +324,10 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 - [x] **D2, écran virtuel (logiciel) :** `d1 --extend --yes-change-display` ajoute un moniteur logique `control-tv-virtual` à droite (`xrandr`, sans fichier de configuration), le diffuse et le retire à l'arrêt ; validé avec un faux `xrandr` ; non vu sur le bureau réel.
 - [ ] **Phase D2 — extension :** étudier et tester un véritable affichage virtuel X11 indépendant, son intégration avec le gestionnaire de fenêtres et la diffusion du seul écran virtuel ; vérifier les capacités du GPU/driver Dell.
 - [x] **D3, carte « Screen to TV » (logiciel) :** Dupliquer / Étendre / Arrêter, choix de l'écran, résolution, FPS, étape de consentement, états et erreurs ; affichée seulement sous X11 ; tests unitaires ; contrôle visuel le 2026-10-19 sur Xvfb privé (application réelle sans TV, puis états consentement/flux/échec avec un shell fictif) et défauts corrigés ; jamais utilisée avec la TV. Budget du bundle JavaScript relevé de 64 à 72 Kio (62,0 → 69,0 ko, modules locaux seulement).
+- [x] **D3, gestionnaire d'affichage (logiciel, PR #97) :** écrans et modes lus à chaque ouverture par `xrandr --verbose`, rectangles numérotés proportionnels, sélection individuelle, placement libre avec magnétisme, Joindre/Cloner/Écran unique, résolution, fréquence, orientation, échelle et écran principal ; Appliquer ne conserve rien sans confirmation et Annuler/Rétablir repassent par le bridge Python autoritatif. Tests automatisés et CI uniquement ; aucune validation matérielle de cette interface.
 - [x] **D4, protections logicielles :** consentement exigé à chaque démarrage, un flux à la fois, une heure au plus, arrêt sur Stop, échec ou fermeture de l'application ; procédure de recette documentée (`docs/SCREENCAST_TV_TEST_PROCEDURE.md`), non lancée.
-- [ ] **Phase D3 — intégration UI :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; aucun lancement automatique de capture.
+- [x] **Phase D3 — intégration UI (logiciel) :** actions explicites « Dupliquer », « Étendre », « Arrêter » ; sélection TV/écran, résolution et FPS ; gestionnaire d'affichage complet ; aucun lancement automatique de capture.
+- [ ] **Phase D3 — validation matérielle :** utiliser le gestionnaire et les actions de diffusion dans l'application installée, sur la topologie réelle, puis consigner les observations sans assimiler la CI à cette preuve.
 - [ ] **Phase D4 — sécurité et validation :** consentement explicite à la capture, arrêt et nettoyage garantis, LAN/authentification, aucune exposition non voulue, tests Ubuntu/TV réels, documentation et rapports.
 - [x] Le propriétaire a explicitement repriorisé D0 puis la préparation D1 avant la clôture de la recette ; les opérations matérielles restent soumises à des accords séparés.
 - **Dépendances et priorités actuelles :** D0, les contrats D1 et leur adaptateur sont dans
@@ -222,6 +364,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 ## 1 ter. Qualité du code — terminé le 2026-10-13
 
 - [x] Compétence `code-solid` appliquée ; plus de `Any` ni de `unknown` dans le code (les tests peuvent en garder) ; mypy refuse désormais tout `Any` explicite hors tests.
+- [x] 2026-10-23 (branche `chore/graphify-agent-integration`) : Graphify intégré proprement à la configuration des agents (skill unique `.agents/skills/graphify` lié pour Claude, règles dans `AGENTS.md`, `/graphify-out/` et `/.worktrees/` ignorés et vérifiés par `agent_config.py check`).
+- [ ] Après accord du propriétaire, dans le checkout principal : retirer les copies non suivies `local-device-mcp-bridge` et `project-bootstrap-context` de `.agents/skills/` et `.claude/skills/` (identiques à `507e052`, archivées), et remplacer la copie locale `.claude/skills/graphify/` par le lien versionné lors de la mise à jour de `main`.
 
 ## 1 quater. Corrections de l'audit de `main` (2026-10-13)
 
@@ -250,7 +394,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 - [ ] **Critère de latence des touches — ta décision :** proposé (non adopté) : délai envoi → effet médian ≤ 0,5 s et maximal ≤ 1,0 s, délai envoi → télécommande prête médian ≤ 1,0 s, sur Ubuntu et sur Android. Tant qu'il n'est pas adopté, K1 et K2 mesurent sans juger la latence.
 - [ ] **Téléphone :** le brancher en USB, accepter le débogage, et autoriser l'installation de l'APK de la CI. Si les signatures diffèrent, le widget actuel sera perdu.
-- [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. **Si ta TV ne propose que « Débogage sans fil » (avec un code d'appairage), la liste ne marchera pas encore** : c'est le premier point à vérifier demain. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
+- [ ] **Applications installées (2E) — à essayer :** la liste passe par le débogage de la TV (ADB), **désactivé tant que tu ne l'actives pas** : Paramètres › Système › À propos › « Build de l'OS Android TV » 7 fois, puis Options pour les développeurs › Débogage USB. La première fois, la TV demande d'autoriser control-TV. Sur Ubuntu, le « Débogage sans fil » avec code d'appairage est désormais pris en charge par #99 lorsqu'un Android SDK Platform Tools externe >= 30 est disponible ; le paquet `.deb` ne garantit encore que l'ADB TCP classique, et l'application Android ne prend pas encore en charge ce transport TLS. Aucun de ces chemins n'a été validé sur la TV du propriétaire. L'ouverture d'une application passe aussi par ADB : le débogage doit rester actif pour ouvrir les applications depuis control-TV.
 - [ ] Commandes concurrentes C1–C7 depuis Ubuntu et Android, avec autorisation.
 
 ## 4. Widget Android — PR #33 (fusionnée le 2026-10-13)
@@ -258,7 +402,15 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 - [x] Conflits résolus et branche remise à jour avec `main` (2026-10-13, CI 4/4 verte) ; description de la PR actualisée ; revue Codex demandée.
 - [x] Documentation du Mute corrigée : mute Cast confirmé par le récepteur, volume fixe, aucun effet audible (le vrai mute passe par le canal télécommande).
 - [ ] Tester sur le téléphone, avec ton accord pour chaque commande : Lecture/Pause, Stop, Volume.
-- [ ] Suite possible : faire passer le Mute du widget par le canal télécommande (le son réellement entendu).
+- [x] Mute et Volume −/+ du widget passés par le canal télécommande (le son réellement entendu, 2026-10-25) ; ils ne dépendent plus d'un volume Cast que la TV ne rapporte pas. Validation automatisée seulement.
+- [x] **Widget enrichi (demande du propriétaire, 2026-10-25) :** sous la ligne lecture/volume, la télécommande de la TV : flèches autour d'OK, Retour et Accueil, Power et Google Assistant ; taille par défaut 4×4, réductible jusqu'à l'ancienne hauteur (les rangées de la télécommande sont alors masquées). Chaque touche est envoyée une seule fois, sans lecture Cast préalable ; TV non appairée : « Pair this TV in control-TV first ». Tests JVM ; pas encore vu sur le téléphone.
+- [ ] Essai réel du widget enrichi sur le téléphone (agrandir le widget existant, chaque touche une fois).
+- [x] **Issue #112 (lenteur et apps sur Chambre parentale, 2026-10-25) :** la connexion de télécommande vers une TV est réutilisée tant que la bibliothèque la tient ouverte (fermée après 30 s sans usage, après tout échec, à l'appairage) au lieu d'une session TLS par touche ; les touches de volume n'attendent plus un volume que la TV ne rapporte pas ; le téléphone journalise la durée de chaque requête (`adb logcat -s control-tv`, méthode, ms, résultat, sans identifiant). Bouton « Open to the phone » sur l'ordinateur : ouvre le port 5555 de la TV appairée en débogage sans fil (`adb tcpip 5555`, jusqu'au redémarrage de la TV) pour que le téléphone liste ses apps ; message du téléphone adapté. Tests automatisés seulement.
+- [x] **Issue #112, Ubuntu :** l'appli lancée depuis GNOME n'avait que l'`adb` d'Ubuntu (28, sans débogage sans fil) car le SDK n'est dans le `PATH` que via `~/.bashrc` ; control-TV cherche maintenant d'abord l'`adb` du SDK installé (`CONTROL_TV_ADB`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `~/Android/Sdk`). Tests automatisés ; pas encore vu sur le matériel.
+- [x] Téléphone : une seule icône control-TV (2026-10-25) ; l'écran de recette des builds de debug n'a plus d'icône, il s'ouvre depuis l'ordinateur (`docs/COMMAND_TRACE.md`).
+- [x] **Issue #112, sans réglage de la TV (demande du propriétaire, 2026-10-25) :** ouvrir une app passe par la télécommande de la TV (appairée une fois, lien `market://launch` de la TV), sans débogage ; le débogage ne sert plus qu'à la liste. Si la TV ne répond pas en débogage, la fenêtre montre sa dernière liste (gardée sur l'appareil, fichier privé par TV), en le disant ; jamais d'apps non lues sur cette TV (la liste générique d'« apps connues » a été retirée le 2026-10-26 : le propriétaire y voyait des apps qui ne sont pas sur Chambre parentale). Ouvrir une app avec une télécommande non appairée demande maintenant d'appairer la télécommande. La vérification du récepteur pour la diffusion reste stricte (jamais devinée). Tests automatisés ; pas encore vu sur le matériel.
+- [x] **Issue #112, vraie liste sans réglage :** ControlTV Récepteur lit lui-même les apps installées sur la TV (avec leurs vrais noms) : la télécommande appairée ouvre son lien `controltv-receiver://apps`, un écran invisible envoie la liste une fois à l'appareil qui l'a demandée (écoute locale à usage unique, jeton aléatoire, 8 s), puis se ferme. Ordre : débogage, récepteur, dernière liste, sinon aucune. Nécessite d'installer une fois cette version du récepteur sur chaque TV. Tests automatisés ; pas encore vu sur le matériel.
+- [ ] Issue #112 sur le matériel : mesurer la latence téléphone → Chambre parentale avec les journaux ; appairer le débogage sans fil depuis l'ordinateur, Open to the phone, puis Show TV apps sur le téléphone. La cause de la lenteur n'est pas confirmée sur le matériel.
 - [x] Fusion de la #33 : faite le 2026-10-13, avant les essais sur téléphone (`1b86f47`). Mute sur volume Cast fixe affiché « Muted (Cast) · TV sound may not change ».
 
 ## 5. Phase 3 — livraison

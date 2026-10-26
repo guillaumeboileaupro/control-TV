@@ -19,6 +19,7 @@ import {
   recordServiceFailure,
   refreshStatus,
   selectDevice,
+  setHostCapabilities,
   chosenDevice,
   startDiscovery,
   toBridgeFailure,
@@ -56,7 +57,11 @@ import {
 import { describeSound } from "./sound.ts";
 import { byId, disclosure, icon, setBusy, setIcon, text } from "./dom.ts";
 import { createRemotePanel, type RemotePanelElements } from "./remote-panel.ts";
-import { createScreenPanel, type ScreenPanelElements } from "./screen-panel.ts";
+import {
+  createScreenPanel,
+  type ScreenPanelController,
+  type ScreenPanelElements,
+} from "./screen-panel.ts";
 import { isTrayAction, trayRequest } from "./tray.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
@@ -75,6 +80,8 @@ const SEEK_COMMIT_DELAY_MS = 400;
 interface PingResult {
   status: string;
   controlTvVersion: string;
+  tvApps: boolean;
+  tvAppsPort?: boolean;
 }
 
 interface DiscoverDevicesResult {
@@ -625,13 +632,30 @@ function start(elements: Elements): void {
     }
   }
 
-  // Drawn again when the selected TV changes: the stream needs one.
-  let screenPanel: { refresh(): void; render(): void } | null = null;
+  // The window remains authoritative; only this small presentation state is copied to GNOME.
+  let trayStreaming = false;
+  let trayStateKey = "";
+  let screenPanel: ScreenPanelController | null = null;
+
+  function syncTrayState(): void {
+    const selectedName = state.selected?.friendlyName ?? null;
+    const connected =
+      state.status.kind === "ready" && state.status.status.connection === "connected";
+    const key = JSON.stringify([selectedName, connected, trayStreaming]);
+    if (key === trayStateKey) {
+      return;
+    }
+    trayStateKey = key;
+    void invoke("update_tray_state", { selectedName, connected, streaming: trayStreaming }).catch(
+      () => undefined,
+    );
+  }
 
   function update(next: AppState): void {
     state = next;
     render();
     screenPanel?.render();
+    syncTrayState();
   }
 
   function onSelect(deviceId: string): void {
@@ -751,7 +775,8 @@ function start(elements: Elements): void {
   async function checkBackend(): Promise<void> {
     const number = ++requestsStarted;
     try {
-      await invoke<PingResult>("bridge_ping");
+      const result = await invoke<PingResult>("bridge_ping");
+      update(setHostCapabilities(state, result.tvApps === true, result.tvAppsPort === true));
       noteAnswer(number, null);
     } catch (error) {
       const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
@@ -824,11 +849,20 @@ function start(elements: Elements): void {
     if (!isTrayAction(event.payload)) {
       return;
     }
-    const request = trayRequest(state, event.payload);
+    const request = trayRequest(state, event.payload, trayStreaming);
     if (request.kind === "transport") {
       onTransport(request.command);
     } else if (request.kind === "remote") {
       onRemote(request.action);
+    } else if (request.kind === "select_tv") {
+      elements.picker.open = true;
+      void invoke("show_main_window").catch(() => undefined);
+      elements.discoverButton.focus();
+    } else if (request.kind === "duplicate_screen") {
+      void invoke("show_main_window").catch(() => undefined);
+      screenPanel?.requestDuplicate();
+    } else if (request.kind === "stop_stream") {
+      screenPanel?.stop();
     } else {
       void invoke("show_main_window").catch(() => undefined);
     }
@@ -839,10 +873,18 @@ function start(elements: Elements): void {
   screenPanel = createScreenPanel(elements.screen, {
     call: (command, args) => invoke<JsonValue>(command, args),
     selectedTv: () => state.selected?.id ?? null,
-    timers: { set: (callback, delayMs) => window.setTimeout(callback, delayMs) },
+    stateChanged: (streaming) => {
+      trayStreaming = streaming;
+      syncTrayState();
+    },
+    timers: {
+      set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clear: (handle) => window.clearTimeout(handle),
+    },
   });
 
   render();
+  syncTrayState();
   void checkBackend();
   screenPanel.refresh();
 }
@@ -852,10 +894,33 @@ window.addEventListener("DOMContentLoaded", () => {
     screen: {
       panel: byId("screen-panel"),
       mode: byId("screen-mode"),
+      preview: byId("screen-preview"),
+      display: {
+        scene: byId("display-scene"),
+        arrangement: byId("display-arrangement"),
+        settings: byId("display-settings"),
+        title: byId("display-title"),
+        enabled: byId<HTMLInputElement>("display-enabled"),
+        primary: byId<HTMLInputElement>("display-primary"),
+        resolution: byId<HTMLSelectElement>("display-resolution"),
+        rate: byId<HTMLSelectElement>("display-rate"),
+        rotation: byId<HTMLSelectElement>("display-rotation"),
+        scale: byId<HTMLSelectElement>("display-scale"),
+        apply: byId<HTMLButtonElement>("display-apply"),
+        cancel: byId<HTMLButtonElement>("display-cancel"),
+        keep: byId("display-keep"),
+        keepText: byId("display-keep-text"),
+        keepButton: byId<HTMLButtonElement>("display-keep-button"),
+        revertButton: byId<HTMLButtonElement>("display-revert"),
+        message: byId("display-message"),
+      },
       screenField: byId("screen-field"),
       screen: byId<HTMLSelectElement>("screen-select"),
+      transport: byId<HTMLSelectElement>("screen-transport"),
       size: byId<HTMLSelectElement>("screen-size"),
       fps: byId<HTMLSelectElement>("screen-fps"),
+      extension: byId("screen-extension"),
+      refresh: byId<HTMLSelectElement>("screen-refresh"),
       ask: byId<HTMLButtonElement>("screen-ask"),
       consent: byId("screen-consent"),
       consentText: byId("screen-consent-text"),
@@ -877,6 +942,14 @@ window.addEventListener("DOMContentLoaded", () => {
       remoteText: byId<HTMLInputElement>("remote-text"),
       remoteTextSend: byId<HTMLButtonElement>("remote-text-send"),
       remoteAppsList: byId<HTMLButtonElement>("remote-apps-list"),
+      remoteAppsOpenPort: byId<HTMLButtonElement>("remote-apps-open-port"),
+      remoteAppsNote: byId("remote-apps-note"),
+      remoteAppsPhoneHint: byId("remote-apps-phone-hint"),
+      remoteAppsPairing: byId("remote-apps-pairing"),
+      remoteAppsPairingForm: byId<HTMLFormElement>("remote-apps-pairing-form"),
+      remoteAppsPairingEndpoint: byId<HTMLInputElement>("remote-apps-pairing-endpoint"),
+      remoteAppsPairingCode: byId<HTMLInputElement>("remote-apps-pairing-code"),
+      remoteAppsPair: byId<HTMLButtonElement>("remote-apps-pair"),
       remoteKeys: byId("remote-keys"),
       remoteAppsFilter: byId<HTMLInputElement>("remote-apps-filter"),
       remoteApps: byId("remote-apps"),

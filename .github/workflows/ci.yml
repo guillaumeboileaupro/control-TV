@@ -108,6 +108,7 @@ jobs:
             librsvg2-dev \
             libsoup-3.0-dev \
             libgtk-3-dev \
+            ffmpeg \
             build-essential
 
       # @stable is this action's own documented usage, not a moving-tag shortcut: it
@@ -182,11 +183,28 @@ jobs:
       - name: Audit the Tauri crate's Rust dependencies
         run: python3 scripts/dev.py rust-audit
 
+      # The engine has its own lockfile. Keep this separate from the Tauri audit so a transitive
+      # WebRTC advisory cannot disappear behind a different workspace resolution. Same policy as
+      # the Tauri audit: webrtc-engine/cargo-audit-waivers.json waives an advisory until a date
+      # (an expired waiver fails), and waived advisories are still printed.
+      - name: Audit the WebRTC engine's Rust dependencies
+        run: python3 scripts/dev.py webrtc-audit
+
       - name: Type-check and format-check the frontend
         run: python3 scripts/dev.py ui-check
 
       - name: Format, lint and test the Tauri shell crate
         run: python3 scripts/dev.py rust-check
+
+      # Includes reconnection/error-path tests and the real local H.264/Opus FFmpeg decode test.
+      # The explicit 120-second endurance remains a local/release-candidate check, not a cost on
+      # every pull request.
+      - name: Format, lint and test the WebRTC engine
+        working-directory: webrtc-engine
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all-targets
 
       - name: Build the frontend and the Tauri application (debug profile)
         run: npx --prefix ui tauri build --debug --bundles deb
@@ -311,7 +329,7 @@ jobs:
       - name: Install the package, ping its bridge and remove it
         run: |
           sudo apt-get install --no-install-recommends -y ./dist/control-tv_*_amd64.deb
-          for package in ffmpeg x11-xserver-utils; do
+          for package in adb ffmpeg libayatana-appindicator3-1 x11-xserver-utils; do
             test "$(dpkg-query -W -f='${Status}' "$package")" = "install ok installed"
           done
           cd "$RUNNER_TEMP"
@@ -470,6 +488,18 @@ jobs:
         working-directory: src-tauri/gen/android
         run: ./gradlew --console=plain :app:testArm64DebugUnitTest
 
+      # Standalone TV receiver: signaling validation, one-shot handoff and peer lifecycle tests,
+      # then its debug APK (a test build for the TV, not a release). Reuse the already provisioned
+      # SDK/JDK and wrapper instead of creating another Android job.
+      - name: Run the Android TV receiver JVM tests and build its debug APK
+        run: |
+          set -o pipefail  # a failed check must not hide behind tee
+          ./src-tauri/gen/android/gradlew --console=plain --project-dir android-tv-receiver test \
+            :app:assembleDebug
+          apk=android-tv-receiver/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          stat -c '%s bytes' "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Fails when the stable key was used but the APK is not signed by the pinned certificate
       # (a replaced key never passes), or when a push to main is not signed by it once a
       # certificate is pinned. Writes the APK provenance (commit, run, SHA-256, signer) next to it.
@@ -498,6 +528,14 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/apk-provenance.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the Android TV receiver debug APK (build artifact, not a release)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-tv-android-tv-receiver-debug
+          path: android-tv-receiver/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error
 

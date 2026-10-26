@@ -31,6 +31,7 @@ from control_tv.screen_streaming import (
 )
 from control_tv.screen_streaming.h264_encoder import D0LiveEncoder
 from control_tv.screen_streaming.hls_publisher import HlsPublisher
+from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
 from live_encoder_fakes import FakeRunner, encoder
 
 
@@ -247,7 +248,7 @@ def test_a_real_synthetic_session_serves_h264_hls_on_loopback(tmp_path: Path) ->
         ready.set()
 
     session = d1.assemble(
-        seconds=6, bind_address="127.0.0.1", receiver=d1.NoReceiver(show), device_id="no-tv"
+        seconds=12, bind_address="127.0.0.1", receiver=d1.NoReceiver(show), device_id="no-tv"
     )
     assert isinstance(session.encoder, D0LiveEncoder)
     ended: list[str] = []
@@ -277,3 +278,46 @@ def test_a_real_synthetic_session_serves_h264_hls_on_loopback(tmp_path: Path) ->
     assert session.encoder.unreleased == () and session.publisher.unreleased == ()
     with pytest.raises(ConnectionRefusedError):
         socket.create_connection(("127.0.0.1", parts.port), timeout=2).close()
+
+
+class InterruptedClose(Lifecycle):
+    def __init__(self, raised: BaseException) -> None:
+        super().__init__()
+        self.raised = raised
+
+    def close(self) -> None:
+        super().close()
+        raise self.raised
+
+
+class Removal:
+    def __init__(self) -> None:
+        self.removed = 0
+
+    def remove(self) -> None:
+        self.removed += 1
+
+
+@pytest.mark.parametrize("raised", [KeyboardInterrupt(), SystemExit(1), OSError("gone")])
+def test_stop_still_removes_the_virtual_monitor_after_an_interrupted_step(
+    raised: BaseException,
+) -> None:
+    request = StreamRequest(
+        SyntheticVideoSource(),
+        EncodingProfile(),
+        PublicationConfig(PublicationKind.HLS, 60),
+        ReceiverTarget("no-tv"),
+    )
+    removal = Removal()
+    session = d1.D1Session(
+        cast(D0LiveEncoder, HealthEncoder()),
+        cast(HlsPublisher, HealthPublisher()),
+        cast(StreamingSessionService, InterruptedClose(raised)),
+        request,
+        60,
+        virtual=cast(XrandrVirtualMonitor, removal),
+    )
+
+    with pytest.raises(type(raised)):
+        session.stop()
+    assert removal.removed == 1  # the D2 extension is never left behind

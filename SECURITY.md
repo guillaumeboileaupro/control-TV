@@ -40,9 +40,11 @@ Confirmed vulnerabilities will be assessed and addressed according to their seve
 ## Dependency advisories
 
 CI audits every dependency for known advisories (`python3 scripts/dev.py npm-audit`,
-`python-audit` and `rust-audit`). A blocking advisory fails the build unless a waiver in the
-ecosystem's waiver file (`ui/npm-audit-waivers.json`, `python-audit-waivers.json`,
-`src-tauri/cargo-audit-waivers.json`) names it, with a reason and an expiry date. A waiver
+`python-audit`, `rust-audit` and `webrtc-audit`, plus OSV-Scanner on the WebRTC engine and TV
+receiver locks). A blocking advisory fails the build unless a waiver in the ecosystem's waiver
+file (`ui/npm-audit-waivers.json`, `python-audit-waivers.json`, `src-tauri/cargo-audit-waivers.json`,
+`webrtc-engine/cargo-audit-waivers.json`, `osv-scanner.toml`) names it, with a reason and an
+expiry date; waived advisories are still printed. A waiver
 needs the owner's approval, covers only the advisory it names (and only the package it names,
 when it names one), and an expired waiver fails the build by itself, so it is reviewed again
 rather than forgotten. Ignores set in a cargo `audit.toml` are refused.
@@ -68,3 +70,27 @@ rather than forgotten. Ignores set in a cargo `audit.toml` are refused.
   glib >= 0.20 (Tauri on gtk-rs >= 0.20 or GTK 4), or if control-TV or a dependency is found
   to use `VariantStrIter`. On 2027-01-15 the waiver expires and the build fails until the owner
   reviews it again.
+
+### RUSTSEC-2026-0387 (crypto-bigint) and RUSTSEC-2025-0141 (bincode), waived until 2026-11-30
+
+- **Advisories:** timing variability in operations of `crypto-bigint` < 0.7.6 meant to be
+  constant-time (fixed only in 0.7.6); `bincode` 1.3.3 unmaintained (no known vulnerability,
+  blocking only in OSV-Scanner).
+- **Why they are in the build:** the WebRTC screen stream only (`webrtc-engine/` and, through it,
+  `src-tauri/`): `webrtc` 0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13 ->
+  `crypto-bigint` 0.5.5, and `bincode` 1.3.3. No compatible fix exists: `dtls` 0.17.2 still
+  needs `p256` ^0.13 (rechecked 2026-10-25).
+- **Why the risk is accepted:** the constant-time fixes of 0.7.6 address code that 0.5.5 lacks
+  (`UintRef`, `BoxedMontyForm`, the `borrowing_sub` change of 2025-12) or that this chain never
+  calls (CTZ, `div_rem`, Montgomery multiplication); `p256` and `p384` do their field arithmetic
+  themselves. DTLS signatures and the certificate use `ring`; `p256`/`p384` only compute
+  single-use ECDHE keys, and a timing attack needs many measurements of one secret. The stream
+  has no STUN/TURN server, refuses to bind every interface, needs the owner's consent and a
+  48-character token over TLS, and lasts at most one session.
+- **Residual risk:** not checked at machine-code level (`cargo checkct`), and the curve the TV
+  negotiates was not observed (libwebrtc offers X25519 first, which never uses `crypto-bigint`).
+  An attacker on the local network measuring one handshake's timing is the only exposure.
+- **Use:** local-network trials only; no exposure beyond the LAN while the waivers last.
+- **Removal:** the migration to `webrtc` 0.21 (its `rtc` stack uses `aws-lc-rs`/`ring`, no
+  `p256` 0.13) removes both advisories; delete the three waiver entries then. On 2026-12-01 they
+  expire and the audits fail until the owner reviews them again.

@@ -110,6 +110,15 @@ class ControlTvWidget : AppWidgetProvider() {
             R.id.widget_volume_down to WidgetClick.Tap(WidgetAction.VOLUME_DOWN),
             R.id.widget_volume_up to WidgetClick.Tap(WidgetAction.VOLUME_UP),
             R.id.widget_refresh to WidgetClick.Tap(WidgetAction.REFRESH),
+            R.id.widget_back to WidgetClick.Tap(WidgetAction.BACK),
+            R.id.widget_up to WidgetClick.Tap(WidgetAction.UP),
+            R.id.widget_home to WidgetClick.Tap(WidgetAction.HOME),
+            R.id.widget_left to WidgetClick.Tap(WidgetAction.LEFT),
+            R.id.widget_ok to WidgetClick.Tap(WidgetAction.OK),
+            R.id.widget_right to WidgetClick.Tap(WidgetAction.RIGHT),
+            R.id.widget_power to WidgetClick.Tap(WidgetAction.POWER),
+            R.id.widget_down to WidgetClick.Tap(WidgetAction.DOWN),
+            R.id.widget_assistant to WidgetClick.Tap(WidgetAction.ASSISTANT),
         )
 
         // Explicit and immutable. The token is part of the intent's data, so each token gets

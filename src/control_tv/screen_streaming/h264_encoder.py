@@ -22,6 +22,7 @@ import math
 import shutil
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -61,6 +62,14 @@ STDERR_NAME = "ffmpeg-stderr.log"
 _MAX_STOP_GRACE = 60.0
 _DEFAULT_DEVICE = VaapiDevice("/dev/dri/renderD128")
 _DEFAULT_SEGMENTING = HlsSegmenting()
+SYSTEM_AUDIO = "@DEFAULT_MONITOR@"
+# A receiver loaded before the playlist holds a few segments starts at the live edge with no
+# buffer and stalls at every segment (seen on the TV): start returns once this many are listed.
+# Two one-second segments are enough for the HLS receiver to start without deliberately putting
+# it eight seconds behind the live edge. WebRTC remains the sub-second transport.
+_READY_SEGMENTS = 2
+_READY_MARGIN_SECONDS = 15.0
+_READY_POLL_SECONDS = 0.1
 
 
 def _preference(value: object) -> EncoderPreference:
@@ -90,6 +99,9 @@ class LiveEncoderSettings:
     segmenting: HlsSegmenting = _DEFAULT_SEGMENTING
     max_session_seconds: int = MAX_LIVE_SESSION_SECONDS
     stop_grace_seconds: float = 5.0
+    # The system sound sent with a captured screen (PulseAudio's monitor of the default output,
+    # which follows the output the owner picks); None sends the picture only.
+    system_audio: str | None = SYSTEM_AUDIO
 
     def __post_init__(self) -> None:
         # Stored as the enum member: `select_plan` compares by identity, so a plain string that
@@ -159,10 +171,14 @@ class D0LiveEncoder:
         make_workdir: Callable[[], Path] = _private_workdir,
         handle_factory: Callable[[], str] = lambda: f"live-{uuid.uuid4().hex}",
         capture_region: Callable[[CaptureHandle], X11GrabSource] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """`capture_region` resolves a `CapturedVideo` source into the X11 region FFmpeg grabs
         (`X11Capture.region`); without it, only the synthetic picture can be encoded."""
         self._capture_region = capture_region
+        self._clock = clock
+        self._sleep = sleep
         self._runner = runner
         self._probe = probe
         self._settings = settings or LiveEncoderSettings()
@@ -206,11 +222,13 @@ class D0LiveEncoder:
                 directory,
                 settings.segmenting,
                 settings.max_session_seconds,
+                settings.system_audio if type(live_source) is X11GrabSource else None,
             )
             process = self._runner.start(argv, stderr_path=directory / STDERR_NAME)
             # Registered inside the guard: an interruption before this completes is handled
             # below, so a started process is never left untracked.
             self._register(handle, _LiveSession(output, process))
+            self._await_segments(output.playlist, process, settings.segmenting)
         except BaseException as error:
             self._abandon_start(handle, output, process)
             if isinstance(error, OSError):
@@ -221,6 +239,20 @@ class D0LiveEncoder:
                 raise StreamStartError(error.message) from None
             raise
         return EncodedStream(handle)
+
+    def _await_segments(
+        self, playlist: Path, process: ManagedProcess, segmenting: HlsSegmenting
+    ) -> None:
+        """Return once the playlist lists `_READY_SEGMENTS` segments, so a receiver loaded next
+        starts with a buffer behind the live edge; bounded, and refused if FFmpeg ends first."""
+        ready = min(_READY_SEGMENTS, segmenting.playlist_size)
+        deadline = self._clock() + ready * segmenting.segment_seconds + _READY_MARGIN_SECONDS
+        while _listed_segments(playlist) < ready:
+            if process.exit_status() is not None:
+                raise StreamStartError("the live encoder stopped before its first segments")
+            if self._clock() >= deadline:
+                raise StreamStartError("the live encoder produced no segment in time")
+            self._sleep(_READY_POLL_SECONDS)
 
     def _register(self, handle: str, session: _LiveSession) -> None:
         with self._lock:
@@ -378,3 +410,12 @@ class D0LiveEncoder:
     @staticmethod
     def _output(directory: Path, choice: EncoderChoice) -> LiveOutput:
         return LiveOutput(directory, directory / HLS_PLAYLIST, choice.plan, choice.fallback_reason)
+
+
+def _listed_segments(playlist: Path) -> int:
+    """How many segments the playlist lists; 0 while FFmpeg has not written it."""
+    try:
+        text = playlist.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    return sum(1 for line in text.splitlines() if line.startswith("#EXTINF"))

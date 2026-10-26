@@ -18,12 +18,13 @@ dependencies = [
 mcp = [
     "mcp==1.30.0",
 ]
-# The Google TV's own channels: its remote (Android TV Remote protocol v2: audible volume, mute,
-# keys, text, app launch) and its network debugging (ADB: the list of installed apps). The
-# desktop bridge and the Android app embed this extra (see packaging/android_python.py).
+# The Google TV's own remote channel (Android TV Remote protocol v2). The desktop bridge and
+# Android app embed this extra. On Ubuntu, the app inventory uses the system Android platform
+# tools so their ADB server owns TLS, mDNS and pairing keys; Android cannot host that server.
 tvremote = [
     "androidtvremote2==0.3.2",
-    # The TV's installed apps, listed over its network debugging (ADB), which the owner turns on.
+    # The phone has no adb program: there the TV's app list goes through this pure-Python
+    # classic ADB (port 5555) instead (`adapters/tv_apps_adb_shell.py`).
     "adb-shell==0.4.4",
 ]
 
@@ -49,7 +50,7 @@ android = [
     "pip==26.2.1",
     "wheel==0.46.3",
     "poetry-core==2.5.0",
-    "setuptools==84.0.0",
+    "setuptools==84.1.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -60,7 +61,7 @@ control_tv = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
+pythonpath = ["src", "tests"]  # this checkout's own code first (tests/test_source_root.py)
 addopts = "-ra --strict-markers --strict-config"
 
 [tool.mypy]
@@ -81,7 +82,7 @@ module = ["PyInstaller", "PyInstaller.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# adb-shell (the TV's app list over network debugging) ships no type information.
+# adb-shell (the TV's app list over network debugging on the phone) ships no type information.
 module = ["adb_shell", "adb_shell.*"]
 ignore_missing_imports = true
 

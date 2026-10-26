@@ -81,7 +81,9 @@ installed `.deb` can still record a trace (for C7) without a hold.
 
 ### Android (debug build only)
 
-The debug APK has a second launcher entry, **control-TV Recette**:
+The debug APK has a screen **control-TV Recette**, without a home-screen icon (only one control-TV
+icon on the phone); open it from the computer with
+`adb shell am start -n io.github.guillaumeboileaupro.controltv/.AcceptanceTraceActivity`:
 
 1. turn on "Mode recette", then "Fermer l'application (pour appliquer)" and reopen control-TV;
 2. the screen shows "Trace active dans ce processus : oui" and the last requests (id, client,

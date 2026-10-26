@@ -7,7 +7,10 @@ import { describe, test } from "node:test";
 import { DEVICE, readyWith, statusOf } from "./fixtures.ts";
 import { initialState, type AppState } from "./model.ts";
 import { startTransport } from "./playback.ts";
-import { isTrayAction, trayRequest } from "./tray.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { isTrayAction, TRAY_ACTIONS, trayRequest } from "./tray.ts";
 
 const playing = (): AppState => readyWith(statusOf());
 const withRemote = (state: AppState): AppState => ({
@@ -68,12 +71,36 @@ describe("tray quick controls", () => {
     }
   });
 
-  test("only the five tray identifiers are accepted from the event", () => {
-    for (const ok of ["play_pause", "stop", "tv_mute", "tv_volume_down", "tv_volume_up"]) {
-      assert.equal(isTrayAction(ok), true);
-    }
-    for (const bad of ["set_volume", "", null, 3, "quit"]) {
-      assert.equal(isTrayAction(bad), false);
+  test("selecting a TV remains available when none is connected", () => {
+    assert.deepEqual(trayRequest(initialState(), "select_tv"), { kind: "select_tv" });
+  });
+
+  test("screen actions follow the real streaming state", () => {
+    assert.deepEqual(trayRequest(playing(), "duplicate_screen"), { kind: "duplicate_screen" });
+    assert.deepEqual(trayRequest(playing(), "duplicate_screen", true), {
+      kind: "show",
+      reason: "screen streaming is already active",
+    });
+    assert.deepEqual(trayRequest(playing(), "stop_stream", true), { kind: "stop_stream" });
+    assert.deepEqual(trayRequest(playing(), "stop_stream"), {
+      kind: "show",
+      reason: "screen streaming is not active",
+    });
+  });
+});
+
+describe("the tray's whole menu", () => {
+  test("the window handles exactly the actions the tray menu shows, in its order", () => {
+    const rust = readFileSync(resolve(process.cwd(), "../src-tauri/src/tray.rs"), "utf8");
+    const block = rust.slice(rust.indexOf("pub(crate) const ACTIONS"), rust.indexOf("];"));
+    const ids = [...block.matchAll(/\("([a-z_]+)",/g)].map((match) => match[1]);
+    assert.deepEqual(ids, [...TRAY_ACTIONS]);
+  });
+
+  test("only the menu's identifiers are actions", () => {
+    for (const action of TRAY_ACTIONS) assert.ok(isTrayAction(action), action);
+    for (const other of ["set_volume", "text", "", "mute", 3, null]) {
+      assert.equal(isTrayAction(other), false, String(other));
     }
   });
 });

@@ -31,6 +31,7 @@ shared files: no home paths, addresses, device identifiers, e-mail addresses, ke
 | `agent-token-efficiency`                                                                                            | every mission: targeted reads, filtered output, short prompts                          |
 | `python-project-quality`, `solid-code-design`, `typescript-no-any`, `conventional-commits-pr`                       | quality gates and commits                                                              |
 | disk hygiene, CI diagnosis, dependency review, release audit, multiplatform release (`.deb`, `.apk`), accessibility | their domain                                                                           |
+| `graphify`                                                                                                          | navigating the code through the local knowledge graph (`graphify-out/`, `/graphify`)   |
 
 ## Worktrees
 
@@ -41,6 +42,11 @@ that branch's ignore rules keep it out of commits):
 ```bash
 python3 scripts/agent_config.py link --from <main checkout>
 ```
+
+A worktree created inside the checkout goes under `.worktrees/` (git-ignored, so it never shows
+as untracked); worktrees beside the checkout need no rule. Each checkout or worktree keeps its own
+Graphify graph in the git-ignored `graphify-out/`, built with `graphify update .` (AST only); the
+rules are in `AGENTS.md` (Code knowledge graph).
 
 ## Checking the configuration
 

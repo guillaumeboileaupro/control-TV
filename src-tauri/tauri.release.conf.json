@@ -7,6 +7,7 @@
     "linux": {
       "deb": {
         "depends": [
+          "adb",
           "ffmpeg",
           "libayatana-appindicator3-1",
           "x11-xserver-utils"

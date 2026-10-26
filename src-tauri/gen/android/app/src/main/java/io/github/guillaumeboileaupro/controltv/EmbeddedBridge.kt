@@ -1,6 +1,7 @@
 package io.github.guillaumeboileaupro.controltv
 
 import android.content.Context
+import android.util.Log
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
@@ -15,12 +16,19 @@ import com.chaquo.python.android.AndroidPlatform
  * starts Python here.
  */
 object EmbeddedBridge {
+    private const val TAG = "control-tv"
+
     @Volatile
     private var shared: BridgeRelay? = null
 
     fun relay(context: Context): BridgeRelay =
         shared ?: synchronized(this) {
-            shared ?: BridgeRelay(handler = EmbeddedHandler(load = handleOf(context.applicationContext)))
+            shared ?: BridgeRelay(
+                handler = EmbeddedHandler(
+                    load = handleOf(context.applicationContext),
+                    log = { Log.i(TAG, it) },
+                ),
+            )
                 .also { shared = it }
         }
 

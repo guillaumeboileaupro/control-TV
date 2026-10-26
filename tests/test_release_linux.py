@@ -248,6 +248,7 @@ def test_the_release_overlay_ships_the_bridge_the_notices_and_the_project_licens
 
     assert overlay["bundle"]["resources"] == {"../dist/python-bridge/": "python-bridge/"}
     assert overlay["bundle"]["linux"]["deb"]["depends"] == [
+        "adb",
         "ffmpeg",
         "libayatana-appindicator3-1",
         "x11-xserver-utils",
@@ -261,3 +262,13 @@ def test_the_release_overlay_ships_the_bridge_the_notices_and_the_project_licens
 def test_arguments_are_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
     assert release.main(["--fast"]) == 2
     assert "usage" in capsys.readouterr().err
+
+
+def test_the_ci_checks_every_runtime_dependency_the_package_declares() -> None:
+    overlay = json.loads((ROOT / "src-tauri" / "tauri.release.conf.json").read_text())
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text().splitlines()
+    loops = [line.split(" in ", 1)[1] for line in workflow if "for package in " in line]
+
+    assert len(loops) == 1, "one installed-dependency check in the Linux release job"
+    checked = loops[0].removesuffix("; do").split()
+    assert checked == overlay["bundle"]["linux"]["deb"]["depends"]

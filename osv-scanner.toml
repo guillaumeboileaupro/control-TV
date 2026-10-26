@@ -1,0 +1,14 @@
+# OSV-Scanner waivers for the WebRTC engine and TV receiver locks (dependency-audit.yml).
+# Each entry names one advisory and stops applying at `ignoreUntil`: from 2026-12-01 the scan
+# fails again. Owner-approved 2026-10-25, for local-network trials only; see SECURITY.md, Dependency
+# advisories. Add nothing here without the owner's approval.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0387"
+ignoreUntil = 2026-11-30T23:59:59Z
+reason = "crypto-bigint 0.5.5 via webrtc 0.14 -> dtls -> p256/p384 0.13: no compatible fix; fixed paths absent from 0.5.5 or not called; single-use ECDHE keys only, DTLS signatures use ring. Removed by the webrtc 0.21 migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+ignoreUntil = 2026-11-30T23:59:59Z
+reason = "bincode 1.3.3 is unmaintained (no known vulnerability), pulled in by webrtc 0.14; removed by the webrtc 0.21 migration."

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- control-TV home-screen widget: the chosen TV and its state, then one row of controls. -->
+<!-- control-TV home-screen widget: the chosen TV and its state, a row of playback and TV volume
+     controls, then the TV's remote. Made smaller, the widget hides the remote rows first. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -99,5 +100,84 @@
             android:layout_marginEnd="0dp"
             android:contentDescription="@string/widget_volume_up"
             android:src="@drawable/ic_widget_volume_up" />
+    </LinearLayout>
+
+    <!-- The TV's remote: the arrows around OK, Back and Home above, Power and Assistant below. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/widget_back"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_back"
+            android:src="@drawable/ic_widget_back" />
+
+        <ImageButton
+            android:id="@+id/widget_up"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_up"
+            android:src="@drawable/ic_widget_up" />
+
+        <ImageButton
+            android:id="@+id/widget_home"
+            style="@style/ControlTvWidgetButton"
+            android:layout_marginEnd="0dp"
+            android:contentDescription="@string/widget_home"
+            android:src="@drawable/ic_widget_home" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/widget_left"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_left"
+            android:src="@drawable/ic_widget_left" />
+
+        <ImageButton
+            android:id="@+id/widget_ok"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_ok"
+            android:src="@drawable/ic_widget_ok" />
+
+        <ImageButton
+            android:id="@+id/widget_right"
+            style="@style/ControlTvWidgetButton"
+            android:layout_marginEnd="0dp"
+            android:contentDescription="@string/widget_right"
+            android:src="@drawable/ic_widget_right" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/widget_power"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_power"
+            android:src="@drawable/ic_widget_power" />
+
+        <ImageButton
+            android:id="@+id/widget_down"
+            style="@style/ControlTvWidgetButton"
+            android:contentDescription="@string/widget_down"
+            android:src="@drawable/ic_widget_down" />
+
+        <ImageButton
+            android:id="@+id/widget_assistant"
+            style="@style/ControlTvWidgetButton"
+            android:layout_marginEnd="0dp"
+            android:contentDescription="@string/widget_assistant"
+            android:src="@drawable/ic_widget_assistant" />
     </LinearLayout>
 </LinearLayout>

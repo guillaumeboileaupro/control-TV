@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import stat
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
 from control_tv.adapters.tv_remote import CERT_FILE, KEY_FILE, TvRemoteChannel
 from control_tv.domain import (
+    AppLaunch,
     AudibleVolume,
     CommandRejectedError,
     DeviceUnavailableError,
@@ -54,6 +56,10 @@ class FakeTv:
         self.texts: list[str] = []
         self.log: list[tuple[str, ...]] = []
         self.remotes: list[FakeRemote] = []
+        # Whether a connection stays open like the library's (a live transport and a pending
+        # "connection lost" future); by default the fake looks closed, so every call connects.
+        self.keeps_open = False
+        self.opens_launched_app = True
 
 
 class FakeRemote:
@@ -79,6 +85,13 @@ class FakeRemote:
         self.volume_info = None if self.tv.volume is None else dict(self.tv.volume)
         self.current_app = self.tv.current_app
         self._remote_message_protocol.ime_field_counter = self.tv.field_counter
+        if self.tv.keeps_open:
+            self._remote_message_protocol.on_con_lost = asyncio.get_running_loop().create_future()
+            self._remote_message_protocol.transport = SimpleNamespace(is_closing=lambda: False)
+
+    def lose_connection(self) -> None:
+        """The library noticed the connection was lost (TV gone, idle timeout)."""
+        self._remote_message_protocol.on_con_lost.set_result(None)
 
     def send_key_command(self, key_code: str) -> None:
         self.tv.log.append(("key", key_code))
@@ -96,6 +109,13 @@ class FakeRemote:
     def _power_toggled(self) -> None:
         self.tv.is_on = not self.tv.is_on
         self.is_on = self.tv.is_on
+
+    def send_launch_app_command(self, app_link_or_app_id: str) -> None:
+        self.tv.log.append(("launch", app_link_or_app_id))
+        if self.tv.send_error is not None:
+            raise self.tv.send_error
+        if self.tv.opens_launched_app:
+            self.current_app = app_link_or_app_id
 
     def send_text(self, text: str) -> None:
         self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
@@ -320,8 +340,11 @@ def test_only_allowlisted_keys_can_be_sent(channel: TvRemoteChannel, tv: FakeTv,
     assert tv.log == []
 
 
-def test_the_allowlist_has_no_text_launch_voice_or_microphone_key() -> None:
-    assert {key.name for key in RemoteKey} == {
+def test_the_allowlist_is_exactly_the_keys_of_a_google_tv_remote() -> None:
+    # Owner decision of 2026-10-25: the keys of a Google TV remote, including its Assistant key;
+    # still no microphone mute (KEYCODE_MUTE) and no free launch or text key.
+    digits = {f"DIGIT_{n}" for n in range(10)}
+    assert {key.name for key in RemoteKey} == digits | {
         "VOLUME_UP",
         "VOLUME_DOWN",
         "VOLUME_MUTE",
@@ -335,7 +358,28 @@ def test_the_allowlist_has_no_text_launch_voice_or_microphone_key() -> None:
         "HOME",
         "DELETE",
         "ENTER",
+        "INFO",
+        "GUIDE",
+        "TV_INPUT",
+        "CAPTIONS",
+        "AUDIO_TRACK",
+        "SETTINGS",
+        "CHANNEL_UP",
+        "CHANNEL_DOWN",
+        "RED",
+        "GREEN",
+        "YELLOW",
+        "BLUE",
+        "PLAY_PAUSE",
+        "STOP",
+        "REWIND",
+        "FAST_FORWARD",
+        "PREVIOUS",
+        "NEXT",
+        "RECORD",
+        "ASSISTANT",
     }
+    assert "KEYCODE_MUTE" not in {key.value for key in RemoteKey}
 
 
 def test_a_failure_after_the_key_was_handed_over_is_reported_and_never_resent(
@@ -564,12 +608,10 @@ def test_text_is_sent_once_to_the_active_field(channel: TvRemoteChannel, tv: Fak
     assert tv.log == [("connect",), ("text", "11"), ("disconnect",)]
 
 
-def test_text_without_a_reported_field_is_still_sent_once_and_says_so(
-    channel: TvRemoteChannel, tv: FakeTv
-) -> None:
+def test_text_without_a_reported_field_is_not_sent(channel: TvRemoteChannel, tv: FakeTv) -> None:
     entry = channel.type_text(HOST, "abc")
 
-    assert tv.texts == ["abc"]
+    assert tv.texts == []
     assert entry.field_reported is False
 
 
@@ -586,6 +628,7 @@ def test_malformed_text_is_refused_before_anything_is_sent(
 
 
 def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.field_counter = 1
     tv.send_error = ConnectionClosed("lost while sending secret-123")
 
     with pytest.raises(DeviceUnavailableError) as excinfo:
@@ -593,3 +636,179 @@ def test_a_failure_while_typing_never_shows_the_text(channel: TvRemoteChannel, t
 
     assert "secret-123" not in str(excinfo.value)
     assert tv.texts == ["secret-123"]  # sent once, not resent
+
+
+# One open connection per TV -------------------------------------------------------------------
+
+
+def run_on(channel: TvRemoteChannel, action: Callable[[], None]) -> None:
+    """Run `action` on the channel's event loop, as the library's own callbacks would."""
+
+    async def call() -> None:
+        action()
+
+    asyncio.run_coroutine_threadsafe(call(), channel._event_loop()).result(1)
+
+
+def factory_for(tv: FakeTv) -> Callable[[str, str, str, str], FakeRemote]:
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+        tv.remotes.append(FakeRemote(tv, certfile, keyfile, host))
+        return tv.remotes[-1]
+
+    return factory
+
+
+def test_keys_in_a_row_share_one_open_connection_closed_with_the_channel(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+
+    channel.press(HOST, RemoteKey.DPAD_UP)
+    channel.press(HOST, RemoteKey.DPAD_CENTER)
+    observed = channel.observe(HOST)
+
+    assert tv.log == [("connect",), ("key", "KEYCODE_DPAD_UP"), ("key", "KEYCODE_DPAD_CENTER")]
+    assert observed.is_on is True
+    channel.close()
+    assert tv.log[-1] == ("disconnect",)
+    assert len(tv.remotes) == 1
+
+
+def test_a_lost_connection_is_never_reused(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.keeps_open = True
+    channel.press(HOST, RemoteKey.HOME)
+
+    run_on(channel, tv.remotes[0].lose_connection)
+    channel.press(HOST, RemoteKey.BACK)
+
+    assert tv.log == [
+        ("connect",),
+        ("key", "KEYCODE_HOME"),
+        ("disconnect",),
+        ("connect",),
+        ("key", "KEYCODE_BACK"),
+    ]
+
+
+def test_a_failed_call_closes_its_connection_and_the_next_one_connects_again(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    tv.send_error = ConnectionClosed("lost")
+    with pytest.raises(DeviceUnavailableError):
+        channel.press(HOST, RemoteKey.HOME)
+    tv.send_error = None
+
+    channel.press(HOST, RemoteKey.HOME)
+
+    assert [entry[0] for entry in tv.log] == ["connect", "key", "disconnect", "connect", "key"]
+    assert [entry for entry in tv.log if entry[0] == "key"] == [("key", "KEYCODE_HOME")] * 2
+
+
+def test_an_unused_connection_is_closed_after_its_keep_open_time(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    channel = TvRemoteChannel(
+        tmp_path / "remote",
+        settle=0.2,
+        keep_open=0.1,
+        remote_factory=factory_for(tv),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+    )
+    try:
+        channel.press(HOST, RemoteKey.HOME)
+        time.sleep(0.4)
+        assert tv.log == [("connect",), ("key", "KEYCODE_HOME"), ("disconnect",)]
+    finally:
+        channel.close()
+    assert tv.remotes[0].disconnected == 1
+
+
+def test_pairing_closes_the_open_connection(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    tv.keeps_open = True
+    channel.press(HOST, RemoteKey.HOME)
+
+    channel.start_pairing(HOST)
+
+    assert tv.remotes[0].disconnected == 1
+
+
+def test_a_volume_key_on_a_tv_that_reports_no_volume_does_not_wait_for_one(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    tv.volume = None
+    channel = TvRemoteChannel(
+        tmp_path / "remote",
+        settle=1.0,
+        remote_factory=factory_for(tv),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+    )
+    try:
+        channel.press(HOST, RemoteKey.VOLUME_UP)  # a new connection: one settle at most
+        started = time.monotonic()
+        pressed = channel.press(HOST, RemoteKey.VOLUME_UP)  # reused: no wait at all
+        assert time.monotonic() - started < 0.5
+    finally:
+        channel.close()
+    assert pressed.before.volume is None and pressed.after.volume is None
+
+
+# Opening an app without the TV's debugging --------------------------------------------------------
+
+
+def test_an_app_is_opened_once_by_its_package_and_the_app_in_front_is_reported(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    launched = channel.launch(HOST, "com.netflix.ninja")
+
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
+    assert launched == AppLaunch(package="com.netflix.ninja", front_app="com.netflix.ninja")
+
+
+def test_a_tv_that_does_not_report_the_app_returns_what_it_said(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.opens_launched_app = False
+    tv.current_app = "com.google.android.tvlauncher"
+
+    launched = channel.launch(HOST, "com.netflix.ninja")
+
+    assert launched.front_app == "com.google.android.tvlauncher"
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
+
+
+@pytest.mark.parametrize("package", ["", "market://launch?id=x", "a b", None])
+def test_only_a_package_name_is_ever_sent_as_an_app(
+    channel: TvRemoteChannel, tv: FakeTv, package: Any
+) -> None:
+    with pytest.raises(InvalidArgumentError):
+        channel.launch(HOST, package)
+    assert tv.log == []
+
+
+LINK = "controltv-receiver://apps?reply=http://192.0.2.20:40123/apps&token=" + "a" * 32
+
+
+def test_the_receivers_app_list_link_is_opened_once(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    channel.open_receiver_link(HOST, LINK)
+
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", LINK)]
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://example.com/",
+        "market://launch?id=com.netflix.ninja",
+        LINK.replace("/apps&", "/other&"),
+        LINK.replace("a" * 32, "short"),
+        LINK + "&extra=1",
+        None,
+    ],
+)
+def test_no_other_link_is_ever_opened(channel: TvRemoteChannel, tv: FakeTv, link: Any) -> None:
+    with pytest.raises(InvalidArgumentError):
+        channel.open_receiver_link(HOST, link)
+    assert tv.log == []

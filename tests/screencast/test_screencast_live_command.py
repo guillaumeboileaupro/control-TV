@@ -23,6 +23,36 @@ from control_tv.screencast.model import (
 )
 
 OUT = Path("/private/live")
+
+
+def test_the_system_sound_is_recorded_only_with_a_captured_screen() -> None:
+    from control_tv.screencast.model import X11GrabSource
+
+    screen = X11GrabSource(":0", 0, 0, 1920, 1080)
+    profile = EncodingProfile(width=1920, height=1080, fps=30)
+    argv = live_hls_command(
+        "ffmpeg", screen, profile, SoftwareX264(), OUT, HlsSegmenting(), 60, "@DEFAULT_MONITOR@"
+    )
+    pulse = argv.index("pulse")
+    assert argv[pulse - 1 : pulse + 5] == (
+        "-f",
+        "pulse",
+        "-thread_queue_size",
+        "8",
+        "-i",
+        "@DEFAULT_MONITOR@",
+    )
+    assert "-c:a" in argv and argv[argv.index("-c:a") + 1] == "aac"
+    with pytest.raises(InvalidScreenCastOption, match="system sound"):
+        live_hls_command(
+            "ffmpeg", SyntheticSource(), profile, SoftwareX264(), OUT, HlsSegmenting(), 60, "x"
+        )
+    with pytest.raises(InvalidScreenCastOption, match="system sound"):
+        live_hls_command(
+            "ffmpeg", screen, profile, SoftwareX264(), OUT, HlsSegmenting(), 60, "bad source;"
+        )
+
+
 DEVICE = VaapiDevice("/dev/dri/renderD128")
 
 

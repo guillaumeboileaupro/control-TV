@@ -8,6 +8,8 @@
 
 mod bridge;
 mod commands;
+#[cfg(target_os = "linux")]
+mod webrtc_commands;
 // A phone has no status area: only the desktop and the tests use this module.
 #[cfg_attr(not(any(desktop, test)), allow(dead_code))]
 mod tray;
@@ -59,6 +61,8 @@ pub fn run() {
         .setup(|app| {
             let slot = BridgeSlot::new(bridge_launcher(app));
             app.manage(Arc::new(Mutex::new(slot)) as SharedBridgeState);
+            #[cfg(target_os = "linux")]
+            app.manage(webrtc_commands::WebRtcState::default());
             // Without a status area (or its AppIndicator support) the window works as before.
             #[cfg(desktop)]
             if let Err(error) = tray::install(app) {
@@ -83,12 +87,29 @@ pub fn run() {
             commands::bridge_type_remote_text,
             commands::bridge_list_tv_apps,
             commands::bridge_launch_tv_app,
+            commands::bridge_pair_tv_apps,
+            commands::bridge_open_tv_apps_port,
             commands::bridge_list_screens,
+            commands::bridge_get_screen_receiver_capabilities,
+            commands::bridge_prepare_webrtc_capture,
+            commands::bridge_activate_webrtc_capture,
+            commands::bridge_release_webrtc_capture,
             commands::bridge_start_screen_stream,
             commands::bridge_stop_screen_stream,
             commands::bridge_get_screen_stream,
+            commands::bridge_get_display_layout,
+            commands::bridge_apply_display_layout,
+            commands::bridge_confirm_display_layout,
+            commands::bridge_revert_display_layout,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::start_webrtc_stream,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::stop_webrtc_stream,
+            #[cfg(target_os = "linux")]
+            webrtc_commands::get_webrtc_stream,
             commands::show_main_window,
-            remember_selection
+            remember_selection,
+            commands::update_tray_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -919,13 +940,45 @@ done"#,
     #[test]
     fn a_screen_stream_request_carries_the_mode_size_rate_and_consent() {
         assert_eq!(
-            screen_stream_request("uuid-1", "duplicate", Some("eDP-1"), (1280, 720), 30, true),
+            screen_stream_request(
+                "uuid-1",
+                "duplicate",
+                Some("eDP-1"),
+                (1280, 720),
+                30,
+                true,
+                &Placement {
+                    refresh: 60,
+                    position: "right"
+                }
+            ),
             json!({"deviceId": "uuid-1", "mode": "duplicate", "screen": "eDP-1",
-                   "width": 1280, "height": 720, "fps": 30, "consent": true})
+                   "width": 1280, "height": 720, "fps": 30, "consent": true,
+                   "refresh": 60, "position": "right"})
         );
         assert_eq!(
-            screen_stream_request("uuid-1", "extend", None, (1920, 1080), 60, false)["screen"],
+            screen_stream_request(
+                "uuid-1",
+                "extend",
+                None,
+                (1920, 1080),
+                25,
+                false,
+                &Placement {
+                    refresh: 50,
+                    position: "below"
+                }
+            )["screen"],
             Value::Null
+        );
+    }
+
+    #[test]
+    fn a_display_layout_request_carries_the_layout_as_given() {
+        let layout = json!([{"name": "eDP-1", "enabled": true}]);
+        assert_eq!(
+            display_layout_request(layout.clone()),
+            json!({ "displays": layout })
         );
     }
 
@@ -933,7 +986,18 @@ done"#,
     fn send_screen_forwards_the_request_to_the_bridge_once() {
         let (state, _script) =
             ready_state(r#"printf '{"id":1,"ok":true,"result":{"received":%s}}\n' "$request""#);
-        let params = screen_stream_request("uuid-1", "extend", None, (1920, 1080), 25, true);
+        let params = screen_stream_request(
+            "uuid-1",
+            "extend",
+            None,
+            (1920, 1080),
+            25,
+            true,
+            &Placement {
+                refresh: 50,
+                position: "left",
+            },
+        );
 
         let result =
             tauri::async_runtime::block_on(send_screen(state, "start_screen_stream", params))
@@ -942,6 +1006,8 @@ done"#,
         assert_eq!(result["received"]["method"], "start_screen_stream");
         assert_eq!(result["received"]["params"]["consent"], true);
         assert_eq!(result["received"]["params"]["mode"], "extend");
+        assert_eq!(result["received"]["params"]["position"], "left");
+        assert_eq!(result["received"]["params"]["refresh"], 50);
     }
 
     #[test]
@@ -1164,20 +1230,61 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
     }
 
     #[test]
-    fn tray_actions_are_the_quick_controls_and_never_a_level_or_a_free_command() {
+    fn tray_actions_match_the_current_compact_menu() {
         let ids: Vec<&str> = tray::ACTIONS.iter().map(|(id, _)| *id).collect();
 
         assert_eq!(
             ids,
             [
+                "select_tv",
                 "play_pause",
                 "stop",
                 "tv_mute",
                 "tv_volume_down",
-                "tv_volume_up"
+                "tv_volume_up",
+                "duplicate_screen",
+                "stop_stream",
             ]
         );
         assert_eq!(tray::EVENT, "tray-action");
+    }
+
+    #[test]
+    fn tray_labels_and_availability_follow_connection_and_streaming() {
+        let labels: Vec<&str> = tray::ACTIONS.iter().map(|(_, label)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "Sélectionner / connecter une TV",
+                "Lecture / Pause",
+                "Arrêter",
+                "Muet",
+                "Volume −",
+                "Volume +",
+                "Dupliquer l’écran",
+                "Arrêter la diffusion",
+            ]
+        );
+        let idle = tray::TrayState::default();
+        assert_eq!(idle.connection_label(), "TV : aucune sélection");
+        assert!(!idle.enabled("play_pause"));
+        assert!(idle.enabled("select_tv"));
+        let connected = tray::TrayState {
+            selected_name: Some("Salon".to_string()),
+            connected: true,
+            streaming: false,
+        };
+        assert_eq!(connected.connection_label(), "TV : Salon — connectée");
+        assert_eq!(connected.stream_label(), "Diffusion : arrêtée");
+        assert!(connected.enabled("duplicate_screen"));
+        assert!(!connected.enabled("stop_stream"));
+        let streaming = tray::TrayState {
+            streaming: true,
+            ..connected
+        };
+        assert_eq!(streaming.stream_label(), "Diffusion : active");
+        assert!(!streaming.enabled("duplicate_screen"));
+        assert!(streaming.enabled("stop_stream"));
     }
 
     #[test]
@@ -1185,6 +1292,18 @@ echo '{"id":1,"ok":true,"result":{"result":{"command":"pause","confirmation":"co
         assert_eq!(
             app_request("uuid-1", "com.example.video"),
             json!({"deviceId": "uuid-1", "package": "com.example.video"})
+        );
+    }
+
+    #[test]
+    fn an_adb_pairing_request_keeps_the_endpoint_and_temporary_code_separate() {
+        assert_eq!(
+            app_pairing_request("uuid-1", "192.0.2.10:40123", "123456"),
+            json!({
+                "deviceId": "uuid-1",
+                "pairingEndpoint": "192.0.2.10:40123",
+                "code": "123456"
+            })
         );
     }
 

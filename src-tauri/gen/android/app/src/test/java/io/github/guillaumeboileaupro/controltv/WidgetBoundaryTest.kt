@@ -99,14 +99,14 @@ class WidgetBoundaryTest {
     fun aJobRunAgainByWorkManagerSendsItsCommandOnlyOnce() {
         val bridge = tvBridge()
         val relay = BridgeRelay(bridge)
-        val tap = TapSpec(WidgetAction.MUTE, "token-1", clock.get(), deviceId = TV)
+        val tap = TapSpec(WidgetAction.STOP, "token-1", clock.get(), deviceId = TV)
 
         val first = WidgetJob(store, relay, clock::get).run(tap)
         val again = WidgetJob(store, relay, clock::get).run(tap)
 
         assertTrue(first is WidgetOutcome.Sent)
-        assertEquals(WidgetOutcome.MaybeSent("set_muted"), again)
-        assertEquals(listOf("set_muted"), bridge.commands.map { it.first })
+        assertEquals(WidgetOutcome.MaybeSent("stop"), again)
+        assertEquals(listOf("stop"), bridge.commands.map { it.first })
         relay.shutdown()
     }
 

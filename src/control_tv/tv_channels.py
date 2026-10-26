@@ -12,14 +12,18 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from control_tv.domain import (
+    AppLaunch,
     AppLaunchResult,
+    AppListing,
     Confirmation,
+    ControlError,
     Device,
     DeviceId,
     DeviceKind,
     DeviceNotFoundError,
     InvalidArgumentError,
     KeyPress,
+    PairingRequiredError,
     RemoteKey,
     RemoteKeyResult,
     RemoteObservation,
@@ -27,7 +31,7 @@ from control_tv.domain import (
     TvApp,
     UnsupportedOperationError,
 )
-from control_tv.ports import TvApps, TvRemote
+from control_tv.ports import AppLister, AppMemory, TvApps, TvRemote
 
 
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
@@ -73,10 +77,14 @@ class TvChannels:
         *,
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
+        memory: AppMemory | None = None,
+        receiver_apps: AppLister | None = None,
     ) -> None:
         self._discovered = discovered
         self._remote = remote
         self._apps = apps
+        self._memory = memory
+        self._receiver_apps = receiver_apps
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
         remote, host = self._remote_target(device_id)
@@ -108,8 +116,8 @@ class TvChannels:
         )
 
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
-        """Send text once to the TV's active text field. The TV never echoes it, so the result
-        is `NOT_CHECKED`; the detail says whether the TV reported an active field."""
+        """Send text once only when the TV reports an active field. The TV never echoes it,
+        so the result is `NOT_CHECKED`; the detail says whether anything was sent."""
         if not isinstance(text, str):
             raise InvalidArgumentError("the text to type must be a string", device_id=device_id)
         remote, host = self._remote_target(device_id)
@@ -117,7 +125,7 @@ class TvChannels:
         detail = (
             "sent to the TV's active text field; check the TV"
             if entry.field_reported
-            else "sent, but the TV did not report an active text field; check the TV"
+            else "not sent because the TV did not report an active text field"
         )
         return RemoteTextResult(
             device_id=device_id,
@@ -136,17 +144,45 @@ class TvChannels:
             )
         return list(self._apps.list_apps(host))
 
+    def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
+        """The apps to offer in the window, whatever the state of the TV's debugging.
+
+        The TV's own list when its debugging or ControlTV Receiver answers (then kept for next
+        time); otherwise its last list, or none, with the reason the TV's debugging did not
+        list them: apps not read from this TV are never offered. A TV not found or a Cast
+        group is still refused.
+        """
+        host = self._tv_host(device_id)
+        try:
+            apps = self._own_list(device_id, host)
+        except ControlError as error:
+            remembered = None if self._memory is None else self._memory.recall(device_id)
+            if remembered:
+                return AppListing(apps=remembered, source="remembered", reason=error.code)
+            return AppListing(apps=(), source="none", reason=error.code)
+        if self._memory is not None and apps:
+            self._memory.remember(device_id, apps)
+        return AppListing(apps=apps, source="tv")
+
+    def _own_list(self, device_id: DeviceId, host: str) -> tuple[TvApp, ...]:
+        """The TV's debugging first; then ControlTV Receiver, which needs no TV setting.
+        The debugging's error is the one reported when neither answers."""
+        try:
+            return tuple(self.list_tv_apps(device_id))
+        except ControlError as debugging_error:
+            if self._receiver_apps is None or self._remote is None:
+                raise
+            try:
+                return self._receiver_apps.list_apps(self._tv_host(device_id, remote=True))
+            except ControlError:
+                raise debugging_error from None
+
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports
         that app in front; `NOT_CHECKED` when it does not say."""
         if not isinstance(package, str):
             raise InvalidArgumentError("the app must be a package name", device_id=device_id)
-        host = self._tv_host(device_id)
-        if self._apps is None:
-            raise UnsupportedOperationError(
-                "this application cannot open the TV's apps", device_id=device_id
-            )
-        launch = self._apps.launch_app(host, package)
+        launch = self._launch(device_id, package)
         front = launch.front_app
         if front == launch.package:
             confirmation, detail = Confirmation.CONFIRMED, "the TV reports the app in front"
@@ -164,12 +200,55 @@ class TvChannels:
             front_app=front,
         )
 
+    def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
+        """Pair the selected TV's Wireless debugging service using its temporary code."""
+        if not isinstance(pairing_endpoint, str) or not isinstance(code, str):
+            raise InvalidArgumentError("the pairing address and code must be text")
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot pair with the TV's debugging service",
+                device_id=device_id,
+            )
+        self._apps.pair(host, pairing_endpoint, code)
+
+    def open_tv_apps_port(self, device_id: DeviceId) -> None:
+        """Have the selected TV accept the phone's app list on port 5555 (until it restarts)."""
+        host = self._tv_host(device_id)
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot reach the TV's debugging service", device_id=device_id
+            )
+        self._apps.open_classic_port(host)
+
     def _remote_target(self, device_id: DeviceId) -> tuple[TvRemote, str]:
         if self._remote is None:
             raise UnsupportedOperationError(
                 "this application has no TV remote channel", device_id=device_id
             )
         return self._remote, self._tv_host(device_id, remote=True)
+
+    def _launch(self, device_id: DeviceId, package: str) -> AppLaunch:
+        """Through the TV's own remote when it offers one: nothing to turn on in the TV's
+        settings. Through its debugging otherwise, or when the remote refused before sending
+        anything (not paired, or no remote library in this build)."""
+        if self._remote is not None:
+            try:
+                remote, host = self._remote_target(device_id)
+                return remote.launch(host, package)
+            except (PairingRequiredError, UnsupportedOperationError) as refused:
+                if self._apps is None:
+                    raise
+                try:
+                    return self._apps.launch_app(self._tv_host(device_id), package)
+                except ControlError:
+                    # Neither way: what to do is the remote's (pair it), not the debugging's.
+                    raise refused from None
+        if self._apps is None:
+            raise UnsupportedOperationError(
+                "this application cannot open the TV's apps", device_id=device_id
+            )
+        return self._apps.launch_app(self._tv_host(device_id), package)
 
     def _tv_host(self, device_id: DeviceId, *, remote: bool = False) -> str:
         """The address of a TV found by the last discovery, never a group or a guess.

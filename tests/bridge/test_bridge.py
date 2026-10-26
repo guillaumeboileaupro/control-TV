@@ -71,6 +71,7 @@ def status_request(device_id: object, request_id: int = 1) -> dict[str, object]:
     return {"id": request_id, "method": "get_status", "params": {"deviceId": device_id}}
 
 
+@pytest.mark.usefixtures("adb_on_path")
 def test_ping_reports_readiness_and_version(control: ControlService) -> None:
     response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
 
@@ -82,6 +83,7 @@ def test_ping_reports_readiness_and_version(control: ControlService) -> None:
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
             "tvApps": True,
+            "tvAppsPort": True,
         },
     }
 
@@ -375,6 +377,24 @@ def test_run_serves_one_response_per_request_line_and_skips_blanks(
     assert all(json.loads(line)["ok"] is True for line in lines)
 
 
+@pytest.mark.usefixtures("no_app_backend")
+def test_ping_reports_no_tv_apps_without_any_adb(control: ControlService) -> None:
+    response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
+
+    assert response["ok"] is True
+    assert response["result"]["tvApps"] is False
+
+
+@pytest.mark.usefixtures("no_adb_on_path")
+def test_ping_reports_tv_apps_on_a_phone_through_adb_shell(control: ControlService) -> None:
+    """A phone has no adb program: the pure-Python adb-shell still lists the TV's apps."""
+    response = dispatch(control, {"id": 1, "method": "ping", "params": {}})
+
+    assert response["result"]["tvApps"] is True
+    assert response["result"]["tvAppsPort"] is False  # the phone cannot open the TV's port
+
+
+@pytest.mark.usefixtures("adb_on_path")
 def test_main_serves_a_ping_over_real_stdio() -> None:
     """End-to-end proof that `python -m control_tv.bridge` is what Rust will actually spawn."""
     process = subprocess.Popen(
@@ -404,6 +424,7 @@ def test_main_serves_a_ping_over_real_stdio() -> None:
             "controlTvVersion": control_tv.__version__,
             "tvRemote": True,
             "tvApps": True,
+            "tvAppsPort": True,
         },
     }
 

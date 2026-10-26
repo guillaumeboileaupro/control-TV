@@ -30,7 +30,7 @@ def test_every_shipped_logo_is_used_and_every_used_logo_is_shipped() -> None:
     referenced = set(re.findall(r'shipped\(\s*"[^"]+",\s*"([a-z0-9-]+)"', CATALOGUE.read_text()))
 
     assert referenced == {path.stem for path in _files()}
-    assert len(referenced) == 9
+    assert len(referenced) == 10
 
 
 @pytest.mark.parametrize("path", _files(), ids=lambda p: p.name)
@@ -57,5 +57,9 @@ def test_a_logo_file_has_its_source_and_licence_documented(path: Path) -> None:
     rows = [line for line in DOCS.read_text(encoding="utf-8").splitlines() if path.name in line]
 
     assert rows, f"{path.name} is not listed in docs/APP_LOGOS.md"
+    if path.name == "controltv.svg":  # control-TV's own logo, a copy of assets/logo.svg
+        assert path.read_bytes() == (path.parents[1] / "logo.svg").read_bytes()
+        assert "control-TV's own logo" in rows[0]
+        return
     assert "commons.wikimedia.org" in rows[0]
     assert re.search(r"public domain|CC0", rows[0], re.IGNORECASE)

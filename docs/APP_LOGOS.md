@@ -41,17 +41,18 @@ marks only identify the app. Files were checked on 2026-10-17, then stripped of 
 verified to hold no script, foreign content, external or data reference (`tests/test_app_logo_assets.py`).
 The drawing itself is unchanged.
 
-| File                    | Displayed mark    | Android package                                                                                         | Commons source                                                                                                   | Licence                                             | Note                                                                               |
-| ----------------------- | ----------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `arte.svg`              | ARTE              | `tv.arte.plus7`                                                                                         | [Arte Logo 2026.svg](https://commons.wikimedia.org/wiki/File:Arte_Logo_2026.svg)                                 | Public domain (PD-textlogo)                         | current positioning of the ARTE wordmark                                           |
-| `canal-plus.svg`        | CANAL+            | `com.canal.android.canal`                                                                               | [Logo Canal+ 1995.svg](https://commons.wikimedia.org/wiki/File:Logo_Canal%2B_1995.svg)                           | Public domain (PD-textlogo)                         | Étienne Robial's CANAL+ wordmark; **owner to confirm visually** it matches the app |
-| `disney-plus.svg`       | Disney+           | `com.disney.disneyplus`                                                                                 | [Disney+ logo.svg](https://commons.wikimedia.org/wiki/File:Disney%2B_logo.svg)                                   | Public domain (PD-textlogo)                         | 2019 version of the wordmark; **owner to confirm visually**                        |
-| `france-tv.svg`         | france.tv         | `fr.francetv.pluzz`                                                                                     | [France.tv - logo 2022.svg](https://commons.wikimedia.org/wiki/File:France.tv_-_logo_2022.svg)                   | Public domain (PD-textlogo)                         | traced from france.tv's own SVG                                                    |
-| `google-play-games.svg` | Google Play Games | `com.google.android.play.games`                                                                         | [Google Play Games logo (2023).svg](<https://commons.wikimedia.org/wiki/File:Google_Play_Games_logo_(2023).svg>) | Public domain (PD-ineligible)                       | the Play Games mark itself, not the Play Store's                                   |
-| `molotov.svg`           | Molotov           | `com.molotov.app`                                                                                       | [Logo Molotov.tv.svg](https://commons.wikimedia.org/wiki/File:Logo_Molotov.tv.svg)                               | Public domain (PD-textlogo)                         | white letters: drawn on a dark tile, colours unchanged                             |
-| `prime-video.svg`       | Prime Video       | `com.amazon.amazonvideo.livingroom`                                                                     | [Prime Video logo (2024).svg](<https://commons.wikimedia.org/wiki/File:Prime_Video_logo_(2024).svg>)             | Public domain (PD-textlogo)                         | logo in use since 2024                                                             |
-| `tf1-plus.svg`          | TF1+              | `fr.tf1.mytf1`, `fr.tf1.mytf1.free` (TF1+'s Freebox edition, listed as "TF1+ : Streaming pour Freebox") | [Logo TF1+.svg](https://commons.wikimedia.org/wiki/File:Logo_TF1%2B.svg)                                         | CC0 (uploader's reproduction of the TF1+ text logo) | **owner to confirm visually**                                                      |
-| `okoo.svg`              | Okoo              | `fr.francetv.zouzous`                                                                                   | [Logo Okoo 2019.svg](https://commons.wikimedia.org/wiki/File:Logo_Okoo_2019.svg)                                 | Public domain (PD-textlogo)                         | traced from france.tv's own Okoo SVG                                               |
+| File                    | Displayed mark      | Android package                                                                                         | Commons source                                                                                                   | Licence                                             | Note                                                                               |
+| ----------------------- | ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `arte.svg`              | ARTE                | `tv.arte.plus7`                                                                                         | [Arte Logo 2026.svg](https://commons.wikimedia.org/wiki/File:Arte_Logo_2026.svg)                                 | Public domain (PD-textlogo)                         | current positioning of the ARTE wordmark                                           |
+| `canal-plus.svg`        | CANAL+              | `com.canal.android.canal`                                                                               | [Logo Canal+ 1995.svg](https://commons.wikimedia.org/wiki/File:Logo_Canal%2B_1995.svg)                           | Public domain (PD-textlogo)                         | Étienne Robial's CANAL+ wordmark; **owner to confirm visually** it matches the app |
+| `disney-plus.svg`       | Disney+             | `com.disney.disneyplus`                                                                                 | [Disney+ logo.svg](https://commons.wikimedia.org/wiki/File:Disney%2B_logo.svg)                                   | Public domain (PD-textlogo)                         | 2019 version of the wordmark; **owner to confirm visually**                        |
+| `france-tv.svg`         | france.tv           | `fr.francetv.pluzz`                                                                                     | [France.tv - logo 2022.svg](https://commons.wikimedia.org/wiki/File:France.tv_-_logo_2022.svg)                   | Public domain (PD-textlogo)                         | traced from france.tv's own SVG                                                    |
+| `google-play-games.svg` | Google Play Games   | `com.google.android.play.games`                                                                         | [Google Play Games logo (2023).svg](<https://commons.wikimedia.org/wiki/File:Google_Play_Games_logo_(2023).svg>) | Public domain (PD-ineligible)                       | the Play Games mark itself, not the Play Store's                                   |
+| `molotov.svg`           | Molotov             | `com.molotov.app`                                                                                       | [Logo Molotov.tv.svg](https://commons.wikimedia.org/wiki/File:Logo_Molotov.tv.svg)                               | Public domain (PD-textlogo)                         | white letters: drawn on a dark tile, colours unchanged                             |
+| `prime-video.svg`       | Prime Video         | `com.amazon.amazonvideo.livingroom`                                                                     | [Prime Video logo (2024).svg](<https://commons.wikimedia.org/wiki/File:Prime_Video_logo_(2024).svg>)             | Public domain (PD-textlogo)                         | logo in use since 2024                                                             |
+| `tf1-plus.svg`          | TF1+                | `fr.tf1.mytf1`, `fr.tf1.mytf1.free` (TF1+'s Freebox edition, listed as "TF1+ : Streaming pour Freebox") | [Logo TF1+.svg](https://commons.wikimedia.org/wiki/File:Logo_TF1%2B.svg)                                         | CC0 (uploader's reproduction of the TF1+ text logo) | **owner to confirm visually**                                                      |
+| `okoo.svg`              | Okoo                | `fr.francetv.zouzous`                                                                                   | [Logo Okoo 2019.svg](https://commons.wikimedia.org/wiki/File:Logo_Okoo_2019.svg)                                 | Public domain (PD-textlogo)                         | traced from france.tv's own Okoo SVG                                               |
+| `controltv.svg`         | ControlTV Récepteur | `io.github.guillaumeboileaupro.controltv.receiver`                                                      | control-TV's own logo (`assets/logo.svg`, the project's GPL-3.0 licence), not a Commons file                     |
 
 ## Apps without a mark
 
@@ -60,11 +61,12 @@ The drawing itself is unchanged.
 - **Android Settings** (`com.android.tv.settings`) and **Google TV recommendations**
   (`com.google.android.tvrecommendations`): the Android and Google TV marks identify different
   products. Keep the initial.
-- **Freebox-specific packages** (not on Google Play, so neither their official name nor their
-  logo can be verified): `fr.freebox.disneypluslauncher` (a Freebox launcher that opens Disney+;
-  a launcher is not the app it opens), `fr.freebox.fbx8lc.fbxdiags` (Freebox diagnostics),
-  `fr.free.aktu` and `com.nextinteractive.rmcbfmplay.tv.free` (Free editions). They keep their
-  package as label and the initial.
+- **Freebox-specific packages** (not on Google Play): named as the owner's TV shows them (owner
+  decision, 2026-10-25): `com.nextinteractive.rmcbfmplay.tv.free` "RMC BFM Play", `fr.free.aktu`
+  "Aktu Free", `fr.freebox.fbx8lc.fbxdiags` "Diagnostic Freebox", `fr.m6.m6replay.free` "M6+",
+  `net.oqee.androidtv` "OQEE", `net.oqee.launcher` "OQEE (accueil)". The Freebox's Disney+ entry
+  `fr.freebox.disneypluslauncher` opens Disney+ and shows the Disney+ logo. Without a logo whose
+  licence allows shipping it, the others keep the initial.
 - **OQEE** (`net.oqee.androidtv`) and its launcher (`net.oqee.launcher`): not on Google Play; the
   only Commons file is a PNG an uploader published under CC BY-SA 4.0, which neither establishes
   a right to license the OQEE mark nor fits a shipped asset without attribution and share-alike.
@@ -85,7 +87,8 @@ the exact marks above. Version 16.33.0 has no transitive runtime dependency. Its
 occupy 16,230,532 bytes (about 26 MiB of allocated local disk), while Vite tree-shakes the named
 imports: the complete frontend JavaScript bundle is measured by the build and remains below its
 limit (56,745 bytes at this revision, under the 65,536-byte limit of the time; the limit is
-73,728 bytes since the Screen to TV card, which brought the bundle to about 69,000 bytes). Replacing these
+73,728 bytes for the Screen to TV card (about 69,000 bytes), then 98,304 bytes for the display
+manager (about 85,800 bytes)). Replacing these
 imports with copied paths would remove the development install
 footprint but would not materially reduce the compiled paths shipped to users, and would move
 upstream provenance and updates into this repository.
@@ -94,5 +97,5 @@ The package is CC0-1.0, but its disclaimer says individual icons may have separa
 trademark rights are granted. Each catalogue change therefore still requires an exact product
 identity and a review of the icon's current source and brand guidelines.
 
-The production build rejects more than 72 KiB of uncompressed application JavaScript. This guards
+The production build rejects more than 96 KiB of uncompressed application JavaScript. This guards
 the targeted imports against accidentally bundling the complete Simple Icons catalogue.
