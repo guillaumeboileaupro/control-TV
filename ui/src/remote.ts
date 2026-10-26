@@ -307,6 +307,16 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
         technical,
       };
     }
+    // The TV's receiver said it did not start the app: nothing opened, nothing to check.
+    if (action.kind === "launch_app" && failure.code === "command_rejected") {
+      return {
+        tone: "failed",
+        text: failure.message.includes("not installed")
+          ? `${action.label} isn't installed on this TV: nothing was opened.`
+          : `The TV refused to open ${action.label}.`,
+        technical,
+      };
+    }
     if (action.kind === "pair_apps" && failure.code === "command_rejected") {
       return {
         tone: "failed",
@@ -359,9 +369,12 @@ function failureOutcome(action: RemoteAction, failure: BridgeFailure): RemoteOut
     case "bridge_timeout":
     case "bridge_transport":
       if (action.kind === "launch_app") {
+        const receiver = failure.message.includes("ControlTV Receiver")
+          ? " If it keeps happening, update ControlTV Récepteur on the TV."
+          : "";
         return {
           tone: "failed",
-          text: `${action.label} may or may not have opened. It was not sent again: check the TV.`,
+          text: `${action.label} may or may not have opened. It was not sent again: check the TV.${receiver}`,
           technical,
         };
       }
@@ -558,6 +571,9 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
     case "launch_app": {
       const launched = isJsonObject(result["result"]) ? result["result"] : {};
       const label = action.label;
+      // "Started" only on the TV's word (its receiver); "sent" only when nothing more is known.
+      const started = launched["started"] === true;
+      const detail = typeof launched["detail"] === "string" ? launched["detail"] : null;
       let outcome: RemoteOutcome;
       switch (launched["confirmation"]) {
         case "confirmed":
@@ -566,12 +582,16 @@ export function finishRemote(state: AppState, requestId: number, answer: RemoteA
         case "unconfirmed":
           outcome = {
             tone: "sent",
-            text: `${label} was sent, but the TV reports another app in front.`,
-            technical: typeof launched["detail"] === "string" ? launched["detail"] : null,
+            text: started
+              ? `The TV started ${label}, but reports another app in front.`
+              : `${label} was sent, but the TV reports another app in front.`,
+            technical: detail,
           };
           break;
         default:
-          outcome = { tone: "sent", text: `${label} was sent: check the TV.`, technical: null };
+          outcome = started
+            ? { tone: "done", text: `The TV started ${label}.`, technical: detail }
+            : { tone: "sent", text: `${label} was sent: check the TV.`, technical: null };
       }
       return {
         ...state,

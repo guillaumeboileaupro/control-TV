@@ -91,16 +91,12 @@ class FakeRemote:
         self._maybe_fail()
         return TextEntry(length=len(text), field_reported=self.field_reported, observed=self.before)
 
-    # Not paired for apps by default: a launch then falls back to the TV's debugging.
-    launches: bool = False
     front: str | None = None
 
-    def launch(self, host: str, package: str) -> AppLaunch:
-        self.calls.append(("launch", host, package))
+    def front_app(self, host: str, package: str) -> str | None:
+        self.calls.append(("front_app", host, package))
         self._maybe_fail()
-        if not self.launches:
-            raise PairingRequiredError("this TV must be paired with control-TV first")
-        return AppLaunch(package=package, front_app=self.front)
+        return self.front
 
 
 class GroupTransport(FakeTransport):
@@ -783,32 +779,8 @@ def test_a_launch_needs_a_package_name_string_and_the_inventory() -> None:
 
     with pytest.raises(InvalidArgumentError):
         with_apps(apps).launch_tv_app(DEVICE_ID, None)  # type: ignore[arg-type]
-    with pytest.raises(PairingRequiredError):  # neither a paired remote nor the inventory
+    with pytest.raises(UnsupportedOperationError):  # neither the receiver nor the inventory
         discovered(FakeRemote()).launch_tv_app(DEVICE_ID, "com.example.video")
-    assert apps.calls == []
-
-
-def test_a_launch_goes_through_the_tvs_remote_without_its_debugging() -> None:
-    apps = FakeApps(error=DebuggingOffError("debugging off"))
-    remote = FakeRemote(launches=True, front="com.example.video")
-    service = ControlService(FakeTransport(), remote=remote, apps=apps)
-    service.discover_devices(timeout=1.0)
-
-    result = service.launch_tv_app(DEVICE_ID, "com.example.video")
-
-    assert remote.calls == [("launch", HOST, "com.example.video")]
-    assert apps.calls == []
-    assert result.confirmation is Confirmation.CONFIRMED
-
-
-def test_a_remote_that_fails_after_sending_is_not_retried_through_the_debugging() -> None:
-    apps = FakeApps()
-    remote = FakeRemote(launches=True, error=OperationTimeoutError("no answer"))
-    service = ControlService(FakeTransport(), remote=remote, apps=apps)
-    service.discover_devices(timeout=1.0)
-
-    with pytest.raises(OperationTimeoutError):
-        service.launch_tv_app(DEVICE_ID, "com.example.video")
     assert apps.calls == []
 
 
@@ -874,7 +846,7 @@ def test_bridge_says_when_the_tv_debugging_is_off() -> None:
     )
 
     assert listed["result"]["reason"] == "debugging_off"
-    assert launched["error"]["code"] == "pairing_required"  # the remote is what to fix
+    assert launched["error"]["code"] == "debugging_off"  # no receiver here: only the debugging
 
 
 def test_bridge_app_list_without_the_channel_is_not_reported_as_debugging_off() -> None:
@@ -935,14 +907,26 @@ def test_the_tv_channels_need_only_a_device_lookup_not_the_cast_service() -> Non
 
 
 class ReceiverApps:
-    def __init__(self, apps: tuple[TvApp, ...] = (), error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        apps: tuple[TvApp, ...] = (),
+        error: Exception | None = None,
+        launch: AppLaunch | Exception | None = None,
+    ) -> None:
         self.apps, self.error, self.hosts = apps, error, list[str]()
+        self.launch, self.launches = launch, list[tuple[str, str]]()
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]:
         self.hosts.append(host)
         if self.error is not None:
             raise self.error
         return self.apps
+
+    def launch_app(self, host: str, package: str) -> AppLaunch:
+        self.launches.append((host, package))
+        if isinstance(self.launch, Exception):
+            raise self.launch
+        return self.launch or AppLaunch(package=package, front_app=None, started=True)
 
 
 def with_receiver(apps: FakeApps, receiver: ReceiverApps, memory: MemoryApps) -> ControlService:
@@ -987,10 +971,65 @@ def test_the_receiver_is_not_asked_when_the_debugging_answers() -> None:
     assert receiver.hosts == []
 
 
+# Opening an app (recette 2026-10-26: the TV refused market://launch, ControlTV said "sent") --
+
+
+def test_an_app_opens_through_the_receiver_without_the_tvs_debugging() -> None:
+    apps = FakeApps(error=DebuggingOffError("debugging off"))
+    started = AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    receiver = ReceiverApps(launch=started)
+    service = with_receiver(apps, receiver, MemoryApps())
+
+    result = call(service, "launch_tv_app", deviceId=str(DEVICE_ID), package="tv.arte.plus7")
+
+    assert receiver.launches == [(HOST, "tv.arte.plus7")]
+    assert apps.calls == []
+    assert result["result"]["result"]["confirmation"] == "confirmed"
+    assert result["result"]["result"]["started"] is True
+
+
+def test_started_but_not_reported_in_front_says_the_tv_started_it_not_merely_sent() -> None:
+    service = with_receiver(FakeApps(), ReceiverApps(), MemoryApps())
+
+    result = service.launch_tv_app(DEVICE_ID, "tv.arte.plus7")
+
+    assert result.confirmation is Confirmation.NOT_CHECKED
+    assert result.started is True
+    assert result.detail.startswith("the TV started it")
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (CommandRejectedError("this app is not installed on the TV"), "command_rejected"),
+        (OperationTimeoutError("ControlTV Receiver did not answer"), "timeout"),
+    ],
+)
+def test_a_receiver_failure_reaches_the_window_and_is_never_retried(
+    failure: Exception, code: str
+) -> None:
+    apps = FakeApps()
+    service = with_receiver(apps, ReceiverApps(launch=failure), MemoryApps())
+
+    response = call(service, "launch_tv_app", deviceId=str(DEVICE_ID), package="tv.arte.plus7")
+
+    assert response["error"]["code"] == code
+    assert apps.calls == []  # a launch that may have reached the TV is not sent another way
+
+
+def test_without_the_receiver_the_debugging_opens_the_app_and_says_sent_not_started() -> None:
+    apps = FakeApps(front=None)
+
+    result = with_apps(apps).launch_tv_app(DEVICE_ID, "com.example.video")
+
+    assert result.started is False
+    assert result.detail.startswith("sent;")
+
+
 def test_an_unpaired_remote_asks_for_pairing_even_when_the_debugging_is_off() -> None:
     apps = FakeApps(error=DebuggingOffError("debugging off"))
-    service = ControlService(FakeTransport(), remote=FakeRemote(), apps=apps)
-    service.discover_devices(timeout=1.0)
+    receiver = ReceiverApps(launch=PairingRequiredError("pair this TV first"))
+    service = with_receiver(apps, receiver, MemoryApps())
 
     with pytest.raises(PairingRequiredError):
         service.launch_tv_app(DEVICE_ID, "com.example.video")

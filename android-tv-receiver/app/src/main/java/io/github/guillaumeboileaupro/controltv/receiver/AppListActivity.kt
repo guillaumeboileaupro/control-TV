@@ -8,8 +8,8 @@ import java.net.URL
 
 /**
  * Opened by control-TV through the TV's remote, with no visible screen: reads the TV's
- * launcher apps (package and the TV's own label), sends them once to the address in the link,
- * and closes, leaving the TV as it was. A link that is not a valid app-list request does
+ * launcher apps (package and the TV's own label), closes at once, then sends them to the
+ * address in the link, leaving the TV as it was. A link that is not a valid app-list request does
  * nothing.
  */
 class AppListActivity : Activity() {
@@ -21,13 +21,14 @@ class AppListActivity : Activity() {
             return
         }
         val body = AppList.answer(request.token, launcherApps(), packageName)
+        // Closed at once, before the network: the app in front (a video) is covered only for
+        // the time it takes to read the list, never while the answer travels.
+        finish()
         Thread {
             try {
                 send(request.reply, body)
             } catch (ignored: Exception) {
                 // control-TV stops waiting by itself; nothing to show on the TV.
-            } finally {
-                runOnUiThread { finish() }
             }
         }.start()
     }

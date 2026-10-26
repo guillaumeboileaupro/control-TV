@@ -92,12 +92,16 @@ found by the last `discover_devices`; a Cast group or a TV whose `androidTvRemot
                              `name` is the TV's label or a display name control-TV knows,
                              or `null`. Only a TV not found or a Cast group is an error.
                              Read-only.
-- `launch_tv_app`         -> also requires `package`: opens that app once, through the TV's
-                             own remote when paired (no debugging needed), else over its
-                             network debugging (the app's home-screen activity).
+- `launch_tv_app`         -> also requires `package`: opens that app once, through ControlTV
+                             Receiver opened by the TV's paired remote (no debugging needed),
+                             else over its network debugging (the app's home-screen activity).
                              Answers {"result": {"package", "deviceId", "confirmation",
-                             "detail", "frontApp"}}: `confirmed` only when the TV then reports
-                             that app in front, `not_checked` when it does not say.
+                             "detail", "frontApp", "started"}}: `started` only when the receiver
+                             said the TV started the app; `confirmed` only when the TV then
+                             reports that app in front, `not_checked` when it does not say.
+                             `command_rejected` when the app is not installed or the TV
+                             refused it; `timeout` when the receiver did not answer (check the
+                             TV before trying again). No `market://` link is ever sent.
 - `open_tv_apps_port`      -> {"port": 5555}: the TV, reached over this computer's debugging
                              (Wireless debugging paired here), also accepts classic network
                              debugging on port 5555 until it restarts, so the phone can list
@@ -425,6 +429,7 @@ def _app_launch_to_json(result: AppLaunchResult) -> JsonObject:
         "confirmation": result.confirmation.value,
         "detail": result.detail,
         "frontApp": result.front_app,
+        "started": result.started,
     }
 
 

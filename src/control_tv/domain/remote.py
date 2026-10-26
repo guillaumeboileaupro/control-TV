@@ -172,18 +172,22 @@ class AppListing:
 @dataclass(frozen=True, slots=True)
 class AppLaunch:
     """An app launch that was sent once, and the app the TV reported in front afterwards
-    (`None` when the TV did not say)."""
+    (`None` when the TV did not say). `started` is true only when the TV itself said it
+    started the app (ControlTV Receiver's answer), never because a request was sent."""
 
     package: str
     front_app: str | None
+    started: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AppLaunchResult:
-    """An app launch, and whether the TV reported that app in front afterwards."""
+    """An app launch, and whether the TV reported that app in front afterwards. `started`:
+    the TV itself said it started the app (not merely that a request was sent)."""
 
     package: str
     device_id: DeviceId
     confirmation: Confirmation
     detail: str
     front_app: str | None
+    started: bool = False

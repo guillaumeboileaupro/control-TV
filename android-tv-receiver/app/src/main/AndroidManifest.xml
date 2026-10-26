@@ -50,6 +50,20 @@
                 <data android:scheme="controltv-receiver" android:host="apps" />
             </intent-filter>
         </activity>
+        <!-- Opens one TV app for control-TV, from a link of its paired remote; no visible screen. -->
+        <activity
+            android:name=".AppLaunchActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="controltv-receiver" android:host="launch" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
 

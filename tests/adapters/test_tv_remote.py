@@ -21,7 +21,6 @@ from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
 from control_tv.adapters.tv_remote import CERT_FILE, KEY_FILE, TvRemoteChannel
 from control_tv.domain import (
-    AppLaunch,
     AudibleVolume,
     CommandRejectedError,
     DeviceUnavailableError,
@@ -755,40 +754,41 @@ def test_a_volume_key_on_a_tv_that_reports_no_volume_does_not_wait_for_one(
     assert pressed.before.volume is None and pressed.after.volume is None
 
 
-# Opening an app without the TV's debugging --------------------------------------------------------
+# The app in front, read only; no app is ever opened by its package from here -------------------
 
 
-def test_an_app_is_opened_once_by_its_package_and_the_app_in_front_is_reported(
+def test_the_app_in_front_is_read_without_sending_anything(
     channel: TvRemoteChannel, tv: FakeTv
 ) -> None:
-    launched = channel.launch(HOST, "com.netflix.ninja")
+    tv.current_app = "tv.arte.plus7"
 
-    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
-    assert launched == AppLaunch(package="com.netflix.ninja", front_app="com.netflix.ninja")
+    assert channel.front_app(HOST, "tv.arte.plus7") == "tv.arte.plus7"
+    assert [entry for entry in tv.log if entry[0] in ("key", "launch", "text")] == []
 
 
 def test_a_tv_that_does_not_report_the_app_returns_what_it_said(
     channel: TvRemoteChannel, tv: FakeTv
 ) -> None:
-    tv.opens_launched_app = False
     tv.current_app = "com.google.android.tvlauncher"
 
-    launched = channel.launch(HOST, "com.netflix.ninja")
-
-    assert launched.front_app == "com.google.android.tvlauncher"
-    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", "com.netflix.ninja")]
+    assert channel.front_app(HOST, "tv.arte.plus7") == "com.google.android.tvlauncher"
 
 
-@pytest.mark.parametrize("package", ["", "market://launch?id=x", "a b", None])
-def test_only_a_package_name_is_ever_sent_as_an_app(
-    channel: TvRemoteChannel, tv: FakeTv, package: Any
-) -> None:
-    with pytest.raises(InvalidArgumentError):
-        channel.launch(HOST, package)
-    assert tv.log == []
+def test_the_market_launch_link_this_google_tv_refuses_is_gone() -> None:
+    assert not hasattr(TvRemoteChannel, "launch")
 
 
 LINK = "controltv-receiver://apps?reply=http://192.0.2.20:40123/apps&token=" + "a" * 32
+LAUNCH = (
+    "controltv-receiver://launch?package=tv.arte.plus7"
+    "&reply=http://192.0.2.20:40123/launch&token=" + "a" * 32
+)
+
+
+def test_the_receivers_launch_link_is_opened_once(channel: TvRemoteChannel, tv: FakeTv) -> None:
+    channel.open_receiver_link(HOST, LAUNCH)
+
+    assert [entry for entry in tv.log if entry[0] == "launch"] == [("launch", LAUNCH)]
 
 
 def test_the_receivers_app_list_link_is_opened_once(channel: TvRemoteChannel, tv: FakeTv) -> None:
@@ -802,7 +802,11 @@ def test_the_receivers_app_list_link_is_opened_once(channel: TvRemoteChannel, tv
     [
         "https://example.com/",
         "market://launch?id=com.netflix.ninja",
+        "com.netflix.ninja",
         LINK.replace("/apps&", "/other&"),
+        LAUNCH.replace("/launch&", "/apps&"),
+        LAUNCH.replace("tv.arte.plus7", "not a package"),
+        LAUNCH.replace("package=tv.arte.plus7&", ""),
         LINK.replace("a" * 32, "short"),
         LINK + "&extra=1",
         None,
