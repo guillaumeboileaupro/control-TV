@@ -7,8 +7,9 @@ Remote protocol v2 (TLS on ports 6466/6467), which this adapter speaks through t
 
 Rules this adapter keeps:
 
-- Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
-  and key live in a private directory (0700) as private files (0600); nothing else is kept.
+- Pairing is explicit. The TV shows a code; the owner types it here. A distinct installation
+  identity, the client certificate and key live in a private directory (0700) as private files
+  (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
   field (`type_text`), never logged or echoed. Apps are opened through ControlTV Receiver's
   links (`open_receiver_link`): some Google TVs refuse `market://launch` (`ActivityNotFound`,
@@ -33,9 +34,11 @@ import importlib.util
 import ipaddress
 import os
 import re
+import secrets
 import stat
 import threading
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
@@ -62,6 +65,7 @@ from control_tv.domain.remote import (
 CLIENT_NAME = "control-TV"
 CERT_FILE = "client-cert.pem"
 KEY_FILE = "client-key.pem"
+IDENTITY_FILE = "client-identity"
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_SETTLE = 1.0
 # A TV that wakes or goes to standby reports its new power state later than a volume change;
@@ -104,6 +108,11 @@ class RemoteClient(Protocol):
 
 RemoteFactory = Callable[[str, str, str, str], RemoteClient]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
+IdentityGenerator = Callable[[], str]
+
+
+def _new_identity_suffix() -> str:
+    return secrets.token_hex(4)
 
 
 def channel_installed() -> bool:
@@ -247,6 +256,7 @@ class TvRemoteChannel:
         keep_open: float = KEEP_OPEN,
         remote_factory: RemoteFactory = _default_remote_factory,
         cert_generator: CertGenerator = _default_cert_generator,
+        identity_generator: IdentityGenerator = _new_identity_suffix,
     ) -> None:
         self._dir = Path(credentials_dir)
         self._client_name = client_name
@@ -256,6 +266,7 @@ class TvRemoteChannel:
         self._keep_open = keep_open
         self._remote_factory = remote_factory
         self._cert_generator = cert_generator
+        self._identity_generator = identity_generator
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pairing: dict[str, RemoteClient] = {}
@@ -271,7 +282,7 @@ class TvRemoteChannel:
         async def start() -> None:
             self._discard_pairing(host)
             self._drop_connection(host)
-            remote = self._remote_factory(self._client_name, *self._credentials(), host)
+            remote = self._new_remote(host)
             try:
                 await remote.async_start_pairing()
             except BaseException:
@@ -422,7 +433,7 @@ class TvRemoteChannel:
             remote = None
         fresh = remote is None
         if remote is None:
-            remote = self._remote_factory(self._client_name, *self._credentials(), host)
+            remote = self._new_remote(host)
             try:
                 await remote.async_connect()
             except BaseException:
@@ -469,19 +480,53 @@ class TvRemoteChannel:
         if remote is not None:
             remote.disconnect()
 
-    def _credentials(self) -> tuple[str, str]:
-        """The client certificate and key, created once in a private directory."""
+    def _new_remote(self, host: str) -> RemoteClient:
+        identity, cert, key = self._credentials()
+        return self._remote_factory(identity, cert, key, host)
+
+    def _credentials(self) -> tuple[str, str, str]:
+        """The persistent installation identity, certificate and private key.
+
+        Older installations have only the certificate and key. Their identity is derived from
+        that certificate, so upgrading neither regenerates it nor asks the TV to pair again.
+        """
         self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self._dir, 0o700)
-        cert, key = self._dir / CERT_FILE, self._dir / KEY_FILE
-        if not (cert.is_file() and key.is_file()):
-            cert_pem, key_pem = self._cert_generator(self._client_name)
+        cert, key, identity_file = (
+            self._dir / CERT_FILE,
+            self._dir / KEY_FILE,
+            self._dir / IDENTITY_FILE,
+        )
+        complete = cert.is_file() and key.is_file()
+        identity = self._read_identity(identity_file)
+        if identity is None:
+            suffix = (
+                sha256(cert.read_bytes()).hexdigest()[:8]
+                if complete
+                else self._identity_generator()
+            )
+            if re.fullmatch(r"[0-9a-f]{8}", suffix) is None:
+                raise RuntimeError("the generated remote identity is invalid")
+            identity = f"{self._client_name} {suffix}"
+            _write_private(identity_file, identity.encode("utf-8"))
+        if not complete:
+            cert_pem, key_pem = self._cert_generator(identity)
             _write_private(key, key_pem)
             _write_private(cert, cert_pem)
-        for path in (cert, key):
+        for path in (identity_file, cert, key):
             if stat.S_IMODE(path.stat().st_mode) != 0o600:
                 os.chmod(path, 0o600)
-        return str(cert), str(key)
+        return identity, str(cert), str(key)
+
+    def _read_identity(self, path: Path) -> str | None:
+        if not path.is_file():
+            return None
+        try:
+            identity = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        pattern = rf"{re.escape(self._client_name)} [0-9a-f]{{8}}"
+        return identity if re.fullmatch(pattern, identity) is not None else None
 
     def _run(self, make: Callable[[], Coroutine[object, object, T]]) -> T:
         cannot_connect, connection_closed, invalid_auth = _library_errors()
