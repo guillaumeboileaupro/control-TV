@@ -1,5 +1,14 @@
 # Development plan
 
+Sprint 1 T-03 (2026-10-26): Claude's hardware campaign reproduced twice that pressing Assistant
+could leave the whole Ubuntu remote disabled indefinitely even after the Python bridge was idle.
+The UI marked the request pending before invoking Tauri and had no terminal path if that host
+promise was lost; the existing Rust bridge deadline alone could not restore UI state in that
+case. Remote UI calls now have a 25-second caller-side deadline, wider than Rust's 20-second
+deadline. Expiration uses the existing `bridge_timeout` failure path, clears the pending state and
+never retries or replays the possibly delivered key. Automated tests cover lost replies, normal
+answers and host failures. No TV command or hardware retest was run for this correction.
+
 Security maintenance (2026-10-23): the Tauri lockfile pins Tokio 1.53.3, the minimal patched
 release for RUSTSEC-2026-0386 on the existing 1.53 LTS line. No audit waiver was added; validation
 is automated only and does not imply any TV or Android hardware result.

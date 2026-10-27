@@ -63,6 +63,7 @@ import {
   type ScreenPanelElements,
 } from "./screen-panel.ts";
 import { isTrayAction, trayRequest } from "./tray.ts";
+import { settleWithin } from "./request-timeout.ts";
 
 // Every `invoke` below maps onto one application command, which reaches the devices
 // through the shared control layer. This file performs the I/O and draws the DOM; the
@@ -76,6 +77,9 @@ import { isTrayAction, trayRequest } from "./tray.ts";
 // Waits for the seek control to settle (a drag release, or the last of several key presses)
 // before sending one seek, so moving the control never sends a burst of commands.
 const SEEK_COMMIT_DELAY_MS = 400;
+// Rust bounds remote bridge calls at 20 s. This slightly wider UI deadline covers delivery of
+// that answer and releases the controls even if the host response itself is lost.
+const REMOTE_UI_TIMEOUT_MS = 25_000;
 
 interface PingResult {
   status: string;
@@ -737,7 +741,13 @@ function start(elements: Elements): void {
     const { command, args } = remoteInvocation(request);
     let answer: RemoteAnswer;
     try {
-      answer = { ok: true, result: await invoke<JsonValue>(command, args) };
+      answer = {
+        ok: true,
+        result: await settleWithin(invoke<JsonValue>(command, args), REMOTE_UI_TIMEOUT_MS, {
+          set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+          clear: (handle) => window.clearTimeout(handle),
+        }),
+      };
     } catch (error) {
       answer = { ok: false, failure: toBridgeFailure(error) };
     }
