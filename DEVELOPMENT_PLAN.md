@@ -9,6 +9,20 @@ credentials. This makes post-freeze diagnosis possible without making disk I/O p
 path. `bridge_dispatched` is only a local attempt count for the future T-05 receiver counter, not
 evidence that a TV received or applied a command. Automated validation only; no device was used.
 
+Finalisation de #115 (2026-10-27, SHA `1146042`) : la branche est réconciliée avec `main` et
+T-04 est indépendante des dépendances Rust (aucun changement de `Cargo.toml` ou `Cargo.lock`).
+Six contrôles CI sur sept réussissent ; le seul échec est le scan OSV global sur
+GHSA-qwgh-2vcv-g2f7, également reproductible avec les lockfiles de `main`. Dans les deux
+workspaces, `digest` 0.10.7 impose `block-buffer` 0.10.4 par les familles `sha2`, `hmac`, `md-5`
+et `sha1`. Le workspace Tauri ajoute le chemin `tauri-codegen` 2.6.3 -> `sha2` 0.10 ; le moteur
+ajoute les chemins WebRTC/DTLS. `block-buffer` 0.12.1 est le seul correctif publié et ne satisfait
+pas la contrainte `^0.10` de `digest`. Une vérification séparée de `webrtc` 0.21.1 montre que
+`rtc-crypto` 0.21.1 conserve encore `hmac` 0.12.1, `md-5` 0.10.6 et `sha1` 0.10.7, donc
+`digest` 0.10.7 et la version vulnérable ; en outre, cette migration change l'API de transport et
+ne compile pas sans adaptation dédiée. Aucun correctif compatible n'est publié, aucune dérogation
+n'a été ajoutée et les contrôles de sécurité restent obligatoires. L'intégration attend une mise
+à jour des dépendances parentes suivie des tests Rust/Tauri/WebRTC et du scan OSV.
+
 Sprint 1 T-03 (2026-10-26): Claude's hardware campaign reproduced twice that pressing Assistant
 could leave the whole Ubuntu remote disabled indefinitely even after the Python bridge was idle.
 The UI marked the request pending before invoking Tauri and had no terminal path if that host

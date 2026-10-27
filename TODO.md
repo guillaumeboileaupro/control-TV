@@ -6,6 +6,14 @@
   thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
   Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
   automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
+- [ ] **Blocage sécurité de #115 — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** T-04 ne modifie
+  aucun manifeste ni lockfile Rust, mais le contrôle OSV du dépôt échoue aussi sur `main` :
+  `digest` 0.10.7 impose `block-buffer` 0.10.4, vulnérable, dans les workspaces WebRTC et
+  Tauri. Le seul correctif publié est `block-buffer` 0.12.1, incompatible avec `digest` 0.10.
+  Même `webrtc` 0.21.1 conserve `digest` 0.10 via `rtc-crypto` 0.21.1, et la dernière version
+  stable de `tauri-codegen` (2.6.3) impose `sha2` 0.10. Attendre des versions parentes
+  compatibles, puis migrer et retester les deux workspaces. Aucune dérogation ni désactivation
+  de contrôle n'est autorisée ou ajoutée.
 - [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
   télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
