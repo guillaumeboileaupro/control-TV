@@ -563,6 +563,15 @@ pub(crate) async fn call_bridge(
         None,
         None,
     ));
+    if is_tv_command(method) {
+        diagnostics::record(CommandDiagnostic::new(
+            order.as_str(),
+            "command_emitted",
+            method,
+            None,
+            None,
+        ));
+    }
     let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
     let worker_claim = Arc::clone(&claim);
     let worker_order = order.clone();
@@ -662,6 +671,40 @@ pub(crate) async fn call_bridge(
             }
         }
     };
+    if is_tv_command(method) {
+        match &result {
+            Ok(response) => {
+                diagnostics::record(CommandDiagnostic::new(
+                    order.as_str(),
+                    "command_transmitted",
+                    method,
+                    Some(started.elapsed()),
+                    None,
+                ));
+                if command_confirmation(response) == Some("confirmed") {
+                    diagnostics::record(CommandDiagnostic::new(
+                        order.as_str(),
+                        "command_confirmed_by_tv",
+                        method,
+                        Some(started.elapsed()),
+                        None,
+                    ));
+                }
+            }
+            Err(failure)
+                if failure.code == CODE_BRIDGE_TIMEOUT || failure.code == CODE_BRIDGE_TRANSPORT =>
+            {
+                diagnostics::record(CommandDiagnostic::new(
+                    order.as_str(),
+                    "command_delivery_uncertain",
+                    method,
+                    Some(started.elapsed()),
+                    Some(failure.code.as_str()),
+                ));
+            }
+            _ => {}
+        }
+    }
     let (phase, error_code) = match &result {
         Ok(_) => ("command_completed", None),
         Err(failure) if failure.code == CODE_BRIDGE_TIMEOUT || failure.code == CODE_BRIDGE_BUSY => {
@@ -679,6 +722,31 @@ pub(crate) async fn call_bridge(
     result
 }
 
+fn command_confirmation(response: &Value) -> Option<&str> {
+    response.pointer("/result/confirmation")?.as_str()
+}
+
+fn is_tv_command(method: &str) -> bool {
+    matches!(
+        method,
+        "play"
+            | "pause"
+            | "stop"
+            | "seek"
+            | "set_volume"
+            | "set_muted"
+            | "start_remote_pairing"
+            | "finish_remote_pairing"
+            | "press_remote_key"
+            | "type_remote_text"
+            | "launch_tv_app"
+            | "pair_tv_apps"
+            | "open_tv_apps_port"
+            | "start_screen_stream"
+            | "stop_screen_stream"
+    )
+}
+
 /// The failure of an embedded (Android) bridge call. The Android side rejects with
 /// `backend_unavailable` only when the embedded Python could not start, before a request
 /// reached the shared control layer (certainly not sent); every other rejection may have come
@@ -691,5 +759,40 @@ pub(crate) fn embedded_rejection(code: Option<&str>, message: Option<&str>) -> B
     match code {
         Some(CODE_BACKEND_UNAVAILABLE) => BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, message),
         _ => BridgeFailure::transport(message),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{command_confirmation, is_tv_command};
+    use serde_json::json;
+
+    #[test]
+    fn only_orders_that_can_change_the_tv_are_counted_as_emitted() {
+        for method in [
+            "pause",
+            "press_remote_key",
+            "type_remote_text",
+            "launch_tv_app",
+            "start_screen_stream",
+        ] {
+            assert!(is_tv_command(method), "{method}");
+        }
+        for method in ["ping", "discover_devices", "get_status", "list_tv_apps"] {
+            assert!(!is_tv_command(method), "{method}");
+        }
+    }
+
+    #[test]
+    fn only_receiver_confirmed_results_are_counted_as_confirmed() {
+        assert_eq!(
+            command_confirmation(&json!({"result": {"confirmation": "confirmed"}})),
+            Some("confirmed")
+        );
+        assert_eq!(
+            command_confirmation(&json!({"result": {"confirmation": "unconfirmed"}})),
+            Some("unconfirmed")
+        );
+        assert_eq!(command_confirmation(&json!({"status": "ok"})), None);
     }
 }

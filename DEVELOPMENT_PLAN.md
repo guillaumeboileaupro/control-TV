@@ -9,6 +9,16 @@ credentials. This makes post-freeze diagnosis possible without making disk I/O p
 path. `bridge_dispatched` is only a local attempt count for the future T-05 receiver counter, not
 evidence that a TV received or applied a command. Automated validation only; no device was used.
 
+Sprint 1 T-05 command counting (2026-10-27): the same non-blocking T-04 journal now records
+`command_emitted` only for state-changing TV orders, `command_transmitted` only after the shared
+Python control layer returns a successful command result, and `command_confirmed_by_tv` only when
+that result contains receiver-confirmed status. Every line carries cumulative emitted,
+transmitted, confirmed and multiple-transmission counts. The writer remembers at most 1,024
+recent transmission ids and flags a second transmission with the same correlation id; repeated
+intentional presses get new ids and are not treated as duplicates. A bridge timeout or transport
+failure is recorded as `command_delivery_uncertain` and is never retried. These are software
+observations, not proof of a physical effect. Automated validation only; no TV was contacted.
+
 Finalisation de #115 (2026-10-27, SHA `1146042`) : la branche est réconciliée avec `main` et
 T-04 est indépendante des dépendances Rust (aucun changement de `Cargo.toml` ou `Cargo.lock`).
 Six contrôles CI sur sept réussissent ; le seul échec est le scan OSV global sur

@@ -4,6 +4,7 @@
 //! rotates it, so a slow or broken disk never blocks a Tauri command. Events deliberately have no
 //! command arguments, device identity, address, error message, pairing code, text or credential.
 
+use std::collections::{HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const QUEUE_CAPACITY: usize = 256;
 const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+const RECENT_TRANSMISSIONS: usize = 1_024;
 pub(crate) const LOG_FILE: &str = "commands.jsonl";
 
 static EVENTS: OnceLock<SyncSender<CommandDiagnostic>> = OnceLock::new();
@@ -32,6 +34,16 @@ pub(crate) struct CommandDiagnostic {
     duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emitted_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transmitted_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmed_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multiple_count: Option<u64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    multiple_detected: bool,
 }
 
 impl CommandDiagnostic {
@@ -55,7 +67,54 @@ impl CommandDiagnostic {
             method,
             duration_ms: duration.map(|elapsed| elapsed.as_millis().try_into().unwrap_or(u64::MAX)),
             error_code: error_code.map(str::to_string),
+            emitted_count: None,
+            transmitted_count: None,
+            confirmed_count: None,
+            multiple_count: None,
+            multiple_detected: false,
         }
+    }
+}
+
+#[derive(Default)]
+struct DiagnosticCounts {
+    emitted: u64,
+    transmitted: u64,
+    confirmed: u64,
+    multiple: u64,
+    recent_transmissions: HashSet<String>,
+    transmission_order: VecDeque<String>,
+}
+
+impl DiagnosticCounts {
+    fn annotate(&mut self, event: &mut CommandDiagnostic) {
+        match event.phase {
+            "command_emitted" => self.emitted = self.emitted.saturating_add(1),
+            "command_transmitted" => {
+                self.transmitted = self.transmitted.saturating_add(1);
+                if !self
+                    .recent_transmissions
+                    .insert(event.correlation_id.clone())
+                {
+                    self.multiple = self.multiple.saturating_add(1);
+                    event.multiple_detected = true;
+                } else {
+                    self.transmission_order
+                        .push_back(event.correlation_id.clone());
+                    if self.transmission_order.len() > RECENT_TRANSMISSIONS {
+                        if let Some(expired) = self.transmission_order.pop_front() {
+                            self.recent_transmissions.remove(&expired);
+                        }
+                    }
+                }
+            }
+            "command_confirmed_by_tv" => self.confirmed = self.confirmed.saturating_add(1),
+            _ => {}
+        }
+        event.emitted_count = Some(self.emitted);
+        event.transmitted_count = Some(self.transmitted);
+        event.confirmed_count = Some(self.confirmed);
+        event.multiple_count = Some(self.multiple);
     }
 }
 
@@ -68,7 +127,9 @@ pub(crate) fn install(path: PathBuf) {
     let Ok(()) = std::thread::Builder::new()
         .name("control-tv-diagnostics".to_string())
         .spawn(move || {
-            for event in receiver {
+            let mut counts = DiagnosticCounts::default();
+            for mut event in receiver {
+                counts.annotate(&mut event);
                 if let Err(error) = append(&path, &event) {
                     eprintln!("control-tv: command diagnostic write failed: {error}");
                 }
@@ -149,6 +210,63 @@ mod tests {
         for forbidden in ["params", "message", "device", "address", "code", "text"] {
             assert!(!object.contains_key(forbidden));
         }
+    }
+
+    #[test]
+    fn lifecycle_counts_are_correlated_and_detect_only_the_same_order_twice() {
+        let mut counts = DiagnosticCounts::default();
+        let mut emitted =
+            CommandDiagnostic::new("request-1", "command_emitted", "pause", None, None);
+        let mut transmitted =
+            CommandDiagnostic::new("request-1", "command_transmitted", "pause", None, None);
+        let mut repeated_press =
+            CommandDiagnostic::new("request-2", "command_transmitted", "pause", None, None);
+        let mut duplicate = transmitted.clone();
+        let mut confirmed =
+            CommandDiagnostic::new("request-1", "command_confirmed_by_tv", "pause", None, None);
+
+        for event in [
+            &mut emitted,
+            &mut transmitted,
+            &mut repeated_press,
+            &mut duplicate,
+            &mut confirmed,
+        ] {
+            counts.annotate(event);
+        }
+
+        assert_eq!(confirmed.emitted_count, Some(1));
+        assert_eq!(confirmed.transmitted_count, Some(3));
+        assert_eq!(confirmed.confirmed_count, Some(1));
+        assert_eq!(confirmed.multiple_count, Some(1));
+        assert!(!repeated_press.multiple_detected);
+        assert!(duplicate.multiple_detected);
+
+        let persisted = serde_json::to_value(duplicate).unwrap();
+        assert_eq!(persisted["emitted_count"], 1);
+        assert_eq!(persisted["transmitted_count"], 3);
+        assert_eq!(persisted["confirmed_count"], 0);
+        assert_eq!(persisted["multiple_count"], 1);
+        assert_eq!(persisted["multiple_detected"], true);
+    }
+
+    #[test]
+    fn recent_transmission_tracking_is_bounded() {
+        let mut counts = DiagnosticCounts::default();
+        for index in 0..=RECENT_TRANSMISSIONS {
+            let mut event = CommandDiagnostic::new(
+                &format!("request-{index}"),
+                "command_transmitted",
+                "pause",
+                None,
+                None,
+            );
+            counts.annotate(&mut event);
+        }
+
+        assert_eq!(counts.recent_transmissions.len(), RECENT_TRANSMISSIONS);
+        assert_eq!(counts.transmission_order.len(), RECENT_TRANSMISSIONS);
+        assert!(!counts.recent_transmissions.contains("request-0"));
     }
 
     #[test]

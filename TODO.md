@@ -6,6 +6,13 @@
   thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
   Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
   automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
+- [x] **T-05 — comptage corrélé des commandes (2026-10-27) :** le journal T-04 distingue désormais
+  une commande utilisateur émise, une réponse positive du transport vers la TV et une confirmation
+  issue de l'état relu sur la TV. Chaque événement conserve l'identifiant unique de l'appui et les
+  compteurs cumulés émis/transmis/confirmés. Une seconde transmission portant le même identifiant est
+  signalée ; deux appuis intentionnels restent distincts. Un résultat incertain est journalisé sans
+  être rejoué. Détection bornée aux 1 024 transmissions récentes. Validation automatisée uniquement ;
+  aucun appareil n'a été commandé et la confirmation physique reste hors de portée du logiciel.
 - [ ] **Blocage sécurité de #115 — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** T-04 ne modifie
   aucun manifeste ni lockfile Rust, mais le contrôle OSV du dépôt échoue aussi sur `main` :
   `digest` 0.10.7 impose `block-buffer` 0.10.4, vulnérable, dans les workspaces WebRTC et
