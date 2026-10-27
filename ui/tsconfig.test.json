@@ -33,6 +33,8 @@
     "src/tray.test.ts",
     "src/interaction.ts",
     "src/interaction.test.ts",
+    "src/request-timeout.ts",
+    "src/request-timeout.test.ts",
     "src/screen.ts",
     "src/screen.test.ts",
     "src/view-state.ts",

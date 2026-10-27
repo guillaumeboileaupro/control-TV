@@ -6,6 +6,11 @@
   thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
   Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
   automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
+- [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
+  télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
+  la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
+  occupé et ne renvoie jamais la commande. Tests automatisés uniquement ; la reproduction matérielle
+  2/2 de Claude n'a pas été relancée.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
