@@ -1,5 +1,12 @@
 # control-TV — TODO
 
+- [x] **Sécurité Rust — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** les deux lockfiles ne
+  contiennent plus `block-buffer` 0.10.4. `digest` 0.10.7 utilise désormais une source locale
+  identique à l'amont hors manifeste, raccordée à `control-tv-block-buffer-compat` : API 0.10,
+  curseur remis à zéro avant le callback et aucune branche `unreachable_unchecked` sur un état
+  corrompu. Le test de régression intercepte une panique puis réutilise le buffer. Aucun avis,
+  contrôle ou seuil n'est ignoré. Remplacer ce raccord local quand tout le graphe Tauri/WebRTC
+  accepte la génération RustCrypto avec `block-buffer` 0.12.1 ou ultérieur.
 - [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
   télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
