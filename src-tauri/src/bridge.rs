@@ -8,12 +8,15 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 // `app.path()`, used only by the packaged (release) bridge resolution.
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
+
+use crate::diagnostics::{self, CommandDiagnostic};
 
 /// Codes raised by this crate itself, as opposed to codes relayed from the bridge (which
 /// are `ControlError` codes such as `device_unavailable`, or `internal_error`). They let
@@ -552,8 +555,26 @@ pub(crate) async fn call_bridge(
 ) -> Result<Value, BridgeFailure> {
     // This call is one order: its id is made once, here, and travels with the request.
     let order = ApplicationRequestId::new();
+    let started = Instant::now();
+    diagnostics::record(CommandDiagnostic::new(
+        order.as_str(),
+        "command_received",
+        method,
+        None,
+        None,
+    ));
+    if is_tv_command(method) {
+        diagnostics::record(CommandDiagnostic::new(
+            order.as_str(),
+            "command_emitted",
+            method,
+            None,
+            None,
+        ));
+    }
     let claim = Arc::new(AtomicU8::new(CLAIM_PENDING));
     let worker_claim = Arc::clone(&claim);
+    let worker_order = order.clone();
     // The process this request is written to, set before the claim, so a caller that loses
     // the claim race to the worker can stop that process (and only that one).
     let written_to: Arc<OnceLock<Arc<BridgeProcess>>> = Arc::new(OnceLock::new());
@@ -594,7 +615,14 @@ pub(crate) async fn call_bridge(
                 "the request was abandoned before it was sent",
             ));
         }
-        let result = bridge.call_as(&order, method, params);
+        diagnostics::record(CommandDiagnostic::new(
+            worker_order.as_str(),
+            "bridge_dispatched",
+            method,
+            Some(started.elapsed()),
+            None,
+        ));
+        let result = bridge.call_as(&worker_order, method, params);
         if let Err(failure) = &result {
             if failure.code == CODE_BRIDGE_TRANSPORT {
                 slot.retire(failure.message.clone());
@@ -603,7 +631,7 @@ pub(crate) async fn call_bridge(
         result
     });
 
-    match tokio::time::timeout(timeout, task).await {
+    let result = match tokio::time::timeout(timeout, task).await {
         Ok(Ok(result)) => result,
         Ok(Err(join_error)) => Err(BridgeFailure::transport(format!(
             "bridge worker thread failed: {join_error}"
@@ -642,7 +670,81 @@ pub(crate) async fn call_bridge(
                 ))
             }
         }
+    };
+    if is_tv_command(method) {
+        match &result {
+            Ok(response) => {
+                diagnostics::record(CommandDiagnostic::new(
+                    order.as_str(),
+                    "command_transmitted",
+                    method,
+                    Some(started.elapsed()),
+                    None,
+                ));
+                if command_confirmation(response) == Some("confirmed") {
+                    diagnostics::record(CommandDiagnostic::new(
+                        order.as_str(),
+                        "command_confirmed_by_tv",
+                        method,
+                        Some(started.elapsed()),
+                        None,
+                    ));
+                }
+            }
+            Err(failure)
+                if failure.code == CODE_BRIDGE_TIMEOUT || failure.code == CODE_BRIDGE_TRANSPORT =>
+            {
+                diagnostics::record(CommandDiagnostic::new(
+                    order.as_str(),
+                    "command_delivery_uncertain",
+                    method,
+                    Some(started.elapsed()),
+                    Some(failure.code.as_str()),
+                ));
+            }
+            _ => {}
+        }
     }
+    let (phase, error_code) = match &result {
+        Ok(_) => ("command_completed", None),
+        Err(failure) if failure.code == CODE_BRIDGE_TIMEOUT || failure.code == CODE_BRIDGE_BUSY => {
+            ("command_timed_out", Some(failure.code.as_str()))
+        }
+        Err(failure) => ("command_failed", Some(failure.code.as_str())),
+    };
+    diagnostics::record(CommandDiagnostic::new(
+        order.as_str(),
+        phase,
+        method,
+        Some(started.elapsed()),
+        error_code,
+    ));
+    result
+}
+
+fn command_confirmation(response: &Value) -> Option<&str> {
+    response.pointer("/result/confirmation")?.as_str()
+}
+
+fn is_tv_command(method: &str) -> bool {
+    matches!(
+        method,
+        "play"
+            | "pause"
+            | "stop"
+            | "seek"
+            | "set_volume"
+            | "set_muted"
+            | "start_remote_pairing"
+            | "finish_remote_pairing"
+            | "press_remote_key"
+            | "type_remote_text"
+            | "launch_tv_app"
+            | "pair_tv_apps"
+            | "open_tv_apps_port"
+            | "start_screen_stream"
+            | "stop_screen_stream"
+    )
 }
 
 /// The failure of an embedded (Android) bridge call. The Android side rejects with
@@ -657,5 +759,40 @@ pub(crate) fn embedded_rejection(code: Option<&str>, message: Option<&str>) -> B
     match code {
         Some(CODE_BACKEND_UNAVAILABLE) => BridgeFailure::new(CODE_BACKEND_UNAVAILABLE, message),
         _ => BridgeFailure::transport(message),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{command_confirmation, is_tv_command};
+    use serde_json::json;
+
+    #[test]
+    fn only_orders_that_can_change_the_tv_are_counted_as_emitted() {
+        for method in [
+            "pause",
+            "press_remote_key",
+            "type_remote_text",
+            "launch_tv_app",
+            "start_screen_stream",
+        ] {
+            assert!(is_tv_command(method), "{method}");
+        }
+        for method in ["ping", "discover_devices", "get_status", "list_tv_apps"] {
+            assert!(!is_tv_command(method), "{method}");
+        }
+    }
+
+    #[test]
+    fn only_receiver_confirmed_results_are_counted_as_confirmed() {
+        assert_eq!(
+            command_confirmation(&json!({"result": {"confirmation": "confirmed"}})),
+            Some("confirmed")
+        );
+        assert_eq!(
+            command_confirmation(&json!({"result": {"confirmation": "unconfirmed"}})),
+            Some("unconfirmed")
+        );
+        assert_eq!(command_confirmation(&json!({"status": "ok"})), None);
     }
 }
