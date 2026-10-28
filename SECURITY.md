@@ -49,23 +49,20 @@ needs the owner's approval, covers only the advisory it names (and only the pack
 when it names one), and an expired waiver fails the build by itself, so it is reviewed again
 rather than forgotten. Ignores set in a cargo `audit.toml` are refused.
 
-### GHSA-qwgh-2vcv-g2f7 (block-buffer), unresolved
+### GHSA-qwgh-2vcv-g2f7 (block-buffer), fixed locally
 
-- **Status on 2026-10-27:** OSV blocks PR #115 and the same dependency is present on `main`.
-  T-04 changes no Rust manifest or lockfile; six of its seven CI checks pass and only the
-  repository-wide OSV scan fails on this advisory.
-- **Dependency paths:** both Rust workspaces resolve `digest` 0.10.7 -> `block-buffer` 0.10.4
-  through `sha2`, `hmac`, `md-5` and `sha1`. The Tauri workspace also resolves
-  `tauri-codegen` 2.6.3 -> `sha2` 0.10; the WebRTC engine resolves the same generation through
-  `webrtc` 0.14 and its DTLS/SRTP dependencies.
-- **Compatibility check:** the only patched `block-buffer` is 0.12.1, outside `digest` 0.10's
-  `^0.10` constraint. The latest published `webrtc` 0.21.1 still pulls `digest` 0.10.7 through
-  `rtc-crypto` 0.21.1 (`hmac` 0.12.1, `md-5` 0.10.6 and `sha1` 0.10.7), while the latest stable
-  `tauri-codegen` 2.6.3 still requires `sha2` 0.10. A trial migration also requires a dedicated
-  rewrite for the new WebRTC transport API; it is not a compatible lockfile update.
-- **Required resolution:** wait for or contribute parent releases that use the RustCrypto 0.11
-  generation, then update both lockfiles and rerun the Rust, Tauri, WebRTC and OSV gates.
-  No waiver, ignore entry, audit relaxation or workflow bypass has been added.
+The current Tauri and WebRTC graph requires the RustCrypto 0.10 API through `digest` 0.10.7, while
+the first upstream `block-buffer` release outside the advisory range is the incompatible 0.12.1.
+Both workspaces therefore patch `digest` to the upstream 0.10.7 source under `vendor/`, with only
+its block-buffer dependency redirected to the distinct `control-tv-block-buffer-compat` package.
+That package keeps the required 0.10 API but resets its cursor before calling external compression
+code and replaces the unsafe invalid-cursor assumption with a checked panic. Its regression test
+catches a callback panic and proves that the same buffer remains usable.
+
+Neither lockfile contains the affected `block-buffer` package. No OSV or Cargo Audit exception was
+added. The vendored compatibility sources and their licenses must remain until all Tauri/WebRTC
+parents support `block-buffer` 0.12.1 or later; that migration should remove the `[patch.crates-io]`
+entries and the two vendored directories together.
 
 ### RUSTSEC-2024-0429 (glib), waived until 2027-01-15
 

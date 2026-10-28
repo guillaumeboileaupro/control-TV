@@ -42,6 +42,17 @@ deadline. Expiration uses the existing `bridge_timeout` failure path, clears the
 never retries or replays the possibly delivered key. Automated tests cover lost replies, normal
 answers and host failures. No TV command or hardware retest was run for this correction.
 
+Security maintenance (2026-10-27): GHSA-qwgh-2vcv-g2f7 affected `block-buffer` 0.10.4 in both
+Rust lockfiles through `digest` 0.10.7. Directly selecting 0.12.1 is incompatible with the
+RustCrypto 0.10 API still imposed by Tauri and WebRTC. Both workspaces now patch `digest` to a
+vendored upstream 0.10.7 source whose only manifest change selects the distinct local
+`control-tv-block-buffer-compat` package. That compatibility package preserves the required API,
+resets its separate cursor before invoking the compression callback, and validates an invalid
+cursor with a safe panic instead of `unreachable_unchecked`. A regression test catches a callback
+panic and then reuses the buffer successfully. The vulnerable package name/version is absent from
+both resolved graphs; no audit waiver or workflow exception was added. This isolated compatibility
+source remains temporary until the full Tauri/WebRTC graph can adopt RustCrypto's 0.12 generation.
+
 Security maintenance (2026-10-23): the Tauri lockfile pins Tokio 1.53.3, the minimal patched
 release for RUSTSEC-2026-0386 on the existing 1.53 LTS line. No audit waiver was added; validation
 is automated only and does not imply any TV or Android hardware result.

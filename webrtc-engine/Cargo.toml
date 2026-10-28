@@ -23,4 +23,8 @@ webrtc = "0.14"
 rtp = "0.14"
 webrtc-media = "0.11"
 
+[patch.crates-io]
+# Keep standalone engine builds on the same panic-safe digest source as the Tauri workspace.
+digest = { path = "../vendor/digest-0.10.7" }
+
 

@@ -13,14 +13,13 @@
   signalée ; deux appuis intentionnels restent distincts. Un résultat incertain est journalisé sans
   être rejoué. Détection bornée aux 1 024 transmissions récentes. Validation automatisée uniquement ;
   aucun appareil n'a été commandé et la confirmation physique reste hors de portée du logiciel.
-- [ ] **Blocage sécurité de #115 — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** T-04 ne modifie
-  aucun manifeste ni lockfile Rust, mais le contrôle OSV du dépôt échoue aussi sur `main` :
-  `digest` 0.10.7 impose `block-buffer` 0.10.4, vulnérable, dans les workspaces WebRTC et
-  Tauri. Le seul correctif publié est `block-buffer` 0.12.1, incompatible avec `digest` 0.10.
-  Même `webrtc` 0.21.1 conserve `digest` 0.10 via `rtc-crypto` 0.21.1, et la dernière version
-  stable de `tauri-codegen` (2.6.3) impose `sha2` 0.10. Attendre des versions parentes
-  compatibles, puis migrer et retester les deux workspaces. Aucune dérogation ni désactivation
-  de contrôle n'est autorisée ou ajoutée.
+- [x] **Sécurité Rust — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** les deux lockfiles ne
+  contiennent plus `block-buffer` 0.10.4. `digest` 0.10.7 utilise désormais une source locale
+  identique à l'amont hors manifeste, raccordée à `control-tv-block-buffer-compat` : API 0.10,
+  curseur remis à zéro avant le callback et aucune branche `unreachable_unchecked` sur un état
+  corrompu. Le test de régression intercepte une panique puis réutilise le buffer. Aucun avis,
+  contrôle ou seuil n'est ignoré. Remplacer ce raccord local quand tout le graphe Tauri/WebRTC
+  accepte la génération RustCrypto avec `block-buffer` 0.12.1 ou ultérieur.
 - [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
   télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
