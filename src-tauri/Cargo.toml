@@ -43,3 +43,8 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[patch.crates-io]
+# `digest` 0.10 is still required by Tauri/WebRTC. This local source changes only its
+# block-buffer provider to the panic-safe compatibility crate under `vendor/`.
+digest = { path = "../vendor/digest-0.10.7" }

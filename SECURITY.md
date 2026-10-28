@@ -49,6 +49,21 @@ needs the owner's approval, covers only the advisory it names (and only the pack
 when it names one), and an expired waiver fails the build by itself, so it is reviewed again
 rather than forgotten. Ignores set in a cargo `audit.toml` are refused.
 
+### GHSA-qwgh-2vcv-g2f7 (block-buffer), fixed locally
+
+The current Tauri and WebRTC graph requires the RustCrypto 0.10 API through `digest` 0.10.7, while
+the first upstream `block-buffer` release outside the advisory range is the incompatible 0.12.1.
+Both workspaces therefore patch `digest` to the upstream 0.10.7 source under `vendor/`, with only
+its block-buffer dependency redirected to the distinct `control-tv-block-buffer-compat` package.
+That package keeps the required 0.10 API but resets its cursor before calling external compression
+code and replaces the unsafe invalid-cursor assumption with a checked panic. Its regression test
+catches a callback panic and proves that the same buffer remains usable.
+
+Neither lockfile contains the affected `block-buffer` package. No OSV or Cargo Audit exception was
+added. The vendored compatibility sources and their licenses must remain until all Tauri/WebRTC
+parents support `block-buffer` 0.12.1 or later; that migration should remove the `[patch.crates-io]`
+entries and the two vendored directories together.
+
 ### RUSTSEC-2024-0429 (glib), waived until 2027-01-15
 
 - **Advisory:** unsoundness in the `Iterator` and `DoubleEndedIterator` implementations of
