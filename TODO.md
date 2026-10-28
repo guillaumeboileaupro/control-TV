@@ -1,5 +1,30 @@
 # control-TV — TODO
 
+- [x] **T-04 — observabilité des commandes (2026-10-26) :** chaque appel Tauri reçoit un identifiant
+  transmis au bridge Python et produit des événements JSONL structurés (réception, remise au bridge,
+  issue, durée, code d'erreur ou timeout) dans un journal privé, persistant, borné et écrit hors du
+  thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
+  Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
+  automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
+- [x] **T-05 — comptage corrélé des commandes (2026-10-27) :** le journal T-04 distingue désormais
+  une commande utilisateur émise, une réponse positive du transport vers la TV et une confirmation
+  issue de l'état relu sur la TV. Chaque événement conserve l'identifiant unique de l'appui et les
+  compteurs cumulés émis/transmis/confirmés. Une seconde transmission portant le même identifiant est
+  signalée ; deux appuis intentionnels restent distincts. Un résultat incertain est journalisé sans
+  être rejoué. Détection bornée aux 1 024 transmissions récentes. Validation automatisée uniquement ;
+  aucun appareil n'a été commandé et la confirmation physique reste hors de portée du logiciel.
+- [x] **Sécurité Rust — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** les deux lockfiles ne
+  contiennent plus `block-buffer` 0.10.4. `digest` 0.10.7 utilise désormais une source locale
+  identique à l'amont hors manifeste, raccordée à `control-tv-block-buffer-compat` : API 0.10,
+  curseur remis à zéro avant le callback et aucune branche `unreachable_unchecked` sur un état
+  corrompu. Le test de régression intercepte une panique puis réutilise le buffer. Aucun avis,
+  contrôle ou seuil n'est ignoré. Remplacer ce raccord local quand tout le graphe Tauri/WebRTC
+  accepte la génération RustCrypto avec `block-buffer` 0.12.1 ou ultérieur.
+- [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
+  télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
+  la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
+  occupé et ne renvoie jamais la commande. Tests automatisés uniquement ; la reproduction matérielle
+  2/2 de Claude n'a pas été relancée.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.

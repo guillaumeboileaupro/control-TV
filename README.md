@@ -25,6 +25,11 @@ Today the manual UI is a vanilla TypeScript page in a Tauri 2 window. Its Rust s
 
 The UI and the MCP adapter are thin. Device discovery, validation and state belong to the shared control layer, which reaches the TV through a focused Python Chromecast adapter. A command that was sent is not proof that the TV reached the requested state, and a state the receiver reports is not proof of what you see or hear, so sent, receiver-confirmed and physically observed are kept distinct; the Cast receiver's volume and mute are not always the TV's sound. See [ARCHITECTURE.md](ARCHITECTURE.md) for the decisions, [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the phased roadmap and [docs/REQUIREMENTS_TRACEABILITY.md](docs/REQUIREMENTS_TRACEABILITY.md) for each requirement's status.
 
+After a window freeze or command failure, the private, bounded JSONL command log correlates the
+window request, Python bridge dispatch and terminal result without recording command arguments or
+device data. Its location, fields and recovery commands are documented in
+[docs/COMMAND_DIAGNOSTICS.md](docs/COMMAND_DIAGNOSTICS.md).
+
 Priority (owner, issue #37, 2026-10-08): the standalone Ubuntu and Android remotes, usable in parallel on the same TV; MCP, ChatGPT Voice and Windows were abandoned on 2026-10-12.
 
 Today: in the window (Ubuntu) and the Android app, Cast playback control and the receiver's volume and mute; the TV's own remote channel (Android TV Remote: pairing, power, navigation keys, the audible volume and mute, the remote keyboard, the app in front); the TV's installed apps, listed and opened over the TV's debugging (ADB); and, on Ubuntu, a status-area icon. All are automation-validated. On real hardware, the audible volume and mute were validated from Ubuntu on 2026-10-12, and some Cast commands were sent from the window (see the plan); power, navigation, the keyboard, the apps, the status-area icon and every command from Android are not yet tried on a TV. The MCP server is kept as it is: only read-only calls were made with a real client, and no MCP control command was validated on hardware.
