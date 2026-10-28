@@ -12,6 +12,7 @@ import asyncio
 import stat
 import time
 from collections.abc import Callable, Iterator
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,7 +20,7 @@ from typing import Any
 import pytest
 from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
-from control_tv.adapters.tv_remote import CERT_FILE, KEY_FILE, TvRemoteChannel
+from control_tv.adapters.tv_remote import CERT_FILE, IDENTITY_FILE, KEY_FILE, TvRemoteChannel
 from control_tv.domain import (
     AudibleVolume,
     CommandRejectedError,
@@ -145,7 +146,7 @@ def tv() -> FakeTv:
 @pytest.fixture
 def channel(tmp_path: Path, tv: FakeTv) -> Iterator[TvRemoteChannel]:
     def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
-        assert client_name == "control-TV"
+        assert client_name == "control-TV 01234567"
         tv.remotes.append(FakeRemote(tv, certfile, keyfile, host))
         return tv.remotes[-1]
 
@@ -156,6 +157,7 @@ def channel(tmp_path: Path, tv: FakeTv) -> Iterator[TvRemoteChannel]:
         power_settle=0.5,
         remote_factory=factory,
         cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+        identity_generator=lambda: "01234567",
     )
     yield made
     made.close()
@@ -179,7 +181,9 @@ def test_credentials_are_created_once_in_a_private_directory(
     assert mode(folder / CERT_FILE) == 0o600
     assert mode(folder / KEY_FILE) == 0o600
     assert (folder / KEY_FILE).read_bytes() == KEY_PEM
-    assert sorted(p.name for p in folder.iterdir()) == sorted([CERT_FILE, KEY_FILE])
+    assert sorted(p.name for p in folder.iterdir()) == sorted([CERT_FILE, IDENTITY_FILE, KEY_FILE])
+    assert mode(folder / IDENTITY_FILE) == 0o600
+    assert (folder / IDENTITY_FILE).read_text(encoding="utf-8") == "control-TV 01234567"
     assert tv.remotes[0].certfile == str(folder / CERT_FILE)
     assert tv.remotes[0].keyfile == str(folder / KEY_FILE)
 
@@ -210,6 +214,123 @@ def test_loose_permissions_on_existing_credentials_are_tightened(
     assert mode(folder) == 0o700
     assert mode(folder / KEY_FILE) == 0o600
     assert mode(folder / CERT_FILE) == 0o600
+
+
+def test_existing_pairing_gets_a_stable_distinct_name_without_replacing_credentials(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    folder = tmp_path / "remote"
+    folder.mkdir(mode=0o700)
+    (folder / CERT_FILE).write_bytes(CERT_PEM)
+    (folder / KEY_FILE).write_bytes(KEY_PEM)
+    names: list[str] = []
+
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+        names.append(client_name)
+        return FakeRemote(tv, certfile, keyfile, host)
+
+    def refuse_certificate(name: str) -> tuple[bytes, bytes]:
+        raise AssertionError("existing credentials must be preserved")
+
+    for _ in range(2):
+        channel = TvRemoteChannel(
+            folder,
+            settle=0.0,
+            remote_factory=factory,
+            cert_generator=refuse_certificate,
+            identity_generator=lambda: "ffffffff",
+        )
+        try:
+            channel.observe(HOST)
+        finally:
+            channel.close()
+
+    expected = f"control-TV {sha256(CERT_PEM).hexdigest()[:8]}"
+    assert names == [expected, expected]
+    assert (folder / IDENTITY_FILE).read_text(encoding="utf-8") == expected
+    assert (folder / CERT_FILE).read_bytes() == CERT_PEM
+    assert (folder / KEY_FILE).read_bytes() == KEY_PEM
+
+
+def test_two_installations_generate_distinct_persistent_pairing_names(
+    tmp_path: Path, tv: FakeTv
+) -> None:
+    names: list[str] = []
+
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+        names.append(client_name)
+        return FakeRemote(tv, certfile, keyfile, host)
+
+    def identity_generator(suffix: str) -> Callable[[], str]:
+        def identity() -> str:
+            return suffix
+
+        return identity
+
+    for directory, suffix in (("ubuntu", "11111111"), ("android", "22222222")):
+        channel = TvRemoteChannel(
+            tmp_path / directory,
+            settle=0.0,
+            remote_factory=factory,
+            cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+            identity_generator=identity_generator(suffix),
+        )
+        try:
+            channel.observe(HOST)
+        finally:
+            channel.close()
+
+    assert names == ["control-TV 11111111", "control-TV 22222222"]
+
+
+def test_invalid_generated_identity_is_reported_before_pairing(tmp_path: Path, tv: FakeTv) -> None:
+    channel = TvRemoteChannel(
+        tmp_path / "remote",
+        settle=0.0,
+        remote_factory=lambda *args: FakeRemote(tv, *args[1:]),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+        identity_generator=lambda: "not-an-identity",
+    )
+    try:
+        with pytest.raises(RuntimeError, match="generated remote identity is invalid"):
+            channel.observe(HOST)
+    finally:
+        channel.close()
+
+
+def test_unreadable_identity_is_recovered_from_existing_certificate(
+    tmp_path: Path, tv: FakeTv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "remote"
+    folder.mkdir(mode=0o700)
+    cert = folder / CERT_FILE
+    cert.write_bytes(CERT_PEM)
+    (folder / KEY_FILE).write_bytes(KEY_PEM)
+    identity_file = folder / IDENTITY_FILE
+    identity_file.write_bytes(b"old")
+    read_text = Path.read_text
+
+    def unreadable(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        if path == identity_file:
+            raise OSError("unreadable")
+        return read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    channel = TvRemoteChannel(
+        folder,
+        settle=0.0,
+        remote_factory=lambda *args: FakeRemote(tv, *args[1:]),
+        cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+    )
+    try:
+        channel.observe(HOST)
+    finally:
+        channel.close()
+    monkeypatch.undo()
+
+    assert identity_file.read_text(encoding="utf-8") == (
+        f"control-TV {sha256(CERT_PEM).hexdigest()[:8]}"
+    )
 
 
 def test_a_lone_certificate_without_its_key_is_replaced_by_a_new_pair(
