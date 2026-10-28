@@ -107,6 +107,16 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   remote opens `controltv-receiver://apps?reply=<this device>&token=<random>`, the receiver posts the list once
   to a one-request local listener (8 s, private addresses only), then closes. Order: debugging, receiver, last
   list, else none. Needs this receiver version installed once per TV; hardware validation open.
+- [ ] Sprint 1 T-02 (recette 2026-10-26, AP-C-03 / AP-A-C-01): opening an app failed on Chambre parentale and
+  the window said "sent": the TV's remote refused `market://launch` (`ActivityNotFoundException`,
+  `INVALID_ARGUMENT`) and the library reports no error. Implemented, automated checks only: no `market://` link
+  is sent any more; the remote opens ControlTV Receiver's `controltv-receiver://launch?package=…` link, the
+  receiver (`AppLaunchActivity`) starts the app's own launch activity and answers `started`, `not_installed`
+  or `refused`; the window says "The TV started …" or "… is open on the TV" only on the TV's word, an error
+  otherwise, and a launch with no answer is never resent another way. The receiver's invisible screens close
+  before any network exchange (video interruption). Review 2026-10-28 (Claude, self-review of its own
+  `121f462`; an independent review is still required): the two uncovered error paths (malformed launch answer,
+  listener that cannot bind) got tests. Open: receiver update on each TV and hardware validation with the owner.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.

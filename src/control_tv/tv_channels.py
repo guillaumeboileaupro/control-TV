@@ -31,7 +31,7 @@ from control_tv.domain import (
     TvApp,
     UnsupportedOperationError,
 )
-from control_tv.ports import AppLister, AppMemory, TvApps, TvRemote
+from control_tv.ports import AppMemory, ReceiverApps, TvApps, TvRemote
 
 
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
@@ -78,7 +78,7 @@ class TvChannels:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         memory: AppMemory | None = None,
-        receiver_apps: AppLister | None = None,
+        receiver_apps: ReceiverApps | None = None,
     ) -> None:
         self._discovered = discovered
         self._remote = remote
@@ -184,20 +184,22 @@ class TvChannels:
             raise InvalidArgumentError("the app must be a package name", device_id=device_id)
         launch = self._launch(device_id, package)
         front = launch.front_app
+        done = "the TV started it" if launch.started else "sent"
         if front == launch.package:
             confirmation, detail = Confirmation.CONFIRMED, "the TV reports the app in front"
         elif front is not None:
             confirmation = Confirmation.UNCONFIRMED
-            detail = f"sent; the TV still reports {front} in front"
+            detail = f"{done}; the TV still reports {front} in front"
         else:
             confirmation = Confirmation.NOT_CHECKED
-            detail = "sent; the TV did not report the app in front; check the TV"
+            detail = f"{done}; the TV did not report the app in front; check the TV"
         return AppLaunchResult(
             package=launch.package,
             device_id=device_id,
             confirmation=confirmation,
             detail=detail,
             front_app=front,
+            started=launch.started,
         )
 
     def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
@@ -229,13 +231,15 @@ class TvChannels:
         return self._remote, self._tv_host(device_id, remote=True)
 
     def _launch(self, device_id: DeviceId, package: str) -> AppLaunch:
-        """Through the TV's own remote when it offers one: nothing to turn on in the TV's
-        settings. Through its debugging otherwise, or when the remote refused before sending
-        anything (not paired, or no remote library in this build)."""
-        if self._remote is not None:
+        """Through ControlTV Receiver, opened by the TV's paired remote: nothing to turn on in
+        the TV's settings, and the receiver says whether the TV started the app. Through the
+        TV's debugging otherwise, or when the remote refused before sending anything (not
+        paired, or no remote library in this build). A launch that may have reached the TV
+        is never sent again another way."""
+        if self._remote is not None and self._receiver_apps is not None:
             try:
-                remote, host = self._remote_target(device_id)
-                return remote.launch(host, package)
+                _, host = self._remote_target(device_id)
+                return self._receiver_apps.launch_app(host, package)
             except (PairingRequiredError, UnsupportedOperationError) as refused:
                 if self._apps is None:
                     raise

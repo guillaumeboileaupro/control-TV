@@ -44,7 +44,7 @@ from control_tv.domain import (
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import AppLister, AppMemory, CastTransport, TvApps, TvRemote
+from control_tv.ports import AppMemory, CastTransport, ReceiverApps, TvApps, TvRemote
 from control_tv.tv_channels import TvChannels
 
 
@@ -352,7 +352,7 @@ class ControlService:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         app_memory: AppMemory | None = None,
-        receiver_apps: AppLister | None = None,
+        receiver_apps: ReceiverApps | None = None,
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
     ) -> None:

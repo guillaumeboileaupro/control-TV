@@ -47,6 +47,10 @@ addresses, kept apart from CI results.
   open one.
 - [ ] **Apps without the TV's settings (#112):** with the TV's debugging off, Show TV apps shows its last
   list (never another TV's apps) and says so; opening one works through the paired remote.
+- [ ] **Opening an app (Sprint 1 T-02):** with ControlTV Récepteur updated on the TV, choose an app on Ubuntu,
+  then another on the phone: each opens on the TV and the window says "is open on the TV" or "The TV
+  started …"; an app removed from the TV says it isn't installed; with a video playing, Show TV apps
+  does not stop it. The TV's log never shows `market://launch` or `Failed to launch app link`.
 - [ ] **Chambre parentale apps (#112):** on the computer, pair its Wireless debugging, press Open to the
   phone; on the phone, Show TV apps, allow the phone on the TV, open one app. Then press keys for a minute
   and read `adb logcat -s control-tv` for each request's duration.

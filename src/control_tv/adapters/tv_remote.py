@@ -10,9 +10,9 @@ Rules this adapter keeps:
 - Pairing is explicit. The TV shows a code; the owner types it here. The client certificate
   and key live in a private directory (0700) as private files (0600); nothing else is kept.
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
-  field (`type_text`), never logged or echoed. An app is opened by its package name
-  (`launch`, the TV's own `market://launch` link): no debugging setting is needed on the TV.
-  Voice is not exposed here.
+  field (`type_text`), never logged or echoed. Apps are opened through ControlTV Receiver's
+  links (`open_receiver_link`): some Google TVs refuse `market://launch` (`ActivityNotFound`,
+  recette 2026-10-26), so no such link is ever sent. Voice is not exposed here.
 - One connection per TV, reused only while it is demonstrably open: the library has not
   reported it lost and its transport is not closing (the TV pings it every 5 s and the
   library closes it after 16 s without a message). It is closed after `KEEP_OPEN` seconds
@@ -52,7 +52,6 @@ from control_tv.domain import (
 from control_tv.domain.remote import (
     MAX_TEXT_LENGTH,
     VOLUME_KEYS,
-    AppLaunch,
     AudibleVolume,
     KeyPress,
     RemoteKey,
@@ -70,10 +69,13 @@ DEFAULT_SETTLE = 1.0
 DEFAULT_POWER_SETTLE = 4.0
 # How long a connection stays open after its last use, for the next key to reuse it.
 KEEP_OPEN = 30.0
-# The only link besides an app's package this adapter opens: ControlTV Receiver's app list.
+# The only links this adapter opens: ControlTV Receiver's app list and app launch.
+_REPLY = r"reply=http://\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}/{path}&token=[A-Za-z0-9_-]{16,64}"
 RECEIVER_LINK = re.compile(
-    r"controltv-receiver://apps\?reply=http://\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}/apps"
-    r"&token=[A-Za-z0-9_-]{16,64}"
+    r"controltv-receiver://apps\?"
+    + _REPLY.replace("{path}", "apps")
+    + r"|controltv-receiver://launch\?package=[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+&"
+    + _REPLY.replace("{path}", "launch")
 )
 PAIRING_CODE = re.compile(r"[0-9A-Fa-f]{6}")
 _SETTLE_STEP = 0.05
@@ -362,27 +364,25 @@ class TvRemoteChannel:
 
         return self._run(lambda: self._session(host, send))
 
-    def launch(self, host: str, package: str) -> AppLaunch:
-        """Open an app by its package name, once, through the TV's own remote.
+    def front_app(self, host: str, package: str) -> str | None:
+        """The app the TV reports in front, waited for a short time to become `package`.
 
-        The adapter then waits a short time for the TV to report that app in front, and
-        returns the app the TV reported, whichever it is (`None` when it did not say).
+        Read only: nothing is sent to the TV. `None` when the TV does not say.
         """
         host = _checked_host(host)
         package = checked_package(package)
 
-        async def send(remote: RemoteClient, fresh: bool) -> AppLaunch:
+        async def read(remote: RemoteClient, fresh: bool) -> str | None:
             del fresh
-            remote.send_launch_app_command(package)
             await self._wait_for(
                 lambda: _observe(remote).current_app == package, self._power_settle
             )
-            return AppLaunch(package=package, front_app=_observe(remote).current_app)
+            return _observe(remote).current_app
 
-        return self._run(lambda: self._session(host, send))
+        return self._run(lambda: self._session(host, read))
 
     def open_receiver_link(self, host: str, link: str) -> None:
-        """Open ControlTV Receiver's app-list link on the TV, once (see `receiver_apps`).
+        """Open one of ControlTV Receiver's links on the TV, once (see `receiver_apps`).
 
         Only that link's exact shape is sent: a reply address on this network and a token.
         """

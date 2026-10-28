@@ -912,3 +912,49 @@ describe("an app list without the TV's debugging", () => {
     assert.equal(describeRemote(state).appsNote, null);
   });
 });
+
+// Recette 2026-10-26: the TV refused the app link and the window still said "sent".
+describe("what opening an app really did", () => {
+  const open = { kind: "launch_app" as const, package: "tv.arte.plus7", label: "ARTE" };
+  const answer = (confirmation: string, started: boolean, front: string | null): RemoteAnswer => ({
+    ok: true,
+    result: {
+      result: {
+        package: "tv.arte.plus7",
+        deviceId: "a",
+        confirmation,
+        detail: started ? "the TV started it; …" : "sent; …",
+        frontApp: front,
+        started,
+      },
+    },
+  });
+  const outcomeOf = (reply: RemoteAnswer) =>
+    describeRemote(run(withTv(), open, reply).state).outcome;
+
+  test("started by the TV is said as such, never as merely sent", () => {
+    const started = outcomeOf(answer("not_checked", true, null));
+    const other = outcomeOf(answer("unconfirmed", true, "com.other"));
+
+    assert.equal(started?.text, "The TV started ARTE.");
+    assert.equal(started?.tone, "done");
+    assert.equal(other?.text, "The TV started ARTE, but reports another app in front.");
+  });
+
+  test("an app that isn't installed or that the TV refused says nothing was opened", () => {
+    const missing = outcomeOf(failure("command_rejected", "this app is not installed on the TV"));
+    const refused = outcomeOf(failure("command_rejected", "the TV refused to open this app"));
+
+    assert.equal(missing?.text, "ARTE isn't installed on this TV: nothing was opened.");
+    assert.equal(missing?.tone, "failed");
+    assert.equal(refused?.text, "The TV refused to open ARTE.");
+  });
+
+  test("no answer from the receiver is uncertain, never a success, and points to the receiver", () => {
+    const silent = outcomeOf(failure("timeout", "ControlTV Receiver did not answer"));
+
+    assert.equal(silent?.tone, "failed");
+    assert.match(silent?.text ?? "", /may or may not have opened.*update ControlTV Récepteur/);
+    assert.doesNotMatch(silent?.text ?? "", /sent:/);
+  });
+});

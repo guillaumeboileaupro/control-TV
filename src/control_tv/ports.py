@@ -84,7 +84,7 @@ class TvRemote(Protocol):
 
     def type_text(self, host: str, text: str) -> TextEntry: ...
 
-    def launch(self, host: str, package: str) -> AppLaunch: ...
+    def front_app(self, host: str, package: str) -> str | None: ...
 
 
 class TvApps(Protocol):
@@ -104,10 +104,13 @@ class TvApps(Protocol):
     def open_classic_port(self, host: str) -> None: ...
 
 
-class AppLister(Protocol):
-    """Another way to read a TV's installed apps (ControlTV Receiver, on the TV itself)."""
+class ReceiverApps(Protocol):
+    """The TV's apps through ControlTV Receiver, on the TV itself: no TV setting needed.
+    A launch is sent at most once; `started` only when the receiver said the TV started it."""
 
     def list_apps(self, host: str) -> tuple[TvApp, ...]: ...
+
+    def launch_app(self, host: str, package: str) -> AppLaunch: ...
 
 
 class AppMemory(Protocol):

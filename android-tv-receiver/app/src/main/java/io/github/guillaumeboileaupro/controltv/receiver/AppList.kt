@@ -13,27 +13,32 @@ import java.net.URLDecoder
 data class AppListRequest(val reply: String, val token: String)
 
 object AppList {
-    private val TOKEN = Regex("[A-Za-z0-9_-]{16,64}")
+    val TOKEN = Regex("[A-Za-z0-9_-]{16,64}")
     private const val MAX_APPS = 500
 
     /** The request in [link], or `null` for anything else: only a reply on the local network. */
     fun parse(link: String?): AppListRequest? {
-        val uri = runCatching { URI(link ?: return null) }.getOrNull() ?: return null
-        if (uri.scheme != "controltv-receiver" || uri.host != "apps") return null
-        val query = uri.rawQuery ?: return null
-        val params = query.split("&").mapNotNull { part ->
-            val pair = part.split("=", limit = 2)
-            if (pair.size == 2) pair[0] to URLDecoder.decode(pair[1], "UTF-8") else null
-        }.toMap()
+        val params = linkParams(link, "apps") ?: return null
         val token = params["token"]?.takeIf { TOKEN.matches(it) } ?: return null
-        val reply = params["reply"]?.takeIf(::isLocalReply) ?: return null
+        val reply = params["reply"]?.takeIf { isLocalReply(it) } ?: return null
         return AppListRequest(reply, token)
     }
 
-    /** `http://<private IPv4>:<port>/apps` only: the list never leaves the home network. */
-    fun isLocalReply(reply: String): Boolean {
+    /** The query of a `controltv-receiver://<host>?…` link, or `null` for any other link. */
+    fun linkParams(link: String?, host: String): Map<String, String>? {
+        val uri = runCatching { URI(link ?: return null) }.getOrNull() ?: return null
+        if (uri.scheme != "controltv-receiver" || uri.host != host) return null
+        val query = uri.rawQuery ?: return null
+        return query.split("&").mapNotNull { part ->
+            val pair = part.split("=", limit = 2)
+            if (pair.size == 2) pair[0] to URLDecoder.decode(pair[1], "UTF-8") else null
+        }.toMap()
+    }
+
+    /** `http://<private IPv4>:<port>/<path>` only: an answer never leaves the home network. */
+    fun isLocalReply(reply: String, path: String = "/apps"): Boolean {
         val uri = runCatching { URI(reply) }.getOrNull() ?: return false
-        if (uri.scheme != "http" || uri.path != "/apps" || uri.query != null || uri.port !in 1..65535) return false
+        if (uri.scheme != "http" || uri.path != path || uri.query != null || uri.port !in 1..65535) return false
         val parts = uri.host?.split(".")?.map { it.toIntOrNull() ?: return false } ?: return false
         if (parts.size != 4 || parts.any { it !in 0..255 }) return false
         val (a, b) = parts
