@@ -114,8 +114,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   receiver (`AppLaunchActivity`) starts the app's own launch activity and answers `started`, `not_installed`
   or `refused`; the window says "The TV started …" or "… is open on the TV" only on the TV's word, an error
   otherwise, and a launch with no answer is never resent another way. The receiver's invisible screens close
-  before any network exchange (video interruption). Open: receiver update on each TV and hardware validation
-  with the owner.
+  before any network exchange (video interruption). Review 2026-10-28 (Claude, self-review of its own
+  `121f462`; an independent review is still required): the two uncovered error paths (malformed launch answer,
+  listener that cannot bind) got tests. Open: receiver update on each TV and hardware validation with the owner.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.

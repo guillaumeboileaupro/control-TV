@@ -212,3 +212,18 @@ def test_the_front_app_unknown_after_a_start_is_still_a_start() -> None:
     tv = Unreadable({"package": "tv.arte.plus7", "result": "started"})
 
     assert lister(tv).launch_app(HOST, "tv.arte.plus7").started is True
+
+
+def test_a_malformed_launch_answer_is_not_an_answer() -> None:
+    for body in (b"not json", b"\xff\xfe", b"[]", b'"started"'):
+        assert parse_launch_answer(body, TOKEN, "tv.arte.plus7") is None
+
+
+def test_a_device_that_cannot_listen_says_so_and_opens_nothing() -> None:
+    tv = launch_tv("started")
+    # An address that is not this device's: binding the one-request listener fails.
+    unbindable = ReceiverAppList(tv, address_towards=lambda _: "192.0.2.123")
+
+    with pytest.raises(DeviceUnavailableError, match="could not listen"):
+        unbindable.launch_app(HOST, "tv.arte.plus7")
+    assert tv.links == []
