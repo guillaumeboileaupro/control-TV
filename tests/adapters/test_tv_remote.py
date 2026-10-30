@@ -20,7 +20,15 @@ from typing import Any
 import pytest
 from androidtvremote2 import CannotConnect, ConnectionClosed, InvalidAuth
 
-from control_tv.adapters.tv_remote import CERT_FILE, IDENTITY_FILE, KEY_FILE, TvRemoteChannel
+from control_tv.adapters.tv_remote import (
+    CERT_FILE,
+    CERTIFICATE_IDENTITY_FILE,
+    IDENTITY_FILE,
+    KEY_FILE,
+    LEGACY_CERT_FILE,
+    LEGACY_KEY_FILE,
+    TvRemoteChannel,
+)
 from control_tv.domain import (
     AudibleVolume,
     CommandRejectedError,
@@ -170,6 +178,21 @@ def mode(path: Path) -> int:
 # Credentials ---------------------------------------------------------------------------------
 
 
+def test_default_credentials_directory_is_platform_private_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from control_tv.adapters.tv_remote import default_credentials_dir
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert default_credentials_dir() == tmp_path / "xdg/control-tv/tv-remote"
+
+    monkeypatch.delenv("XDG_DATA_HOME")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "app-private-home")
+    assert (
+        default_credentials_dir() == tmp_path / "app-private-home/.local/share/control-tv/tv-remote"
+    )
+
+
 def test_credentials_are_created_once_in_a_private_directory(
     channel: TvRemoteChannel, tv: FakeTv, tmp_path: Path
 ) -> None:
@@ -181,7 +204,9 @@ def test_credentials_are_created_once_in_a_private_directory(
     assert mode(folder / CERT_FILE) == 0o600
     assert mode(folder / KEY_FILE) == 0o600
     assert (folder / KEY_FILE).read_bytes() == KEY_PEM
-    assert sorted(p.name for p in folder.iterdir()) == sorted([CERT_FILE, IDENTITY_FILE, KEY_FILE])
+    assert sorted(p.name for p in folder.iterdir()) == sorted(
+        [CERT_FILE, CERTIFICATE_IDENTITY_FILE, IDENTITY_FILE, KEY_FILE]
+    )
     assert mode(folder / IDENTITY_FILE) == 0o600
     assert (folder / IDENTITY_FILE).read_text(encoding="utf-8") == "control-TV 01234567"
     assert tv.remotes[0].certfile == str(folder / CERT_FILE)
@@ -205,6 +230,9 @@ def test_loose_permissions_on_existing_credentials_are_tightened(
         settle=0.0,
         remote_factory=lambda *args: FakeRemote(tv, *args[1:]),
         cert_generator=refuse,
+        certificate_name_reader=lambda certificate: (
+            f"control-TV {sha256(certificate).hexdigest()[:8]}"
+        ),
     )
     try:
         channel.observe(HOST)
@@ -216,7 +244,7 @@ def test_loose_permissions_on_existing_credentials_are_tightened(
     assert mode(folder / CERT_FILE) == 0o600
 
 
-def test_existing_pairing_gets_a_stable_distinct_name_without_replacing_credentials(
+def test_legacy_named_credentials_are_migrated_once_and_backed_up(
     tmp_path: Path, tv: FakeTv
 ) -> None:
     folder = tmp_path / "remote"
@@ -224,42 +252,93 @@ def test_existing_pairing_gets_a_stable_distinct_name_without_replacing_credenti
     (folder / CERT_FILE).write_bytes(CERT_PEM)
     (folder / KEY_FILE).write_bytes(KEY_PEM)
     names: list[str] = []
+    paired_certificates: set[bytes] = set()
 
-    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+    class MigrationRemote(FakeRemote):
+        async def async_connect(self) -> None:
+            if Path(self.certfile).read_bytes() not in paired_certificates:
+                raise InvalidAuth("not paired")
+            await super().async_connect()
+
+        async def async_finish_pairing(self, code: str) -> None:
+            await super().async_finish_pairing(code)
+            paired_certificates.add(Path(self.certfile).read_bytes())
+
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> MigrationRemote:
         names.append(client_name)
-        return FakeRemote(tv, certfile, keyfile, host)
+        return MigrationRemote(tv, certfile, keyfile, host)
 
-    def refuse_certificate(name: str) -> tuple[bytes, bytes]:
-        raise AssertionError("existing credentials must be preserved")
+    generated: list[str] = []
 
-    for _ in range(2):
+    def generate_certificate(name: str) -> tuple[bytes, bytes]:
+        generated.append(name)
+        return b"new certificate", b"new key"
+
+    expected = f"control-TV {sha256(CERT_PEM).hexdigest()[:8]}"
+    for launch in range(2):
         channel = TvRemoteChannel(
             folder,
             settle=0.0,
             remote_factory=factory,
-            cert_generator=refuse_certificate,
+            cert_generator=generate_certificate,
+            certificate_name_reader=lambda certificate: (
+                "control-TV" if certificate == CERT_PEM else expected
+            ),
             identity_generator=lambda: "ffffffff",
         )
         try:
-            channel.observe(HOST)
+            if launch == 0:
+                with pytest.raises(PairingRequiredError, match="updated its installation identity"):
+                    channel.observe(HOST)
+                channel.start_pairing(HOST)
+                channel.finish_pairing(HOST, tv.paired_code)
+            else:
+                assert channel.observe(HOST).is_on is True
         finally:
             channel.close()
 
-    expected = f"control-TV {sha256(CERT_PEM).hexdigest()[:8]}"
-    assert names == [expected, expected]
+    assert set(names) == {expected}
     assert (folder / IDENTITY_FILE).read_text(encoding="utf-8") == expected
-    assert (folder / CERT_FILE).read_bytes() == CERT_PEM
-    assert (folder / KEY_FILE).read_bytes() == KEY_PEM
+    assert generated == [expected]
+    assert (folder / CERT_FILE).read_bytes() == b"new certificate"
+    assert (folder / KEY_FILE).read_bytes() == b"new key"
+    assert (folder / LEGACY_CERT_FILE).read_bytes() == CERT_PEM
+    assert (folder / LEGACY_KEY_FILE).read_bytes() == KEY_PEM
+    assert mode(folder / LEGACY_CERT_FILE) == 0o600
+    assert mode(folder / LEGACY_KEY_FILE) == 0o600
 
 
-def test_two_installations_generate_distinct_persistent_pairing_names(
+def test_ubuntu_and_android_pairings_coexist_after_restart_without_regeneration(
     tmp_path: Path, tv: FakeTv
 ) -> None:
     names: list[str] = []
+    paired_certificates: set[bytes] = set()
+    generated: list[str] = []
 
-    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> FakeRemote:
+    class PairedRemote(FakeRemote):
+        def __init__(self, client_name: str, certfile: str, keyfile: str, host: str) -> None:
+            super().__init__(tv, certfile, keyfile, host)
+            self.client_name = client_name
+
+        async def async_connect(self) -> None:
+            if Path(self.certfile).read_bytes() not in paired_certificates:
+                raise InvalidAuth("not paired")
+            await super().async_connect()
+
+        async def async_finish_pairing(self, code: str) -> None:
+            await super().async_finish_pairing(code)
+            paired_certificates.add(Path(self.certfile).read_bytes())
+
+    def factory(client_name: str, certfile: str, keyfile: str, host: str) -> PairedRemote:
         names.append(client_name)
-        return FakeRemote(tv, certfile, keyfile, host)
+        return PairedRemote(client_name, certfile, keyfile, host)
+
+    def generate_certificate(name: str) -> tuple[bytes, bytes]:
+        generated.append(name)
+        return f"certificate:{name}".encode(), f"key:{name}".encode()
+
+    def certificate_name(certificate: bytes) -> str:
+        return certificate.decode().removeprefix("certificate:")
 
     def identity_generator(suffix: str) -> Callable[[], str]:
         def identity() -> str:
@@ -267,20 +346,39 @@ def test_two_installations_generate_distinct_persistent_pairing_names(
 
         return identity
 
-    for directory, suffix in (("ubuntu", "11111111"), ("android", "22222222")):
+    installations = (("ubuntu", "11111111"), ("android", "22222222"))
+    for directory, suffix in installations:
         channel = TvRemoteChannel(
             tmp_path / directory,
             settle=0.0,
             remote_factory=factory,
-            cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+            cert_generator=generate_certificate,
+            certificate_name_reader=certificate_name,
             identity_generator=identity_generator(suffix),
         )
         try:
-            channel.observe(HOST)
+            channel.start_pairing(HOST)
+            channel.finish_pairing(HOST, tv.paired_code)
         finally:
             channel.close()
 
-    assert names == ["control-TV 11111111", "control-TV 22222222"]
+    for _ in range(2):
+        for directory, suffix in installations:
+            channel = TvRemoteChannel(
+                tmp_path / directory,
+                settle=0.0,
+                remote_factory=factory,
+                cert_generator=generate_certificate,
+                certificate_name_reader=certificate_name,
+                identity_generator=identity_generator(suffix),
+            )
+            try:
+                assert channel.observe(HOST).is_on is True
+            finally:
+                channel.close()
+
+    assert generated == ["control-TV 11111111", "control-TV 22222222"]
+    assert set(names) == {"control-TV 11111111", "control-TV 22222222"}
 
 
 def test_invalid_generated_identity_is_reported_before_pairing(tmp_path: Path, tv: FakeTv) -> None:
@@ -289,6 +387,9 @@ def test_invalid_generated_identity_is_reported_before_pairing(tmp_path: Path, t
         settle=0.0,
         remote_factory=lambda *args: FakeRemote(tv, *args[1:]),
         cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+        certificate_name_reader=lambda certificate: (
+            f"control-TV {sha256(certificate).hexdigest()[:8]}"
+        ),
         identity_generator=lambda: "not-an-identity",
     )
     try:
@@ -321,6 +422,9 @@ def test_unreadable_identity_is_recovered_from_existing_certificate(
         settle=0.0,
         remote_factory=lambda *args: FakeRemote(tv, *args[1:]),
         cert_generator=lambda name: (CERT_PEM, KEY_PEM),
+        certificate_name_reader=lambda certificate: (
+            f"control-TV {sha256(certificate).hexdigest()[:8]}"
+        ),
     )
     try:
         channel.observe(HOST)
@@ -671,13 +775,37 @@ def test_the_default_factory_builds_the_library_remote_without_voice_or_network(
 def test_the_default_certificate_is_a_pem_pair_named_after_the_client() -> None:
     from cryptography import x509
 
-    from control_tv.adapters.tv_remote import _default_cert_generator
+    from control_tv.adapters.tv_remote import _default_cert_generator, _default_certificate_name
 
     cert_pem, key_pem = _default_cert_generator("control-TV")
 
     cert = x509.load_pem_x509_certificate(cert_pem)
     assert "control-TV" in cert.subject.rfc4514_string()
+    assert _default_certificate_name(cert_pem) == "control-TV"
     assert key_pem.startswith(b"-----BEGIN")
+
+
+def test_an_invalid_stored_certificate_is_not_silently_replaced() -> None:
+    from control_tv.adapters.tv_remote import _default_certificate_name
+
+    with pytest.raises(RuntimeError, match="stored remote certificate is invalid"):
+        _default_certificate_name(b"not a certificate")
+
+
+def test_a_stored_certificate_without_one_client_name_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cryptography import x509
+
+    from control_tv.adapters.tv_remote import _default_certificate_name
+
+    subject = SimpleNamespace(get_attributes_for_oid=lambda oid: [])
+    monkeypatch.setattr(
+        x509, "load_pem_x509_certificate", lambda certificate: SimpleNamespace(subject=subject)
+    )
+
+    with pytest.raises(RuntimeError, match="no unique client name"):
+        _default_certificate_name(b"certificate")
 
 
 def test_without_the_optional_extra_the_channel_says_so(
