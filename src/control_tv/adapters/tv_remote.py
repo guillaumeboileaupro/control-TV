@@ -66,6 +66,9 @@ CLIENT_NAME = "control-TV"
 CERT_FILE = "client-cert.pem"
 KEY_FILE = "client-key.pem"
 IDENTITY_FILE = "client-identity"
+CERTIFICATE_IDENTITY_FILE = "certificate-identity"
+LEGACY_CERT_FILE = "client-cert.legacy.pem"
+LEGACY_KEY_FILE = "client-key.legacy.pem"
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_SETTLE = 1.0
 # A TV that wakes or goes to standby reports its new power state later than a volume change;
@@ -108,6 +111,7 @@ class RemoteClient(Protocol):
 
 RemoteFactory = Callable[[str, str, str, str], RemoteClient]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
+CertificateNameReader = Callable[[bytes], str]
 IdentityGenerator = Callable[[], str]
 
 
@@ -237,6 +241,22 @@ def _default_cert_generator(client_name: str) -> tuple[bytes, bytes]:
     return generate_selfsigned_cert(client_name)
 
 
+def _default_certificate_name(certificate: bytes) -> str:
+    """Return the certificate's single common name without accepting an ambiguous subject."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    try:
+        names = x509.load_pem_x509_certificate(certificate).subject.get_attributes_for_oid(
+            NameOID.COMMON_NAME
+        )
+    except ValueError:
+        raise RuntimeError("the stored remote certificate is invalid") from None
+    if len(names) != 1 or not isinstance(names[0].value, str):
+        raise RuntimeError("the stored remote certificate has no unique client name")
+    return names[0].value
+
+
 class TvRemoteChannel:
     """A synchronous facade over the Android TV Remote protocol, one TV address per call.
 
@@ -256,6 +276,7 @@ class TvRemoteChannel:
         keep_open: float = KEEP_OPEN,
         remote_factory: RemoteFactory = _default_remote_factory,
         cert_generator: CertGenerator = _default_cert_generator,
+        certificate_name_reader: CertificateNameReader = _default_certificate_name,
         identity_generator: IdentityGenerator = _new_identity_suffix,
     ) -> None:
         self._dir = Path(credentials_dir)
@@ -266,6 +287,7 @@ class TvRemoteChannel:
         self._keep_open = keep_open
         self._remote_factory = remote_factory
         self._cert_generator = cert_generator
+        self._certificate_name_reader = certificate_name_reader
         self._identity_generator = identity_generator
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -487,15 +509,17 @@ class TvRemoteChannel:
     def _credentials(self) -> tuple[str, str, str]:
         """The persistent installation identity, certificate and private key.
 
-        Older installations have only the certificate and key. Their identity is derived from
-        that certificate, so upgrading neither regenerates it nor asks the TV to pair again.
+        Older installations have a certificate named only ``control-TV``. Their stable identity
+        is derived from that certificate, then that legacy pair is backed up and replaced once:
+        the TV requires one explicit final pairing, after which both installations can coexist.
         """
         self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self._dir, 0o700)
-        cert, key, identity_file = (
+        cert, key, identity_file, certificate_identity_file = (
             self._dir / CERT_FILE,
             self._dir / KEY_FILE,
             self._dir / IDENTITY_FILE,
+            self._dir / CERTIFICATE_IDENTITY_FILE,
         )
         complete = cert.is_file() and key.is_file()
         identity = self._read_identity(identity_file)
@@ -509,14 +533,40 @@ class TvRemoteChannel:
                 raise RuntimeError("the generated remote identity is invalid")
             identity = f"{self._client_name} {suffix}"
             _write_private(identity_file, identity.encode("utf-8"))
-        if not complete:
+        certificate_identity = self._read_identity(certificate_identity_file)
+        if complete and certificate_identity != identity:
+            if self._certificate_name_reader(cert.read_bytes()) != identity:
+                self._migrate_legacy_credentials(cert, key, identity)
+            _write_private(certificate_identity_file, identity.encode("utf-8"))
+        elif not complete:
             cert_pem, key_pem = self._cert_generator(identity)
             _write_private(key, key_pem)
             _write_private(cert, cert_pem)
-        for path in (identity_file, cert, key):
+            _write_private(certificate_identity_file, identity.encode("utf-8"))
+        private_files = [identity_file, certificate_identity_file, cert, key]
+        private_files.extend(
+            path
+            for path in (self._dir / LEGACY_CERT_FILE, self._dir / LEGACY_KEY_FILE)
+            if path.is_file()
+        )
+        for path in private_files:
             if stat.S_IMODE(path.stat().st_mode) != 0o600:
                 os.chmod(path, 0o600)
         return identity, str(cert), str(key)
+
+    def _migrate_legacy_credentials(self, cert: Path, key: Path, identity: str) -> None:
+        """Replace a legacy named pair once, retaining its exact bytes as private evidence."""
+        legacy_cert = self._dir / LEGACY_CERT_FILE
+        legacy_key = self._dir / LEGACY_KEY_FILE
+        if not legacy_cert.exists():
+            _write_private(legacy_cert, cert.read_bytes())
+        if not legacy_key.exists():
+            _write_private(legacy_key, key.read_bytes())
+        cert_pem, key_pem = self._cert_generator(identity)
+        # Key first is deliberate: an interruption leaves the old certificate name in place,
+        # so the next launch retries the bounded migration instead of accepting a mismatched pair.
+        _write_private(key, key_pem)
+        _write_private(cert, cert_pem)
 
     def _read_identity(self, path: Path) -> str | None:
         if not path.is_file():
@@ -539,7 +589,11 @@ class TvRemoteChannel:
         except ControlError:
             raise
         except invalid_auth:
-            raise PairingRequiredError("this TV must be paired with control-TV first") from None
+            if (self._dir / LEGACY_CERT_FILE).is_file():
+                message = "pair this TV once after control-TV updated its installation identity"
+            else:
+                message = "this TV must be paired with control-TV first"
+            raise PairingRequiredError(message) from None
         except (cannot_connect, connection_closed, OSError):
             raise DeviceUnavailableError("the TV's remote channel could not be reached") from None
 
