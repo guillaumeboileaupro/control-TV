@@ -29,6 +29,14 @@ pub struct MediaFrame {
 pub struct MediaStreams {
     pub video: mpsc::Receiver<Result<MediaFrame, EngineError>>,
     pub audio: Option<mpsc::Receiver<Result<MediaFrame, EngineError>>>,
+    pub encoder: EncoderReport,
+}
+
+/// The H.264 encoder a source actually runs, and why it is not the requested one.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EncoderReport {
+    pub encoder: Option<String>,
+    pub fallback: Option<String>,
 }
 
 pub trait Clock: Send + Sync {
@@ -144,11 +152,18 @@ impl SessionController {
         self.media_stop = Some(stop_tx);
         self.media_task = Some(tokio::spawn(async move {
             let result = match source.start().await {
-                Ok(streams) => tokio::select! {
-                    result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
-                    result = transport.wait_for_disconnect() => result,
-                    _ = stop_rx => Ok(()),
-                },
+                Ok(streams) => {
+                    {
+                        let mut values = diagnostics.lock().await;
+                        values.video_encoder = streams.encoder.encoder.clone();
+                        values.encoder_fallback = streams.encoder.fallback.clone();
+                    }
+                    tokio::select! {
+                        result = pump_media(streams, transport.as_ref(), diagnostics, deadline) => result,
+                        result = transport.wait_for_disconnect() => result,
+                        _ = stop_rx => Ok(()),
+                    }
+                }
                 Err(error) => Err(error),
             };
             let cleanup = source.stop().await;
@@ -363,6 +378,7 @@ mod tests {
             Ok(MediaStreams {
                 video: receiver,
                 audio: None,
+                encoder: EncoderReport::default(),
             })
         }
 
@@ -394,6 +410,7 @@ mod tests {
             Ok(MediaStreams {
                 video: receiver,
                 audio: None,
+                encoder: EncoderReport::default(),
             })
         }
 
@@ -411,6 +428,7 @@ mod tests {
             Ok(MediaStreams {
                 video: receiver,
                 audio: None,
+                encoder: EncoderReport::default(),
             })
         }
 
@@ -857,6 +875,7 @@ mod tests {
             MediaStreams {
                 video: video_rx,
                 audio: Some(audio_rx),
+                encoder: EncoderReport::default(),
             },
             &FakeTransport::default(),
             Arc::clone(&diagnostics),
@@ -949,6 +968,7 @@ mod tests {
             MediaStreams {
                 video: video_rx,
                 audio: Some(audio_rx),
+                encoder: EncoderReport::default(),
             },
             &FakeTransport::default(),
             Arc::clone(&diagnostics),

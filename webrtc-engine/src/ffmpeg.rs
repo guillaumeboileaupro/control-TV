@@ -1,12 +1,14 @@
-use crate::{CaptureConfig, EngineError, MediaFrame, MediaSource, MediaStreams};
+use crate::{
+    CaptureConfig, EncoderReport, EngineError, MediaFrame, MediaSource, MediaStreams, VideoEncoder,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, ChildStdout, Command};
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 const READ_BUFFER: usize = 64 * 1024;
@@ -14,6 +16,11 @@ const VIDEO_QUEUE: usize = 1;
 const AUDIO_QUEUE: usize = 4;
 const MAX_H264_ACCESS_UNIT: usize = 8 * 1024 * 1024;
 const MAX_OGG_BUFFER: usize = 1024 * 1024;
+/// How long a VA-API encoder may take to deliver its first picture before the session falls back
+/// to `libx264`: x11grab and the GPU encoder start in well under a second when they work.
+const VAAPI_FIRST_PICTURE: Duration = Duration::from_secs(3);
+const SOFTWARE_ENCODER: &str = "libx264";
+const VAAPI_ENCODER: &str = "h264_vaapi";
 
 /// Starts a child process without involving a shell, so display and device names are never
 /// interpreted as command syntax.
@@ -29,44 +36,68 @@ impl ProcessRunner {
         }
     }
 
-    fn video_arguments(config: &CaptureConfig) -> Vec<String> {
-        vec![
-            "-hide_banner".into(),
-            "-loglevel".into(),
-            "warning".into(),
+    fn video_arguments(config: &CaptureConfig, encoder: &VideoEncoder) -> Vec<String> {
+        let video = &config.video;
+        let scale = format!("scale={}:{}", video.width, video.height);
+        let mut arguments: Vec<String> =
+            vec!["-hide_banner".into(), "-loglevel".into(), "warning".into()];
+        if let VideoEncoder::Vaapi { render_node, .. } = encoder {
+            arguments.extend(["-vaapi_device".into(), render_node.clone()]);
+        }
+        arguments.extend([
             "-f".into(),
             "x11grab".into(),
             "-draw_mouse".into(),
             "1".into(),
             "-framerate".into(),
-            config.video.fps.to_string(),
+            video.fps.to_string(),
             "-video_size".into(),
             format!("{}x{}", config.source_width, config.source_height),
             "-i".into(),
             format!("{}+{},{}", config.display, config.offset_x, config.offset_y),
             "-an".into(),
-            "-vf".into(),
-            format!("scale={}:{}", config.video.width, config.video.height),
-            "-c:v".into(),
-            "libx264".into(),
-            "-preset".into(),
-            "ultrafast".into(),
-            "-tune".into(),
-            "zerolatency".into(),
-            "-profile:v".into(),
-            "baseline".into(),
+        ]);
+        match encoder {
+            VideoEncoder::Software => arguments.extend([
+                "-vf".into(),
+                scale,
+                "-c:v".into(),
+                SOFTWARE_ENCODER.into(),
+                "-preset".into(),
+                "ultrafast".into(),
+                "-tune".into(),
+                "zerolatency".into(),
+                "-profile:v".into(),
+                "baseline".into(),
+                "-b:v".into(),
+                format!("{}k", video.bitrate_kbps),
+            ]),
+            // Constant QP: the bitrate mode failed on the measured Intel GPU (D0, #79).
+            VideoEncoder::Vaapi { qp, .. } => arguments.extend([
+                "-vf".into(),
+                format!("{scale},format=nv12,hwupload"),
+                "-c:v".into(),
+                VAAPI_ENCODER.into(),
+                "-rc_mode".into(),
+                "CQP".into(),
+                "-qp".into(),
+                qp.to_string(),
+                "-profile:v".into(),
+                "constrained_baseline".into(),
+            ]),
+        }
+        arguments.extend([
             "-g".into(),
-            config.video.fps.to_string(),
+            video.fps.to_string(),
             "-bf".into(),
             "0".into(),
-            "-b:v".into(),
-            format!("{}k", config.video.bitrate_kbps),
             "-bsf:v".into(),
             "h264_metadata=aud=insert".into(),
             "-f".into(),
             "h264".into(),
             "pipe:1".into(),
-        ]
+        ]);
+        arguments
     }
 
     fn audio_arguments(config: &CaptureConfig) -> Option<Vec<String>> {
@@ -95,12 +126,14 @@ impl ProcessRunner {
     }
 
     fn spawn(&self, arguments: &[String]) -> Result<(Child, ChildStdout), EngineError> {
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        let mut child = command
             .spawn()
             .map_err(|error| EngineError::MediaSource(error.to_string()))?;
         let stdout = child
@@ -123,6 +156,7 @@ pub struct FfmpegMediaSource {
     video_child: Option<Child>,
     audio_child: Option<Child>,
     readers: Vec<JoinHandle<()>>,
+    first_picture_timeout: Duration,
 }
 
 impl FfmpegMediaSource {
@@ -133,7 +167,77 @@ impl FfmpegMediaSource {
             video_child: None,
             audio_child: None,
             readers: Vec::new(),
+            first_picture_timeout: VAAPI_FIRST_PICTURE,
         }
+    }
+
+    /// Starts one video encoder; `first_picture` fires once it has produced a complete picture.
+    fn spawn_video(
+        &mut self,
+        encoder: &VideoEncoder,
+        first_picture: Option<oneshot::Sender<()>>,
+    ) -> Result<mpsc::Receiver<Result<MediaFrame, EngineError>>, EngineError> {
+        let (child, stdout) = self
+            .runner
+            .spawn(&ProcessRunner::video_arguments(&self.config, encoder))?;
+        self.video_child = Some(child);
+        let (sender, receiver) = mpsc::channel(VIDEO_QUEUE);
+        let duration = Duration::from_secs_f64(1.0 / f64::from(self.config.video.fps));
+        self.readers.push(tokio::spawn(read_h264(
+            stdout,
+            sender,
+            duration,
+            first_picture,
+        )));
+        Ok(receiver)
+    }
+
+    /// The requested encoder, or `libx264` with the reason when VA-API delivers no picture. A
+    /// failed VA-API process must be reaped before the fallback starts: if it cannot be, the
+    /// start fails and the process stays tracked for `stop`.
+    async fn start_video(
+        &mut self,
+    ) -> Result<
+        (
+            mpsc::Receiver<Result<MediaFrame, EngineError>>,
+            EncoderReport,
+        ),
+        EngineError,
+    > {
+        let requested = self.config.video.encoder.clone();
+        let mut fallback = None;
+        if matches!(requested, VideoEncoder::Vaapi { .. }) {
+            let (picture_tx, picture_rx) = oneshot::channel();
+            let receiver = self.spawn_video(&requested, Some(picture_tx))?;
+            let reason = match tokio::time::timeout(self.first_picture_timeout, picture_rx).await {
+                Ok(Ok(())) => {
+                    return Ok((
+                        receiver,
+                        EncoderReport {
+                            encoder: Some(VAAPI_ENCODER.into()),
+                            fallback: None,
+                        },
+                    ))
+                }
+                Ok(Err(_)) => "the VA-API encoder stopped before its first picture",
+                Err(_) => "the VA-API encoder produced no picture in time",
+            };
+            if let Some(reader) = self.readers.pop() {
+                reader.abort();
+                let _ = reader.await;
+            }
+            drop(receiver);
+            Self::stop_child(&mut self.video_child).await?;
+            fallback = Some(format!("{reason}; using {SOFTWARE_ENCODER}"));
+        }
+        let receiver = self.spawn_video(&VideoEncoder::Software, None)?;
+        Ok((
+            receiver,
+            EncoderReport {
+                encoder: Some(SOFTWARE_ENCODER.into()),
+                fallback,
+            },
+        ))
     }
 
     async fn stop_child(child: &mut Option<Child>) -> Result<(), EngineError> {
@@ -185,14 +289,7 @@ impl MediaSource for FfmpegMediaSource {
         if self.video_child.is_some() {
             return Err(EngineError::MediaSource("source already started".into()));
         }
-        let (video_child, video) = self
-            .runner
-            .spawn(&ProcessRunner::video_arguments(&self.config))?;
-        self.video_child = Some(video_child);
-        let (video_tx, video_rx) = mpsc::channel(VIDEO_QUEUE);
-        let frame_duration = Duration::from_secs_f64(1.0 / f64::from(self.config.video.fps));
-        self.readers
-            .push(tokio::spawn(read_h264(video, video_tx, frame_duration)));
+        let (video_rx, encoder) = self.start_video().await?;
         let mut audio_rx = None;
         if self.config.audio.enabled {
             let args = ProcessRunner::audio_arguments(&self.config)
@@ -214,6 +311,7 @@ impl MediaSource for FfmpegMediaSource {
         Ok(MediaStreams {
             video: video_rx,
             audio: audio_rx,
+            encoder,
         })
     }
 
@@ -245,6 +343,7 @@ async fn read_h264(
     mut reader: ChildStdout,
     sender: mpsc::Sender<Result<MediaFrame, EngineError>>,
     duration: Duration,
+    mut first_picture: Option<oneshot::Sender<()>>,
 ) {
     let mut parser = AnnexBAccessUnits::default();
     let mut dropper = LagDropper::video();
@@ -267,6 +366,12 @@ async fn read_h264(
                         return;
                     }
                 };
+                // Only a picture closed by the next AUD counts: a partial one at EOF does not.
+                if !frames.is_empty() {
+                    if let Some(signal) = first_picture.take() {
+                        let _ = signal.send(());
+                    }
+                }
                 for frame in frames {
                     // Interactive video prefers dropping an obsolete complete frame to building lag.
                     if !dropper.offer(&sender, frame) {
@@ -569,6 +674,7 @@ mod tests {
                 height: 1080,
                 fps: 60,
                 bitrate_kbps: 8_000,
+                encoder: VideoEncoder::Software,
             },
             audio: AudioConfig {
                 enabled: true,
@@ -578,10 +684,20 @@ mod tests {
         }
     }
 
+    fn vaapi() -> VideoEncoder {
+        VideoEncoder::Vaapi {
+            render_node: "/dev/dri/renderD128".into(),
+            qp: 24,
+        }
+    }
+
     #[test]
     fn video_command_is_low_latency_and_scoped_to_selected_geometry() {
-        let args = ProcessRunner::video_arguments(&capture());
+        let args = ProcessRunner::video_arguments(&capture(), &VideoEncoder::Software);
         assert!(args.windows(2).any(|item| item == ["-tune", "zerolatency"]));
+        assert!(args.windows(2).any(|item| item == ["-c:v", "libx264"]));
+        assert!(args.windows(2).any(|item| item == ["-b:v", "8000k"]));
+        assert!(!args.contains(&"-vaapi_device".into()));
         assert!(args.contains(&"2560x1440".into()));
         assert!(args.contains(&"scale=1920:1080".into()));
         assert!(args.contains(&":7.0+12,34".into()));
@@ -589,6 +705,36 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|item| item == ["-bsf:v", "h264_metadata=aud=insert"]));
+    }
+
+    #[test]
+    fn vaapi_command_uploads_the_scaled_picture_and_uses_constant_qp() {
+        let args = ProcessRunner::video_arguments(&capture(), &vaapi());
+        let device = args
+            .windows(2)
+            .position(|item| item == ["-vaapi_device", "/dev/dri/renderD128"])
+            .expect("render node");
+        let input = args.iter().position(|item| item == "-i").expect("input");
+        assert!(
+            device < input,
+            "the device is a global option before the input"
+        );
+        assert!(args.contains(&"scale=1920:1080,format=nv12,hwupload".into()));
+        for pair in [
+            ["-c:v", "h264_vaapi"],
+            ["-rc_mode", "CQP"],
+            ["-qp", "24"],
+            ["-profile:v", "constrained_baseline"],
+            ["-bf", "0"],
+            ["-g", "60"],
+            ["-bsf:v", "h264_metadata=aud=insert"],
+        ] {
+            assert!(args.windows(2).any(|item| item == pair), "{pair:?}");
+        }
+        assert!(
+            !args.contains(&"-b:v".into()),
+            "bitrate mode fails on the measured GPU"
+        );
     }
 
     #[test]
@@ -747,6 +893,130 @@ mod tests {
                 Duration::from_millis(40)
             )
             .is_err());
+    }
+
+    /// Two complete AUD-delimited pictures (AUD, IDR slice) and the next AUD.
+    const PICTURES: &str = r"\000\000\000\001\011\020\000\000\001\145\210\000\000\000\001\011\020\000\000\001\145\210\000\000\000\001\011\020";
+
+    /// A stand-in `ffmpeg`: `vaapi` is what it does when asked for `h264_vaapi`.
+    struct FakeFfmpeg(std::path::PathBuf);
+
+    impl FakeFfmpeg {
+        fn new(name: &str, vaapi: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "control-tv-fake-ffmpeg-{}-{name}",
+                std::process::id()
+            ));
+            let pictures = format!("printf '{PICTURES}'; exec sleep 30");
+            let script = format!(
+                "#!/bin/sh\ncase \" $* \" in *\" h264_vaapi \"*) {vaapi} ;; *) {pictures} ;; esac\n"
+            );
+            // Written by a separate process: a file this process holds open for writing would be
+            // inherited by a concurrent test's fork and make `exec` fail with ETXTBSY.
+            let mut writer = std::process::Command::new("sh")
+                .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+                .arg(&path)
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("script writer");
+            std::io::Write::write_all(&mut writer.stdin.take().expect("stdin"), script.as_bytes())
+                .expect("fake ffmpeg");
+            assert!(writer.wait().expect("writer").success());
+            Self(path)
+        }
+
+        fn source(&self, encoder: VideoEncoder) -> FfmpegMediaSource {
+            let mut config = capture();
+            config.audio.enabled = false;
+            config.video.encoder = encoder;
+            let mut source = FfmpegMediaSource::new(
+                ProcessRunner::new(self.0.to_string_lossy().into_owned()),
+                config,
+            );
+            source.first_picture_timeout = Duration::from_millis(500);
+            source
+        }
+    }
+
+    impl Drop for FakeFfmpeg {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    async fn first_picture(streams: &mut MediaStreams) -> MediaFrame {
+        tokio::time::timeout(Duration::from_secs(5), streams.video.recv())
+            .await
+            .expect("a picture in time")
+            .expect("open queue")
+            .expect("media")
+    }
+
+    #[tokio::test]
+    async fn a_working_vaapi_encoder_is_used_without_fallback() {
+        let fake = FakeFfmpeg::new("vaapi-ok", &format!("printf '{PICTURES}'; exec sleep 30"));
+        let mut source = fake.source(vaapi());
+        let mut streams = source.start().await.expect("start");
+        assert_eq!(
+            streams.encoder,
+            EncoderReport {
+                encoder: Some("h264_vaapi".into()),
+                fallback: None,
+            }
+        );
+        assert!(first_picture(&mut streams).await.keyframe);
+        source.stop().await.expect("stop");
+        assert!(source.video_child.is_none());
+    }
+
+    #[tokio::test]
+    async fn vaapi_failures_fall_back_to_libx264_and_say_why() {
+        for (name, vaapi_behaviour, reason) in [
+            ("vaapi-exits", "exit 1", "stopped before its first picture"),
+            (
+                "vaapi-silent",
+                "exec sleep 30",
+                "produced no picture in time",
+            ),
+            (
+                "vaapi-partial",
+                "printf '\\000\\000\\000\\001\\011\\020'; exit 1",
+                "stopped before",
+            ),
+        ] {
+            let fake = FakeFfmpeg::new(name, vaapi_behaviour);
+            let mut source = fake.source(vaapi());
+            let mut streams = source.start().await.expect("start");
+            assert_eq!(
+                streams.encoder.encoder.as_deref(),
+                Some("libx264"),
+                "{name}"
+            );
+            let fallback = streams.encoder.fallback.clone().expect("fallback reason");
+            assert!(fallback.contains(reason), "{name}: {fallback}");
+            assert!(fallback.ends_with("using libx264"), "{name}: {fallback}");
+            assert!(first_picture(&mut streams).await.keyframe, "{name}");
+            assert_eq!(source.readers.len(), 1, "{name}: the VA-API reader is gone");
+            source.stop().await.expect("stop");
+            assert!(source.video_child.is_none(), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_encoder_is_an_error_not_a_fallback() {
+        for encoder in [VideoEncoder::Software, vaapi()] {
+            let mut config = capture();
+            config.video.encoder = encoder;
+            let mut source = FfmpegMediaSource::new(
+                ProcessRunner::new("/nonexistent/control-tv-ffmpeg"),
+                config,
+            );
+            assert!(matches!(
+                source.start().await,
+                Err(EngineError::MediaSource(_))
+            ));
+            assert!(source.video_child.is_none());
+        }
     }
 
     #[tokio::test]
