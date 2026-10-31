@@ -28,6 +28,7 @@ work. `DEVELOPMENT_PLAN.md` is the source of truth for scope and progress; read 
 ## Permanent project dashboard (mandatory)
 
 `DASHBOARD.md` is the owner's orchestration dashboard and a mandatory companion to this file.
+Load skill `dashboard-maintenance` (`.agents/skills/dashboard-maintenance/SKILL.md`) for every mission and apply its start/end checklists.
 At the **start of every mission or resumed prompt**, read it alongside `TODO.md` and
 `DEVELOPMENT_PLAN.md`, verify live PR/CI data, and use its full list of work, priorities,
 responsibilities and dependencies instead of remembering only the current mission.
@@ -106,7 +107,7 @@ clean` and `dist-clean` stay limited to reproducible project-owned output (skill
 ## Skills
 
 Project skills: one source, `.agents/skills/<name>/SKILL.md` (Codex), linked as
-`.claude/skills/<name>` for Claude. Mission skills: `git-worktree-pr-workflow`,
+`.claude/skills/<name>` for Claude. Mission skills: `dashboard-maintenance`, `git-worktree-pr-workflow`,
 `independent-code-review`, `hardware-safety`, `development-reporting`, `agent-token-efficiency`;
 quality: `python-project-quality`, `solid-code-design`, `typescript-no-any`,
 `conventional-commits-pr`; domain: disk hygiene, multiplatform release (`.deb`, `.apk`), CI
