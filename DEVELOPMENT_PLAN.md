@@ -1,5 +1,59 @@
 # Development plan
 
+## Screen streaming — D1, D2, D4 (consolidated, reviewed on `main` `3eebf23`, 2026-10-31)
+
+This section is the current state of screen streaming; the dated entries below are history. The
+task-level table (references D1-1 … D4-6) is at the top of [`TODO.md`](TODO.md).
+
+**Delivered in `main` (#111, `88f08d3`), automation-validated only:** the Rust engine
+`webrtc-engine` (bounded session, X11 capture and `libx264` H.264, PulseAudio Opus, ICE/DTLS/SRTP,
+one-time TLS pairing token, LAN-only bind), the Kotlin/libwebrtc Android TV receiver, the Python
+D1/D2 capture lease that owns geometry, consent and restoration, and the Tauri start/stop/status
+commands with the Auto/WebRTC/HLS selector. Bounded reconnection (two attempts inside the absolute
+deadline, fresh transport/token/port), FFmpeg reaping that keeps unconfirmed handles, combined
+cleanup errors and receiver generations are covered by tests. **No WebRTC hardware run exists**:
+the 2026-10-26 and 2026-10-30 acceptance campaigns left streaming `NOT RUN`; the only streaming
+hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved onto the TV).
+
+**D1 — duplication (next PR, opened only once #118 is closed):**
+- [x] branch `feat/d1-rust-screencast` (worktree `../control-TV-d1`, no PR): late-transport drops
+  no longer corrupt the receiver's timeline. Before, a frame discarded on a full queue lost its
+  duration (video RTP clock drifted against audio) and the next P-frames referenced a picture the
+  receiver never got (corrupted image until the next IDR); `dropped_frames` was never incremented
+  and `captured_frames` counted sent frames. Now each discarded unit is carried as
+  `MediaFrame::dropped_before` into WebRTC `Sample::prev_dropped_packets` (RTP time and sequence
+  numbers skipped, so the receiver conceals a loss), video waits for the next keyframe after a
+  drop (brief freeze instead of corruption; GOP = 1 s bounds it), and diagnostics report produced,
+  sent and dropped video frames and dropped audio packets. `MediaTransport::send_video/send_audio`
+  now take the `MediaFrame`. Engine: fmt, Clippy `-D warnings`, 34 tests; Tauri host: 102 tests.
+  Hardware: not run.
+- [ ] D1-3: VA-API H.264 in the engine with an explicit `libx264` fallback and its reason in the
+  diagnostics; software stays the default until decoding is confirmed on both TVs.
+- [ ] D4-4: FFmpeg must end after an abrupt host exit (SIGKILL); today it is assumed to stop on
+  EPIPE at its next write, unverified.
+- [ ] D1-9 (owner authorization): latency median/p95/worst, FPS, drops, A/V sync, CPU on both
+  Android TVs.
+- Acceptance: repeated start/stop leaves no FFmpeg, port or token; distinct visible errors; drops
+  counted and the picture frozen, never corrupted; on hardware median latency < 500 ms and 10 min
+  without A/V drift.
+
+**D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
+- [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
+- [ ] D2-B1, owner decision: an X11 virtual screen independent of any connector does not exist
+  under GNOME on Xorg `modesetting`; options are `evdi` (DKMS install, root) or keeping the forced
+  connector (root once per boot). No installation without authorization.
+- [ ] D4-5: persistent journal of the initial topology, modes, moved screens and PulseAudio route,
+  written before any change, replayed at next start and at exit, deleted only after a verified
+  restore (the current state lives in memory only and is lost on a crash).
+- Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
+  failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
+  initial state and no `control-tv-*` mode remains.
+
+**Blockers:** D1-B1 #118 open (single open PR rule); D1-B2 WebRTC advisories waived for local
+network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
+`rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
+authorization.
+
 Sprint 1 T-04 observability (2026-10-26): every command entering the Tauri-to-Python boundary now
 gets a correlation id that is also sent as the Python `requestId`. A bounded non-blocking channel
 writes durable JSONL events for receipt, bridge dispatch and terminal completion, failure or
@@ -72,7 +126,8 @@ now refuses deleting a missing or attached mode, like the real one (assumed, not
 hardware). Automated validation only; no display or TV was used.
 
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
-- [ ] **Open, owner decision:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
+- [x] **Owner decision taken 2026-10-25 (waiver below); the `webrtc` 0.21 migration stays open as
+  D1-B2:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
   constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`
   0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13. Only `crypto-bigint` >= 0.7.6 is
   patched; the newest `dtls` (0.17.2) still requires `p256` ^0.13, and `webrtc` 0.21 moves to the
@@ -190,6 +245,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   media pipeline (it already did). Automated validation only.
 
 ## Rust/WebRTC — état logiciel au 2026-10-21
+
+Historique : cette branche est dans `main` depuis #111 (`88f08d3`) ; l'état courant est dans la
+section « Screen streaming — D1, D2, D4 » en tête de ce plan.
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
 
