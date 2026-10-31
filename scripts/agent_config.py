@@ -241,9 +241,11 @@ def _link_problems(root: Path) -> list[str]:
         for entry in sorted(holder.iterdir()):
             if not entry.is_symlink():
                 continue
-            target = entry.readlink()
+            # `os.readlink` and `parents`, not `Path.readlink`/`is_relative_to` (Python 3.9):
+            # this script runs on whichever `python3` the shell finds, not on `.venv`.
+            target = Path(os.readlink(entry))
             resolved = entry.resolve()
-            if target.is_absolute() or not resolved.is_relative_to(repository):
+            if target.is_absolute() or repository not in (resolved, *resolved.parents):
                 problems.append(f"{directory}/{entry.name} links outside the repository")
             elif not resolved.exists():
                 problems.append(f"{directory}/{entry.name} is a broken link")
