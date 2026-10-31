@@ -79,14 +79,16 @@ essai réel autorisé par le propriétaire.
   issue, durée, code d'erreur ou timeout) dans un journal privé, persistant, borné et écrit hors du
   thread de l'interface. Aucun paramètre, appareil, texte, code d'appairage ou secret n'est journalisé.
   Le comptage `bridge_dispatched` prépare T-05 mais ne prouve pas la réception par la TV. Validation
-  automatisée uniquement ; la reproduction du blocage Ubuntu reste à faire sans commande matérielle.
+  automatisée, puis recette matérielle ciblée du 2026-10-30 : corrélation et absence de données
+  sensibles rapportées PASS. Ce résultat ne prouve pas l'effet physique des commandes.
 - [x] **T-05 — comptage corrélé des commandes (2026-10-27) :** le journal T-04 distingue désormais
   une commande utilisateur émise, une réponse positive du transport vers la TV et une confirmation
   issue de l'état relu sur la TV. Chaque événement conserve l'identifiant unique de l'appui et les
   compteurs cumulés émis/transmis/confirmés. Une seconde transmission portant le même identifiant est
   signalée ; deux appuis intentionnels restent distincts. Un résultat incertain est journalisé sans
   être rejoué. Détection bornée aux 1 024 transmissions récentes. Validation automatisée uniquement ;
-  aucun appareil n'a été commandé et la confirmation physique reste hors de portée du logiciel.
+  recette matérielle ciblée du 2026-10-30 : compteur de doublons à 0 sur le scénario essayé.
+  La confirmation physique reste hors de portée du logiciel.
 - [x] **Sécurité Rust — GHSA-qwgh-2vcv-g2f7 (2026-10-27) :** les deux lockfiles ne
   contiennent plus `block-buffer` 0.10.4. `digest` 0.10.7 utilise désormais une source locale
   identique à l'amont hors manifeste, raccordée à `control-tv-block-buffer-compat` : API 0.10,
@@ -97,8 +99,12 @@ essai réel autorisé par le propriétaire.
 - [x] **T-03 — déblocage de la télécommande après Assistant (2026-10-26) :** chaque requête
   télécommande de la fenêtre possède désormais une échéance UI de 25 s, légèrement supérieure à
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
-  occupé et ne renvoie jamais la commande. Tests automatisés uniquement ; la reproduction matérielle
-  2/2 de Claude n'a pas été relancée.
+  occupé et ne renvoie jamais la commande. Tests automatisés, puis recette matérielle ciblée du
+  2026-10-30 : interface Ubuntu restée utilisable après deux clics Assistant (PASS).
+- [ ] **T-06 — découverte persistante (FAIL matériel P1, 2026-10-30) :** une TV éveillée et
+  annoncée sur le réseau est restée absente de trois découvertes successives sur Ubuntu et le
+  téléphone. Garder une TV déjà appairée visible et reconnectable reste à concevoir et tester ;
+  aucun correctif n'est encore implémenté.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.

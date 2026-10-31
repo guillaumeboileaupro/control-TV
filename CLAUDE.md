@@ -5,6 +5,23 @@
 All shared rules, scope and definition of done are in `AGENTS.md` (imported above); this file only
 adds what is specific to Claude Code. Previous version: `.ai-private/agent-config-backups/`.
 
+## Permanent dashboard - mandatory on every prompt
+
+Load `.claude/skills/dashboard-maintenance/SKILL.md` at the start of every mission and apply its end-of-iteration checklist.
+
+Read `DASHBOARD.md` at the start of every prompt or resumed task, in addition to the
+shared rules imported from `AGENTS.md`. At the end of each work iteration, update
+the affected status, PR/CI evidence, blockers, next actions and changelog in
+`DASHBOARD.md`. Preserve the complete global list of unfinished work, including
+D1 duplication and D2 extension, even when the current task concerns another area.
+Synchronize `TODO.md` and `DEVELOPMENT_PLAN.md` for code changes.
+
+Never edit main directly or another agent's branch in order to update this dashboard:
+include changes in the active authorized PR, or report the pending update when blocked.
+Never fabricate hardware results or time estimates; only the coordinator sets the
+single min/max/median remaining-time column. Follow the owner's one-agent,
+one-open-PR rules. This dashboard complements, not replaces, `AGENTS.md`.
+
 ## Mandatory progress updates
 
 The mandatory documentation-update and time-reporting policies are inherited from
