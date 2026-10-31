@@ -7,6 +7,8 @@ adds what is specific to Claude Code. Previous version: `.ai-private/agent-confi
 
 ## Permanent dashboard - mandatory on every prompt
 
+Load `.claude/skills/dashboard-maintenance/SKILL.md` at the start of every mission and apply its end-of-iteration checklist.
+
 Read `DASHBOARD.md` at the start of every prompt or resumed task, in addition to the
 shared rules imported from `AGENTS.md`. At the end of each work iteration, update
 the affected status, PR/CI evidence, blockers, next actions and changelog in
