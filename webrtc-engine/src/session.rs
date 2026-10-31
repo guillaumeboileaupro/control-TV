@@ -20,6 +20,10 @@ pub struct MediaFrame {
     pub data: Bytes,
     pub duration: Duration,
     pub keyframe: bool,
+    /// Frames of the same track discarded just before this one because the transport was late.
+    /// The transport skips their RTP time and sequence numbers, so the timeline stays aligned
+    /// with the other track and the receiver sees a loss instead of a compressed timeline.
+    pub dropped_before: u16,
 }
 
 pub struct MediaStreams {
@@ -291,10 +295,13 @@ async fn pump_video(
         };
         let frame = frame?;
         let bytes = frame.data.len() as u64;
-        transport.send_video(frame.data, frame.duration).await?;
+        let dropped = u64::from(frame.dropped_before);
+        transport.send_video(frame).await?;
         let mut values = diagnostics.lock().await;
-        values.captured_frames += 1;
-        values.encoded_frames += 1;
+        values.captured_frames += 1 + dropped;
+        values.encoded_frames += 1 + dropped;
+        values.sent_video_frames += 1;
+        values.dropped_frames += dropped;
         values.sent_video_bytes += bytes;
     }
     Ok(())
@@ -319,8 +326,11 @@ async fn pump_audio(
         };
         let frame = frame?;
         let bytes = frame.data.len() as u64;
-        transport.send_audio(frame.data, frame.duration).await?;
-        diagnostics.lock().await.sent_audio_bytes += bytes;
+        let dropped = u64::from(frame.dropped_before);
+        transport.send_audio(frame).await?;
+        let mut values = diagnostics.lock().await;
+        values.sent_audio_bytes += bytes;
+        values.dropped_audio_packets += dropped;
     }
     Ok(())
 }
@@ -438,10 +448,10 @@ mod tests {
         async fn accept_answer(&self, _answer: SessionDescription) -> Result<(), EngineError> {
             Ok(())
         }
-        async fn send_video(&self, _data: Bytes, _duration: Duration) -> Result<(), EngineError> {
+        async fn send_video(&self, _frame: MediaFrame) -> Result<(), EngineError> {
             Ok(())
         }
-        async fn send_audio(&self, _data: Bytes, _duration: Duration) -> Result<(), EngineError> {
+        async fn send_audio(&self, _frame: MediaFrame) -> Result<(), EngineError> {
             Ok(())
         }
         async fn close(&self) -> Result<(), EngineError> {
@@ -826,6 +836,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn diagnostics_count_units_discarded_while_the_transport_was_late() {
+        let unit = |keyframe, dropped_before| {
+            Ok(MediaFrame {
+                data: Bytes::from_static(&[1, 2, 3]),
+                duration: Duration::from_millis(20),
+                keyframe,
+                dropped_before,
+            })
+        };
+        let (video_tx, video_rx) = mpsc::channel(2);
+        let (audio_tx, audio_rx) = mpsc::channel(2);
+        video_tx.try_send(unit(true, 0)).expect("first frame");
+        video_tx.try_send(unit(true, 4)).expect("resync frame");
+        audio_tx.try_send(unit(false, 0)).expect("first packet");
+        audio_tx.try_send(unit(false, 2)).expect("late packet");
+        drop((video_tx, audio_tx));
+        let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
+        pump_media(
+            MediaStreams {
+                video: video_rx,
+                audio: Some(audio_rx),
+            },
+            &FakeTransport::default(),
+            Arc::clone(&diagnostics),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .await
+        .expect("pump");
+        let values = diagnostics.lock().await.clone();
+        assert_eq!(values.sent_video_frames, 2);
+        assert_eq!(values.dropped_frames, 4);
+        assert_eq!(values.captured_frames, 6);
+        assert_eq!(values.encoded_frames, 6);
+        assert_eq!(values.dropped_audio_packets, 2);
+        assert_eq!(values.sent_audio_bytes, 6);
+    }
+
+    #[tokio::test]
     #[ignore = "explicit synthetic endurance check; set CONTROL_TV_ENDURANCE_SECONDS"]
     async fn bounded_audio_video_queues_remain_live_for_the_endurance_window() {
         let seconds = std::env::var("CONTROL_TV_ENDURANCE_SECONDS")
@@ -841,6 +889,7 @@ mod tests {
                     data: Bytes::from_static(&[0, 0, 0, 1, 0x65]),
                     duration: Duration::from_millis(10),
                     keyframe: true,
+                    dropped_before: 0,
                 }))
                 .expect("video queue high-water mark");
         }
@@ -850,6 +899,7 @@ mod tests {
                     data: Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
                     duration: Duration::from_millis(20),
                     keyframe: false,
+                    dropped_before: 0,
                 }))
                 .expect("audio queue high-water mark");
         }
@@ -865,6 +915,7 @@ mod tests {
                         data: Bytes::from_static(&[0, 0, 0, 1, 0x65]),
                         duration: Duration::from_millis(10),
                         keyframe: true,
+                        dropped_before: 0,
                     }))
                     .await
                     .is_err()
@@ -883,6 +934,7 @@ mod tests {
                         data: Bytes::from_static(&[0xF8, 0xFF, 0xFE]),
                         duration: Duration::from_millis(20),
                         keyframe: false,
+                        dropped_before: 0,
                     }))
                     .await
                     .is_err()

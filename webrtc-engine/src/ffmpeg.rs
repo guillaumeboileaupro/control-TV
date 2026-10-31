@@ -247,12 +247,13 @@ async fn read_h264(
     duration: Duration,
 ) {
     let mut parser = AnnexBAccessUnits::default();
+    let mut dropper = LagDropper::video();
     let mut chunk = vec![0_u8; READ_BUFFER];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) => {
                 if let Some(frame) = parser.finish(duration) {
-                    if !send_without_lag(&sender, frame) {
+                    if !dropper.offer(&sender, frame) {
                         return;
                     }
                 }
@@ -268,7 +269,9 @@ async fn read_h264(
                 };
                 for frame in frames {
                     // Interactive video prefers dropping an obsolete complete frame to building lag.
-                    let _ = sender.try_send(Ok(frame));
+                    if !dropper.offer(&sender, frame) {
+                        return;
+                    }
                 }
             }
             Err(error) => {
@@ -286,6 +289,7 @@ async fn read_ogg_opus(
     sender: mpsc::Sender<Result<MediaFrame, EngineError>>,
 ) {
     let mut parser = OggOpusPackets::default();
+    let mut dropper = LagDropper::audio();
     let mut chunk = vec![0_u8; READ_BUFFER];
     loop {
         match reader.read(&mut chunk).await {
@@ -296,7 +300,7 @@ async fn read_ogg_opus(
                         // Keep draining FFmpeg when the transport is late. Backpressure here would
                         // accumulate old Opus packets in the pipe and turn a transient stall into
                         // seconds of audible lag.
-                        if !send_without_lag(&sender, frame) {
+                        if !dropper.offer(&sender, frame) {
                             return;
                         }
                     }
@@ -316,13 +320,62 @@ async fn read_ogg_opus(
     }
 }
 
-fn send_without_lag(
-    sender: &mpsc::Sender<Result<MediaFrame, EngineError>>,
-    frame: MediaFrame,
-) -> bool {
-    match sender.try_send(Ok(frame)) {
-        Ok(()) | Err(TrySendError::Full(_)) => true,
-        Err(TrySendError::Closed(_)) => false,
+/// Discards media while the transport is late without corrupting what the receiver plays.
+///
+/// Each discarded unit is reported on the next unit sent (`dropped_before`), so the transport
+/// skips its RTP time instead of compressing the timeline against the other track. A discarded
+/// H.264 frame is the reference of the frames that follow it: those are discarded as well until
+/// the next keyframe, so the picture freezes briefly instead of decoding into corruption.
+struct LagDropper {
+    resync_on_keyframe: bool,
+    awaiting_keyframe: bool,
+    dropped: u16,
+}
+
+impl LagDropper {
+    fn video() -> Self {
+        Self {
+            resync_on_keyframe: true,
+            awaiting_keyframe: false,
+            dropped: 0,
+        }
+    }
+
+    fn audio() -> Self {
+        Self {
+            resync_on_keyframe: false,
+            awaiting_keyframe: false,
+            dropped: 0,
+        }
+    }
+
+    /// Queues `frame` or discards it; false once the session no longer reads the queue.
+    fn offer(
+        &mut self,
+        sender: &mpsc::Sender<Result<MediaFrame, EngineError>>,
+        mut frame: MediaFrame,
+    ) -> bool {
+        if sender.is_closed() {
+            return false;
+        }
+        if self.awaiting_keyframe && !frame.keyframe {
+            self.dropped = self.dropped.saturating_add(1);
+            return true;
+        }
+        frame.dropped_before = self.dropped;
+        match sender.try_send(Ok(frame)) {
+            Ok(()) => {
+                self.dropped = 0;
+                self.awaiting_keyframe = false;
+                true
+            }
+            Err(TrySendError::Full(_)) => {
+                self.dropped = self.dropped.saturating_add(1);
+                self.awaiting_keyframe = self.resync_on_keyframe;
+                true
+            }
+            Err(TrySendError::Closed(_)) => false,
+        }
     }
 }
 
@@ -378,6 +431,7 @@ fn video_frame(data: Vec<u8>, duration: Duration) -> MediaFrame {
         data: Bytes::from(data),
         duration,
         keyframe,
+        dropped_before: 0,
     }
 }
 
@@ -455,6 +509,7 @@ impl OggOpusPackets {
                             duration: opus_duration(&packet)?,
                             data: Bytes::from(packet),
                             keyframe: false,
+                            dropped_before: 0,
                         });
                     }
                 }
@@ -545,36 +600,74 @@ mod tests {
             .any(|item| item == ["-application", "lowdelay"]));
     }
 
+    fn unit(value: &'static [u8], keyframe: bool) -> MediaFrame {
+        MediaFrame {
+            data: Bytes::from_static(value),
+            duration: Duration::from_millis(33),
+            keyframe,
+            dropped_before: 0,
+        }
+    }
+
+    async fn next(receiver: &mut mpsc::Receiver<Result<MediaFrame, EngineError>>) -> MediaFrame {
+        receiver.recv().await.expect("queued unit").expect("media")
+    }
+
     #[tokio::test]
     async fn a_lagging_transport_never_accumulates_more_than_one_video_frame() {
         let (sender, mut receiver) = mpsc::channel(1);
-        let frame = |value| MediaFrame {
-            data: Bytes::from_static(value),
-            duration: Duration::from_millis(33),
-            keyframe: false,
-        };
+        let mut dropper = LagDropper::video();
 
-        assert!(send_without_lag(&sender, frame(b"old")));
-        assert!(send_without_lag(&sender, frame(b"discarded-while-late")));
-        assert_eq!(
-            receiver
-                .recv()
-                .await
-                .expect("old frame")
-                .expect("media")
-                .data,
-            b"old"[..]
-        );
-        assert!(send_without_lag(&sender, frame(b"fresh")));
-        assert_eq!(
-            receiver
-                .recv()
-                .await
-                .expect("fresh frame")
-                .expect("media")
-                .data,
-            b"fresh"[..]
-        );
+        assert!(dropper.offer(&sender, unit(b"old", true)));
+        assert!(dropper.offer(&sender, unit(b"discarded-while-late", false)));
+        assert_eq!(next(&mut receiver).await.data, b"old"[..]);
+        assert!(dropper.offer(&sender, unit(b"fresh", true)));
+        let fresh = next(&mut receiver).await;
+        assert_eq!(fresh.data, b"fresh"[..]);
+        assert_eq!(fresh.dropped_before, 1);
+    }
+
+    #[tokio::test]
+    async fn frames_referencing_a_discarded_frame_wait_for_the_next_keyframe() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let mut dropper = LagDropper::video();
+
+        assert!(dropper.offer(&sender, unit(b"idr", true)));
+        assert!(dropper.offer(&sender, unit(b"late-p", false)));
+        assert_eq!(next(&mut receiver).await.data, b"idr"[..]);
+        // The queue has room again, but these frames reference the discarded one.
+        assert!(dropper.offer(&sender, unit(b"broken-p1", false)));
+        assert!(dropper.offer(&sender, unit(b"broken-p2", false)));
+        assert!(receiver.try_recv().is_err());
+        assert!(dropper.offer(&sender, unit(b"next-idr", true)));
+        let resync = next(&mut receiver).await;
+        assert_eq!(resync.data, b"next-idr"[..]);
+        assert_eq!(resync.dropped_before, 3);
+        assert!(dropper.offer(&sender, unit(b"p-after-idr", false)));
+        assert_eq!(next(&mut receiver).await.dropped_before, 0);
+    }
+
+    #[tokio::test]
+    async fn discarded_audio_is_reported_on_the_next_packet_without_waiting() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let mut dropper = LagDropper::audio();
+
+        assert!(dropper.offer(&sender, unit(b"first", false)));
+        assert!(dropper.offer(&sender, unit(b"late-1", false)));
+        assert!(dropper.offer(&sender, unit(b"late-2", false)));
+        assert_eq!(next(&mut receiver).await.data, b"first"[..]);
+        assert!(dropper.offer(&sender, unit(b"resumed", false)));
+        let resumed = next(&mut receiver).await;
+        assert_eq!(resumed.data, b"resumed"[..]);
+        assert_eq!(resumed.dropped_before, 2);
+    }
+
+    #[tokio::test]
+    async fn a_closed_queue_stops_the_reader() {
+        let (sender, receiver) = mpsc::channel(1);
+        drop(receiver);
+        assert!(!LagDropper::video().offer(&sender, unit(b"idr", true)));
+        assert!(!LagDropper::audio().offer(&sender, unit(b"opus", false)));
     }
 
     #[test]

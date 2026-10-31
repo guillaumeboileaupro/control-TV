@@ -131,11 +131,15 @@ pub enum EngineState {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Diagnostics {
+    /// Video frames produced by the capture/encoder, whether sent or discarded.
     pub captured_frames: u64,
     pub encoded_frames: u64,
+    pub sent_video_frames: u64,
     pub sent_video_bytes: u64,
     pub sent_audio_bytes: u64,
+    /// Discarded because the transport was late, counted when the next unit of the track is sent.
     pub dropped_frames: u64,
+    pub dropped_audio_packets: u64,
     pub reconnect_attempts: u32,
 }
 
