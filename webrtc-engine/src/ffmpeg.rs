@@ -133,6 +133,7 @@ impl ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        end_with_host(&mut command);
         let mut child = command
             .spawn()
             .map_err(|error| EngineError::MediaSource(error.to_string()))?;
@@ -143,6 +144,33 @@ impl ProcessRunner {
         Ok((child, stdout))
     }
 }
+
+/// `kill_on_drop` cannot run when the host itself is killed (SIGKILL, OOM, crash): the kernel then
+/// sends SIGKILL to the child so no capture or encoder survives the session that owned it.
+///
+/// Linux delivers it when the *thread* that spawned the child ends. The engine spawns from Tokio
+/// runtime worker threads, which live as long as the runtime; never spawn from `spawn_blocking`.
+#[cfg(target_os = "linux")]
+fn end_with_host(command: &mut Command) {
+    let host = std::process::id();
+    // SAFETY: the closure runs in the forked child before `exec`. `prctl`, `getppid` and `_exit`
+    // are async-signal-safe, and the closure only reads a copied integer.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The host may have died between `fork` and `prctl`: nothing would signal us then.
+            if u32::try_from(libc::getppid()).ok() != Some(host) {
+                libc::_exit(1);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn end_with_host(_command: &mut Command) {}
 
 impl Default for ProcessRunner {
     fn default() -> Self {
@@ -1017,6 +1045,74 @@ mod tests {
             ));
             assert!(source.video_child.is_none());
         }
+    }
+
+    const HOST_ENV: &str = "CONTROL_TV_TEST_MEDIA_HOST";
+
+    /// Not a test on its own: the host process `media_processes_end_when_their_host_is_killed`
+    /// starts and kills. It spawns a long-lived child the way a session does and reports its pid.
+    #[test]
+    fn media_host_for_the_kill_test() {
+        if std::env::var_os(HOST_ENV).is_none() {
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let child = tokio::spawn(async { ProcessRunner::new("sleep").spawn(&["60".into()]) })
+                .await
+                .expect("spawn task")
+                .expect("child");
+            println!("child-pid {}", child.0.id().expect("pid"));
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(child);
+        });
+    }
+
+    fn running(pid: u32) -> bool {
+        // A zombie has ended; only its new parent has not reaped it yet.
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| stat.rsplit(") ").next().map(str::to_owned))
+            .is_some_and(|fields| !fields.starts_with('Z'))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn media_processes_end_when_their_host_is_killed() {
+        use std::io::BufRead;
+        let mut host = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "ffmpeg::tests::media_host_for_the_kill_test",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HOST_ENV, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("host");
+        let mut lines = std::io::BufReader::new(host.stdout.take().expect("host stdout")).lines();
+        let pid: u32 = lines
+            .by_ref()
+            .map_while(Result::ok)
+            // The harness prints `test <name> ... ` before the test's own output, on the same line.
+            .find_map(|line| line.split_once("child-pid ").map(|(_, pid)| pid.to_owned()))
+            .expect("child pid")
+            .parse()
+            .expect("numeric pid");
+        assert!(running(pid), "the child runs while its host lives");
+
+        host.kill().expect("SIGKILL the host");
+        host.wait().expect("reap the host");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while running(pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!running(pid), "the child outlived its killed host");
     }
 
     #[tokio::test]
