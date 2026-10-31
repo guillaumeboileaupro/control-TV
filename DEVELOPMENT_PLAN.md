@@ -1,5 +1,11 @@
 # Development plan
 
+Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
+dependency from 0.6.4 to the patched 0.6.5 release for CVE-2026-119194, CVE-2026-119195,
+CVE-2026-119196 and CVE-2026-119197. The dependency remains supplied through `adb-shell` and
+`rsa`; no direct dependency, audit waiver or security exception is introduced. Validation is
+automated only and does not imply any device or hardware result.
+
 Sprint 1 T-04 observability (2026-10-26): every command entering the Tauri-to-Python boundary now
 gets a correlation id that is also sent as the Python `requestId`. A bounded non-blocking channel
 writes durable JSONL events for receipt, bridge dispatch and terminal completion, failure or
@@ -7,7 +13,9 @@ timeout, including duration and stable error code. Logs rotate at 2 MiB with pri
 they deliberately exclude arguments, free-form errors, device data, pairing codes, text and
 credentials. This makes post-freeze diagnosis possible without making disk I/O part of the UI hot
 path. `bridge_dispatched` is only a local attempt count for the future T-05 receiver counter, not
-evidence that a TV received or applied a command. Automated validation only; no device was used.
+evidence that a TV received or applied a command. Automated validation passed. During the
+targeted 2026-10-30 hardware recipe, correlation and the reported absence of sensitive data passed;
+this still does not prove a physical command effect.
 
 Sprint 1 T-05 command counting (2026-10-27): the same non-blocking T-04 journal now records
 `command_emitted` only for state-changing TV orders, `command_transmitted` only after the shared
@@ -17,7 +25,8 @@ transmitted, confirmed and multiple-transmission counts. The writer remembers at
 recent transmission ids and flags a second transmission with the same correlation id; repeated
 intentional presses get new ids and are not treated as duplicates. A bridge timeout or transport
 failure is recorded as `command_delivery_uncertain` and is never retried. These are software
-observations, not proof of a physical effect. Automated validation only; no TV was contacted.
+observations, not proof of a physical effect. Automated validation passed. The targeted 2026-10-30
+hardware scenario reported a zero duplicate counter (PASS for that scenario only).
 
 Finalisation de #115 (2026-10-27, SHA `1146042`) : la branche est réconciliée avec `main` et
 T-04 est indépendante des dépendances Rust (aucun changement de `Cargo.toml` ou `Cargo.lock`).
@@ -40,7 +49,13 @@ promise was lost; the existing Rust bridge deadline alone could not restore UI s
 case. Remote UI calls now have a 25-second caller-side deadline, wider than Rust's 20-second
 deadline. Expiration uses the existing `bridge_timeout` failure path, clears the pending state and
 never retries or replays the possibly delivered key. Automated tests cover lost replies, normal
-answers and host failures. No TV command or hardware retest was run for this correction.
+answers and host failures. During the targeted 2026-10-30 hardware recipe, the Ubuntu interface
+remained usable after two Assistant clicks (PASS for that scenario only).
+
+T-06 persistent discovery (hardware FAIL P1, 2026-10-30): one awake TV that was announced on the
+network remained absent from three consecutive discovery attempts on Ubuntu and the phone. No
+correction is implemented. The next change must keep an already paired TV visible and reconnectable
+without turning stale identity or address data into a false availability claim.
 
 Security maintenance (2026-10-27): GHSA-qwgh-2vcv-g2f7 affected `block-buffer` 0.10.4 in both
 Rust lockfiles through `digest` 0.10.7. Directly selecting 0.12.1 is incompatible with the

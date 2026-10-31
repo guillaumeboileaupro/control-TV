@@ -25,6 +25,23 @@ work. `DEVELOPMENT_PLAN.md` is the source of truth for scope and progress; read 
 - Go is rejected by the owner. Architecture follows owner decisions and validated constraints,
   not exploratory comparisons.
 
+## Permanent project dashboard (mandatory)
+
+`DASHBOARD.md` is the owner's orchestration dashboard and a mandatory companion to this file.
+Load skill `dashboard-maintenance` (`.agents/skills/dashboard-maintenance/SKILL.md`) for every mission and apply its start/end checklists.
+At the **start of every mission or resumed prompt**, read it alongside `TODO.md` and
+`DEVELOPMENT_PLAN.md`, verify live PR/CI data, and use its full list of work, priorities,
+responsibilities and dependencies instead of remembering only the current mission.
+
+At the **end of each work iteration**, update all affected dashboard rows, actual
+implementation/CI/hardware status, next actions, blockers and the update log. Keep all
+unrelated unfinished work visible. Changes to `DASHBOARD.md`, `TODO.md` and
+`DEVELOPMENT_PLAN.md` go in the mission's existing branch/PR; never bypass branch rules
+or alter another agent's PR. In read-only sessions or when a write is blocked, report the
+precise pending update rather than claiming it landed. Only the coordinator estimates hours;
+agents report facts, not estimated time. Present remaining times in one column
+`Temps restant (min / max / méd.)`. Maintain one active agent and one open PR repository-wide.
+
 ## Mandatory common rules
 
 1. [rule:one-mission] One active mission per agent; finish or hand it off before another.
@@ -61,13 +78,13 @@ work. `DEVELOPMENT_PLAN.md` is the source of truth for scope and progress; read 
 14. [rule:remaining-estimate] Project estimates belong to the coordinator. Agents must not
     measure elapsed time or estimate remaining hours.
     Project-wide time estimates are managed by the coordinator, not by coding agents.
-15. [rule:progress-docs] For every project change, update `TODO.md` and
+15. [rule:progress-docs] For every project change, update `DASHBOARD.md`, `TODO.md` and
     `DEVELOPMENT_PLAN.md` as part of the same branch/PR, before handoff. Keep changes
     limited to the affected tasks and D0-D4 phases; mark complete only work actually done,
     add newly discovered issues and unfinished work, and correct stale dependencies or
     statements. Clearly distinguish implementation, automated checks/CI and real hardware
     validation. Preserve relevant history and never silently remove unfinished tasks. Verify
-    that both files reflect the delivered change even when no checkbox changes are needed.
+    that all three files reflect the delivered change even when no checkbox changes are needed.
     For read-only audits, report necessary follow-up edits without modifying other PRs.
 
 ## Temporary and build cleanup (blocking)
@@ -90,7 +107,7 @@ clean` and `dist-clean` stay limited to reproducible project-owned output (skill
 ## Skills
 
 Project skills: one source, `.agents/skills/<name>/SKILL.md` (Codex), linked as
-`.claude/skills/<name>` for Claude. Mission skills: `git-worktree-pr-workflow`,
+`.claude/skills/<name>` for Claude. Mission skills: `dashboard-maintenance`, `git-worktree-pr-workflow`,
 `independent-code-review`, `hardware-safety`, `development-reporting`, `agent-token-efficiency`;
 quality: `python-project-quality`, `solid-code-design`, `typescript-no-any`,
 `conventional-commits-pr`; domain: disk hygiene, multiplatform release (`.deb`, `.apk`), CI
@@ -122,7 +139,7 @@ and `/graphify`.
 ## Handoff and definition of done
 
 Scope complete; relevant checks run; hardware claims classified (simulated, CI, hardware);
-cleanup done and footprint recorded; `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized as required;
+cleanup done and footprint recorded; `DASHBOARD.md`, `TODO.md` and `DEVELOPMENT_PLAN.md` synchronized as required;
 PR workflow respected; the report of skill `development-reporting`
 gives the other agent
 everything needed to continue (objective, branch/PR, files, interfaces, decisions, dependencies,
