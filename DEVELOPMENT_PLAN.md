@@ -27,10 +27,33 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   sent and dropped video frames and dropped audio packets. `MediaTransport::send_video/send_audio`
   now take the `MediaFrame`. Engine: fmt, Clippy `-D warnings`, 34 tests; Tauri host: 102 tests.
   Hardware: not run.
-- [ ] D1-3: VA-API H.264 in the engine with an explicit `libx264` fallback and its reason in the
-  diagnostics; software stays the default until decoding is confirmed on both TVs.
-- [ ] D4-4: FFmpeg must end after an abrupt host exit (SIGKILL); today it is assumed to stop on
-  EPIPE at its next write, unverified.
+- [x] D1-3 (branch, automation only): `VideoEncoder::Vaapi { render_node, qp }` reuses D0's
+  validated shape (`-vaapi_device`, `format=nv12,hwupload`, `h264_vaapi` constant QP, no bitrate
+  target) with `constrained_baseline`, no B-frames, GOP = fps and AUDs. A VA-API process that
+  ends, stays silent or emits only a partial picture within 3 s is reaped, then `libx264` starts and
+  the diagnostics report `video_encoder` and `encoder_fallback`; a missing FFmpeg stays an error.
+  If the failed process cannot be reaped the start fails and it stays tracked. Tauri passes
+  `VideoEncoder::Software` explicitly until a VA-API stream is decoded on both TVs (GPU and TV use
+  need authorization).
+- [x] D4-4 (branch, automation only): every FFmpeg child gets `PR_SET_PDEATHSIG` = SIGKILL, and
+  exits if its host already died between `fork` and `prctl`. A real-process test SIGKILLs a host
+  that spawned a child from a Tokio worker and fails without the fix ("the child outlived its
+  killed host"). Constraint: Linux ties the signal to the spawning thread, so spawning stays on
+  runtime workers, never `spawn_blocking`. `libc` becomes a direct Linux dependency (already
+  locked: 0.2.191 engine, 0.2.189 Tauri; no new crate).
+- [x] Agent-configuration CLI (branch): `python3 scripts/agent_config.py check` crashed with
+  `AttributeError` on the system Python 3.7 because `Path.readlink`/`Path.is_relative_to` need
+  3.9; it now uses `os.readlink` and `resolved.parents`, with a test without those APIs and a
+  subprocess test of the real command. Verified on Python 3.7 and 3.10. The `mypy` import errors
+  seen earlier came from an ad-hoc `uv run` without extras, not from the repository:
+  `dev.py setup` installs them.
+- Local checks at the end of this slice (no CI: no PR may open while #118/#119 are open): engine
+  fmt, Clippy `-D warnings`, 40 tests (the D1-3 commit alone: 38); Tauri `dev.py rust-check` 102
+  tests; `dev.py check` 2,777 passed / 8 skipped with the system Python 3.7; coverage 98.87 %;
+  `rust-audit`, `webrtc-audit` (waivers only) and `npm-audit` pass. `python-audit` **fails on
+  `main` too**: `pyasn1` 0.6.4 has CVE-2026-119194…119197, fixed in 0.6.5; this branch does not
+  touch `uv.lock`, and the bump belongs to a separate security change, so CI will fail until it
+  lands.
 - [ ] D1-9 (owner authorization): latency median/p95/worst, FPS, drops, A/V sync, CPU on both
   Android TVs.
 - Acceptance: repeated start/stop leaves no FFmpeg, port or token; distinct visible errors; drops
@@ -49,7 +72,8 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
 
-**Blockers:** D1-B1 #118 open (single open PR rule); D1-B2 WebRTC advisories waived for local
+**Blockers:** D1-B1 #118 and #119 open (single open PR rule; this branch merges #119's pushed
+head `acee470` for the dashboard, without touching that branch); D1-B2 WebRTC advisories waived for local
 network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
 `rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
 authorization.

@@ -16,7 +16,7 @@ essai réel autorisé par le propriétaire.
 |---|---|---|---|---|
 | D1-1 | Capture X11 de la géométrie fournie par le bail Python (`x11grab`, mise à l'échelle séparée) | Fusionné | Oui | HLS seulement ; WebRTC non |
 | D1-2 | H.264 logiciel `libx264` zerolatency baseline, AUD, GOP = 1 s | Fusionné | Oui | Non (WebRTC) |
-| D1-3 | H.264 matériel VA-API avec repli logiciel explicite dans le moteur Rust | **Non développé** (VA-API CQP mesuré à la main par D0, #79) | — | — |
+| D1-3 | H.264 matériel VA-API avec repli logiciel explicite dans le moteur Rust | **Branche** (désactivé par défaut dans Tauri) | Oui (faux `ffmpeg` : réussite, arrêt, silence, image partielle) | Non (GPU non utilisé) |
 | D1-4 | Audio Opus depuis la source monitor PulseAudio du bail | Fusionné | Oui | Non |
 | D1-5 | WebRTC ICE/DTLS/SRTP, signalisation TLS à jeton unique, LAN uniquement | Fusionné | Oui (deux pairs locaux, décodage FFmpeg) | Non |
 | D1-6 | Récepteur Android TV Kotlin/libwebrtc (écrans d'état, générations, fermeture) | Fusionné | Tests JVM, APK debug CI | Non installé |
@@ -31,7 +31,7 @@ essai réel autorisé par le propriétaire.
 | D4-1 | Arrêt fiable : Stop annule attente/négociation/reconnexion, FFmpeg récolté, erreurs combinées | Fusionné | Oui | Non |
 | D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
 | D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
-| D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Non développé** (fin supposée sur EPIPE, non vérifiée) | — | — |
+| D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Branche** (`PR_SET_PDEATHSIG`) | Oui (processus réels ; le test échoue sans le correctif) | Non |
 | D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Non développé** (état en mémoire seulement) | — | — |
 | D4-6 | Aucune session fantôme : un seul bail émetteur, générations côté récepteur | Fusionné | Oui | Non |
 
@@ -40,9 +40,19 @@ essai réel autorisé par le propriétaire.
 - [x] Moteur, récepteur, bail et intégration Tauri (D1-1, D1-2, D1-4 à D1-7) : fusionnés via #111.
 - [ ] **D1-8 :** pertes sous retard sans corruption ni dérive (implémenté et testé sur la branche ;
   à publier en PR D1 puis revue indépendante).
-- [ ] **D1-3 :** encodeur VA-API dans le moteur Rust avec repli `libx264` explicite et motif
-  exposé dans les diagnostics ; activé par défaut seulement après décodage confirmé sur les deux TV.
-- [ ] **D4-4 :** garantir la fin de FFmpeg après un arrêt brutal de l'hôte (test sur processus réel).
+- [x] **D1-3 (branche, automatisé) :** `VideoEncoder::Vaapi { render_node, qp }` (nœud
+  `/dev/dri/renderDNNN`, QP 1–51 validés) produit `-vaapi_device`, `format=nv12,hwupload`,
+  `h264_vaapi` en QP constant, profil `constrained_baseline`, sans débit cible (mode qui échoue sur
+  l'Intel mesuré). Sans première image complète dans les 3 s (processus arrêté, silencieux ou image
+  partielle), le processus VA-API est récolté puis `libx264` démarre ; `video_encoder` et
+  `encoder_fallback` le disent dans les diagnostics. Un FFmpeg introuvable reste une erreur, jamais
+  un repli. Tauri garde `Software` explicitement.
+- [ ] **D1-3, suite :** proposer VA-API dans Tauri seulement après décodage confirmé sur les deux TV
+  (essai GPU et TV avec autorisation).
+- [x] **D4-4 (branche, automatisé) :** chaque enfant FFmpeg reçoit `PR_SET_PDEATHSIG` = SIGKILL
+  (et s'arrête si l'hôte est déjà mort au moment du `fork`) ; un vrai hôte tué par SIGKILL ne
+  laisse plus son enfant vivant. Contrainte : lancer depuis un thread de travail Tokio, jamais
+  depuis `spawn_blocking` (le signal suit la fin du thread lanceur).
 - [ ] **D1-9 :** recette matérielle WebRTC sur les deux Android TV (autorisation requise).
 - **Dépendances :** #118 terminée ; revue indépendante ; CI verte ; dérogations WebRTC valides.
 - **Critères d'acceptation :** démarrage/arrêt répétés sans processus FFmpeg, port ni jeton
@@ -66,9 +76,23 @@ essai réel autorisé par le propriétaire.
   après Stop, échec, Ctrl-C ou SIGKILL puis relance, la topologie, les modes et la route audio
   sont identiques à l'état initial ; aucun mode `control-tv-*` restant.
 
+### Outils en ligne de commande
+
+- [x] **`python3 scripts/agent_config.py check` (branche) :** plantait avec `AttributeError` sur le
+  `python3` système 3.7, alors que l'outil est documenté pour lui : `Path.readlink` et
+  `Path.is_relative_to` n'existent qu'à partir de 3.9. Remplacés par `os.readlink` et
+  `resolved.parents` ; test sans ces API et test de la commande réelle (code de sortie, aucune
+  trace). Vérifié avec Python 3.7 et 3.10 ; `dev.py check`, `version-check`, `type-rules`,
+  `disk-usage` passent aussi sous 3.7 et `d1 --help` sous `.venv`.
+
 ### Blocages
 
-- **D1-B1 :** #118 ouverte — aucune PR Rust ne peut être ouverte avant sa clôture.
+- **Sécurité Python (aussi sur `main`) :** `pyasn1` 0.6.4 — CVE-2026-119194 à 119197, corrigés
+  en 0.6.5 ; `dev.py python-audit` échoue. Montée de version à faire dans une PR de sécurité
+  distincte ; cette branche ne modifie pas `uv.lock`.
+
+- **D1-B1 :** #118 et #119 ouvertes — aucune PR Rust avant leur clôture. La branche intègre la
+  tête poussée de #119 (`acee470`, tableau de bord) sans modifier la branche de son auteur.
 - **D1-B2 :** dérogations RUSTSEC-2026-0387/RUSTSEC-2025-0141 limitées au réseau local et à leur
   date d'expiration ; `webrtc` 0.21 conserve `digest` 0.10 via `rtc-crypto` et change l'API de transport.
 - **D2-B1 :** écran virtuel indépendant (ci-dessus).
