@@ -1,5 +1,9 @@
 # control-TV — TODO
 
+- [x] **Sécurité Python — pyasn1 0.6.5 (2026-10-31) :** le verrou remplace `pyasn1` 0.6.4,
+  transitif via `adb-shell` et `rsa`, par la première version corrigeant CVE-2026-119194,
+  CVE-2026-119195, CVE-2026-119196 et CVE-2026-119197. Aucune dérogation ni dépendance
+  directe n'est ajoutée. Validation automatisée uniquement, sans interaction matérielle.
 - [x] **T-04 — observabilité des commandes (2026-10-26) :** chaque appel Tauri reçoit un identifiant
   transmis au bridge Python et produit des événements JSONL structurés (réception, remise au bridge,
   issue, durée, code d'erreur ou timeout) dans un journal privé, persistant, borné et écrit hors du

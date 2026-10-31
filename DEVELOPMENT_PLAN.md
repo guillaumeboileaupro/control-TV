@@ -1,5 +1,11 @@
 # Development plan
 
+Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
+dependency from 0.6.4 to the patched 0.6.5 release for CVE-2026-119194, CVE-2026-119195,
+CVE-2026-119196 and CVE-2026-119197. The dependency remains supplied through `adb-shell` and
+`rsa`; no direct dependency, audit waiver or security exception is introduced. Validation is
+automated only and does not imply any device or hardware result.
+
 Sprint 1 T-04 observability (2026-10-26): every command entering the Tauri-to-Python boundary now
 gets a correlation id that is also sent as the Python `requestId`. A bounded non-blocking channel
 writes durable JSONL events for receipt, bridge dispatch and terminal completion, failure or
