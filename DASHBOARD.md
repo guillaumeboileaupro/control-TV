@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR active connue au 31/10 | **#118** - migration des anciens certificats ; HEAD vérifié `0a19fd7` |
+| PR actives vérifiées au 31/10 | **#118** - migration des anciens certificats (`0a19fd7`) ; **#119** - dashboard (`fd1ae16`), correction CI du lien de skill appliquée localement, rerun en attente |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -95,3 +95,4 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | Date | Événement |
 |---|---|
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
+| 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
