@@ -27,7 +27,7 @@ essai réel autorisé par le propriétaire.
 | D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Écarté par l'architecture D2 du 2026-11-01** : aucun evdi ni nouveau système ; maintien du connecteur RandR forcé | — | — |
 | D2-3 | Diffuser uniquement l'écran étendu (géométrie du bail = cet écran) | Fusionné | Oui | Non (WebRTC) |
 | D2-4 | Déplacement des fenêtres sur l'écran étendu | Dépend de GNOME | — | 1 observation HLS |
-| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **Branche D2** : retrait idempotent, journal privé atomique avant mutation et reprise vérifiée au prochain processus | Oui (faux `xrandr`, reprise après plantage simulé) | Non |
+| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **Branche D2** : retrait idempotent, journal privé atomique avant mutation et reprise vérifiée au prochain processus ; **branche `feat/d2-startup-x11-restore`** : reprise dès le démarrage du bridge, réglages du propriétaire conservés, diffusion vivante protégée | Oui (faux `xrandr`, reprise après plantage simulé, verrou libéré par un vrai SIGKILL) | Non |
 | D4-1 | Arrêt fiable : Stop annule attente/négociation/reconnexion, FFmpeg récolté, erreurs combinées | Fusionné | Oui | Non |
 | D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
 | D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
@@ -84,8 +84,24 @@ essai réel autorisé par le propriétaire.
   conservé et signalé (stderr au démarrage, erreur au `start`). Les tests utilisent désormais un
   `XDG_STATE_HOME` temporaire : aucun test ne peut lire un vrai journal et rejouer `pactl` ou
   `xrandr` sur le poste. Tests automatisés uniquement ; matériel NOT RUN.
+- [x] **D2/D4-5, restauration X11 au démarrage (branche `feat/d2-startup-x11-restore`, issue de
+  D4-5, sans PR) :** le bridge termine la restauration de l'écran étendu d'un processus tué dès son
+  démarrage, avant le son, sans attendre une nouvelle diffusion ; l'une n'empêche jamais l'autre et
+  un échec est signalé sur stderr avec journal conservé et nouvelle tentative au démarrage suivant.
+  La reprise ne défait que ce qui appartient encore au processus tué : un écran replacé par le
+  propriétaire depuis reste où il est, une sortie qui n'affiche plus le mode TV n'est pas éteinte,
+  un écran débranché ne bloque plus le journal ; le journal enregistre le décalage appliqué (un
+  journal plus ancien sans décalage garde la remise en place complète). Le journal partagé
+  (`restore_journal.py`) porte désormais un verrou `flock` du propriétaire, libéré par le noyau au
+  SIGKILL : une reprise (démarrage, autre processus, nouvel objet du contrôleur) ne défait jamais
+  une diffusion vivante. Défauts corrigés : chaque `extension_output()` du contrôleur recréait un
+  moniteur dont la reprise démontait l'écran étendu en cours ; une extension refusée nettoyait
+  l'écran TV d'une autre diffusion ; une reprise hors session X11 levait une erreur non gérée au
+  démarrage. Tests automatisés uniquement ; matériel NOT RUN.
 - [ ] **D4-5, preuve matérielle (autorisation) :** tuer l'application pendant une diffusion avec
   son, relancer, vérifier que le son revient sur la sortie d'origine.
+- [ ] **D2/D4-5, preuve matérielle X11 (autorisation) :** tuer l'application pendant une
+  extension (TV à gauche), relancer sans diffuser, comparer `xrandr --verbose` à l'état initial.
 - [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
   Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
   réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.

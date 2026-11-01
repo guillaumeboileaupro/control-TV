@@ -85,8 +85,23 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   kept, unplugged output, repeatability, unconfirmed and invalid journals; probes confirm the
   journal and start-up recovery tests fail without the fix. Python 2,822 passed / 8 skipped,
   coverage 98.89 %. Hardware NOT RUN.
+- [x] D2/D4-5 start-up X11 restoration (branch `feat/d2-startup-x11-restore`, from D4-5, no PR
+  while #120 and #121 are open): `bridge.main` recovers a killed run's extended screen
+  (`recover_interrupted_extension`) then its sound, each independently, stderr report and journal
+  kept on failure, retried at the next start. The recovery undoes only what is still the killed
+  run's: screens are moved back only while at the journaled shift (new `shift` field; an older
+  journal keeps the full put-back), the output is turned off only while it shows the TV mode, an
+  unplugged screen no longer pins the journal. `RestoreJournal` gains an owner `flock` on a
+  sibling `.lock` file (claimed before any change, released at verified clear, freed by the kernel
+  on SIGKILL), so no recovery undoes a live stream. Fixed: `extension_output()` built a monitor
+  whose recovery tore down the running extension; a refused `create` cleaned another stream's TV
+  output; a recovery outside X11 raised an unhandled `InvalidStreamConfiguration` at start-up.
+  Probes: removing the start-up call or the owner check fails the new tests. Python 2,851 passed
+  / 8 skipped, coverage 98.91 % (virtual_display and restore_journal 100 %). Hardware NOT RUN.
 - [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
   check the sound returns to the original output.
+- [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
+  restart without streaming, compare `xrandr --verbose` with the initial state.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
