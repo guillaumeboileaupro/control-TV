@@ -15,7 +15,7 @@ cleanup errors and receiver generations are covered by tests. **No WebRTC hardwa
 the 2026-10-26 and 2026-10-30 acceptance campaigns left streaming `NOT RUN`; the only streaming
 hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved onto the TV).
 
-**D1 — duplication (next PR, opened only once #118 is closed):**
+**D1 — duplication (PR #120, branch `feat/d1-rust-screencast`, `main` merged after #118/#119):**
 - [x] branch `feat/d1-rust-screencast` (worktree `../control-TV-d1`, no PR): late-transport drops
   no longer corrupt the receiver's timeline. Before, a frame discarded on a full queue lost its
   duration (video RTP clock drifted against audio) and the next P-frames referenced a picture the
@@ -54,6 +54,29 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   `main` too**: `pyasn1` 0.6.4 has CVE-2026-119194…119197, fixed in 0.6.5; this branch does not
   touch `uv.lock`, and the bump belongs to a separate security change, so CI will fail until it
   lands.
+- [x] PR #120 finalisation (automation only): (1) Opus left FFmpeg in one-second Ogg pages behind
+  a 32 KiB pipe buffer — measured, no packet within two seconds, then bursts, so sound lagged the
+  picture; `-page_duration 20000` and `-flush_packets 1` (also for H.264, explicit rather than
+  version-dependent). Real-FFmpeg tests replace only the live input with a real-time `lavfi`
+  source and assert pacing measured from the first unit (≥ 10 units spread ≥ 500 ms in the next
+  second), robust under load; the Opus one fails on the old arguments. (2) Pairing accepted only the
+  first TCP connection, so a LAN scan or an aborted receiver attempt cancelled the session; now
+  connections authenticate concurrently (8 at most, 5 s each), the first one with the token wins,
+  others are closed, and the token stays single-use. (3) Tauri relaunched the receiver for any
+  media error, including local FFmpeg, capture and cleanup failures; only transport failures and
+  negotiation timeouts now consume the two-attempt budget. A failed `start_media` looped back to a
+  consumed signaling server and panicked; it now returns. (4) VA-API is selected through
+  `VideoEncoder::preferred("/dev/dri")` (first render node, QP 24) with the automatic `libx264`
+  fallback. (5) An end-to-end test drives the session controller, TLS pairing with a simulated
+  receiver, WebRTC and the production `FfmpegMediaSource` (synthetic inputs via a stand-in
+  `ffmpeg` that execs the real one) until H.264 with an IDR and Opus samples arrive, then checks
+  that both FFmpeg processes are gone after Stop. (6) A Tauri test leaked one fake bridge script
+  per run in the temporary directory. Local results: engine 47 tests (3 consecutive runs),
+  Tauri 104, Python 2,780 passed / 8 skipped, coverage 98.87 %, all four audits pass.
+- [ ] D1-3 hardware proof (authorization): the fallback covers the encoder only, not a stream a TV
+  cannot decode; confirm VA-API decoding on both Android TVs.
+- [ ] Known latency floor: a picture is emitted at the next AUD (one frame, 33 ms at 30 fps);
+  measure with D1-9 before optimizing.
 - [ ] D1-9 (owner authorization): latency median/p95/worst, FPS, drops, A/V sync, CPU on both
   Android TVs.
 - Acceptance: repeated start/stop leaves no FFmpeg, port or token; distinct visible errors; drops
@@ -72,8 +95,7 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
 
-**Blockers:** D1-B1 #118 and #119 open (single open PR rule; this branch merges #119's pushed
-head `acee470` for the dashboard, without touching that branch); D1-B2 WebRTC advisories waived for local
+**Blockers:** D1-B1 lifted (#118 and #119 merged, #120 is the only open PR); D1-B2 WebRTC advisories waived for local
 network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
 `rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
 authorization.
