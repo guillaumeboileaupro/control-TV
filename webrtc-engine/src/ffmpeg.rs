@@ -93,6 +93,10 @@ impl ProcessRunner {
             "0".into(),
             "-bsf:v".into(),
             "h264_metadata=aud=insert".into(),
+            // Each access unit reaches the pipe as soon as it is encoded, whatever the FFmpeg
+            // version's default for non-seekable outputs.
+            "-flush_packets".into(),
+            "1".into(),
             "-f".into(),
             "h264".into(),
             "pipe:1".into(),
@@ -119,6 +123,13 @@ impl ProcessRunner {
             "20".into(),
             "-b:a".into(),
             format!("{}k", config.audio.bitrate_kbps),
+            // The Ogg muxer groups packets into pages of one second by default and the pipe
+            // buffers 32 KiB: measured, no packet reached the reader within two seconds, so audio
+            // lagged the picture. One 20 ms packet per page, flushed at once.
+            "-page_duration".into(),
+            "20000".into(),
+            "-flush_packets".into(),
+            "1".into(),
             "-f".into(),
             "opus".into(),
             "pipe:1".into(),
@@ -772,6 +783,122 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|item| item == ["-application", "lowdelay"]));
+    }
+
+    #[test]
+    fn media_commands_flush_every_unit_at_once() {
+        let audio = ProcessRunner::audio_arguments(&capture()).expect("audio command");
+        assert!(audio
+            .windows(2)
+            .any(|item| item == ["-page_duration", "20000"]));
+        for args in [
+            audio,
+            ProcessRunner::video_arguments(&capture(), &VideoEncoder::Software),
+            ProcessRunner::video_arguments(&capture(), &vaapi()),
+        ] {
+            assert!(args.windows(2).any(|item| item == ["-flush_packets", "1"]));
+        }
+    }
+
+    /// The production command with only its live input (`x11grab` or `pulse`, then `-i`) replaced
+    /// by a real-time synthetic source, so encoder, muxer and flushing options run for real.
+    fn with_synthetic_input(args: Vec<String>, format: &str, source: String) -> Vec<String> {
+        let start = args
+            .windows(2)
+            .position(|item| item == ["-f", format])
+            .expect("live input format");
+        let input = start
+            + args[start..]
+                .iter()
+                .position(|item| item == "-i")
+                .expect("live input");
+        let mut synthetic = args[..start].to_vec();
+        synthetic.extend(["-re", "-f", "lavfi", "-i"].map(String::from));
+        synthetic.push(source);
+        synthetic.extend_from_slice(&args[input + 2..]);
+        synthetic
+    }
+
+    /// Units a real FFmpeg delivers through the production parser during the second that follows
+    /// the first one, with their arrival times relative to it. Measuring from the first unit keeps
+    /// a loaded machine's slow FFmpeg start out of the result: what matters is the pacing.
+    async fn paced_units(args: Vec<String>, audio: bool) -> Vec<(Duration, MediaFrame)> {
+        let (child, stdout) = ProcessRunner::default().spawn(&args).expect("ffmpeg");
+        let (sender, mut receiver) = mpsc::channel(256);
+        let reader = if audio {
+            tokio::spawn(read_ogg_opus(stdout, sender))
+        } else {
+            tokio::spawn(read_h264(stdout, sender, Duration::from_millis(33), None))
+        };
+        let first = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .expect("a first unit")
+            .expect("open queue")
+            .expect("media");
+        let started = tokio::time::Instant::now();
+        let mut units = vec![(Duration::ZERO, first)];
+        let window = started + Duration::from_secs(1);
+        while let Ok(Some(unit)) = tokio::time::timeout_at(window, receiver.recv()).await {
+            units.push((started.elapsed(), unit.expect("media")));
+        }
+        reader.abort();
+        let mut child = Some(child);
+        FfmpegMediaSource::stop_child(&mut child)
+            .await
+            .expect("reap ffmpeg");
+        units
+    }
+
+    /// Real-time delivery: many units, spread over the second instead of one buffered burst.
+    fn assert_paced(units: &[(Duration, MediaFrame)], kind: &str) {
+        let spread = units.last().map(|(at, _)| *at).unwrap_or_default();
+        assert!(
+            units.len() >= 10,
+            "only {} {kind} in one second",
+            units.len()
+        );
+        assert!(
+            spread >= Duration::from_millis(500),
+            "{kind} arrived in a burst ({spread:?})"
+        );
+    }
+
+    #[tokio::test]
+    async fn opus_reaches_the_reader_in_real_time_not_in_one_second_pages() {
+        let args = with_synthetic_input(
+            ProcessRunner::audio_arguments(&capture()).expect("audio command"),
+            "pulse",
+            "sine=frequency=440:sample_rate=48000".into(),
+        );
+        // Before the fix nothing arrived for two seconds, then whole pages at once.
+        let packets = paced_units(args, true).await;
+        assert_paced(&packets, "Opus packets");
+        assert!(packets
+            .iter()
+            .all(|(_, packet)| packet.duration == Duration::from_millis(20)));
+    }
+
+    #[tokio::test]
+    async fn h264_access_units_reach_the_reader_frame_by_frame() {
+        let mut config = capture();
+        config.video = VideoConfig {
+            width: 640,
+            height: 360,
+            fps: 30,
+            bitrate_kbps: 1_000,
+            encoder: VideoEncoder::Software,
+        };
+        let args = with_synthetic_input(
+            ProcessRunner::video_arguments(&config, &VideoEncoder::Software),
+            "x11grab",
+            "color=c=gray:size=640x360:rate=30".into(),
+        );
+        let frames = paced_units(args, false).await;
+        assert!(
+            frames[0].1.keyframe,
+            "the stream starts with an IDR picture"
+        );
+        assert_paced(&frames, "H.264 frames");
     }
 
     fn unit(value: &'static [u8], keyframe: bool) -> MediaFrame {
