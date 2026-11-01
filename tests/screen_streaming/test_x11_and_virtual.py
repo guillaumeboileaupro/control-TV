@@ -914,3 +914,107 @@ def test_extending_outside_x11_is_refused_before_any_change(tmp_path: Path) -> N
         .name
         == "HDMI-2"
     )
+
+
+# A connector GNOME lit by itself (owner's desktop, 2026-11-01) ------------------------------
+
+LIT = ("HDMI-2", 1024, 768, 4481, 0)
+
+
+def test_stop_gives_a_lit_connector_its_former_mode_back(tmp_path: Path) -> None:
+    xrandr = FakeXrandr(lit=True)
+    journal = tmp_path / "extended-display.json"
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    extension.create(1280, 720, consent=True, x=-1280, y=0)
+    assert xrandr.shown == "control-tv-1280x720-60"
+
+    extension.remove()
+
+    assert ("--output", "HDMI-2", "--off") not in xrandr.calls
+    assert xrandr.enabled == LIT and xrandr.shown == "1024x768"
+    assert xrandr.places == DESKTOP and xrandr.modes == set() and not journal.exists()
+
+
+def test_a_killed_run_gives_a_lit_connector_its_former_mode_back(tmp_path: Path) -> None:
+    xrandr = FakeXrandr(lit=True)
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+    assert json.loads(journal.read_text(encoding="utf-8"))["before"] == {
+        "mode": "1024x768",
+        "rate": "60.00",
+        "x": 4481,
+        "y": 0,
+        "rotation": "normal",
+    }
+
+    assert (
+        recover_interrupted_extension(
+            lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        )
+        is None
+    )
+
+    assert xrandr.enabled == LIT and xrandr.shown == "1024x768"
+    assert xrandr.places == DESKTOP and xrandr.modes == set() and not journal.exists()
+
+
+def test_a_refused_extension_gives_a_lit_connector_back(tmp_path: Path) -> None:
+    xrandr = FakeXrandr(lit=True, accept=False)
+    journal = tmp_path / "extended-display.json"
+
+    with pytest.raises(StreamStartError, match="did not accept"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal).create(1280, 720, consent=True)
+
+    assert xrandr.enabled == LIT and xrandr.shown == "1024x768" and not journal.exists()
+
+
+@pytest.mark.parametrize(
+    "before",
+    [
+        '"1024x768"',
+        '{"mode":"1024x768","rate":60,"x":0,"y":0,"rotation":"normal"}',
+        '{"mode":"1024x768","rate":"60.00","x":"0","y":0,"rotation":"normal"}',
+        '{"mode":"1024x768","rate":"60.00","x":0,"y":0,"rotation":"upside"}',
+        '{"rate":"60.00","x":0,"y":0,"rotation":"normal"}',
+    ],
+)
+def test_a_journal_with_a_malformed_former_output_state_is_kept(
+    tmp_path: Path, before: str
+) -> None:
+    journal = tmp_path / "extended-display.json"
+    content = (
+        '{"version":1,"output":"HDMI-2","mode":"control-tv-1280x720-60","moved":[],'
+        f'"shift":[0,0],"before":{before}}}'
+    )
+    journal.write_text(content, encoding="utf-8")
+
+    with pytest.raises(StreamCleanupError, match="restoration is invalid"):
+        XrandrVirtualMonitor(X11, FakeXrandr(), no_wait, journal=journal)
+    assert journal.read_text(encoding="utf-8") == content
+
+
+@pytest.mark.parametrize(
+    ("header", "modes", "expected"),
+    [
+        ("HDMI-2 connected 768x1024+1920+0 left (normal", "   1024x768  60.00*+", ("left", 1920)),
+        (
+            "HDMI-2 connected primary 1024x768+0+0 (normal",
+            "   1024x768  75.00 60.00*",
+            ("normal", 0),
+        ),
+        ("HDMI-2 connected (normal", "   1024x768  60.00", None),  # off
+        ("HDMI-2 connected 1024x768+0+0 (normal", "   1024x768  60.00", None),  # no current mode
+    ],
+)
+def test_the_former_output_state_is_read_from_xrandr(
+    header: str, modes: str, expected: tuple[str, int] | None
+) -> None:
+    from control_tv.screen_streaming.virtual_display import _shown
+
+    listing = f"eDP-1 connected 1920x1080+0+0 (normal\n   1920x1080  60.00*\n{header}\n{modes}\n"
+    shown = _shown(listing, "HDMI-2")
+    if expected is None:
+        assert shown is None
+    else:
+        assert shown is not None and (shown.rotation, shown.x) == expected
+        assert shown.mode == "1024x768" and shown.rate == "60.00"

@@ -16,6 +16,7 @@ CVT = (
     "# 1920x1080 59.96 Hz (CVT 2.07M9) hsync: 67.16 kHz; pclk: 173.00 MHz\n"
     'Modeline "1920x1080_60.00"  173.00  1920 2048 2248 2576  1080 1083 1088 1120 -hsync +vsync\n'
 )
+NATIVE = "1024x768"  # the mode the forced connector offers by itself
 _PLACES = {"--right-of": (1920, 0), "--left-of": (0, 0), "--above": (0, 0), "--below": (0, 1080)}
 
 
@@ -30,6 +31,7 @@ class FakeXrandr:
         forced: bool = True,
         accept: bool = True,
         leftover: str | None = None,
+        lit: bool = False,
     ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail = fail
@@ -41,6 +43,8 @@ class FakeXrandr:
         self.added: set[tuple[str, str]] = set()
         self.enabled: tuple[str, int, int, int, int] | None = None  # output, w, h, x, y
         self.shown: str | None = None  # the mode the enabled output displays
+        if lit:  # GNOME lit the forced connector by itself, as on the owner's desktop
+            self.enabled, self.shown = ("HDMI-2", 1024, 768, 4481, 0), NATIVE
         # Where the desktop's own screens are (moved when the TV goes left of or above them).
         self.places = {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
 
@@ -92,17 +96,20 @@ class FakeXrandr:
             name, *rest = arguments[start + 1 : end]
             if rest == ["--off"]:
                 self.enabled = self.shown = None
-            elif rest[0] == "--pos":  # a screen of the desktop moved
-                x, y = (int(value) for value in rest[1].split("x"))
+                continue
+            options = dict(zip(rest[::2], rest[1::2], strict=True))
+            if "--mode" not in options:  # a screen of the desktop moved
+                x, y = (int(value) for value in options["--pos"].split("x"))
                 self.places[name] = (x, y)
+                continue
+            mode = options["--mode"]
+            size = mode.removeprefix("control-tv-").split("-")[0]
+            width, height = (int(value) for value in size.split("x"))
+            if "--pos" in options:
+                x, y = (int(value) for value in options["--pos"].split("x"))
             else:
-                size = rest[1].removeprefix("control-tv-").split("-")[0]
-                width, height = (int(value) for value in size.split("x"))
-                if rest[2] == "--pos":
-                    x, y = (int(value) for value in rest[3].split("x"))
-                else:
-                    x, y = _PLACES[rest[2]]
-                self.enabled, self.shown = (name, width, height, x, y), rest[1]
+                x, y = next(_PLACES[flag] for flag in options if flag in _PLACES)
+            self.enabled, self.shown = (name, width, height, x, y), mode
 
     def _query(self) -> str:
         lines = [
@@ -111,12 +118,14 @@ class FakeXrandr:
             "HDMI-1 connected 2561x1441+1920+0 (normal left inverted right) 597mm x 336mm",
             "HDMI-2 "
             + ("connected" if self.forced else "disconnected")
+            + self._geometry("HDMI-2")
             + " (normal left inverted right x axis y axis)"
             + (" 0mm x 0mm" if self.forced else ""),
         ]
         # Like xrandr: the modes of an output under it, the current one marked `*`, and the
         # modes on no output at the end.
         on_output = sorted(mode for output, mode in self.added if output == "HDMI-2")
+        on_output += [NATIVE] if self.forced else []
         lines += [f"   {mode}  60.00{'*' if mode == self.shown else ''}" for mode in on_output]
         lines.append("DP-1 disconnected (normal left inverted right x axis y axis)")
         lines += [
@@ -125,3 +134,9 @@ class FakeXrandr:
             if mode not in on_output
         ]
         return "\n".join(lines) + "\n"
+
+    def _geometry(self, output: str) -> str:
+        if self.enabled is None or self.enabled[0] != output:
+            return ""
+        _, width, height, x, y = self.enabled
+        return f" {width}x{height}+{x}+{y}"

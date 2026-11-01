@@ -34,7 +34,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -65,6 +65,7 @@ _MODELINE = re.compile(r'^Modeline "[^"]+"\s+(.+)$', re.MULTILINE)
 _ACCEPT_SECONDS = 3.0
 _ACCEPT_POLL_SECONDS = 0.1
 _JOURNAL_NAME = "extended-display.json"
+_ROTATIONS = ("normal", "left", "right", "inverted")
 
 
 class Position(StrEnum):
@@ -77,6 +78,18 @@ class Position(StrEnum):
 
 
 @dataclass(frozen=True)
+class _Shown:
+    """What an output displayed: GNOME lights a connector forced on by itself (seen on the owner's
+    desktop on 2026-11-01: 1024x768 next to the primary screen), so it is given back, not off."""
+
+    mode: str
+    rate: str
+    x: int
+    y: int
+    rotation: str = "normal"
+
+
+@dataclass(frozen=True)
 class _Extension:
     output: str
     mode: str
@@ -84,6 +97,8 @@ class _Extension:
     moved: tuple[tuple[str, int, int], ...] = ()
     # How far they were moved; None for a journal written before it was recorded.
     shift: tuple[int, int] | None = (0, 0)
+    # What the output displayed before the extension; None when it was off.
+    before: _Shown | None = None
 
 
 def extension_journal_path(environ: Mapping[str, str] | None = None) -> Path:
@@ -202,7 +217,7 @@ class XrandrVirtualMonitor:
                 "no free video output is enabled for the extension: enable one first "
                 "(echo on-digital | sudo tee /sys/class/drm/<card>-HDMI-A-<n>/status)"
             )
-        extension = _Extension(free, mode)
+        extension = _Extension(free, mode, before=_shown(listing, free))
         if mode in listing:
             self._forget(extension)  # left by an interrupted run
         try:
@@ -231,7 +246,7 @@ class XrandrVirtualMonitor:
             if extension is None:
                 return
             steps: tuple[Callable[[], object], ...] = (
-                lambda: self._xrandr("--output", extension.output, "--off", cleanup=True),
+                lambda: self._xrandr(*_give_back(extension), cleanup=True),
                 lambda: self._xrandr("--delmode", extension.output, extension.mode, cleanup=True),
                 lambda: self._xrandr("--rmmode", extension.mode, cleanup=True),
                 lambda: self._put_back(extension.moved, cleanup=True),
@@ -266,7 +281,7 @@ class XrandrVirtualMonitor:
             self._put_back(self._still_moved(extension), cleanup=True)
         steps: list[tuple[str, ...]] = []
         if _shows_mode(listing, extension.output, extension.mode):
-            steps.append(("--output", extension.output, "--off"))
+            steps.append(_give_back(extension))
         if extension.mode in listing:
             steps += [("--delmode", extension.output, extension.mode), ("--rmmode", extension.mode)]
         for arguments in steps:
@@ -300,6 +315,7 @@ class XrandrVirtualMonitor:
                 "mode": extension.mode,
                 "moved": [list(item) for item in extension.moved],
                 "shift": None if extension.shift is None else list(extension.shift),
+                "before": None if extension.before is None else asdict(extension.before),
             }
         )
 
@@ -335,9 +351,7 @@ class XrandrVirtualMonitor:
         )
         for name, old_x, old_y in moved:
             arguments += ["--output", name, "--pos", f"{old_x + shift_x}x{old_y + shift_y}"]
-        return tuple(arguments), _Extension(
-            extension.output, extension.mode, moved, (shift_x, shift_y)
-        )
+        return tuple(arguments), replace(extension, moved=moved, shift=(shift_x, shift_y))
 
     def _put_back(self, moved: tuple[tuple[str, int, int], ...], *, cleanup: bool) -> None:
         if moved:
@@ -363,7 +377,7 @@ class XrandrVirtualMonitor:
         with contextlib.suppress(StreamCleanupError):
             self._put_back(extension.moved, cleanup=True)
         for arguments in (
-            ("--output", extension.output, "--off"),
+            _give_back(extension),
             ("--delmode", extension.output, extension.mode),
             ("--rmmode", extension.mode),
         ):
@@ -411,15 +425,81 @@ def _saved_extension(value: JsonObject) -> _Extension:
         if not isinstance(name, str) or type(x) is not int or type(y) is not int:
             raise ValueError("unexpected moved screen")
         screens.append((name, x, y))
+    return _Extension(output, mode, tuple(screens), _saved_shift(value), _saved_shown(value))
+
+
+def _saved_shift(value: JsonObject) -> tuple[int, int] | None:
     shift = value.get("shift")
     if shift is None:  # a journal written before the shift was recorded
-        return _Extension(output, mode, tuple(screens), None)
+        return None
     if not isinstance(shift, list) or len(shift) != 2:
         raise ValueError("unexpected screen shift")
     shift_x, shift_y = shift
     if type(shift_x) is not int or type(shift_y) is not int:
         raise ValueError("unexpected screen shift")
-    return _Extension(output, mode, tuple(screens), (shift_x, shift_y))
+    return shift_x, shift_y
+
+
+def _saved_shown(value: JsonObject) -> _Shown | None:
+    before = value.get("before")
+    if before is None:  # off before, or a journal written before it was recorded
+        return None
+    if not isinstance(before, dict):
+        raise ValueError("unexpected former output state")
+    mode, rate, x, y = before.get("mode"), before.get("rate"), before.get("x"), before.get("y")
+    rotation = before.get("rotation")
+    if (
+        not isinstance(mode, str)
+        or not isinstance(rate, str)
+        or type(x) is not int
+        or type(y) is not int
+        or rotation not in _ROTATIONS
+    ):
+        raise ValueError("unexpected former output state")
+    assert isinstance(rotation, str)
+    return _Shown(mode, rate, x, y, rotation)
+
+
+def _shown(listing: str, output: str) -> _Shown | None:
+    """What `output` displays in `xrandr --query`, or None when it is off."""
+    header = re.search(
+        rf"^{re.escape(output)} connected(?: primary)? \d+x\d+\+(\d+)\+(\d+)"
+        r"(?: (left|right|inverted))? \(",
+        listing,
+        re.MULTILINE,
+    )
+    if header is None:
+        return None
+    inside = False
+    for line in listing.splitlines():
+        if not line[:1].isspace():
+            inside = line.startswith(f"{output} ")
+            continue
+        fields = line.split()
+        current = [field for field in fields[1:] if "*" in field]
+        if inside and current:
+            rate = current[0].rstrip("*+")
+            return _Shown(fields[0], rate, int(header[1]), int(header[2]), header[3] or "normal")
+    return None
+
+
+def _give_back(extension: _Extension) -> tuple[str, ...]:
+    """The command putting the extension's output back as it was: off, or its former mode."""
+    before = extension.before
+    if before is None:
+        return ("--output", extension.output, "--off")
+    return (
+        "--output",
+        extension.output,
+        "--mode",
+        before.mode,
+        "--rate",
+        before.rate,
+        "--pos",
+        f"{before.x}x{before.y}",
+        "--rotate",
+        before.rotation,
+    )
 
 
 def _read_saved(journal: RestoreJournal) -> _Extension | None:
