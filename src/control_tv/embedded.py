@@ -19,6 +19,7 @@ from pathlib import Path
 
 import control_tv
 from control_tv.bridge import default_service, handle_line
+from control_tv.domain import DeviceId
 from control_tv.service import ControlService
 from control_tv.trace_files import AcceptanceTracing, android_tracing
 
@@ -67,6 +68,21 @@ def acceptance_trace_status() -> str:
 def handle(line: str) -> str:
     """Run one request line against the process-wide service; return one response line."""
     return json.dumps(handle_line(_service(), line))
+
+
+def start_voice(device_id: str) -> None:
+    """Start one TV voice session. Audio remains in memory and is never logged or stored."""
+    _service().start_remote_voice(DeviceId(device_id))
+
+
+def send_voice(device_id: str, chunk: bytes) -> None:
+    """Forward one bounded PCM chunk to the active TV voice session."""
+    _service().send_remote_voice(DeviceId(device_id), chunk)
+
+
+def stop_voice(device_id: str) -> None:
+    """End the TV voice session; safe when capture cleanup calls it after an interruption."""
+    _service().stop_remote_voice(DeviceId(device_id))
 
 
 def startup_diagnostic() -> str:

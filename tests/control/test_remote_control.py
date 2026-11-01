@@ -98,6 +98,18 @@ class FakeRemote:
         self._maybe_fail()
         return self.front
 
+    def start_voice(self, host: str) -> None:
+        self.calls.append(("start_voice", host))
+        self._maybe_fail()
+
+    def send_voice(self, host: str, chunk: bytes) -> None:
+        self.calls.append(("send_voice", host, str(len(chunk))))
+        self._maybe_fail()
+
+    def stop_voice(self, host: str) -> None:
+        self.calls.append(("stop_voice", host))
+        self._maybe_fail()
+
 
 class GroupTransport(FakeTransport):
     def discover(self, *, timeout: float) -> Sequence[Device]:
@@ -133,6 +145,22 @@ def test_the_tv_is_reached_at_its_discovered_address() -> None:
 
     assert discovered(remote).get_remote_status(DEVICE_ID) == volume(10)
     assert remote.calls == [("observe", HOST)]
+
+
+def test_voice_session_uses_the_discovered_remote_without_copying_audio() -> None:
+    remote = FakeRemote()
+    service = discovered(remote)
+    audio = b"\x00\x01" * 4096
+
+    service.start_remote_voice(DEVICE_ID)
+    service.send_remote_voice(DEVICE_ID, audio)
+    service.stop_remote_voice(DEVICE_ID)
+
+    assert remote.calls == [
+        ("start_voice", HOST),
+        ("send_voice", HOST, "8192"),
+        ("stop_voice", HOST),
+    ]
 
 
 def test_a_tv_not_found_by_discovery_is_not_guessed() -> None:

@@ -252,8 +252,12 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   101x101 grid and measured in Chromium and WebKitGTK; the TV receiver maps its session states to clear
   screens, ignores late callbacks of a replaced session (no ghost session), ends it on stop and keeps the
   TV awake only while streaming; every remote key is tested end to end and pinned to the TV protocol's key
-  codes. The Android `VoiceCapture` records the phone's voice in the TV's voice format on demand only; the
-  voice session in the TV remote adapter and the bridge is still to wire. Automated validation only.
+  codes. On 2026-11-01 the Android `VoiceCapture` was wired through the embedded bridge and the existing
+  `androidtvremote2` voice session: explicit runtime permission, bounded push-to-talk, in-memory PCM only,
+  stop/disconnect/error cleanup and no automatic retry. PR #122 now includes `main` after #120; its port-test
+  double implements the full voice contract and the Kotlin lock passes the strict source vocabulary gate.
+  Local validation: 12 targeted tests, full Python check (2,785 passed, 8 skipped) and Android JVM tests pass.
+  CI remains to run; automated validation only, no device was used.
 - [x] Owner request, 2026-10-25: the Freebox editions are named as the owner's TV shows them, the
   receiver shows control-TV's own logo and the Freebox Disney+ entry the Disney+ logo; no other logo
   with a shippable licence exists (OQEE and TFOU on Commons are CC BY-SA), so the initials stay.
@@ -262,8 +266,8 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   560 px phone column; the phone keeps the single column. Checked on screenshots.
 - [x] Owner request, 2026-10-25: the window offers the whole Google TV remote (digits, Input, Settings,
   Info, Guide, channels, subtitles, audio track, colour keys, media keys, Google Assistant key); every
-  window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone":
-  streaming the voice to the TV's Assistant (`androidtvremote2.start_voice`) is the next step.
+  window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone"; the
+  Android phone-to-TV Assistant stream is implemented as of 2026-11-01 and awaits hardware acceptance.
 - [x] Audio/latency correction, 2026-10-25: the WebRTC capture lease now owns the same retryable
   `PulseAudioRoute` as HLS and gives its monitor source to the existing Opus FFmpeg process; release
   restores the prior Ubuntu output even when another cleanup step fails. The UI no longer disables
@@ -360,7 +364,10 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 - Capabilities are per device and per endpoint and are never assumed for all TVs.
 - `docs/REQUIREMENTS_TRACEABILITY.md` keeps the requirement history (issue #34); where it describes ChatGPT, voice, MCP tools or Windows, those parts are abandoned (see above).
 
-**Not requested:** a microphone, speech-to-text or voice assistant; a natural-language parser; a search interface or search results; a video player in control-TV; ChatGPT or any AI service in the control path; Windows.
+**Not requested:** speech-to-text, a natural-language parser, a search interface or search results, a video
+player in control-TV, ChatGPT or any AI service in the control path, or Windows. The narrowly scoped Android
+push-to-talk microphone for the TV's own Assistant is requested and implemented; it adds no AI service to
+control-TV and retains no recording.
 
 ## Architecture constraints
 
@@ -632,7 +639,9 @@ Deliverables:
 - [ ] the TV's applications shown and launched on the TV, per capability (item Q, R11-R12);
 - [ ] power on and off, the TV's audible volume and mute, and navigation, per capability (item Q, R7-R10);
 
-Not part of the window (owner, 2026-10-08): a microphone, a voice assistant, a search interface or a video player.
+Not part of the original window scope (owner, 2026-10-08): a search interface or a video player. The later
+owner decision of 2026-10-25 adds Android push-to-talk to the TV's own Assistant; implemented on 2026-11-01,
+automated validation only.
 
 Exit criteria:
 - [ ] application controls a TV manually, with no AI service in the path (needs a recorded real-hardware command result; with the restored scope this covers the TV's applications, power, audible sound, playback and navigation per capability, items M and Q);

@@ -68,6 +68,26 @@ class FakeTv:
         # "connection lost" future); by default the fake looks closed, so every call connects.
         self.keeps_open = False
         self.opens_launched_app = True
+        self.voice_enabled = True
+
+
+class FakeVoiceSession:
+    def __init__(self, tv: FakeTv) -> None:
+        self.tv = tv
+        self.closed = False
+
+    def send_chunk(self, chunk: bytes) -> bool:
+        if self.closed:
+            return False
+        if self.tv.send_error is not None:
+            raise self.tv.send_error
+        self.tv.log.append(("voice_chunk", str(len(chunk))))
+        return True
+
+    def end(self) -> None:
+        if not self.closed:
+            self.tv.log.append(("voice_end",))
+            self.closed = True
 
 
 class FakeRemote:
@@ -82,6 +102,10 @@ class FakeRemote:
         self.current_app: str = ""
         self._remote_message_protocol = SimpleNamespace(ime_field_counter=0)
         self.disconnected = 0
+
+    @property
+    def is_voice_enabled(self) -> bool:
+        return self.tv.voice_enabled
 
     async def async_connect(self) -> None:
         self.tv.log.append(("connect",))
@@ -130,6 +154,12 @@ class FakeRemote:
         self.tv.texts.append(text)
         if self.tv.send_error is not None:
             raise self.tv.send_error
+
+    async def start_voice(self) -> FakeVoiceSession:
+        self.tv.log.append(("voice_start",))
+        if self.tv.send_error is not None:
+            raise self.tv.send_error
+        return FakeVoiceSession(self.tv)
 
     async def async_start_pairing(self) -> None:
         self.tv.log.append(("start_pairing",))
@@ -769,7 +799,7 @@ def test_the_default_factory_builds_the_library_remote_without_voice_or_network(
     assert isinstance(remote, AndroidTVRemote)
     assert remote.host == HOST
     assert remote._enable_ime is True  # carries text and reports the app in front
-    assert remote._enable_voice is False
+    assert remote._enable_voice is True
 
 
 def test_the_default_certificate_is_a_pem_pair_named_after_the_client() -> None:
@@ -1013,6 +1043,60 @@ def test_the_app_in_front_is_read_without_sending_anything(
 
     assert channel.front_app(HOST, "tv.arte.plus7") == "tv.arte.plus7"
     assert [entry for entry in tv.log if entry[0] in ("key", "launch", "text")] == []
+
+
+# Voice streaming -------------------------------------------------------------------------------
+
+
+def test_voice_audio_is_sent_once_in_memory_and_the_session_ends(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    audio = b"\x00\x01" * 4096
+
+    channel.start_voice(HOST)
+    channel.send_voice(HOST, audio)
+    channel.stop_voice(HOST)
+
+    assert [entry for entry in tv.log if entry[0].startswith("voice")] == [
+        ("voice_start",),
+        ("voice_chunk", "8192"),
+        ("voice_end",),
+    ]
+
+
+def test_voice_refusal_disconnect_and_close_release_the_session(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    tv.voice_enabled = False
+    with pytest.raises(UnsupportedOperationError, match="does not accept"):
+        channel.start_voice(HOST)
+
+    tv.voice_enabled = True
+    channel.start_voice(HOST)
+    tv.remotes[-1].lose_connection()
+    with pytest.raises(DeviceUnavailableError):
+        channel.send_voice(HOST, b"\x00\x01")
+    assert ("voice_end",) in tv.log
+
+
+def test_voice_cleanup_is_idempotent_and_chunks_are_bounded(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.keeps_open = True
+    channel.start_voice(HOST)
+    with pytest.raises(CommandRejectedError, match="already active"):
+        channel.start_voice(HOST)
+    with pytest.raises(InvalidArgumentError):
+        channel.send_voice(HOST, b"")
+    with pytest.raises(InvalidArgumentError):
+        channel.send_voice(HOST, b"x" * (20 * 1024 + 1))
+
+    channel.stop_voice(HOST)
+    channel.stop_voice(HOST)
+
+    assert [entry for entry in tv.log if entry == ("voice_end",)] == [("voice_end",)]
 
 
 def test_a_tv_that_does_not_report_the_app_returns_what_it_said(

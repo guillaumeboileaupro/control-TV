@@ -52,6 +52,11 @@ export interface RemotePanelActions {
   filterApps(filter: string): void;
   // Moves keyboard focus out of the panel when the panel hides while it had it.
   focusElsewhere(): void;
+  voice?: {
+    available(): boolean;
+    start(): Promise<string | null>;
+    stop(): Promise<string | null>;
+  };
 }
 
 interface ValueField {
@@ -94,11 +99,42 @@ export function createRemotePanel(
   let appsKey = "";
   let pairingDeviceId: string | null = null;
   let appsPairingWasVisible = false;
+  let voiceActive = false;
+  const remoteButtons = [...el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")];
+  const assistant =
+    remoteButtons.find((button) => button.dataset["remoteKey"] === "assistant") ?? null;
 
-  for (const button of el.tvRemote.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
-    button.addEventListener("click", () =>
-      actions.run({ kind: "key", key: button.dataset["remoteKey"] as RemoteKeyName }),
-    );
+  const drawVoice = (message: string | null = null): void => {
+    if (assistant === null) return;
+    assistant.setAttribute("aria-pressed", String(voiceActive));
+    assistant.classList.toggle("voice-active", voiceActive);
+    assistant.title = voiceActive ? "Stop sending microphone audio" : "Google Assistant on the TV";
+    const label = assistant.querySelector("span");
+    if (label !== null) label.textContent = voiceActive ? "Stop speaking" : "Google Assistant";
+    if (message !== null) {
+      el.remoteFeedback.replaceChildren(text("p", "feedback feedback-warning", message));
+    }
+  };
+
+  for (const button of remoteButtons) {
+    button.addEventListener("click", () => {
+      const key = button.dataset["remoteKey"] as RemoteKeyName;
+      const voice = actions.voice;
+      if (key !== "assistant" || voice === undefined || !voice.available()) {
+        actions.run({ kind: "key", key });
+        return;
+      }
+      if (voiceActive) {
+        void voice.stop().then((failure) => failure !== null && drawVoice(failure));
+        return;
+      }
+      voiceActive = true;
+      drawVoice();
+      void voice.start().then((failure) => {
+        voiceActive = false;
+        drawVoice(failure);
+      });
+    });
   }
   el.remoteRead.addEventListener("click", () => actions.run({ kind: "status" }));
   el.remoteAppsList.addEventListener("click", () => actions.run({ kind: "list_apps" }));
@@ -139,6 +175,7 @@ export function createRemotePanel(
     const hadFocus = active !== null && el.tvRemote.contains(active);
     el.tvRemote.hidden = !remote.visible;
     el.remoteKeys.hidden = !remote.remoteVisible;
+    drawVoice();
     if (!remote.visible) {
       if (hadFocus) {
         actions.focusElsewhere();

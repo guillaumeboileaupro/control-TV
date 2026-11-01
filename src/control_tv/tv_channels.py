@@ -135,6 +135,18 @@ class TvChannels:
             observed=entry.observed,
         )
 
+    def start_remote_voice(self, device_id: DeviceId) -> None:
+        remote, host = self._remote_target(device_id)
+        remote.start_voice(host)
+
+    def send_remote_voice(self, device_id: DeviceId, chunk: bytes) -> None:
+        remote, host = self._remote_target(device_id)
+        remote.send_voice(host, chunk)
+
+    def stop_remote_voice(self, device_id: DeviceId) -> None:
+        remote, host = self._remote_target(device_id)
+        remote.stop_voice(host)
+
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         """The apps installed on the TV that its home screen can launch, as the TV lists them."""
         host = self._tv_host(device_id)

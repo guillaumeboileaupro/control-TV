@@ -88,6 +88,15 @@ class StubControl:
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
         raise _unexpected("type_remote_text")
 
+    def start_remote_voice(self, device_id: DeviceId) -> None:
+        raise _unexpected("start_remote_voice")
+
+    def send_remote_voice(self, device_id: DeviceId, chunk: bytes) -> None:
+        raise _unexpected("send_remote_voice")
+
+    def stop_remote_voice(self, device_id: DeviceId) -> None:
+        raise _unexpected("stop_remote_voice")
+
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         self.calls.append(("list_tv_apps", device_id))
         return list(self.apps)
