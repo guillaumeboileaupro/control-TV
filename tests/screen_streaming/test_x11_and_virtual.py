@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -20,7 +21,11 @@ from control_tv.screen_streaming import (
 )
 from control_tv.screen_streaming.h264_encoder import LiveEncoderSettings
 from control_tv.screen_streaming.model import SyntheticVideoSource
-from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import (
+    Position,
+    XrandrVirtualMonitor,
+    recover_interrupted_extension,
+)
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output, parse_monitors
 from control_tv.screencast.ffmpeg import encoder_arguments, live_hls_command
 from control_tv.screencast.model import (
@@ -367,11 +372,22 @@ def test_a_removal_that_fails_keeps_the_extension_for_a_retry() -> None:
     assert not extension.active and xrandr.modes == set()
 
 
+def killed_while_extended(
+    xrandr: FakeXrandr, journal: Path, *, x: int | None = None, y: int | None = None
+) -> XrandrVirtualMonitor:
+    """A run that extended the desktop and was then killed: nothing else of it runs, and the
+    kernel drops its lock on the journal, as for a real SIGKILL."""
+    abandoned = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    abandoned.create(1280, 720, consent=True, x=x, y=y)
+    assert abandoned._journal is not None
+    abandoned._journal.release()
+    return abandoned
+
+
 def test_a_new_process_restores_a_journaled_extension_after_a_crash(tmp_path: Path) -> None:
     xrandr = FakeXrandr()
     journal = tmp_path / "state" / "extended-display.json"
-    abandoned = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
-    abandoned.create(1280, 720, consent=True, x=-1280, y=0)
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
     assert journal.exists() and xrandr.enabled is not None
     assert xrandr.enabled[0] == "HDMI-2"
     assert xrandr.places != {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
@@ -387,7 +403,7 @@ def test_a_new_process_restores_a_journaled_extension_after_a_crash(tmp_path: Pa
 def test_a_failed_crash_recovery_keeps_the_journal_for_the_next_start(tmp_path: Path) -> None:
     xrandr = FakeXrandr()
     journal = tmp_path / "extended-display.json"
-    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal).create(1280, 720, consent=True)
+    killed_while_extended(xrandr, journal)
     xrandr.fail = "--delmode"
 
     with pytest.raises(StreamCleanupError, match="saved extended-screen configuration"):
@@ -622,7 +638,17 @@ def test_a_removal_retried_after_a_late_failure_finishes_and_puts_the_desktop_ba
 
 @pytest.mark.parametrize(
     "moved",
-    ['[["eDP-1",0]]', '["eDP-1"]', "[[1,0,0]]", '[["eDP-1","0",0]]', '[["eDP-1",0,true]]'],
+    [
+        '[["eDP-1",0]]',
+        '["eDP-1"]',
+        "[[1,0,0]]",
+        '[["eDP-1","0",0]]',
+        '[["eDP-1",0,true]]',
+        '[],"shift":[1280]',
+        '[],"shift":"1280x0"',
+        '[],"shift":[1280,false]',
+        '[],"shift":[1280.0,0]',
+    ],
 )
 def test_a_journal_with_malformed_moved_screens_is_kept(tmp_path: Path, moved: str) -> None:
     journal = tmp_path / "extended-display.json"
@@ -642,3 +668,249 @@ def test_the_production_extension_journals_in_the_state_directory() -> None:
 
     assert "control-tv-test-state-" in str(extension_journal_path())
     assert not persistent_virtual_monitor().active
+
+
+# Start-up restoration of a killed run (D2) ---------------------------------------------------
+
+DESKTOP = {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+
+
+def mutations(xrandr: FakeXrandr) -> list[tuple[str, ...]]:
+    return [call for call in xrandr.calls if call[0] not in ("--query", "--listmonitors")]
+
+
+def test_the_killed_run_s_journal_records_how_far_the_desktop_moved(tmp_path: Path) -> None:
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(FakeXrandr(), journal, x=-1280, y=-720)
+
+    saved = json.loads(journal.read_text(encoding="utf-8"))
+    assert saved["shift"] == [1280, 720]
+    assert saved["moved"] == [["eDP-1", 0, 0], ["HDMI-1", 1920, 0]]
+
+
+def test_the_start_up_recovery_restores_the_screens_without_a_new_stream(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+
+    assert (
+        recover_interrupted_extension(
+            lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        )
+        is None
+    )
+
+    assert xrandr.enabled is None and xrandr.modes == set() and xrandr.places == DESKTOP
+    assert not journal.exists()
+    assert not journal.with_suffix(".tmp").exists()
+
+
+def test_a_screen_the_owner_placed_since_the_crash_stays_where_it_is(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+    xrandr.places["HDMI-1"] = (0, 1080)  # rearranged by hand in GNOME's settings
+
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (0, 1080)}
+    assert xrandr.enabled is None and xrandr.modes == set() and not journal.exists()
+
+
+def test_an_output_the_owner_turned_off_since_the_crash_is_not_touched(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal)
+    xrandr.enabled = xrandr.shown = None  # turned off in GNOME's settings
+    xrandr.calls.clear()
+
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert ("--output", "HDMI-2", "--off") not in xrandr.calls
+    assert mutations(xrandr) == [
+        ("--delmode", "HDMI-2", "control-tv-1280x720-60"),
+        ("--rmmode", "control-tv-1280x720-60"),
+    ]
+    assert xrandr.modes == set() and not journal.exists()
+
+
+def test_a_restoration_the_owner_already_did_only_forgets_the_journal(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    abandoned = killed_while_extended(xrandr, journal, x=-1280, y=0)
+    abandoned.remove()  # by hand: same commands, then the journal is still there
+    journal.write_text(
+        '{"version":1,"output":"HDMI-2","mode":"control-tv-1280x720-60",'
+        '"moved":[["eDP-1",0,0],["HDMI-1",1920,0]],"shift":[1280,0]}\n',
+        encoding="utf-8",
+    )
+    xrandr.calls.clear()
+
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert mutations(xrandr) == [] and not journal.exists()
+
+
+def test_a_screen_unplugged_since_the_crash_does_not_keep_the_journal(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+    del xrandr.places["HDMI-1"]
+
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert xrandr.places == {"eDP-1": (0, 0)} and not journal.exists()
+
+
+def test_a_journal_without_the_shift_puts_every_screen_back(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+    saved = json.loads(journal.read_text(encoding="utf-8"))
+    del saved["shift"]  # written by the first D2 version
+    journal.write_text(json.dumps(saved), encoding="utf-8")
+    xrandr.places["HDMI-1"] = (0, 1080)
+
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert xrandr.places == DESKTOP and not journal.exists()
+
+
+def test_the_recovery_is_repeatable_and_retried_at_the_next_start(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal, x=-1280, y=0)
+    xrandr.fail = "--rmmode"
+
+    problem = recover_interrupted_extension(
+        lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    )
+
+    assert problem == "the saved extended-screen configuration was not restored"
+    assert journal.exists() and xrandr.places == DESKTOP  # undone as far as possible
+    xrandr.fail = None
+    assert (
+        recover_interrupted_extension(
+            lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        )
+        is None
+    )
+    assert xrandr.modes == set() and not journal.exists()
+    xrandr.calls.clear()
+    assert (
+        recover_interrupted_extension(
+            lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        )
+        is None
+    )
+    assert xrandr.calls == []  # nothing pending: nothing runs
+
+
+def test_a_start_up_outside_x11_keeps_the_journal_without_failing(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal)
+    xrandr.calls.clear()
+    wayland = {**X11, "XDG_SESSION_TYPE": "wayland"}
+
+    problem = recover_interrupted_extension(
+        lambda: XrandrVirtualMonitor(wayland, xrandr, no_wait, journal=journal)
+    )
+
+    assert problem is not None and "X11 session" in problem
+    assert journal.exists() and xrandr.calls == []
+
+
+def test_an_unusable_state_directory_is_reported_not_raised(tmp_path: Path) -> None:
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(FakeXrandr(), journal)
+    lock = journal.with_suffix(".lock")
+    lock.unlink()
+    lock.mkdir()  # the lock cannot be opened
+
+    problem = recover_interrupted_extension(
+        lambda: XrandrVirtualMonitor(X11, FakeXrandr(), no_wait, journal=journal)
+    )
+
+    assert problem is not None and "Is a directory" in problem
+    assert journal.exists()
+
+
+def test_a_live_extension_is_never_undone_by_another_monitor(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    live = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    live.create(1280, 720, consent=True, x=-1280, y=0)
+    xrandr.calls.clear()
+
+    # What the controller does for each "which output would Étendre use?" while streaming.
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal).free_output()
+    assert (
+        recover_interrupted_extension(
+            lambda: XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        )
+        is None
+    )
+
+    assert mutations(xrandr) == [] and live.active and journal.exists()
+    with pytest.raises(StreamStartError, match="already extends the display"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal).create(1920, 1080, consent=True)
+    assert mutations(xrandr) == []  # not even a cleanup of the refused extension
+    live.remove()
+    assert not journal.exists() and xrandr.places == DESKTOP
+
+
+def test_a_failed_extension_does_not_lock_out_the_next_one(tmp_path: Path) -> None:
+    xrandr = FakeXrandr(accept=False, fail="--rmmode")
+    journal = tmp_path / "extended-display.json"
+    failing = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    with pytest.raises(StreamCleanupError, match="not restored"):
+        failing.create(1280, 720, consent=True)  # refused, and its mode cannot be deleted
+    assert journal.exists() and not failing.active
+
+    xrandr.accept, xrandr.fail = True, None
+    extension = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)  # recovers it
+    assert not journal.exists() and xrandr.modes == set()
+    extension.create(1280, 720, consent=True)
+    assert extension.active and journal.exists()
+
+
+def test_a_journal_restored_by_its_owner_meanwhile_is_left_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from control_tv.screen_streaming.restore_journal import RestoreJournal
+
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    killed_while_extended(xrandr, journal)
+    real_claim = RestoreJournal.claim
+
+    def claim_after_the_owner(self: RestoreJournal) -> bool:
+        journal.unlink()  # the owner finished between the check and the lock
+        return real_claim(self)
+
+    monkeypatch.setattr(RestoreJournal, "claim", claim_after_the_owner)
+    xrandr.calls.clear()
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    monkeypatch.undo()
+
+    assert xrandr.calls == [] and RestoreJournal(journal).claim()
+
+
+def test_extending_outside_x11_is_refused_before_any_change(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    wayland = {**X11, "XDG_SESSION_TYPE": "wayland"}
+
+    with pytest.raises(InvalidStreamConfiguration, match="X11 session"):
+        XrandrVirtualMonitor(wayland, xrandr, no_wait, journal=journal).create(
+            1280, 720, consent=True
+        )
+
+    assert xrandr.calls == [] and not journal.exists()
+    assert (
+        XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+        .create(1280, 720, consent=True)
+        .name
+        == "HDMI-2"
+    )

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any
@@ -1105,47 +1106,87 @@ def test_a_fixed_volume_is_refused_through_the_bridge_without_sending() -> None:
     assert transport.attempted() == []
 
 
-def test_start_up_leaves_the_sound_alone_without_a_saved_restoration(
+def test_start_up_leaves_screens_and_sound_alone_without_a_saved_restoration(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from control_tv.screen_streaming import audio_route
+    from control_tv.screen_streaming import audio_route, virtual_display
 
     def never(*_: object) -> str | None:
-        raise AssertionError("no journal: nothing to restore, pactl never runs")
+        raise AssertionError("no journal: nothing to restore, pactl and xrandr never run")
 
     monkeypatch.setattr(audio_route, "recover_interrupted_audio_route", never)
-    bridge._recover_interrupted_screen_audio()
+    monkeypatch.setattr(virtual_display, "recover_interrupted_extension", never)
+    bridge._recover_interrupted_screen_stream()
     assert capsys.readouterr().err == ""
 
 
-@pytest.mark.parametrize("problem", [None, "pactl unload-module failed"])
-def test_start_up_finishes_a_killed_run_s_sound_restoration(
+@pytest.mark.parametrize(
+    ("screens", "sound"),
+    [(None, None), ("xrandr --rmmode failed", None), (None, "pactl unload-module failed")],
+)
+def test_start_up_finishes_a_killed_run_s_screens_and_sound_restoration(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    problem: str | None,
+    screens: str | None,
+    sound: str | None,
 ) -> None:
-    from control_tv.screen_streaming import audio_route
+    from control_tv.screen_streaming import audio_route, virtual_display
 
-    journal = audio_route.audio_route_journal_path()
-    journal.parent.mkdir(parents=True, exist_ok=True)
-    journal.write_text('{"version":1,"previous_sink":"speakers"}\n', encoding="utf-8")
+    journals = (virtual_display.extension_journal_path(), audio_route.audio_route_journal_path())
+    for journal in journals:
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text('{"version":1}\n', encoding="utf-8")
     calls: list[str] = []
 
-    def recover(*_: object) -> str | None:
-        calls.append("recover")
-        return problem
+    def recovery(name: str, problem: str | None) -> Callable[[], str | None]:
+        def recover() -> str | None:
+            calls.append(name)
+            return problem
 
-    monkeypatch.setattr(audio_route, "recover_interrupted_audio_route", recover)
+        return recover
+
+    monkeypatch.setattr(
+        virtual_display, "recover_interrupted_extension", recovery("screens", screens)
+    )
+    monkeypatch.setattr(audio_route, "recover_interrupted_audio_route", recovery("sound", sound))
     try:
-        bridge._recover_interrupted_screen_audio()
+        bridge._recover_interrupted_screen_stream()
     finally:
-        journal.unlink()
-    assert calls == ["recover"]
+        for journal in journals:
+            journal.unlink()
+    assert calls == ["screens", "sound"]  # one failing never skips the other
     error = capsys.readouterr().err
-    if problem is None:
-        assert error == ""
-    else:
-        assert "sound is not restored yet" in error and problem in error
+    assert ("screens are not restored yet" in error) is (screens is not None)
+    assert ("sound is not restored yet" in error) is (sound is not None)
+    for problem in (screens, sound):
+        assert problem is None or problem in error
+
+
+def test_start_up_restores_a_really_killed_extension_without_a_new_stream(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from control_tv.screen_streaming import virtual_display
+    from control_tv.screen_streaming.virtual_display import XrandrVirtualMonitor
+    from x11_fakes import X11, FakeXrandr
+
+    xrandr = FakeXrandr()
+    journal = virtual_display.extension_journal_path()
+    killed = XrandrVirtualMonitor(X11, xrandr, lambda _: None, journal=journal)
+    killed.create(1280, 720, consent=True, x=-1280, y=0)
+    assert killed._journal is not None
+    killed._journal.release()  # what the kernel does for a SIGKILL
+    real = virtual_display.recover_interrupted_extension
+    monkeypatch.setattr(
+        virtual_display,
+        "recover_interrupted_extension",
+        lambda: real(lambda: XrandrVirtualMonitor(X11, xrandr, lambda _: None, journal=journal)),
+    )
+
+    bridge._recover_interrupted_screen_stream()
+
+    assert capsys.readouterr().err == ""
+    assert not journal.exists() and xrandr.enabled is None and xrandr.modes == set()
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
 
 
 def test_tests_never_see_the_user_s_real_state_directory() -> None:
