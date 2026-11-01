@@ -178,11 +178,13 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   read-only `cmd package query-activities` form to the older `pm query-activities` form only when
   the former is unsupported. Automated validation only; candidate installation and TV acceptance
   remain required.
-- [x] Remote pairing identity correction T-01, 2026-10-26: the former fixed `control-TV` client
-  name is replaced by one stable name per installation. New credentials are generated with that
-  identity; existing certificate/key pairs are retained and receive a deterministic identity
-  derived from the certificate. Offline regression tests cover distinct Ubuntu/Android stores,
-  restart persistence and migration. Same-TV hardware pairing remains required.
+- [x] Remote pairing identity correction T-01, corrected 2026-10-30 after the 2026-10-28 hardware
+  failure: #114 gave each host a stable name but retained both historical `CN=control-TV`
+  certificates, and the TV evicted the other pairing. Each installation now persists one identity
+  and a certificate with the same subject. A historical pair is retained as private `.legacy.pem`
+  evidence and replaced exactly once, making one explicit final pairing per TV unavoidable but
+  durable. Offline regression tests cover Ubuntu/Android coexistence, alternating use, restarts,
+  persistence and bounded migration. Same-TV hardware re-validation remains required.
 - [x] Real trial, 2026-10-25: the phone listed no TV app, since #99 kept only the `adb` program;
   the pure-Python `adb-shell` adapter of `main` is restored (`tv_apps_adb_shell`) and used where
   `adb` is missing, and embedded again in the Android app. The TV receiver gets a name, an icon,
