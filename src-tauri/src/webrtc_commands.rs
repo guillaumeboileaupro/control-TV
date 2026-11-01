@@ -1,7 +1,7 @@
 use control_tv_webrtc::{
-    AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingEndpoint,
-    PairingServer, ProcessRunner, SessionConfig, SessionController, SessionDescription,
-    SessionToken, SystemClock, VideoConfig, VideoEncoder, WebRtcTransport,
+    AudioConfig, CaptureConfig, EngineError, EngineState, FfmpegMediaSource, MediaTransport,
+    PairingEndpoint, PairingServer, ProcessRunner, SessionConfig, SessionController,
+    SessionDescription, SessionToken, SystemClock, VideoConfig, VideoEncoder, WebRtcTransport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -105,8 +105,9 @@ fn capture_config(lease: CaptureLease, width: u32, height: u32, fps: u32) -> Cap
             height,
             fps,
             bitrate_kbps: 4_000,
-            // VA-API stays opt-in until its stream is confirmed decodable on both Android TVs.
-            encoder: VideoEncoder::Software,
+            // The GPU when a render node exists; the engine falls back to libx264 and reports
+            // why in the diagnostics when VA-API delivers no picture.
+            encoder: VideoEncoder::preferred(std::path::Path::new("/dev/dri")),
         },
         audio: AudioConfig {
             enabled: true,
@@ -232,6 +233,16 @@ type ReconnectAttempt = (
     SessionDescription,
     Arc<WebRtcTransport>,
 );
+
+/// A new receiver handoff can only cure a lost or never-established link. A local media or cleanup
+/// failure (FFmpeg ended, capture refused, process not reaped) or a receiver that declined would
+/// fail again, so it ends the session with its own cause instead of relaunching the receiver.
+fn reconnectable(error: &EngineError) -> bool {
+    matches!(
+        error,
+        EngineError::Transport(_) | EngineError::NegotiationTimeout
+    )
+}
 
 fn reconnect_timeout(session_deadline: Instant, phase_limit: Duration) -> Result<Duration, String> {
     let remaining = session_deadline.saturating_duration_since(Instant::now());
@@ -545,7 +556,12 @@ pub(crate) async fn start_webrtc_stream(
                 let mut active = state_handle.active.lock().await;
                 let detail =
                     stop_engine_after_failure(&mut active, transport.as_ref(), detail).await;
-                let Some(reconnect_attempts) = reconnect_budget.claim() else {
+                let budget = if reconnectable(&error) {
+                    reconnect_budget.claim()
+                } else {
+                    None
+                };
+                let Some(reconnect_attempts) = budget else {
                     active.end_reconnect();
                     active.last_error = Some(detail.clone());
                     drop(active);
@@ -613,6 +629,8 @@ pub(crate) async fn start_webrtc_stream(
                         active.last_error = Some(detail.clone());
                         drop(active);
                         release_after_failure(&state_handle, bridge_handle.clone(), detail).await;
+                        // The signaling server of this attempt is spent: looping would panic.
+                        return;
                     } else {
                         drop(active);
                         if !capture_activated {
@@ -673,7 +691,12 @@ pub(crate) async fn start_webrtc_stream(
                                         detail,
                                     )
                                     .await;
-                                    let Some(attempt) = reconnect_budget.claim() else {
+                                    let budget = if reconnectable(&error) {
+                                        reconnect_budget.claim()
+                                    } else {
+                                        None
+                                    };
+                                    let Some(attempt) = budget else {
                                         active.last_error = Some(detail.clone());
                                         drop(active);
                                         release_after_failure(
@@ -760,6 +783,45 @@ mod tests {
         assert_eq!((capture.source_width, capture.source_height), (2560, 1440));
         assert_eq!((capture.video.width, capture.video.height), (1920, 1080));
         assert!(capture.audio.enabled);
+    }
+
+    #[test]
+    fn only_link_failures_relaunch_the_receiver() {
+        assert!(reconnectable(&EngineError::NegotiationTimeout));
+        assert!(reconnectable(&EngineError::Transport(
+            "peer disconnected".into()
+        )));
+        for local in [
+            EngineError::MediaSource("media pipeline ended unexpectedly".into()),
+            EngineError::Cleanup("timed out while reaping media process".into()),
+            EngineError::AuthenticationFailed,
+            EngineError::InvalidConfiguration,
+            EngineError::NoActiveSession,
+        ] {
+            assert!(!reconnectable(&local), "{local}");
+        }
+    }
+
+    #[test]
+    fn capture_prefers_the_gpu_only_through_a_render_node() {
+        let capture = capture_config(
+            CaptureLease {
+                bind_address: "127.0.0.1".into(),
+                display: ":7".into(),
+                offset_x: 0,
+                offset_y: 0,
+                source_width: 1920,
+                source_height: 1080,
+                audio_device: "pulse.monitor".into(),
+            },
+            1920,
+            1080,
+            30,
+        );
+        assert_eq!(
+            capture.video.encoder,
+            VideoEncoder::preferred(std::path::Path::new("/dev/dri"))
+        );
     }
 
     #[tokio::test]
