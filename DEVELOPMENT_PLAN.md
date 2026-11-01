@@ -90,7 +90,8 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   the explicit endurance test remains ignored. The first CI run exposed an unreadable restoration
   journal in the frozen-bridge smoke environment; start-up now reports that journal, continues the
   independent recovery and serves normally. Regression: 157 bridge tests pass; full Python check:
-  2,864 passed, 8 skipped. Corrected CI rerun and hardware acceptance remain separate.
+  2,864 passed, 8 skipped. Corrected SHA `d505d9f` is green in CI (`41351653298`, audit
+  `41351653694`), including the Linux package and Android APK; hardware acceptance remains open.
 - [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
 - [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
   connector; do not add `evdi` or another display system. GNOME uses that output as a real second

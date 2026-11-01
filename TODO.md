@@ -87,7 +87,9 @@ ont été fusionnés sans réécriture. Validation locale ciblée : 286 tests Py
 47 tests WebRTC PASS ; le test d'endurance explicite reste ignoré. Le premier passage CI a trouvé un
 refus d'accès au journal sous l'utilisateur isolé du smoke test : le pont signale maintenant le journal
 illisible, poursuit la restauration indépendante et démarre normalement. Test bridge ciblé : 157 PASS ;
-contrôle Python complet : 2 864 PASS, 8 SKIP. CI corrigée à relancer ; matériel NOT RUN.
+contrôle Python complet : 2 864 PASS, 8 SKIP. Le SHA corrigé `d505d9f` est vert en CI
+(`41351653298`, audit `41351653694`), paquet Linux et
+APK Android compris ; matériel toujours NOT RUN.
 
 - [x] Extension sur connecteur forcé, retrait reprenable, cliché du gestionnaire d'affichage (D2-1,
   D2-3, D2-5) : fusionnés.
