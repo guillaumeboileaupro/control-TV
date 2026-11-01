@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 31/10 | **#118** - migration des anciens certificats (`0a19fd7`) ; **#119** - dashboard (`acee470`), lien de skill corrigé ; rerun qualité bloqué uniquement par `pyasn1` 0.6.4, mise à jour 0.6.5 en validation |
+| PR actives vérifiées au 01/11 | #118 fusionnée (`5d9f06d`) ; #119 fusionnée (`0a47454`, `pyasn1` 0.6.5) ; **#120** - D1 Rust (`feat/d1-rust-screencast`), seule PR ouverte |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -37,10 +37,10 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | T-01 - Appairage durable | #118 ouverte ; FAIL matériel avant migration | 0,5 / 2 / 1 h | Finaliser #118, revue, fusion, recette | Codex / Claude |
 | P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
-| P1 | D1 - Duplication Rust/WebRTC/HLS | Code avancé ; matériel non accepté | 3 / 8 / 5 h | Achever parcours capture -> TV | Claude |
-| P1 | D2 - Extension Rust/X11 | Virtuel partiel ; vrai second écran non validé | 4 / 12 / 7 h | Bureau indépendant et restauration X11 | Claude |
+| P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED : moteur, récepteur, bail, Tauri (#111). **PR #120** IMPLEMENTED + tests locaux : pertes sans corruption, VA-API choisi si nœud de rendu avec repli `libx264`, Opus en temps réel (avant : 1–2 s de retard), signalisation tolérante, reconnexion réservée aux pannes de lien, test de bout en bout Rust. HARDWARE NOT RUN | 3 / 8 / 5 h | Revue indépendante et CI de #120, accord de fusion ; puis D1-9 avec autorisation | Claude |
+| P1 | D2 - Extension Rust/X11 | Connecteur forcé MERGED ; écran virtuel indépendant bloqué par décision D2-B1 (`evdi` ou connecteur forcé, root) ; vrai second écran non validé | 4 / 12 / 7 h | Décision D2-B1, puis restauration X11 prouvée | Claude |
 | P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
-| P1 | D4 - Robustesse | Automatisation existante, recette incomplète | 2 / 5 / 3 h | Arrêt, reconnexion, cleanup et restauration | Claude |
+| P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg. PR #120 : FFmpeg tué avec son hôte (D4-4), arrêt des FFmpeg vérifié de bout en bout, aucune reconnexion sur panne locale. NOT IMPLEMENTED : restauration après panne (D4-5, PR D2). HARDWARE NOT RUN | 2 / 5 / 3 h | D4-5 journal de restauration avec D2 | Claude |
 | P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
 | P1 | Audio / synchronisation | Opus/PulseAudio codés ; physique non validé | 1 / 4 / 2 h | Mesurer synchronisation sur TV | Claude |
 | P1 | Latence / performances | HLS ancien 9-11 s ; WebRTC <500 ms non prouvé | 1 / 4 / 2 h | Mesurer médiane, p95, pire, FPS, CPU/GPU | Claude |
@@ -51,7 +51,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P2 | Menu GNOME | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests sur Ubuntu | Claude |
 | P2 | Assistant / microphone | Assistant sans effet sur Liberté | 2 / 6 / 3 h | Clarifier capacités et chemin vocal | Codex |
 | P2 | Logos / langues / Power-CEC | Non repris point par point le 30/10 | 1 / 3 / 2 h | Tests ciblés et limites TV | Codex / Claude |
-| P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 en validation sur #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
+| P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 fusionné via #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
 | **TOTAL** | **Travaux restants estimés** | **Ne comprend pas de nouvelle anomalie majeure** | **26 / 79,5 / 46 h** | **Réviser après vérification** | **Coordinateur** |
 
 ## Dernière recette matérielle - 30/10
@@ -97,3 +97,5 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |
+| 2026-10-31 | Claude, branche `feat/d1-rust-screencast` sans PR : D1-3 VA-API avec repli explicite, D4-4 `PR_SET_PDEATHSIG`, correctif `agent_config.py` sous `python3` 3.7 ; skill `python-project-quality` synchronisé avec `my-skills` (branche `docs/python-cli-interpreter`). Tests locaux uniquement, CI non exécutée, matériel NOT RUN. |
+| 2026-11-01 | Claude, PR #120 : `main` (#118, #119) intégré sans perte ; Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien (et panique supprimée), VA-API par nœud de rendu, test de bout en bout Rust, fuite de script de test corrigée. Tests locaux verts ; matériel NOT RUN. |

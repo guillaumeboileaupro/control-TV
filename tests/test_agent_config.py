@@ -310,6 +310,48 @@ def test_skill_links_must_stay_inside_the_repository(tmp_path: Path) -> None:
     assert config._link_problems(tmp_path) == []
 
 
+class Python38Path(type(Path())):  # type: ignore[misc]
+    """A path without the `Path` API that Python 3.9 added and an older `python3` lacks."""
+
+    def __getattribute__(self, name: str) -> object:
+        if name in {"readlink", "is_relative_to"}:
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+def test_link_checks_need_no_path_api_newer_than_the_system_python3(tmp_path: Path) -> None:
+    # `python3` may be older than `.venv` (3.7 on the owner's desktop): `check` crashed there
+    # with AttributeError on `Path.readlink`, added with `Path.is_relative_to` in 3.9.
+    root = repository(tmp_path)
+    (root / ".claude/skills/hardware-safety").unlink()
+    (root / ".claude/skills/hardware-safety").symlink_to(tmp_path / "elsewhere")
+
+    assert config._link_problems(Python38Path(root)) == [
+        ".claude/skills/hardware-safety links outside the repository"
+    ]
+
+
+@pytest.mark.parametrize(("broken", "expected"), [(False, 0), (True, 1)])
+def test_the_check_command_reports_through_its_exit_status(
+    tmp_path: Path, broken: bool, expected: int
+) -> None:
+    root = repository(tmp_path)
+    if broken:
+        (root / ".claude/skills/solid-code-design").unlink()
+        (root / ".claude/skills/solid-code-design").symlink_to(Path("../../.agents/skills/gone"))
+
+    done = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/agent_config.py"), "check", "--root", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == expected, done.stderr
+    assert "Traceback" not in done.stderr
+    assert ("is a broken link" in done.stdout + done.stderr) is broken
+
+
 def test_outside_a_git_repository_only_the_content_is_checked(tmp_path: Path) -> None:
     root = repository(tmp_path)
     shutil.rmtree(root / ".git")
