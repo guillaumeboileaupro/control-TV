@@ -99,9 +99,14 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   Probes: removing the start-up call or the owner check fails the new tests. Python 2,851 passed
   / 8 skipped, coverage 98.91 % (virtual_display and restore_journal 100 %). Hardware NOT RUN.
 - [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
-  check the sound returns to the original output.
+  check the sound returns to the original output. HARDWARE PARTIAL 2026-11-01 (authorized,
+  `e6e5b82`, owner's desktop, no TV, no Tauri app): a real PulseAudio route survives a bridge
+  start during the stream, a SIGKILL leaves the computer muted with its journal, the real bridge
+  start-up restores default sink, sinks, stream placement and modules exactly and deletes the
+  journal. Remaining: the same with the app streaming to the TV.
 - [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
-  restart without streaming, compare `xrandr --verbose` with the initial state.
+  restart without streaming, compare `xrandr --verbose` with the initial state. Authorized
+  2026-11-01, BLOCKED: no free connector is forced on (needs the owner's `sudo` step first).
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.

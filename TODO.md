@@ -99,9 +99,17 @@ essai réel autorisé par le propriétaire.
   l'écran TV d'une autre diffusion ; une reprise hors session X11 levait une erreur non gérée au
   démarrage. Tests automatisés uniquement ; matériel NOT RUN.
 - [ ] **D4-5, preuve matérielle (autorisation) :** tuer l'application pendant une diffusion avec
-  son, relancer, vérifier que le son revient sur la sortie d'origine.
+  son, relancer, vérifier que le son revient sur la sortie d'origine. **HARDWARE PARTIAL
+  (2026-11-01, autorisé, `e6e5b82`) :** sur le poste du propriétaire, sans TV ni application
+  Tauri : route PulseAudio réelle ouverte par un processus, bridge relancé pendant la diffusion
+  (route laissée intacte), SIGKILL (ordinateur muet, journal présent), puis démarrage du vrai
+  bridge : sortie par défaut, puits, placement des sons et modules identiques à l'état initial,
+  journal effacé. Reste : le même scénario avec l'application et une diffusion vers la TV.
 - [ ] **D2/D4-5, preuve matérielle X11 (autorisation) :** tuer l'application pendant une
   extension (TV à gauche), relancer sans diffuser, comparer `xrandr --verbose` à l'état initial.
+  Autorisée le 2026-11-01 mais **BLOCKED** : aucun connecteur libre forcé (HDMI « disconnected ») ;
+  le propriétaire doit d'abord lancer `echo on-digital | sudo tee
+  /sys/class/drm/<card>-HDMI-A-<n>/status`. Script prêt dans `.ai-private/evidence/`.
 - [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
   Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
   réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.
