@@ -30,12 +30,12 @@ essai réel autorisé par le propriétaire.
 | D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Écarté par l'architecture D2 du 2026-11-01** : aucun evdi ni nouveau système ; maintien du connecteur RandR forcé | — | — |
 | D2-3 | Diffuser uniquement l'écran étendu (géométrie du bail = cet écran) | Fusionné | Oui | Non (WebRTC) |
 | D2-4 | Déplacement des fenêtres sur l'écran étendu | Dépend de GNOME | — | 1 observation HLS |
-| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **Branche D2** : retrait idempotent, journal privé atomique avant mutation et reprise vérifiée au prochain processus | Oui (faux `xrandr`, reprise après plantage simulé) | Non |
+| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **PR #121** : retrait idempotent, journal privé atomique, reprise dès le démarrage du bridge, réglages du propriétaire conservés et diffusion vivante protégée | Oui (faux `xrandr`, reprise après plantage simulé, verrou libéré par un vrai SIGKILL) | Partiel sans TV |
 | D4-1 | Arrêt fiable : Stop annule attente/négociation/reconnexion, FFmpeg récolté, erreurs combinées | Fusionné | Oui | Non |
 | D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
 | D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
 | D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Branche** (`PR_SET_PDEATHSIG`) | Oui (processus réels ; le test échoue sans le correctif) | Non |
-| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Partiel sur branche D2** : écran et positions persistants ; route PulseAudio encore sans journal | Oui (X11) | — |
+| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **PR #121** : X11 et son intégrés avec journal partagé | Oui (faux `xrandr`, faux `pactl`, vrai SIGKILL d'un processus) | Partiel séparé, sans TV |
 | D4-6 | Aucune session fantôme : un seul bail émetteur, générations côté récepteur | Fusionné | Oui | Non |
 
 ### D1 — duplication (PR D1, après clôture de #118)
@@ -91,7 +91,52 @@ essai réel autorisé par le propriétaire.
   première mutation RandR ; au prochain processus, retrait du mode, extinction de la sortie et
   remise en place des écrans déplacés ; journal conservé si la vérification échoue et effacé
   seulement après restauration vérifiée. Tests automatisés sur faux `xrandr`, matériel NOT RUN.
-- [ ] **D4-5, suite :** journaliser et restaurer la route PulseAudio après un arrêt brutal.
+- [x] **D4-5, partie son (intégrée dans la PR #121) :** le
+  journal atomique de D2 est extrait dans `restore_journal.py` (0700/0600, `fsync`, renommage
+  atomique) et partagé par D2 et la route PulseAudio. La sortie par défaut est journalisée avant
+  tout `load-module` ; le journal n'est effacé qu'après constat de PulseAudio (plus de puits nul
+  `controltv_tv`, sortie par défaut différente). Après un SIGKILL, le bridge termine la
+  restauration à son démarrage suivant (`main`), et un nouveau `start` le fait aussi ; avant, le
+  puits nul restait la sortie (ordinateur muet) et la diffusion suivante était refusée. La
+  restauration ne remet la sortie que si le puits nul est encore la sortie par défaut, ne déplace
+  que les sons restés sur lui, laisse PulseAudio choisir si la sortie d'origine a disparu, et ne
+  change plus rien une fois faite ; un journal invalide ou une restauration non confirmée est
+  conservé et signalé (stderr au démarrage, erreur au `start`). Les tests utilisent désormais un
+  `XDG_STATE_HOME` temporaire : aucun test ne peut lire un vrai journal et rejouer `pactl` ou
+  `xrandr` sur le poste. Tests automatisés uniquement ; matériel NOT RUN.
+- [x] **D2/D4-5, restauration X11 au démarrage (intégrée dans la PR #121) :** le bridge termine
+  la restauration de l'écran étendu d'un processus tué dès son
+  démarrage, avant le son, sans attendre une nouvelle diffusion ; l'une n'empêche jamais l'autre et
+  un échec est signalé sur stderr avec journal conservé et nouvelle tentative au démarrage suivant.
+  La reprise ne défait que ce qui appartient encore au processus tué : un écran replacé par le
+  propriétaire depuis reste où il est, une sortie qui n'affiche plus le mode TV n'est pas éteinte,
+  un écran débranché ne bloque plus le journal ; le journal enregistre le décalage appliqué (un
+  journal plus ancien sans décalage garde la remise en place complète). Le journal partagé
+  (`restore_journal.py`) porte désormais un verrou `flock` du propriétaire, libéré par le noyau au
+  SIGKILL : une reprise (démarrage, autre processus, nouvel objet du contrôleur) ne défait jamais
+  une diffusion vivante. Défauts corrigés : chaque `extension_output()` du contrôleur recréait un
+  moniteur dont la reprise démontait l'écran étendu en cours ; une extension refusée nettoyait
+  l'écran TV d'une autre diffusion ; une reprise hors session X11 levait une erreur non gérée au
+  démarrage. Tests automatisés uniquement ; matériel NOT RUN.
+- [ ] **D4-5, preuve matérielle (autorisation) :** tuer l'application pendant une diffusion avec
+  son, relancer, vérifier que le son revient sur la sortie d'origine. **HARDWARE PARTIAL
+  (2026-11-01, autorisé, `e6e5b82`) :** sur le poste du propriétaire, sans TV ni application
+  Tauri : route PulseAudio réelle ouverte par un processus, bridge relancé pendant la diffusion
+  (route laissée intacte), SIGKILL (ordinateur muet, journal présent), puis démarrage du vrai
+  bridge : sortie par défaut, puits, placement des sons et modules identiques à l'état initial,
+  journal effacé. Reste : le même scénario avec l'application et une diffusion vers la TV.
+- [ ] **D2/D4-5, preuve matérielle X11 (autorisation) :** tuer l'application pendant une
+  extension (TV à gauche), relancer sans diffuser, comparer `xrandr --verbose` à l'état initial.
+  **HARDWARE PARTIAL (2026-11-01, autorisé)** sur le poste du propriétaire, connecteur HDMI forcé
+  par le propriétaire, sans TV ni application Tauri : extension réelle (TV à gauche, écran
+  intégré déplacé), bridge relancé pendant l'extension (laissée intacte), SIGKILL, puis démarrage
+  du vrai bridge sans diffusion. Premier passage **FAIL** : GNOME avait allumé seul le connecteur
+  forcé (1024x768 à droite) et la restauration l'éteignait (disposition remise à la main
+  aussitôt). Corrigé : le journal enregistre ce que la sortie affichait (mode, fréquence,
+  position, rotation) et l'arrêt normal, l'échec de création et la reprise le lui rendent au lieu
+  de l'éteindre. Second passage : `xrandr --verbose` identique à l'état initial hors horodatages
+  X, aucun mode `control-tv-*`, journal effacé. Reste : le même scénario avec l'application et
+  une diffusion vers la TV, et un arrêt normal sur matériel.
 - [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
   Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
   réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.

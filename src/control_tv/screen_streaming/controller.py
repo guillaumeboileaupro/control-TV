@@ -20,7 +20,7 @@ from typing import Protocol
 
 from control_tv.domain import DeviceId
 from control_tv.ports import TvControl
-from control_tv.screen_streaming.audio_route import PulseAudioRoute
+from control_tv.screen_streaming.audio_route import PulseAudioRoute, persistent_audio_route
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
 from control_tv.screen_streaming.d1 import (
     MAX_D1_SECONDS,
@@ -155,7 +155,7 @@ class ScreenStreamController:
         connect: Connect = tv_and_route,
         capture: Callable[[], X11Capture] = X11Capture,
         extension: Callable[[], XrandrVirtualMonitor] = persistent_virtual_monitor,
-        audio_route: Callable[[], PulseAudioRoute] = PulseAudioRoute,
+        audio_route: Callable[[], PulseAudioRoute] = persistent_audio_route,
         build: Assemble = assemble,
         seconds: int = MAX_D1_SECONDS,
         clock: Callable[[], float] = time.monotonic,

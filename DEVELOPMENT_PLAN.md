@@ -92,7 +92,50 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   first RandR mutation. A new process removes the D2 mode, disables its output, restores every
   shifted screen position, verifies the result, and only then deletes the journal; failed recovery
   keeps it for the next start. Automated fake-`xrandr` tests only, hardware NOT RUN.
-- [ ] D4-5 remainder: persist and restore the PulseAudio route after an abrupt process death.
+- [x] D4-5 sound part (integrated into PR #121): the D2 journal is extracted into
+  `screen_streaming/restore_journal.py` and
+  shared, unchanged in behaviour (private 0700/0600, fsynced temporary file, atomic rename,
+  directory fsync; an impossible path means nothing pending). `PulseAudioRoute` journals the
+  previous default sink before `load-module` and clears it only once PulseAudio shows no
+  `controltv_tv` sink and another default. After a SIGKILL the null sink stayed the default (a
+  silent computer) and the next start was refused; now the bridge's `main` finishes the
+  restoration at the next start (stderr report, journal kept on failure) and `start` recovers
+  first. Restoring never overrides the user: the default is given back only while it is still the
+  null sink, only sounds still on it move, a vanished output is left to PulseAudio's fallback,
+  and repeating it changes nothing. The test suite now runs with a temporary `XDG_STATE_HOME`, so
+  no test can replay a real journal against the owner's display or sound server. Tests: a real
+  SIGKILLed child whose fake PulseAudio state outlives it, journal-before-change, user choices
+  kept, unplugged output, repeatability, unconfirmed and invalid journals; probes confirm the
+  journal and start-up recovery tests fail without the fix. Python 2,822 passed / 8 skipped,
+  coverage 98.89 %. Hardware NOT RUN.
+- [x] D2/D4-5 start-up X11 restoration (integrated into PR #121): `bridge.main` recovers a killed
+  run's extended screen
+  (`recover_interrupted_extension`) then its sound, each independently, stderr report and journal
+  kept on failure, retried at the next start. The recovery undoes only what is still the killed
+  run's: screens are moved back only while at the journaled shift (new `shift` field; an older
+  journal keeps the full put-back), the output is turned off only while it shows the TV mode, an
+  unplugged screen no longer pins the journal. `RestoreJournal` gains an owner `flock` on a
+  sibling `.lock` file (claimed before any change, released at verified clear, freed by the kernel
+  on SIGKILL), so no recovery undoes a live stream. Fixed: `extension_output()` built a monitor
+  whose recovery tore down the running extension; a refused `create` cleaned another stream's TV
+  output; a recovery outside X11 raised an unhandled `InvalidStreamConfiguration` at start-up.
+  Probes: removing the start-up call or the owner check fails the new tests. Python 2,851 passed
+  / 8 skipped, coverage 98.91 % (virtual_display and restore_journal 100 %). Hardware NOT RUN.
+- [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
+  check the sound returns to the original output. HARDWARE PARTIAL 2026-11-01 (authorized,
+  `e6e5b82`, owner's desktop, no TV, no Tauri app): a real PulseAudio route survives a bridge
+  start during the stream, a SIGKILL leaves the computer muted with its journal, the real bridge
+  start-up restores default sink, sinks, stream placement and modules exactly and deletes the
+  journal. Remaining: the same with the app streaming to the TV.
+- [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
+  restart without streaming, compare `xrandr --verbose` with the initial state. HARDWARE
+  PARTIAL 2026-11-01 (authorized, owner's desktop, forced HDMI connector, no TV, no Tauri app):
+  first run FAIL, GNOME had lit the forced connector by itself (1024x768) and the restoration
+  turned it off; fixed by journaling what the output displayed (`before`: mode, rate, position,
+  rotation) and giving it back on stop, failed create and recovery. Second run: `xrandr
+  --verbose` identical to the initial state apart from X timestamps, no `control-tv-*` mode,
+  journal deleted. Python 2,863 passed / 8 skipped, coverage 98.92 %. Remaining: the same with
+  the app streaming to the TV, and a normal stop on hardware.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
