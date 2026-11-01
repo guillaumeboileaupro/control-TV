@@ -62,6 +62,16 @@ class PickerScreenTest {
     }
 
     @Test
+    fun aKnownTvMissingFromTheNetworkIsListedWithoutClaimingAvailability() {
+        val away = PickableTv("tv-away-uuid", "Bedroom", "Google TV", available = false)
+        val row = found(away, chosen = away.deviceId).rows.single()
+
+        assertEquals("Google TV · Known, currently unavailable", row.subtitle)
+        assertTrue(row.spoken.contains("currently unavailable"))
+        assertTrue(row.current)
+    }
+
+    @Test
     fun aCurrentTvThatWasNotFoundStaysChosenAndSaysSo() {
         val screen = found(kitchen, chosen = "tv-away-uuid", missing = true)
 

@@ -15,6 +15,7 @@ from control_tv.domain.errors import (
     InvalidArgumentError,
     OperationTimeoutError,
     PairingRequiredError,
+    StorageUnavailableError,
     UnsupportedMediaError,
     UnsupportedOperationError,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "RemoteKeyResult",
     "RemoteObservation",
     "RemoteTextResult",
+    "StorageUnavailableError",
     "StreamType",
     "TextEntry",
     "TvApp",

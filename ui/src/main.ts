@@ -11,10 +11,12 @@ import {
   describeFailure,
   describeStatus,
   failDiscovery,
+  forgetDevice,
   finishDiscovery,
   finishStatusRead,
   HEALTHY,
   initialState,
+  rememberDevice,
   recordServiceAnswer,
   recordServiceFailure,
   refreshStatus,
@@ -292,6 +294,17 @@ function start(elements: Elements): void {
       }
       button.addEventListener("click", () => onSelect(device.id));
       item.appendChild(button);
+      if (device.known === true) {
+        const forget = document.createElement("button");
+        forget.type = "button";
+        forget.className = "forget-device";
+        forget.setAttribute("aria-label", `Forget ${device.friendlyName} on this installation`);
+        forget.title = "Forget this TV (pairing credentials are kept)";
+        setBusy(forget, busy);
+        forget.append(icon("trash"));
+        forget.addEventListener("click", () => onForget(device.id));
+        item.appendChild(forget);
+      }
       devicesList.appendChild(item);
     }
   }
@@ -666,17 +679,35 @@ function start(elements: Elements): void {
     const next = selectDevice(state, deviceId);
     update(next.state);
     const chosen = chosenDevice(next);
-    if (chosen !== null) {
-      // The explicit choice becomes the home-screen widget's TV (Android only; nothing is
-      // sent to any TV). A failure to store it never affects the window.
-      void invoke("remember_selection", chosen).catch(() => undefined);
-    }
     if (next.request !== null) {
       // The chosen device is now the row you see; collapse the list and keep focus nearby.
       elements.picker.open = false;
       elements.pickerSummary.focus();
-      void readStatus(next.request);
+      if (chosen !== null) void rememberThenRead(chosen, next.request);
     }
+  }
+
+  async function rememberThenRead(
+    chosen: { deviceId: string; name: string },
+    request: StatusRequest,
+  ): Promise<void> {
+    try {
+      await invoke("bridge_remember_device", { deviceId: chosen.deviceId });
+      update(rememberDevice(state, chosen.deviceId));
+    } catch {
+      // The selection remains usable in this process, but is not presented as durably known.
+    }
+    // The explicit choice becomes the home-screen widget's TV (Android only; nothing is
+    // sent to any TV). A failure to store it never affects the window.
+    void invoke("remember_selection", chosen).catch(() => undefined);
+    await readStatus(request);
+  }
+
+  function onForget(deviceId: string): void {
+    if (!canSelect(state)) return;
+    void invoke("bridge_forget_device", { deviceId })
+      .then(() => update(forgetDevice(state, deviceId)))
+      .catch(() => undefined);
   }
 
   function onRefresh(): void {

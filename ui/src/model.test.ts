@@ -27,6 +27,8 @@ import {
   selectDevice,
   chosenDevice,
   startDiscovery,
+  forgetDevice,
+  rememberDevice,
   toBridgeFailure,
   type AppState,
   type Device,
@@ -283,6 +285,30 @@ describe("discovery", () => {
     assert.equal(next.selected, null);
     assert.deepEqual(next.status, { kind: "none" });
     assert.match(next.notice ?? "", /not found by the latest discovery/);
+  });
+
+  test("an explicitly known device stays selectable while the latest discovery says unavailable", () => {
+    const known = { ...device("a"), known: true, available: false };
+    const next = finishDiscovery(startDiscovery(initialState()), [known]);
+
+    assert.equal(next.devices[0]?.available, false);
+    assert.match(describeDevice(known, [known]).subtitle, /Known, currently unavailable/);
+    assert.equal(selectDevice(next, "a").request?.deviceId, "a");
+  });
+
+  test("remember and explicit forget are separate from network availability", () => {
+    const found = discovered(device("a"));
+    const remembered = rememberDevice(found, "a");
+
+    assert.equal(remembered.devices[0]?.known, true);
+    assert.equal(forgetDevice(remembered, "a").devices[0]?.known, false);
+    assert.deepEqual(
+      forgetDevice(
+        { ...remembered, devices: [{ ...remembered.devices[0]!, available: false }] },
+        "a",
+      ).devices,
+      [],
+    );
   });
 
   test("a failed discovery keeps the selection and reports the failure", () => {

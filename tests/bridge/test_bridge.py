@@ -108,8 +108,28 @@ def test_discover_devices_returns_transport_devices_as_json(control: ControlServ
             "kind": "other",
             "modelName": None,
             "androidTvRemote": None,
+            "known": False,
+            "available": True,
         }
     ]
+
+
+def test_remember_and_forget_device_are_explicit_bridge_operations(
+    control: ControlService,
+) -> None:
+    dispatch(control, {"id": 1, "method": "discover_devices", "params": {}})
+
+    remembered = dispatch(
+        control,
+        {"id": 2, "method": "remember_device", "params": {"deviceId": str(DEVICE_ID)}},
+    )
+    forgotten = dispatch(
+        control,
+        {"id": 3, "method": "forget_device", "params": {"deviceId": str(DEVICE_ID)}},
+    )
+
+    assert remembered == {"id": 2, "ok": True, "result": {}}
+    assert forgotten == {"id": 3, "ok": True, "result": {}}
 
 
 def test_discover_devices_forwards_the_timeout(

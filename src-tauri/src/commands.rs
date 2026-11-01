@@ -103,6 +103,34 @@ pub(crate) async fn bridge_discover_devices(
     call_bridge(state.inner().clone(), "discover_devices", params, timeout).await
 }
 
+#[tauri::command]
+pub(crate) async fn bridge_remember_device(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "remember_device",
+        status_request(&device_id),
+        PING_TIMEOUT,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn bridge_forget_device(
+    state: tauri::State<'_, SharedBridgeState>,
+    device_id: String,
+) -> Result<Value, BridgeFailure> {
+    call_bridge(
+        state.inner().clone(),
+        "forget_device",
+        status_request(&device_id),
+        PING_TIMEOUT,
+    )
+    .await
+}
+
 /// The request for one status read: only the stable device id, exactly as discovery
 /// reported it. Whether that id is valid, known or reachable is decided by the shared
 /// control layer, never here.

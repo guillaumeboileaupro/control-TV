@@ -78,6 +78,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::bridge_ping,
             commands::bridge_discover_devices,
+            commands::bridge_remember_device,
+            commands::bridge_forget_device,
             commands::bridge_get_status,
             commands::bridge_play,
             commands::bridge_pause,

@@ -27,6 +27,10 @@ export interface Device {
   // false when discovery looked for it, null when undetermined. Optional: an older control backend
   // does not send it, which reads as undetermined. Only `true` offers the TV remote panel.
   androidTvRemote?: boolean | null;
+  // `known` is an explicit local choice. `available` means only that the latest network
+  // discovery saw it; neither value claims that a connection or pairing is active.
+  known?: boolean;
+  available?: boolean;
 }
 
 export interface ReceiverStatus {
@@ -300,6 +304,34 @@ export function finishDiscovery(state: AppState, devices: Device[]): AppState {
   };
 }
 
+export function rememberDevice(state: AppState, deviceId: string): AppState {
+  const devices = state.devices.map((device) =>
+    device.id === deviceId ? { ...device, known: true } : device,
+  );
+  const selected =
+    state.selected?.id === deviceId ? { ...state.selected, known: true } : state.selected;
+  return { ...state, devices, selected };
+}
+
+export function forgetDevice(state: AppState, deviceId: string): AppState {
+  const devices = state.devices.flatMap((device) => {
+    if (device.id !== deviceId) return [device];
+    return device.available === false ? [] : [{ ...device, known: false }];
+  });
+  if (state.selected?.id !== deviceId) return { ...state, devices };
+  return {
+    ...state,
+    devices,
+    selected: null,
+    status: { kind: "none" },
+    command: { kind: "idle" },
+    seekDraft: null,
+    volumeDraft: null,
+    remote: REMOTE_IDLE,
+    notice: "This TV was forgotten on this installation. Pairing credentials were preserved.",
+  };
+}
+
 export function failDiscovery(state: AppState, failure: BridgeFailure): AppState {
   return { ...state, devices: [], discovery: { kind: "failed", failure } };
 }
@@ -522,7 +554,14 @@ export function describeDevice(device: Device, all: Device[]): DeviceDescription
   );
   return {
     name: device.friendlyName,
-    subtitle: shared ? `${kind} · ${device.host}:${device.port}` : kind,
+    subtitle:
+      device.available === false
+        ? `${kind} · Known, currently unavailable`
+        : shared
+          ? `${kind} · ${device.host}:${device.port}`
+          : device.known === true
+            ? `${kind} · Known`
+            : kind,
   };
 }
 

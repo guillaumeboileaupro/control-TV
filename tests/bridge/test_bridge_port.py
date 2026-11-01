@@ -45,6 +45,12 @@ class StubControl:
         self.calls.append(("discover_devices", str(timeout)))
         return []
 
+    def remember_device(self, device_id: DeviceId) -> None:
+        self.calls.append(("remember_device", str(device_id)))
+
+    def forget_device(self, device_id: DeviceId) -> None:
+        self.calls.append(("forget_device", str(device_id)))
+
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
         self.calls.append(("get_status", device_id))
         raise DeviceNotFoundError("not found by the last discovery", device_id=device_id)
@@ -122,6 +128,25 @@ def test_the_bridge_dispatches_to_any_implementation_of_the_port() -> None:
         "reason": None,
     }
     assert stub.calls == [("discover_devices", "5.0"), ("browse_tv_apps", str(DEVICE_ID))]
+
+
+def test_known_device_changes_stay_on_the_control_port() -> None:
+    stub = StubControl()
+
+    remembered = dispatch(
+        stub,
+        {"id": 1, "method": "remember_device", "params": {"deviceId": str(DEVICE_ID)}},
+    )
+    forgotten = dispatch(
+        stub,
+        {"id": 2, "method": "forget_device", "params": {"deviceId": str(DEVICE_ID)}},
+    )
+
+    assert remembered["ok"] is True and forgotten["ok"] is True
+    assert stub.calls == [
+        ("remember_device", str(DEVICE_ID)),
+        ("forget_device", str(DEVICE_ID)),
+    ]
 
 
 def test_an_error_of_the_port_keeps_its_code_through_the_bridge() -> None:

@@ -52,10 +52,14 @@ never retries or replays the possibly delivered key. Automated tests cover lost 
 answers and host failures. During the targeted 2026-10-30 hardware recipe, the Ubuntu interface
 remained usable after two Assistant clicks (PASS for that scenario only).
 
-T-06 persistent discovery (hardware FAIL P1, 2026-10-30): one awake TV that was announced on the
-network remained absent from three consecutive discovery attempts on Ubuntu and the phone. No
-correction is implemented. The next change must keep an already paired TV visible and reconnectable
-without turning stale identity or address data into a false availability claim.
+T-06 persistent discovery (automated implementation, 2026-11-01): known TVs are now stored in a
+private registry separate from certificates, restored as unavailable after application restart,
+and reconciled with live discovery. Reconnection performs a bounded rediscovery before reading
+status, so stale identity or address data never becomes a false connection or availability claim.
+Forgetting a TV remains an explicit user action and preserves pairing credentials and preferences.
+Regression tests cover network disappearance, restart, redetection, reconnection, two known TVs
+and pairing-data preservation. The 2026-10-30 hardware FAIL remains open for a later authorized
+retest after integration; no hardware test was run for this implementation.
 
 Security maintenance (2026-10-27): GHSA-qwgh-2vcv-g2f7 affected `block-buffer` 0.10.4 in both
 Rust lockfiles through `digest` 0.10.7. Directly selecting 0.12.1 is incompatible with the

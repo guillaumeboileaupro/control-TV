@@ -16,7 +16,8 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 
 from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
@@ -30,7 +31,10 @@ from control_tv.domain import (
     ControlError,
     Device,
     DeviceId,
+    DeviceNotFoundError,
     DeviceStatus,
+    DeviceUnavailableError,
+    DiscoveryError,
     InvalidArgumentError,
     MediaRequest,
     MediaStatus,
@@ -40,11 +44,12 @@ from control_tv.domain import (
     RemoteKeyResult,
     RemoteObservation,
     RemoteTextResult,
+    StorageUnavailableError,
     TvApp,
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import AppMemory, CastTransport, ReceiverApps, TvApps, TvRemote
+from control_tv.ports import AppMemory, CastTransport, DeviceMemory, ReceiverApps, TvApps, TvRemote
 from control_tv.tv_channels import TvChannels
 
 
@@ -352,6 +357,7 @@ class ControlService:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         app_memory: AppMemory | None = None,
+        device_memory: DeviceMemory | None = None,
         receiver_apps: ReceiverApps | None = None,
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
@@ -385,6 +391,7 @@ class ControlService:
         self._clock = clock
         self._sleep = sleep
         self._trace = trace or TraceRecorder()
+        self._device_memory = device_memory
         # Acceptance only (C6): holds a sent playback command's confirmation until an
         # independent observer has recorded the session change. None in normal use.
         self._gate = gate
@@ -395,17 +402,68 @@ class ControlService:
             memory=app_memory,
             receiver_apps=receiver_apps,
         )
-        self._devices: dict[DeviceId, Device] = {}
+        recalled = () if device_memory is None else device_memory.recall()
+        self._devices: dict[DeviceId, Device] = {
+            device.id: replace(device, known=True, available=False) for device in recalled
+        }
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
         timeout = _number(timeout, "discovery timeout")
         _require(timeout > 0, f"discovery timeout must be a finite number > 0: {timeout}")
-        devices = list(self._transport.discover(timeout=timeout))
-        self._devices = {device.id: device for device in devices}
-        return devices
+        remembered = {
+            device.id: replace(device, known=True, available=False)
+            for device in (() if self._device_memory is None else self._device_memory.recall())
+        }
+        try:
+            discovered = list(self._transport.discover(timeout=timeout))
+        except DiscoveryError:
+            if not remembered:
+                raise
+            self._devices = remembered
+            return list(remembered.values())
+        live = {
+            device.id: replace(device, known=device.id in remembered, available=True)
+            for device in discovered
+        }
+        self._devices = {**remembered, **live}
+        return list(self._devices.values())
+
+    def remember_device(self, device_id: DeviceId) -> None:
+        device_id = _checked_id(device_id)
+        device = self._devices.get(device_id)
+        if device is None:
+            raise DeviceNotFoundError(
+                f"device {device_id} has not been discovered", device_id=device_id
+            )
+        if self._device_memory is not None and not self._device_memory.remember(device):
+            raise StorageUnavailableError("could not persist the known TV on this installation")
+        self._devices[device_id] = replace(device, known=True)
+
+    def forget_device(self, device_id: DeviceId) -> None:
+        device_id = _checked_id(device_id)
+        if self._device_memory is not None and not self._device_memory.forget(device_id):
+            raise StorageUnavailableError("could not forget the known TV on this installation")
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        if device.available:
+            self._devices[device_id] = replace(device, known=False)
+        else:
+            self._devices.pop(device_id, None)
 
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
-        return self._transport.get_status(_checked_id(device_id), timeout=self._status_timeout)
+        device_id = _checked_id(device_id)
+        known = self._devices.get(device_id)
+        if known is not None and not known.available:
+            with suppress(DiscoveryError):
+                self.discover_devices(timeout=self._status_timeout)
+            refreshed = self._devices.get(device_id)
+            if refreshed is None or not refreshed.available:
+                raise DeviceUnavailableError(
+                    f"known device {device_id} is not available on the network",
+                    device_id=device_id,
+                )
+        return self._transport.get_status(device_id, timeout=self._status_timeout)
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> CommandResult:
         device_id = _checked_id(device_id)

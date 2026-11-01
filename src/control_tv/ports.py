@@ -122,6 +122,16 @@ class AppMemory(Protocol):
     def remember(self, device_id: DeviceId, apps: tuple[TvApp, ...]) -> None: ...
 
 
+class DeviceMemory(Protocol):
+    """Explicitly kept TVs on this installation; persistence is best effort."""
+
+    def recall(self) -> tuple[Device, ...]: ...
+
+    def remember(self, device: Device) -> bool: ...
+
+    def forget(self, device_id: DeviceId) -> bool: ...
+
+
 class TvControl(Protocol):
     """The authoritative control surface. The bridge (window, Android app) and the MCP adapter
     call this, never a concrete service.
@@ -132,6 +142,10 @@ class TvControl(Protocol):
     """
 
     def discover_devices(self, *, timeout: float = ...) -> list[Device]: ...
+
+    def remember_device(self, device_id: DeviceId) -> None: ...
+
+    def forget_device(self, device_id: DeviceId) -> None: ...
 
     def get_status(self, device_id: DeviceId) -> DeviceStatus: ...
 

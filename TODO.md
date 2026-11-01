@@ -31,10 +31,13 @@
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
   occupé et ne renvoie jamais la commande. Tests automatisés, puis recette matérielle ciblée du
   2026-10-30 : interface Ubuntu restée utilisable après deux clics Assistant (PASS).
-- [ ] **T-06 — découverte persistante (FAIL matériel P1, 2026-10-30) :** une TV éveillée et
-  annoncée sur le réseau est restée absente de trois découvertes successives sur Ubuntu et le
-  téléphone. Garder une TV déjà appairée visible et reconnectable reste à concevoir et tester ;
-  aucun correctif n'est encore implémenté.
+- [x] **T-06 — découverte persistante (implémentation automatisée, 2026-11-01) :** les TV connues
+  sont conservées dans un registre privé distinct des certificats, restaurées hors ligne au
+  redémarrage et réconciliées avec la découverte réseau sans inventer un état connecté. L'oubli
+  reste une action utilisateur explicite et ne supprime ni certificat ni préférence. Les tests
+  couvrent disparition réseau, redémarrage, redécouverte, reconnexion, deux TV et absence de perte
+  d'appairage. Le FAIL matériel du 2026-10-30 reste à retester après intégration ; aucun test
+  matériel n'a été lancé pour cette correction.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.

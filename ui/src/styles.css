@@ -470,17 +470,35 @@ h2 {
   border-top: 1px solid var(--line);
 }
 
+.devices li {
+  display: flex;
+  align-items: stretch;
+}
+
 .device {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 100%;
+  flex: 1;
   min-height: 60px;
   padding: 8px 16px;
   border: 0;
   border-radius: 0;
   background: transparent;
   text-align: left;
+}
+
+.forget-device {
+  width: 48px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.forget-device:hover {
+  background: var(--hover);
+  color: var(--error);
 }
 
 .device:hover {
