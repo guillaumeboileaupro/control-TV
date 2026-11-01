@@ -1,6 +1,5 @@
-use crate::{EngineError, SessionDescription};
+use crate::{EngineError, MediaFrame, SessionDescription};
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -22,8 +21,8 @@ use webrtc::track::track_local::TrackLocal;
 pub trait MediaTransport: Send + Sync {
     async fn create_offer(&self) -> Result<SessionDescription, EngineError>;
     async fn accept_answer(&self, answer: SessionDescription) -> Result<(), EngineError>;
-    async fn send_video(&self, data: Bytes, duration: Duration) -> Result<(), EngineError>;
-    async fn send_audio(&self, data: Bytes, duration: Duration) -> Result<(), EngineError>;
+    async fn send_video(&self, frame: MediaFrame) -> Result<(), EngineError>;
+    async fn send_audio(&self, frame: MediaFrame) -> Result<(), EngineError>;
     async fn close(&self) -> Result<(), EngineError>;
     async fn wait_for_disconnect(&self) -> Result<(), EngineError> {
         std::future::pending().await
@@ -108,6 +107,15 @@ fn transport_error(error: impl std::fmt::Display) -> EngineError {
     EngineError::Transport(error.to_string())
 }
 
+fn sample(frame: MediaFrame) -> Sample {
+    Sample {
+        data: frame.data,
+        duration: frame.duration,
+        prev_dropped_packets: frame.dropped_before,
+        ..Default::default()
+    }
+}
+
 async fn wait_for_connection_loss(
     mut states: watch::Receiver<RTCPeerConnectionState>,
     disconnect_grace: Duration,
@@ -166,24 +174,16 @@ impl MediaTransport for WebRtcTransport {
             .map_err(transport_error)
     }
 
-    async fn send_video(&self, data: Bytes, duration: Duration) -> Result<(), EngineError> {
+    async fn send_video(&self, frame: MediaFrame) -> Result<(), EngineError> {
         self.video
-            .write_sample(&Sample {
-                data,
-                duration,
-                ..Default::default()
-            })
+            .write_sample(&sample(frame))
             .await
             .map_err(transport_error)
     }
 
-    async fn send_audio(&self, data: Bytes, duration: Duration) -> Result<(), EngineError> {
+    async fn send_audio(&self, frame: MediaFrame) -> Result<(), EngineError> {
         self.audio
-            .write_sample(&Sample {
-                data,
-                duration,
-                ..Default::default()
-            })
+            .write_sample(&sample(frame))
             .await
             .map_err(transport_error)
     }
@@ -200,6 +200,7 @@ impl MediaTransport for WebRtcTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use rtp::codecs::h264::H264Packet;
     use rtp::codecs::opus::OpusPacket;
     use std::io::Write;
@@ -208,6 +209,25 @@ mod tests {
     use tokio::time::timeout;
     use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
     use webrtc_media::io::sample_builder::SampleBuilder;
+
+    fn frame(data: Bytes, duration: Duration) -> MediaFrame {
+        MediaFrame {
+            data,
+            duration,
+            keyframe: false,
+            dropped_before: 0,
+        }
+    }
+
+    #[test]
+    fn units_discarded_before_a_sample_skip_its_rtp_time_and_sequence_numbers() {
+        let mut late = frame(Bytes::from_static(b"next"), Duration::from_millis(20));
+        late.dropped_before = 3;
+        let converted = sample(late);
+        assert_eq!(converted.prev_dropped_packets, 3);
+        assert_eq!(converted.duration, Duration::from_millis(20));
+        assert_eq!(converted.data, Bytes::from_static(b"next"));
+    }
 
     #[tokio::test]
     async fn a_transient_disconnect_that_recovers_does_not_restart_the_session() {
@@ -498,7 +518,7 @@ mod tests {
         let video = async {
             for _ in 0..3 {
                 sender
-                    .send_video(video_fixture.clone(), Duration::from_secs(1))
+                    .send_video(frame(video_fixture.clone(), Duration::from_secs(1)))
                     .await
                     .expect("send video");
             }
@@ -506,7 +526,7 @@ mod tests {
         let audio = async {
             for packet in encoded_opus.iter().chain(encoded_opus.first()) {
                 sender
-                    .send_audio(packet.clone(), Duration::from_millis(20))
+                    .send_audio(frame(packet.clone(), Duration::from_millis(20)))
                     .await
                     .expect("send audio");
             }

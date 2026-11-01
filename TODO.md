@@ -1,5 +1,148 @@
 # control-TV — TODO
 
+## Diffusion d'écran — D1, D2, D4 (état consolidé, revu sur `main` `3eebf23`)
+
+Ce tableau remplace, pour la diffusion d'écran, les états partiels plus bas (conservés comme
+historique). Le moteur Rust WebRTC, le récepteur Android TV et le bail Python D1/D2 sont dans
+`main` depuis #111 (`88f08d3`). Aucune recette matérielle WebRTC n'a été exécutée : les recettes
+du 2026-10-26 et du 2026-10-30 ont laissé la diffusion `NOT RUN`. Les seules preuves matérielles
+de diffusion sont les essais HLS des 2026-10-19/20 (latence 9–11 s).
+
+Légende : **Fusionné** = dans `main` ; **Branche** = `feat/d1-rust-screencast`, sans PR (une
+seule PR ouverte au total, #118 d'abord) ; **Auto** = tests automatisés locaux/CI ; **Matériel** =
+essai réel autorisé par le propriétaire.
+
+| Réf. | Fonction | Code | Auto | Matériel |
+|---|---|---|---|---|
+| D1-1 | Capture X11 de la géométrie fournie par le bail Python (`x11grab`, mise à l'échelle séparée) | Fusionné | Oui | HLS seulement ; WebRTC non |
+| D1-2 | H.264 logiciel `libx264` zerolatency baseline, AUD, GOP = 1 s | Fusionné | Oui | Non (WebRTC) |
+| D1-3 | H.264 matériel VA-API avec repli logiciel explicite dans le moteur Rust | **Branche** (désactivé par défaut dans Tauri) | Oui (faux `ffmpeg` : réussite, arrêt, silence, image partielle) | Non (GPU non utilisé) |
+| D1-4 | Audio Opus depuis la source monitor PulseAudio du bail | Fusionné | Oui | Non |
+| D1-5 | WebRTC ICE/DTLS/SRTP, signalisation TLS à jeton unique, LAN uniquement | Fusionné | Oui (deux pairs locaux, décodage FFmpeg) | Non |
+| D1-6 | Récepteur Android TV Kotlin/libwebrtc (écrans d'état, générations, fermeture) | Fusionné | Tests JVM, APK debug CI | Non installé |
+| D1-7 | Start/Stop Tauri, erreurs structurées, choix Auto/WebRTC/HLS | Fusionné | Oui | Non |
+| D1-8 | Pertes sous retard réseau : horloge RTP conservée, vidéo resynchronisée sur l'IDR suivante, compteurs de pertes réels | **Branche** | Oui (moteur) | Non |
+| D1-9 | Latence, FPS, pertes, synchro A/V, CPU sur les deux Android TV | Non mesuré | — | **À faire, avec accord** |
+| D2-1 | Écran étendu : mode `cvt` sur un connecteur libre « forcé connecté », placé à gauche/droite/dessus/dessous | Fusionné | Oui (faux `xrandr`) | 1 essai HLS (fenêtre déplacée, 2026-10-20) |
+| D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Écarté par l'architecture D2 du 2026-11-01** : aucun evdi ni nouveau système ; maintien du connecteur RandR forcé | — | — |
+| D2-3 | Diffuser uniquement l'écran étendu (géométrie du bail = cet écran) | Fusionné | Oui | Non (WebRTC) |
+| D2-4 | Déplacement des fenêtres sur l'écran étendu | Dépend de GNOME | — | 1 observation HLS |
+| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **Branche D2** : retrait idempotent, journal privé atomique avant mutation et reprise vérifiée au prochain processus ; **branche `feat/d2-startup-x11-restore`** : reprise dès le démarrage du bridge, réglages du propriétaire conservés, diffusion vivante protégée | Oui (faux `xrandr`, reprise après plantage simulé, verrou libéré par un vrai SIGKILL) | Non |
+| D4-1 | Arrêt fiable : Stop annule attente/négociation/reconnexion, FFmpeg récolté, erreurs combinées | Fusionné | Oui | Non |
+| D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
+| D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
+| D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Branche** (`PR_SET_PDEATHSIG`) | Oui (processus réels ; le test échoue sans le correctif) | Non |
+| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Branche D2** (X11) + **branche `feat/d4-5-audio-restore`** (son, sans PR) | Oui (faux `xrandr`, faux `pactl`, vrai SIGKILL d'un processus) | Non |
+| D4-6 | Aucune session fantôme : un seul bail émetteur, générations côté récepteur | Fusionné | Oui | Non |
+
+### D1 — duplication (PR D1, après clôture de #118)
+
+- [x] Moteur, récepteur, bail et intégration Tauri (D1-1, D1-2, D1-4 à D1-7) : fusionnés via #111.
+- [ ] **D1-8 :** pertes sous retard sans corruption ni dérive (implémenté et testé sur la branche ;
+  à publier en PR D1 puis revue indépendante).
+- [x] **D1-3 (branche, automatisé) :** `VideoEncoder::Vaapi { render_node, qp }` (nœud
+  `/dev/dri/renderDNNN`, QP 1–51 validés) produit `-vaapi_device`, `format=nv12,hwupload`,
+  `h264_vaapi` en QP constant, profil `constrained_baseline`, sans débit cible (mode qui échoue sur
+  l'Intel mesuré). Sans première image complète dans les 3 s (processus arrêté, silencieux ou image
+  partielle), le processus VA-API est récolté puis `libx264` démarre ; `video_encoder` et
+  `encoder_fallback` le disent dans les diagnostics. Un FFmpeg introuvable reste une erreur, jamais
+  un repli. Tauri garde `Software` explicitement.
+- [ ] **D1-3, suite :** proposer VA-API dans Tauri seulement après décodage confirmé sur les deux TV
+  (essai GPU et TV avec autorisation).
+- [x] **D4-4 (branche, automatisé) :** chaque enfant FFmpeg reçoit `PR_SET_PDEATHSIG` = SIGKILL
+  (et s'arrête si l'hôte est déjà mort au moment du `fork`) ; un vrai hôte tué par SIGKILL ne
+  laisse plus son enfant vivant. Contrainte : lancer depuis un thread de travail Tokio, jamais
+  depuis `spawn_blocking` (le signal suit la fin du thread lanceur).
+- [ ] **D1-9 :** recette matérielle WebRTC sur les deux Android TV (autorisation requise).
+- **Dépendances :** #118 terminée ; revue indépendante ; CI verte ; dérogations WebRTC valides.
+- **Critères d'acceptation :** démarrage/arrêt répétés sans processus FFmpeg, port ni jeton
+  restant ; erreurs visibles et distinctes (récepteur absent, négociation expirée, FFmpeg arrêté) ;
+  pertes comptées et image figée (jamais corrompue) jusqu'à l'IDR suivante ; sur matériel : latence
+  médiane < 500 ms, p95 et pire cas consignés, synchro A/V, 10 min sans dérive.
+
+### D2 — extension (PR D2, après la PR D1)
+
+- [x] Extension sur connecteur forcé, retrait reprenable, cliché du gestionnaire d'affichage (D2-1,
+  D2-3, D2-5) : fusionnés.
+- [x] **D2-B1 — décision propriétaire du 2026-11-01 :** conserver le gestionnaire X11 et le
+  connecteur RandR forcé existants ; aucun `evdi` ni nouveau système d'affichage. GNOME traite ce
+  connecteur comme un véritable second espace de travail, distinct de l'écran principal.
+- [x] **D4-5, partie X11 (branche D2) :** journal privé atomique écrit et synchronisé avant la
+  première mutation RandR ; au prochain processus, retrait du mode, extinction de la sortie et
+  remise en place des écrans déplacés ; journal conservé si la vérification échoue et effacé
+  seulement après restauration vérifiée. Tests automatisés sur faux `xrandr`, matériel NOT RUN.
+- [x] **D4-5, partie son (branche `feat/d4-5-audio-restore`, empilée sur #121, sans PR) :** le
+  journal atomique de D2 est extrait dans `restore_journal.py` (0700/0600, `fsync`, renommage
+  atomique) et partagé par D2 et la route PulseAudio. La sortie par défaut est journalisée avant
+  tout `load-module` ; le journal n'est effacé qu'après constat de PulseAudio (plus de puits nul
+  `controltv_tv`, sortie par défaut différente). Après un SIGKILL, le bridge termine la
+  restauration à son démarrage suivant (`main`), et un nouveau `start` le fait aussi ; avant, le
+  puits nul restait la sortie (ordinateur muet) et la diffusion suivante était refusée. La
+  restauration ne remet la sortie que si le puits nul est encore la sortie par défaut, ne déplace
+  que les sons restés sur lui, laisse PulseAudio choisir si la sortie d'origine a disparu, et ne
+  change plus rien une fois faite ; un journal invalide ou une restauration non confirmée est
+  conservé et signalé (stderr au démarrage, erreur au `start`). Les tests utilisent désormais un
+  `XDG_STATE_HOME` temporaire : aucun test ne peut lire un vrai journal et rejouer `pactl` ou
+  `xrandr` sur le poste. Tests automatisés uniquement ; matériel NOT RUN.
+- [x] **D2/D4-5, restauration X11 au démarrage (branche `feat/d2-startup-x11-restore`, issue de
+  D4-5, sans PR) :** le bridge termine la restauration de l'écran étendu d'un processus tué dès son
+  démarrage, avant le son, sans attendre une nouvelle diffusion ; l'une n'empêche jamais l'autre et
+  un échec est signalé sur stderr avec journal conservé et nouvelle tentative au démarrage suivant.
+  La reprise ne défait que ce qui appartient encore au processus tué : un écran replacé par le
+  propriétaire depuis reste où il est, une sortie qui n'affiche plus le mode TV n'est pas éteinte,
+  un écran débranché ne bloque plus le journal ; le journal enregistre le décalage appliqué (un
+  journal plus ancien sans décalage garde la remise en place complète). Le journal partagé
+  (`restore_journal.py`) porte désormais un verrou `flock` du propriétaire, libéré par le noyau au
+  SIGKILL : une reprise (démarrage, autre processus, nouvel objet du contrôleur) ne défait jamais
+  une diffusion vivante. Défauts corrigés : chaque `extension_output()` du contrôleur recréait un
+  moniteur dont la reprise démontait l'écran étendu en cours ; une extension refusée nettoyait
+  l'écran TV d'une autre diffusion ; une reprise hors session X11 levait une erreur non gérée au
+  démarrage. Tests automatisés uniquement ; matériel NOT RUN.
+- [ ] **D4-5, preuve matérielle (autorisation) :** tuer l'application pendant une diffusion avec
+  son, relancer, vérifier que le son revient sur la sortie d'origine. **HARDWARE PARTIAL
+  (2026-11-01, autorisé, `e6e5b82`) :** sur le poste du propriétaire, sans TV ni application
+  Tauri : route PulseAudio réelle ouverte par un processus, bridge relancé pendant la diffusion
+  (route laissée intacte), SIGKILL (ordinateur muet, journal présent), puis démarrage du vrai
+  bridge : sortie par défaut, puits, placement des sons et modules identiques à l'état initial,
+  journal effacé. Reste : le même scénario avec l'application et une diffusion vers la TV.
+- [ ] **D2/D4-5, preuve matérielle X11 (autorisation) :** tuer l'application pendant une
+  extension (TV à gauche), relancer sans diffuser, comparer `xrandr --verbose` à l'état initial.
+  **HARDWARE PARTIAL (2026-11-01, autorisé)** sur le poste du propriétaire, connecteur HDMI forcé
+  par le propriétaire, sans TV ni application Tauri : extension réelle (TV à gauche, écran
+  intégré déplacé), bridge relancé pendant l'extension (laissée intacte), SIGKILL, puis démarrage
+  du vrai bridge sans diffusion. Premier passage **FAIL** : GNOME avait allumé seul le connecteur
+  forcé (1024x768 à droite) et la restauration l'éteignait (disposition remise à la main
+  aussitôt). Corrigé : le journal enregistre ce que la sortie affichait (mode, fréquence,
+  position, rotation) et l'arrêt normal, l'échec de création et la reprise le lui rendent au lieu
+  de l'éteindre. Second passage : `xrandr --verbose` identique à l'état initial hors horodatages
+  X, aucun mode `control-tv-*`, journal effacé. Reste : le même scénario avec l'application et
+  une diffusion vers la TV, et un arrêt normal sur matériel.
+- [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
+  Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
+  réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.
+- **Dépendances :** PR D1 fusionnée ; autorisation pour toute modification d'affichage réelle.
+- **Critères d'acceptation :** seul l'écran étendu est transmis ; une fenêtre y est déplaçable ;
+  après Stop, échec, Ctrl-C ou SIGKILL puis relance, la topologie, les modes et la route audio
+  sont identiques à l'état initial ; aucun mode `control-tv-*` restant.
+
+### Outils en ligne de commande
+
+- [x] **`python3 scripts/agent_config.py check` (branche) :** plantait avec `AttributeError` sur le
+  `python3` système 3.7, alors que l'outil est documenté pour lui : `Path.readlink` et
+  `Path.is_relative_to` n'existent qu'à partir de 3.9. Remplacés par `os.readlink` et
+  `resolved.parents` ; test sans ces API et test de la commande réelle (code de sortie, aucune
+  trace). Vérifié avec Python 3.7 et 3.10 ; `dev.py check`, `version-check`, `type-rules`,
+  `disk-usage` passent aussi sous 3.7 et `d1 --help` sous `.venv`.
+
+### Blocages
+
+- **D1-B1 :** #118 et #119 ouvertes — aucune PR Rust avant leur clôture. La branche intègre la
+  tête poussée de #119 (`acee470`, tableau de bord) sans modifier la branche de son auteur.
+- **D1-B2 :** dérogations RUSTSEC-2026-0387/RUSTSEC-2025-0141 limitées au réseau local et à leur
+  date d'expiration ; `webrtc` 0.21 conserve `digest` 0.10 via `rtc-crypto` et change l'API de transport.
+- **D2-B1 :** résolu par la décision du 2026-11-01 de conserver le connecteur forcé existant.
+- **Matériel :** aucune recette D1/D2/D4 sans autorisation explicite du propriétaire.
+
 - [x] **Sécurité Python — pyasn1 0.6.5 (2026-10-31) :** le verrou remplace `pyasn1` 0.6.4,
   transitif via `adb-shell` et `rsa`, par la première version corrigeant CVE-2026-119194,
   CVE-2026-119195, CVE-2026-119196 et CVE-2026-119197. Aucune dérogation ni dépendance
@@ -95,11 +238,10 @@
   ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
   Fait côté Android : `VoiceCapture` (capture à la demande, permission, arrêt garanti, 8 tests). Reste : session
   vocale dans l'adaptateur de télécommande et le bridge, puis permission `RECORD_AUDIO` et bouton.
-- [ ] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
-  `p256`/`p384`) :** aucun correctif compatible avec la pile actuelle ; choisir entre attendre un
-  correctif amont, financer la migration majeure non compatible vers `webrtc` 0.21/`rtc`, ou
-  approuver explicitement une dérogation datée et ciblée. Les audits restent bloquants et aucune
-  dérogation n'a été ajoutée.
+- [x] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
+  `p256`/`p384`) :** tranchée le 2026-10-25 par une dérogation datée et ciblée (entrée
+  « Dérogations WebRTC » ci-dessus, `webrtc-engine/cargo-audit-waivers.json`, `osv-scanner.toml`) ;
+  la migration `webrtc` 0.21 reste ouverte (D1-B2).
 - [x] **CI :** `webrtc-engine` exécute fmt, Clippy, tests de reconnexion/décodage et son propre
   audit Cargo ; `android-tv-receiver` exécute ses tests JVM avec verrou Gradle. Un audit OSV
   bloquant couvre les deux verrous sans ajouter un second build Android coûteux.

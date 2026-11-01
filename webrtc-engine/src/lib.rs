@@ -13,8 +13,10 @@ mod transport;
 pub use ffmpeg::{FfmpegMediaSource, ProcessRunner};
 pub use model::{
     AudioConfig, CaptureConfig, Diagnostics, EngineError, EngineState, SessionConfig,
-    SessionDescription, SessionId, SessionToken, TransportMode, VideoConfig,
+    SessionDescription, SessionId, SessionToken, TransportMode, VideoConfig, VideoEncoder,
 };
-pub use session::{Clock, MediaFrame, MediaSource, MediaStreams, SessionController, SystemClock};
+pub use session::{
+    Clock, EncoderReport, MediaFrame, MediaSource, MediaStreams, SessionController, SystemClock,
+};
 pub use signaling::{PairingEndpoint, PairingServer};
 pub use transport::{MediaTransport, WebRtcTransport};

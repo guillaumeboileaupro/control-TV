@@ -1,7 +1,7 @@
 use control_tv_webrtc::{
     AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingEndpoint,
     PairingServer, ProcessRunner, SessionConfig, SessionController, SessionDescription,
-    SessionToken, SystemClock, VideoConfig, WebRtcTransport,
+    SessionToken, SystemClock, VideoConfig, VideoEncoder, WebRtcTransport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -105,6 +105,8 @@ fn capture_config(lease: CaptureLease, width: u32, height: u32, fps: u32) -> Cap
             height,
             fps,
             bitrate_kbps: 4_000,
+            // VA-API stays opt-in until its stream is confirmed decodable on both Android TVs.
+            encoder: VideoEncoder::Software,
         },
         audio: AudioConfig {
             enabled: true,

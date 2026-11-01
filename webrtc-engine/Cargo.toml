@@ -19,6 +19,10 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webrtc = "0.14"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# PR_SET_PDEATHSIG: a capture/encoder child must not outlive a killed host (D4-4).
+libc = "0.2"
+
 [dev-dependencies]
 rtp = "0.14"
 webrtc-media = "0.11"

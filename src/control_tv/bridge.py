@@ -152,6 +152,8 @@ from control_tv.trace_files import AcceptanceTracing
 Handler = Callable[[TvControl, JsonObject], JsonObject]
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from control_tv.screen_streaming.controller import (
         ScreenRequest,
         ScreenStatus,
@@ -956,7 +958,37 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
 
 
 def main() -> None:
+    _recover_interrupted_screen_stream()
     run(default_service())
+
+
+def _recover_interrupted_screen_stream() -> None:
+    """Give the computer its screens (D2) and sound (D4-5) back if a previous run was killed
+    while streaming, without waiting for another stream.
+
+    Nothing is done without a saved restoration (always the case on Android), nor for one a
+    running stream owns. A restoration that cannot be finished keeps its journal for the next
+    start and is reported on stderr, never on stdout, which carries only protocol lines. Each
+    one is attempted even when the other fails."""
+    from control_tv.screen_streaming.audio_route import (
+        audio_route_journal_path,
+        recover_interrupted_audio_route,
+    )
+    from control_tv.screen_streaming.virtual_display import (
+        extension_journal_path,
+        recover_interrupted_extension,
+    )
+
+    recoveries: tuple[tuple[Path, Callable[[], str | None], str], ...] = (
+        (extension_journal_path(), recover_interrupted_extension, "screens are"),
+        (audio_route_journal_path(), recover_interrupted_audio_route, "sound is"),
+    )
+    for journal, recover, what in recoveries:
+        if not journal.exists():
+            continue
+        problem = recover()
+        if problem is not None:
+            print(f"control-tv: the computer's {what} not restored yet: {problem}", file=sys.stderr)
 
 
 if __name__ == "__main__":

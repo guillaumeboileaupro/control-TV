@@ -59,12 +59,45 @@ impl SessionToken {
     }
 }
 
+/// How the engine encodes H.264. `Software` (`libx264`) is the default. `Vaapi` uses the GPU with
+/// constant QP, the only rate control that worked on the measured Intel GPU (D0, #79), so
+/// `bitrate_kbps` does not apply to it; when it delivers no picture the source falls back to
+/// `libx264` and reports why in the diagnostics.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum VideoEncoder {
+    #[default]
+    Software,
+    Vaapi {
+        render_node: String,
+        qp: u8,
+    },
+}
+
+impl VideoEncoder {
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::Software => true,
+            Self::Vaapi { render_node, qp } => {
+                (1..=51).contains(qp)
+                    && render_node
+                        .strip_prefix("/dev/dri/renderD")
+                        .is_some_and(|number| {
+                            number.len() == 3 && number.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VideoConfig {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
     pub bitrate_kbps: u32,
+    #[serde(default)]
+    pub encoder: VideoEncoder,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,6 +136,7 @@ impl SessionConfig {
             || self.capture.video.width == 0
             || self.capture.video.height == 0
             || !(1..=120).contains(&self.capture.video.fps)
+            || !self.capture.video.encoder.is_valid()
             || self.maximum_duration.is_zero()
             || self.negotiation_timeout.is_zero()
             || self.negotiation_timeout >= self.maximum_duration
@@ -131,12 +165,19 @@ pub enum EngineState {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Diagnostics {
+    /// Video frames produced by the capture/encoder, whether sent or discarded.
     pub captured_frames: u64,
     pub encoded_frames: u64,
+    pub sent_video_frames: u64,
     pub sent_video_bytes: u64,
     pub sent_audio_bytes: u64,
+    /// Discarded because the transport was late, counted when the next unit of the track is sent.
     pub dropped_frames: u64,
+    pub dropped_audio_packets: u64,
     pub reconnect_attempts: u32,
+    /// The H.264 encoder in use, and why it differs from the requested one (VA-API fallback).
+    pub video_encoder: Option<String>,
+    pub encoder_fallback: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -180,6 +221,7 @@ mod tests {
                     height: 720,
                     fps: 30,
                     bitrate_kbps: 4_000,
+                    encoder: VideoEncoder::Software,
                 },
                 audio: AudioConfig {
                     enabled: true,
@@ -216,6 +258,27 @@ mod tests {
             Err(EngineError::InvalidConfiguration)
         ));
         invalid.capture.video.fps = 30;
+        for (render_node, qp) in [
+            ("/dev/dri/card0", 24),
+            ("/dev/dri/renderD12", 24),
+            ("/dev/dri/renderD128;", 24),
+            ("/dev/dri/renderD128", 0),
+            ("/dev/dri/renderD128", 52),
+        ] {
+            invalid.capture.video.encoder = VideoEncoder::Vaapi {
+                render_node: render_node.into(),
+                qp,
+            };
+            assert!(matches!(
+                invalid.validate(),
+                Err(EngineError::InvalidConfiguration)
+            ));
+        }
+        invalid.capture.video.encoder = VideoEncoder::Vaapi {
+            render_node: "/dev/dri/renderD128".into(),
+            qp: 24,
+        };
+        assert!(invalid.validate().is_ok());
         invalid.negotiation_timeout = invalid.maximum_duration;
         assert!(matches!(
             invalid.validate(),

@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 31/10 | **#118** - migration des anciens certificats (`0a19fd7`) ; **#119** - dashboard (`acee470`), lien de skill corrigé ; rerun qualité bloqué uniquement par `pyasn1` 0.6.4, mise à jour 0.6.5 en validation |
+| PR actives vérifiées au 01/11 | **#120** - D1 Rust (`feat/d1-rust-screencast`) ; **#121** - D2 (`feat/d2-extended-display`) ; branches sans PR `feat/d4-5-audio-restore` (empilée sur #121) et `feat/d2-startup-x11-restore` (issue de D4-5) |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -37,10 +37,10 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | T-01 - Appairage durable | #118 ouverte ; FAIL matériel avant migration | 0,5 / 2 / 1 h | Finaliser #118, revue, fusion, recette | Codex / Claude |
 | P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
-| P1 | D1 - Duplication Rust/WebRTC/HLS | Code avancé ; matériel non accepté | 3 / 8 / 5 h | Achever parcours capture -> TV | Claude |
-| P1 | D2 - Extension Rust/X11 | Virtuel partiel ; vrai second écran non validé | 4 / 12 / 7 h | Bureau indépendant et restauration X11 | Claude |
+| P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED : moteur, récepteur, bail, Tauri (#111). IMPLEMENTED sur branche : pertes sans corruption (D1-8), VA-API avec repli `libx264` (D1-3, désactivé par défaut). HARDWARE NOT RUN | 3 / 8 / 5 h | PR D1 après #118/#119, revue, CI ; puis essai GPU/TV autorisé | Claude |
+| P1 | D2 - Extension Rust/X11 | Connecteur forcé MERGED et retenu par décision du 01/11 (aucun evdi/nouveau système) ; branche `feat/d2-extended-display` : journal X11 atomique et reprise vérifiée implémentés/testés ; HARDWARE NOT RUN | 4 / 12 / 7 h | Après fusion de #120, ouvrir l'unique PR D2 puis recette X11 autorisée | Codex |
 | P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
-| P1 | D4 - Robustesse | Automatisation existante, recette incomplète | 2 / 5 / 3 h | Arrêt, reconnexion, cleanup et restauration | Claude |
+| P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg. IMPLEMENTED : D4-4 sur #120 ; D4-5 X11 sur branche D2 (journal avant mutation, reprise après plantage simulé). D4-5 son IMPLEMENTED sur `feat/d4-5-audio-restore` (journal partagé avec D2, restauration au démarrage après SIGKILL, réglages utilisateur conservés), sans PR. Reprise X11 au démarrage du bridge IMPLEMENTED sur `feat/d2-startup-x11-restore` (réglages du propriétaire conservés, verrou protégeant une diffusion vivante), sans PR. Son : HARDWARE PARTIAL 01/11 (poste réel, SIGKILL puis démarrage du bridge = état initial ; sans TV ni app). X11 : HARDWARE PARTIAL 01/11 (poste réel, connecteur forcé, SIGKILL puis démarrage du bridge = `xrandr --verbose` initial hors horodatages, après correctif de la sortie allumée par GNOME ; sans TV ni app) | 2 / 5 / 3 h | PR D4-5 après #120/#121 ; recette autorisée (SIGKILL pendant une diffusion avec son) | Codex / Claude |
 | P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
 | P1 | Audio / synchronisation | Opus/PulseAudio codés ; physique non validé | 1 / 4 / 2 h | Mesurer synchronisation sur TV | Claude |
 | P1 | Latence / performances | HLS ancien 9-11 s ; WebRTC <500 ms non prouvé | 1 / 4 / 2 h | Mesurer médiane, p95, pire, FPS, CPU/GPU | Claude |
@@ -51,7 +51,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P2 | Menu GNOME | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests sur Ubuntu | Claude |
 | P2 | Assistant / microphone | Assistant sans effet sur Liberté | 2 / 6 / 3 h | Clarifier capacités et chemin vocal | Codex |
 | P2 | Logos / langues / Power-CEC | Non repris point par point le 30/10 | 1 / 3 / 2 h | Tests ciblés et limites TV | Codex / Claude |
-| P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 en validation sur #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
+| P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 fusionné via #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
 | **TOTAL** | **Travaux restants estimés** | **Ne comprend pas de nouvelle anomalie majeure** | **26 / 79,5 / 46 h** | **Réviser après vérification** | **Coordinateur** |
 
 ## Dernière recette matérielle - 30/10
@@ -94,6 +94,12 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |
+| 2026-10-31 | Claude, branche `feat/d1-rust-screencast` sans PR : D1-3 VA-API avec repli explicite, D4-4 `PR_SET_PDEATHSIG`, correctif `agent_config.py` sous `python3` 3.7 ; skill `python-project-quality` synchronisé avec `my-skills` (branche `docs/python-cli-interpreter`). Tests locaux uniquement, CI non exécutée, matériel NOT RUN. |
+| 2026-11-01 | Claude, D4-5 son sur `feat/d4-5-audio-restore` (sans PR, empilée sur #121) : journal atomique partagé avec D2, restauration PulseAudio après arrêt normal, erreur ou SIGKILL, au démarrage suivant ; tests isolés de l'état réel. Tests locaux verts, matériel NOT RUN. |
+| 2026-11-01 | Claude, `feat/d2-startup-x11-restore` (sans PR, issue de D4-5) : restauration X11 d'un processus tué dès le démarrage du bridge, réglages du propriétaire conservés, verrou `flock` du journal partagé ; corrige le démontage de l'extension vivante par `extension_output()`. Tests locaux verts, CI non exécutée (aucune PR autorisée), matériel NOT RUN. |
+| 2026-11-01 | Claude, preuves autorisées sur le poste (sans TV) : son HARDWARE PARTIAL (route réelle, bridge relancé pendant la diffusion sans effet, SIGKILL, démarrage du bridge = état PulseAudio initial, journal effacé). X11 bloqué : aucun connecteur HDMI forcé, étape `sudo` du propriétaire requise. |
+| 2026-11-01 | Claude, preuve X11 autorisée après l'étape `sudo` du propriétaire : 1er passage FAIL (sortie allumée par GNOME éteinte au lieu d'être rendue, disposition remise aussitôt), correctif poussé (état de la sortie journalisé et rendu à l'arrêt, à l'échec et à la reprise), 2e passage HARDWARE PARTIAL : état X11 initial retrouvé. Tests locaux verts, CI non exécutée. |
