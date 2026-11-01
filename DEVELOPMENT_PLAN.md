@@ -69,7 +69,24 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   first RandR mutation. A new process removes the D2 mode, disables its output, restores every
   shifted screen position, verifies the result, and only then deletes the journal; failed recovery
   keeps it for the next start. Automated fake-`xrandr` tests only, hardware NOT RUN.
-- [ ] D4-5 remainder: persist and restore the PulseAudio route after an abrupt process death.
+- [x] D4-5 sound part (branch `feat/d4-5-audio-restore`, stacked on #121, no PR while #120 and
+  #121 are open): the D2 journal is extracted into `screen_streaming/restore_journal.py` and
+  shared, unchanged in behaviour (private 0700/0600, fsynced temporary file, atomic rename,
+  directory fsync; an impossible path means nothing pending). `PulseAudioRoute` journals the
+  previous default sink before `load-module` and clears it only once PulseAudio shows no
+  `controltv_tv` sink and another default. After a SIGKILL the null sink stayed the default (a
+  silent computer) and the next start was refused; now the bridge's `main` finishes the
+  restoration at the next start (stderr report, journal kept on failure) and `start` recovers
+  first. Restoring never overrides the user: the default is given back only while it is still the
+  null sink, only sounds still on it move, a vanished output is left to PulseAudio's fallback,
+  and repeating it changes nothing. The test suite now runs with a temporary `XDG_STATE_HOME`, so
+  no test can replay a real journal against the owner's display or sound server. Tests: a real
+  SIGKILLed child whose fake PulseAudio state outlives it, journal-before-change, user choices
+  kept, unplugged output, repeatability, unconfirmed and invalid journals; probes confirm the
+  journal and start-up recovery tests fail without the fix. Python 2,822 passed / 8 skipped,
+  coverage 98.89 %. Hardware NOT RUN.
+- [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
+  check the sound returns to the original output.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.

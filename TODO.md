@@ -32,7 +32,7 @@ essai réel autorisé par le propriétaire.
 | D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
 | D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
 | D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Branche** (`PR_SET_PDEATHSIG`) | Oui (processus réels ; le test échoue sans le correctif) | Non |
-| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Partiel sur branche D2** : écran et positions persistants ; route PulseAudio encore sans journal | Oui (X11) | — |
+| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Branche D2** (X11) + **branche `feat/d4-5-audio-restore`** (son, sans PR) | Oui (faux `xrandr`, faux `pactl`, vrai SIGKILL d'un processus) | Non |
 | D4-6 | Aucune session fantôme : un seul bail émetteur, générations côté récepteur | Fusionné | Oui | Non |
 
 ### D1 — duplication (PR D1, après clôture de #118)
@@ -71,7 +71,21 @@ essai réel autorisé par le propriétaire.
   première mutation RandR ; au prochain processus, retrait du mode, extinction de la sortie et
   remise en place des écrans déplacés ; journal conservé si la vérification échoue et effacé
   seulement après restauration vérifiée. Tests automatisés sur faux `xrandr`, matériel NOT RUN.
-- [ ] **D4-5, suite :** journaliser et restaurer la route PulseAudio après un arrêt brutal.
+- [x] **D4-5, partie son (branche `feat/d4-5-audio-restore`, empilée sur #121, sans PR) :** le
+  journal atomique de D2 est extrait dans `restore_journal.py` (0700/0600, `fsync`, renommage
+  atomique) et partagé par D2 et la route PulseAudio. La sortie par défaut est journalisée avant
+  tout `load-module` ; le journal n'est effacé qu'après constat de PulseAudio (plus de puits nul
+  `controltv_tv`, sortie par défaut différente). Après un SIGKILL, le bridge termine la
+  restauration à son démarrage suivant (`main`), et un nouveau `start` le fait aussi ; avant, le
+  puits nul restait la sortie (ordinateur muet) et la diffusion suivante était refusée. La
+  restauration ne remet la sortie que si le puits nul est encore la sortie par défaut, ne déplace
+  que les sons restés sur lui, laisse PulseAudio choisir si la sortie d'origine a disparu, et ne
+  change plus rien une fois faite ; un journal invalide ou une restauration non confirmée est
+  conservé et signalé (stderr au démarrage, erreur au `start`). Les tests utilisent désormais un
+  `XDG_STATE_HOME` temporaire : aucun test ne peut lire un vrai journal et rejouer `pactl` ou
+  `xrandr` sur le poste. Tests automatisés uniquement ; matériel NOT RUN.
+- [ ] **D4-5, preuve matérielle (autorisation) :** tuer l'application pendant une diffusion avec
+  son, relancer, vérifier que le son revient sur la sortie d'origine.
 - [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
   Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
   réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.
