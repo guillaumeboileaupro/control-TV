@@ -1,5 +1,105 @@
 # Development plan
 
+## Screen streaming — D1, D2, D4 (consolidated, reviewed on `main` `3eebf23`, 2026-10-31)
+
+This section is the current state of screen streaming; the dated entries below are history. The
+task-level table (references D1-1 … D4-6) is at the top of [`TODO.md`](TODO.md).
+
+**Delivered in `main` (#111, `88f08d3`), automation-validated only:** the Rust engine
+`webrtc-engine` (bounded session, X11 capture and `libx264` H.264, PulseAudio Opus, ICE/DTLS/SRTP,
+one-time TLS pairing token, LAN-only bind), the Kotlin/libwebrtc Android TV receiver, the Python
+D1/D2 capture lease that owns geometry, consent and restoration, and the Tauri start/stop/status
+commands with the Auto/WebRTC/HLS selector. Bounded reconnection (two attempts inside the absolute
+deadline, fresh transport/token/port), FFmpeg reaping that keeps unconfirmed handles, combined
+cleanup errors and receiver generations are covered by tests. **No WebRTC hardware run exists**:
+the 2026-10-26 and 2026-10-30 acceptance campaigns left streaming `NOT RUN`; the only streaming
+hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved onto the TV).
+
+**D1 — duplication (PR #120, branch `feat/d1-rust-screencast`, `main` merged after #118/#119):**
+- [x] branch `feat/d1-rust-screencast` (worktree `../control-TV-d1`, no PR): late-transport drops
+  no longer corrupt the receiver's timeline. Before, a frame discarded on a full queue lost its
+  duration (video RTP clock drifted against audio) and the next P-frames referenced a picture the
+  receiver never got (corrupted image until the next IDR); `dropped_frames` was never incremented
+  and `captured_frames` counted sent frames. Now each discarded unit is carried as
+  `MediaFrame::dropped_before` into WebRTC `Sample::prev_dropped_packets` (RTP time and sequence
+  numbers skipped, so the receiver conceals a loss), video waits for the next keyframe after a
+  drop (brief freeze instead of corruption; GOP = 1 s bounds it), and diagnostics report produced,
+  sent and dropped video frames and dropped audio packets. `MediaTransport::send_video/send_audio`
+  now take the `MediaFrame`. Engine: fmt, Clippy `-D warnings`, 34 tests; Tauri host: 102 tests.
+  Hardware: not run.
+- [x] D1-3 (branch, automation only): `VideoEncoder::Vaapi { render_node, qp }` reuses D0's
+  validated shape (`-vaapi_device`, `format=nv12,hwupload`, `h264_vaapi` constant QP, no bitrate
+  target) with `constrained_baseline`, no B-frames, GOP = fps and AUDs. A VA-API process that
+  ends, stays silent or emits only a partial picture within 3 s is reaped, then `libx264` starts and
+  the diagnostics report `video_encoder` and `encoder_fallback`; a missing FFmpeg stays an error.
+  If the failed process cannot be reaped the start fails and it stays tracked. Tauri passes
+  `VideoEncoder::Software` explicitly until a VA-API stream is decoded on both TVs (GPU and TV use
+  need authorization).
+- [x] D4-4 (branch, automation only): every FFmpeg child gets `PR_SET_PDEATHSIG` = SIGKILL, and
+  exits if its host already died between `fork` and `prctl`. A real-process test SIGKILLs a host
+  that spawned a child from a Tokio worker and fails without the fix ("the child outlived its
+  killed host"). Constraint: Linux ties the signal to the spawning thread, so spawning stays on
+  runtime workers, never `spawn_blocking`. `libc` becomes a direct Linux dependency (already
+  locked: 0.2.191 engine, 0.2.189 Tauri; no new crate).
+- [x] Agent-configuration CLI (branch): `python3 scripts/agent_config.py check` crashed with
+  `AttributeError` on the system Python 3.7 because `Path.readlink`/`Path.is_relative_to` need
+  3.9; it now uses `os.readlink` and `resolved.parents`, with a test without those APIs and a
+  subprocess test of the real command. Verified on Python 3.7 and 3.10. The `mypy` import errors
+  seen earlier came from an ad-hoc `uv run` without extras, not from the repository:
+  `dev.py setup` installs them.
+- Local checks at the end of this slice (no CI: no PR may open while #118/#119 are open): engine
+  fmt, Clippy `-D warnings`, 40 tests (the D1-3 commit alone: 38); Tauri `dev.py rust-check` 102
+  tests; `dev.py check` 2,777 passed / 8 skipped with the system Python 3.7; coverage 98.87 %;
+  `rust-audit`, `webrtc-audit` (waivers only) and `npm-audit` pass. `python-audit` **fails on
+  `main` too**: `pyasn1` 0.6.4 has CVE-2026-119194…119197, fixed in 0.6.5; this branch does not
+  touch `uv.lock`, and the bump belongs to a separate security change, so CI will fail until it
+  lands.
+- [x] PR #120 finalisation (automation only): (1) Opus left FFmpeg in one-second Ogg pages behind
+  a 32 KiB pipe buffer — measured, no packet within two seconds, then bursts, so sound lagged the
+  picture; `-page_duration 20000` and `-flush_packets 1` (also for H.264, explicit rather than
+  version-dependent). Real-FFmpeg tests replace only the live input with a real-time `lavfi`
+  source and assert pacing measured from the first unit (≥ 10 units spread ≥ 500 ms in the next
+  second), robust under load; the Opus one fails on the old arguments. (2) Pairing accepted only the
+  first TCP connection, so a LAN scan or an aborted receiver attempt cancelled the session; now
+  connections authenticate concurrently (8 at most, 5 s each), the first one with the token wins,
+  others are closed, and the token stays single-use. (3) Tauri relaunched the receiver for any
+  media error, including local FFmpeg, capture and cleanup failures; only transport failures and
+  negotiation timeouts now consume the two-attempt budget. A failed `start_media` looped back to a
+  consumed signaling server and panicked; it now returns. (4) VA-API is selected through
+  `VideoEncoder::preferred("/dev/dri")` (first render node, QP 24) with the automatic `libx264`
+  fallback. (5) An end-to-end test drives the session controller, TLS pairing with a simulated
+  receiver, WebRTC and the production `FfmpegMediaSource` (synthetic inputs via a stand-in
+  `ffmpeg` that execs the real one) until H.264 with an IDR and Opus samples arrive, then checks
+  that both FFmpeg processes are gone after Stop. (6) A Tauri test leaked one fake bridge script
+  per run in the temporary directory. Local results: engine 47 tests (3 consecutive runs),
+  Tauri 104, Python 2,780 passed / 8 skipped, coverage 98.87 %, all four audits pass.
+- [ ] D1-3 hardware proof (authorization): the fallback covers the encoder only, not a stream a TV
+  cannot decode; confirm VA-API decoding on both Android TVs.
+- [ ] Known latency floor: a picture is emitted at the next AUD (one frame, 33 ms at 30 fps);
+  measure with D1-9 before optimizing.
+- [ ] D1-9 (owner authorization): latency median/p95/worst, FPS, drops, A/V sync, CPU on both
+  Android TVs.
+- Acceptance: repeated start/stop leaves no FFmpeg, port or token; distinct visible errors; drops
+  counted and the picture frozen, never corrupted; on hardware median latency < 500 ms and 10 min
+  without A/V drift.
+
+**D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
+- [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
+- [ ] D2-B1, owner decision: an X11 virtual screen independent of any connector does not exist
+  under GNOME on Xorg `modesetting`; options are `evdi` (DKMS install, root) or keeping the forced
+  connector (root once per boot). No installation without authorization.
+- [ ] D4-5: persistent journal of the initial topology, modes, moved screens and PulseAudio route,
+  written before any change, replayed at next start and at exit, deleted only after a verified
+  restore (the current state lives in memory only and is lost on a crash).
+- Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
+  failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
+  initial state and no `control-tv-*` mode remains.
+
+**Blockers:** D1-B1 lifted (#118 and #119 merged, #120 is the only open PR); D1-B2 WebRTC advisories waived for local
+network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
+`rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
+authorization.
+
 Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
 dependency from 0.6.4 to the patched 0.6.5 release for CVE-2026-119194, CVE-2026-119195,
 CVE-2026-119196 and CVE-2026-119197. The dependency remains supplied through `adb-shell` and
@@ -87,7 +187,8 @@ now refuses deleting a missing or attached mode, like the real one (assumed, not
 hardware). Automated validation only; no display or TV was used.
 
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
-- [ ] **Open, owner decision:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
+- [x] **Owner decision taken 2026-10-25 (waiver below); the `webrtc` 0.21 migration stays open as
+  D1-B2:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
   constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`
   0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13. Only `crypto-bigint` >= 0.7.6 is
   patched; the newest `dtls` (0.17.2) still requires `p256` ^0.13, and `webrtc` 0.21 moves to the
@@ -208,6 +309,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   media pipeline (it already did). Automated validation only.
 
 ## Rust/WebRTC — état logiciel au 2026-10-21
+
+Historique : cette branche est dans `main` depuis #111 (`88f08d3`) ; l'état courant est dans la
+section « Screen streaming — D1, D2, D4 » en tête de ce plan.
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
 

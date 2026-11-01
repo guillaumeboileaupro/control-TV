@@ -1873,12 +1873,16 @@ while IFS= read -r line; do {ANSWER}; done"#,
         let counted = Arc::clone(&attempts);
         let ok_state = ready_state(r#"echo '{"id":1,"ok":true,"result":{"status":"ready"}}'"#);
         let ready = Arc::new(Mutex::new(Some(ok_state)));
+        // The launched bridge still reads its script: keep it until the test ends, then delete
+        // it (forgetting it left one file in the temporary directory per run).
+        let kept: Arc<Mutex<Option<FakeScript>>> = Arc::new(Mutex::new(None));
+        let keeper = Arc::clone(&kept);
         let launcher: BridgeLauncher = Box::new(move || {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err("failed to spawn the Python control bridge".to_string());
             }
             let (state, script) = ready.lock().unwrap().take().expect("launched twice");
-            std::mem::forget(script);
+            *keeper.lock().unwrap() = Some(script);
             let mut slot = state.lock().unwrap();
             Ok(std::mem::replace(
                 &mut slot.state,
@@ -1905,6 +1909,14 @@ while IFS= read -r line; do {ANSWER}; done"#,
 
         assert_eq!(result["status"], "ready");
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        let script = kept
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the launched bridge's script");
+        let path = script.0.clone();
+        drop(script);
+        assert!(!path.exists(), "the fake bridge script is removed");
     }
 
     #[test]
