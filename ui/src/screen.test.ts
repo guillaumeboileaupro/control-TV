@@ -22,6 +22,8 @@ import {
   parseReceiverCapabilities,
   parseStream,
   previewScreens,
+  reconcileStreams,
+  screenRequestDeadlineMs,
   selectTransport,
   shouldApplyPoll,
   startStop,
@@ -271,6 +273,127 @@ describe("the stream", () => {
       error: null,
     });
     assert.equal(parseStream(null), null);
+  });
+
+  test("an unreadable WebRTC answer ends the request instead of leaving the controls waiting", () => {
+    const sent = {
+      ...consentedStart(confirming(), "tv-1").state,
+      transportUsed: "webrtc" as const,
+    };
+    const unreadable: JsonValue[] = [{ state: "reconnecting" }, { stream: "lost" }, null];
+    for (const result of unreadable) {
+      const answered = finishWebRtc(sent, { ok: true, result });
+      assert.equal(answered.pending, false);
+      assert.equal(answered.failure?.message, "The stream state could not be read.");
+      assert.equal(describeScreen(answered, true).canChoose, true);
+    }
+  });
+});
+
+describe("the stream both hosts report", () => {
+  test("a WebRTC session running in the Rust engine is shown, never as idle", () => {
+    const opened = reconcileStreams(available(), stream("running"), { state: "streaming" });
+    assert.equal(opened.stream.state, "running");
+    assert.equal(opened.stream.mode, "duplicate");
+    assert.equal(opened.stream.screen, "eDP-1");
+    assert.equal(opened.transportUsed, "webrtc");
+    const view = describeScreen(opened, true);
+    assert.equal(view.statusText, "Streaming to the TV with WebRTC.");
+    assert.equal(view.canChoose, false);
+    assert.equal(view.canAsk, false);
+    assert.equal(view.canStop, true);
+    assert.equal(follows(opened), true);
+  });
+
+  test("the mode and screen shown are the ones streamed, not an older choice", () => {
+    const extending: JsonValue = {
+      stream: { state: "running", mode: "extend", screen: null, error: null },
+    };
+    const shown = reconcileStreams(available(), extending, { state: "streaming" });
+    assert.equal(shown.choice.mode, "extend");
+    assert.equal(describeScreen(shown, true).extending, true);
+    const other: JsonValue = {
+      stream: { state: "running", mode: "duplicate", screen: "HDMI-1", error: null },
+    };
+    const duplicating = reconcileStreams(choose(available(), { mode: "extend" }), other, {
+      state: "idle",
+    });
+    assert.equal(duplicating.choice.mode, "duplicate");
+    assert.equal(duplicating.choice.screen, "HDMI-1");
+    assert.equal(duplicating.confirming, false);
+  });
+
+  test("an engine waiting for its receiver or reconnecting is a start still in progress", () => {
+    const waiting = reconcileStreams(available(), stream("starting"), {
+      state: "awaiting_receiver",
+    });
+    assert.equal(waiting.stream.state, "starting");
+    assert.equal(describeScreen(waiting, true).canAsk, false);
+  });
+
+  test("a failed engine session is shown with its error and dismissed through WebRTC", () => {
+    const failed = reconcileStreams(available(), stream("idle"), {
+      state: "failed",
+      error: "the receiver stopped answering",
+    });
+    assert.equal(failed.transportUsed, "webrtc");
+    assert.equal(describeScreen(failed, true).errorText, "The receiver stopped answering.");
+    assert.equal(describeScreen(failed, true).stopLabel, "Dismiss");
+  });
+
+  test("with the engine idle, the control layer's stream is the HLS one", () => {
+    const hls = reconcileStreams(available(), stream("running"), { state: "idle" });
+    assert.equal(hls.transportUsed, "hls");
+    assert.equal(describeScreen(hls, true).statusText, "Streaming to the TV with HLS.");
+    const idle = reconcileStreams({ ...hls, transportUsed: "webrtc" }, stream("idle"), {
+      state: "idle",
+    });
+    assert.equal(idle.stream.state, "idle");
+    assert.equal(idle.transportUsed, null);
+    assert.equal(describeScreen(idle, true).canChoose, true);
+  });
+
+  test("a side that did not answer neither invents nor ends a stream", () => {
+    const running = {
+      ...finishPoll(available(), stream("running")),
+      transportUsed: "webrtc" as const,
+    };
+    assert.equal(reconcileStreams(running, null, null), running);
+    assert.equal(reconcileStreams(running, "garbled", { state: "idle" }), running);
+    assert.equal(reconcileStreams(running, stream("running"), null).transportUsed, "webrtc");
+    assert.equal(reconcileStreams(available(), stream("running"), null).transportUsed, "hls");
+  });
+
+  test("a failure stays visible while the real state is shown", () => {
+    const sent = consentedStart(confirming(), "tv-1").state;
+    const lost = finishScreen(sent, {
+      ok: false,
+      failure: { code: "bridge_timeout", message: "the host did not answer in time" },
+    });
+    const shown = reconcileStreams(lost, stream("running"), { state: "idle" });
+    assert.equal(shown.stream.state, "running");
+    assert.equal(shown.pending, false);
+    assert.equal(describeScreen(shown, true).errorText, "The host did not answer in time.");
+    assert.equal(describeScreen(shown, true).canStop, true);
+  });
+});
+
+describe("request deadlines", () => {
+  test("each stream command outlives the shell's own bound on it", () => {
+    // The shell bounds the bridge's screen commands at 15 s, and a WebRTC start at about 140 s.
+    for (const command of [
+      "bridge_list_screens",
+      "bridge_get_screen_stream",
+      "bridge_start_screen_stream",
+      "bridge_stop_screen_stream",
+      "bridge_get_screen_receiver_capabilities",
+      "bridge_apply_display_layout",
+    ]) {
+      assert.ok(screenRequestDeadlineMs(command) > 15_000, command);
+    }
+    for (const command of ["start_webrtc_stream", "stop_webrtc_stream", "get_webrtc_stream"]) {
+      assert.ok(screenRequestDeadlineMs(command) > 140_000, command);
+    }
   });
 });
 

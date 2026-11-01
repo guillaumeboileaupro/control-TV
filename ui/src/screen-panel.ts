@@ -9,6 +9,7 @@ import { createDisplayPanel, type DisplayPanelElements } from "./display-panel.t
 import { setBusy } from "./dom.ts";
 import type { JsonValue } from "./json.ts";
 import { toBridgeFailure, type BridgeFailure } from "./model.ts";
+import { settleWithin } from "./request-timeout.ts";
 import {
   pendingExtension,
   RATES,
@@ -29,6 +30,8 @@ import {
   parseListing,
   parseReceiverCapabilities,
   previewScreens,
+  reconcileStreams,
+  screenRequestDeadlineMs,
   startStop,
   selectTransport,
   shouldApplyPoll,
@@ -116,8 +119,12 @@ export function createScreenPanel(
   let state: ScreenPanelState = initialScreenState();
   let followTimer: number | null = null;
   let operation = 0;
+  // Every call, the display manager's included, ends by its deadline: a lost reply becomes a
+  // visible failure and the controls come back, instead of waiting forever.
+  const call: ScreenCall = (command, args) =>
+    settleWithin(ports.call(command, args), screenRequestDeadlineMs(command), ports.timers);
   const displays = createDisplayPanel(el.display, {
-    call: ports.call,
+    call,
     timers: ports.timers,
     pendingTv: () => pendingExtension(state),
     placeTv: (x, y) => update(moveExtension(state, x, y)),
@@ -146,10 +153,32 @@ export function createScreenPanel(
     args: Record<string, JsonValue>,
   ): Promise<{ ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure }> {
     try {
-      return { ok: true, result: await ports.call(command, args) };
+      return { ok: true, result: await call(command, args) };
     } catch (error) {
       return { ok: false, failure: toBridgeFailure(error) };
     }
+  }
+
+  // The stream as the control layer and the Rust engine report it now, both asked at once.
+  async function reported(): Promise<{ capture: JsonValue | null; webrtc: JsonValue | null }> {
+    const [capture, webrtc] = await Promise.all([
+      answer("bridge_get_screen_stream", {}),
+      answer("get_webrtc_stream", {}),
+    ]);
+    return {
+      capture: capture.ok ? capture.result : null,
+      webrtc: webrtc.ok ? webrtc.result : null,
+    };
+  }
+
+  // After a start or stop that failed or lost its reply, show what really runs (nothing is
+  // resent): the stream may have started, kept running or stopped all the same.
+  async function reconcile(generation: number): Promise<void> {
+    const now = await reported();
+    if (generation !== operation || state.pending) {
+      return;
+    }
+    update(reconcileStreams(state, now.capture, now.webrtc));
   }
 
   async function poll(): Promise<void> {
@@ -180,12 +209,22 @@ export function createScreenPanel(
 
   async function refresh(): Promise<void> {
     const listed = await answer("bridge_list_screens", {});
-    let next = withScreens(state, listed.ok ? parseListing(listed.result) : null);
-    if (next.availability.kind === "available") {
-      const current = await answer("bridge_get_screen_stream", {});
-      next = current.ok ? finishPoll(next, current.result) : next;
+    const listing = listed.ok ? parseListing(listed.result) : null;
+    if (listing === null) {
+      update(withScreens(state, null));
+      return;
     }
-    update(next);
+    // A WebRTC session lives in the Rust engine: reading only the control layer would show a
+    // running session as idle and offer a second start. Each step applies to the state current
+    // when its answer arrives, so a refresh never overwrites a start or stop in flight.
+    const generation = operation;
+    const now = await reported();
+    const listedState = withScreens(state, listing);
+    update(
+      generation === operation && !state.pending
+        ? reconcileStreams(listedState, now.capture, now.webrtc)
+        : listedState,
+    );
   }
 
   function render(): void {
@@ -365,6 +404,9 @@ export function createScreenPanel(
         return;
       }
       update(used === "webrtc" ? finishWebRtc(state, reply) : finishScreen(state, reply));
+      if (!reply.ok) {
+        await reconcile(generation);
+      }
     }
   }
 
@@ -379,6 +421,9 @@ export function createScreenPanel(
         return;
       }
       update(webrtc ? finishWebRtc(state, reply) : finishScreen(state, reply));
+      if (!reply.ok) {
+        await reconcile(generation);
+      }
     }
   }
 

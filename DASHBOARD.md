@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 31/10 | **#118** - migration des anciens certificats (`0a19fd7`) ; **#119** - dashboard (`acee470`), lien de skill corrigé ; rerun qualité bloqué uniquement par `pyasn1` 0.6.4, mise à jour 0.6.5 en validation |
+| PR actives vérifiées au 01/11 | **#120** - D1 duplication Rust (CI verte) ; **#121** - D2 extension (CI verte). #118 (`5d9f06d`) et #119 (`0a47454`) fusionnées. D3 prêt sur `feat/d3-streaming-controls`, sans PR tant que #120/#121 sont ouvertes |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -39,7 +39,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
 | P1 | D1 - Duplication Rust/WebRTC/HLS | Code avancé ; matériel non accepté | 3 / 8 / 5 h | Achever parcours capture -> TV | Claude |
 | P1 | D2 - Extension Rust/X11 | Virtuel partiel ; vrai second écran non validé | 4 / 12 / 7 h | Bureau indépendant et restauration X11 | Claude |
-| P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
+| P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; contrôles fiabilisés sur `feat/d3-streaming-controls` (délais, état réel Rust + bridge, reprise après erreur), tests UI 430/430, **pas de PR** tant que #120/#121 ouvertes ; matériel NOT RUN | 1 / 3 / 2 h | Ouvrir la PR après #120/#121, puis valider Dupliquer/Étendre/Arrêter sur TV | Claude |
 | P1 | D4 - Robustesse | Automatisation existante, recette incomplète | 2 / 5 / 3 h | Arrêt, reconnexion, cleanup et restauration | Claude |
 | P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
 | P1 | Audio / synchronisation | Opus/PulseAudio codés ; physique non validé | 1 / 4 / 2 h | Mesurer synchronisation sur TV | Claude |
@@ -97,3 +97,4 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |
+| 2026-11-01 | D3 (Claude) : branche `feat/d3-streaming-controls` depuis `main 5d9f06d`, limitée à `ui/` (aucun fichier de #120/#121). Défauts corrigés : appels d'écran sans délai, session WebRTC Rust affichée inactive à l'ouverture, réponse WebRTC illisible bloquant les contrôles, actualisation écrasant une opération en cours, mode affiché différent du flux réel. Tests UI 430/430 ; CI non lancée (pas de PR) ; matériel NOT RUN. Vérifié au 01/11 : #118 et #119 fusionnées (`5d9f06d`, `0a47454`), #120 (D1) et #121 (D2) ouvertes. PR D3 à ouvrir après elles. |
