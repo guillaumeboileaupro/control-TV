@@ -107,9 +107,16 @@ essai réel autorisé par le propriétaire.
   journal effacé. Reste : le même scénario avec l'application et une diffusion vers la TV.
 - [ ] **D2/D4-5, preuve matérielle X11 (autorisation) :** tuer l'application pendant une
   extension (TV à gauche), relancer sans diffuser, comparer `xrandr --verbose` à l'état initial.
-  Autorisée le 2026-11-01 mais **BLOCKED** : aucun connecteur libre forcé (HDMI « disconnected ») ;
-  le propriétaire doit d'abord lancer `echo on-digital | sudo tee
-  /sys/class/drm/<card>-HDMI-A-<n>/status`. Script prêt dans `.ai-private/evidence/`.
+  **HARDWARE PARTIAL (2026-11-01, autorisé)** sur le poste du propriétaire, connecteur HDMI forcé
+  par le propriétaire, sans TV ni application Tauri : extension réelle (TV à gauche, écran
+  intégré déplacé), bridge relancé pendant l'extension (laissée intacte), SIGKILL, puis démarrage
+  du vrai bridge sans diffusion. Premier passage **FAIL** : GNOME avait allumé seul le connecteur
+  forcé (1024x768 à droite) et la restauration l'éteignait (disposition remise à la main
+  aussitôt). Corrigé : le journal enregistre ce que la sortie affichait (mode, fréquence,
+  position, rotation) et l'arrêt normal, l'échec de création et la reprise le lui rendent au lieu
+  de l'éteindre. Second passage : `xrandr --verbose` identique à l'état initial hors horodatages
+  X, aucun mode `control-tv-*`, journal effacé. Reste : le même scénario avec l'application et
+  une diffusion vers la TV, et un arrêt normal sur matériel.
 - [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
   Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
   réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.

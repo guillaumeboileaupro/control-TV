@@ -105,8 +105,14 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   start-up restores default sink, sinks, stream placement and modules exactly and deletes the
   journal. Remaining: the same with the app streaming to the TV.
 - [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
-  restart without streaming, compare `xrandr --verbose` with the initial state. Authorized
-  2026-11-01, BLOCKED: no free connector is forced on (needs the owner's `sudo` step first).
+  restart without streaming, compare `xrandr --verbose` with the initial state. HARDWARE
+  PARTIAL 2026-11-01 (authorized, owner's desktop, forced HDMI connector, no TV, no Tauri app):
+  first run FAIL, GNOME had lit the forced connector by itself (1024x768) and the restoration
+  turned it off; fixed by journaling what the output displayed (`before`: mode, rate, position,
+  rotation) and giving it back on stop, failed create and recovery. Second run: `xrandr
+  --verbose` identical to the initial state apart from X timestamps, no `control-tv-*` mode,
+  journal deleted. Python 2,863 passed / 8 skipped, coverage 98.92 %. Remaining: the same with
+  the app streaming to the TV, and a normal stop on hardware.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
