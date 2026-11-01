@@ -159,6 +159,26 @@ def test_the_receiver_starts_the_app_and_the_app_in_front_is_then_read() -> None
     assert "market://" not in tv.links[0]
 
 
+def test_the_remote_confirms_a_start_when_the_phone_cannot_receive_the_reply() -> None:
+    tv = FakeReceiverTv(None)
+    tv.front = "tv.arte.plus7"
+
+    launched = lister(tv, timeout=0.2).launch_app(HOST, "tv.arte.plus7")
+
+    assert launched == AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    assert len(tv.links) == 1
+    assert tv.front_reads == 1
+
+
+def test_an_explicit_refusal_wins_over_the_foreground_observation() -> None:
+    tv = launch_tv("refused")
+    tv.front = "tv.arte.plus7"
+
+    with pytest.raises(CommandRejectedError, match="refused"):
+        lister(tv).launch_app(HOST, "tv.arte.plus7")
+    assert tv.front_reads == 1
+
+
 @pytest.mark.parametrize(
     ("result", "message"),
     [("not_installed", "not installed"), ("refused", "refused")],
@@ -168,7 +188,7 @@ def test_an_app_the_tv_did_not_start_is_an_error_never_sent(result: str, message
 
     with pytest.raises(CommandRejectedError, match=message):
         lister(tv).launch_app(HOST, "tv.arte.plus7")
-    assert tv.front_reads == 0
+    assert tv.front_reads == 1
 
 
 def test_no_answer_is_an_error_that_says_to_check_the_tv_not_a_success() -> None:
@@ -176,6 +196,7 @@ def test_no_answer_is_an_error_that_says_to_check_the_tv_not_a_success() -> None
 
     with pytest.raises(OperationTimeoutError, match="Check the TV"):
         lister(tv, timeout=0.2).launch_app(HOST, "tv.arte.plus7")
+    assert tv.front_reads == 1
 
 
 def test_an_answer_for_another_app_or_request_is_ignored() -> None:

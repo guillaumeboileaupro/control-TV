@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 31/10 | **#118** - migration des anciens certificats (`0a19fd7`) ; **#119** - dashboard (`acee470`), lien de skill corrigé ; rerun qualité bloqué uniquement par `pyasn1` 0.6.4, mise à jour 0.6.5 en validation |
+| PR actives vérifiées au 01/11 | **#120** - D1 duplication (`fc07cb8`) ; **#121** - D2 extension (`0d51bfd`) ; aucune PR T-02 ouverte tant qu'elles le restent |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -36,7 +36,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 |---|---|---|---|---|---|
 | P1 | T-01 - Appairage durable | #118 ouverte ; FAIL matériel avant migration | 0,5 / 2 / 1 h | Finaliser #118, revue, fusion, recette | Codex / Claude |
 | P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
-| P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
+| P1 | T-02 - Applications Android | Correctif développé sur branche isolée ; Liberté reste FAIL 4/4 avant nouvelle recette ; Ubuntu PASS | 2 / 5 / 3 h | Revue après #120/#121, puis recette Android autorisée | Codex |
 | P1 | D1 - Duplication Rust/WebRTC/HLS | Code avancé ; matériel non accepté | 3 / 8 / 5 h | Achever parcours capture -> TV | Claude |
 | P1 | D2 - Extension Rust/X11 | Virtuel partiel ; vrai second écran non validé | 4 / 12 / 7 h | Bureau indépendant et restauration X11 | Claude |
 | P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
@@ -97,3 +97,4 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |
+| 2026-11-01 | T-02 : correction Android développée sans matériel sur `fix/t02-android-launch` : le POST signé du récepteur reste prioritaire, et le canal Android TV Remote sortant confirme aussi le package réellement au premier plan lorsque le téléphone ne peut pas recevoir le retour HTTP. Un seul lancement, aucune relance ; refus et expiration conservés. PR différée tant que #120 et #121 sont ouvertes. |

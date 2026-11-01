@@ -22,6 +22,7 @@ import json
 import secrets
 import socket
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol, TypeVar
@@ -37,6 +38,7 @@ from control_tv.domain import (
 )
 
 DEFAULT_TIMEOUT = 8.0
+CONFIRMATION_GRACE = 0.25
 MAX_BODY = 256 * 1024
 MAX_APPS = 500
 MAX_LABEL = 80
@@ -130,8 +132,9 @@ class ReceiverAppList:
         return self._ask(host, "/apps", link, parse_app_list)
 
     def launch_app(self, host: str, package: str) -> AppLaunch:
-        """Open `package` once through the receiver; `started` only on its word."""
+        """Open `package` once; accept only a receiver answer or its reported front app."""
         package = checked_package(package)
+        confirmed_front: list[str] = []
 
         def link(reply: str, token: str) -> str:
             return f"controltv-receiver://launch?package={package}&reply={reply}&token={token}"
@@ -139,11 +142,24 @@ class ReceiverAppList:
         def parse(body: bytes, token: str) -> str | None:
             return parse_launch_answer(body, token, package)
 
-        result = self._ask(host, "/launch", link, parse)
+        def confirm() -> str | None:
+            """Use the existing outbound remote when a phone cannot receive the HTTP reply."""
+            try:
+                front = self._link.front_app(host, package)
+            except ControlError:
+                return None
+            if front != package:
+                return None
+            confirmed_front.append(front)
+            return "started"
+
+        result = self._ask(host, "/launch", link, parse, confirm=confirm)
         if result == "not_installed":
             raise CommandRejectedError("this app is not installed on the TV; nothing was opened")
         if result == "refused":
             raise CommandRejectedError("the TV refused to open this app")
+        if confirmed_front:
+            return AppLaunch(package=package, front_app=confirmed_front[0], started=True)
         try:
             front = self._link.front_app(host, package)
         except ControlError:
@@ -156,6 +172,8 @@ class ReceiverAppList:
         path: str,
         make_link: Callable[[str, str], str],
         parse: Callable[[bytes, str], T | None],
+        *,
+        confirm: Callable[[], T | None] | None = None,
     ) -> T:
         """Open one receiver link and wait for its single answer on a one-request listener."""
         try:
@@ -189,9 +207,21 @@ class ReceiverAppList:
         thread.daemon = True
         thread.start()
         try:
+            deadline = time.monotonic() + self._timeout
             port = server.server_address[1]
             self._link.open_receiver_link(host, make_link(f"http://{address}:{port}{path}", token))
-            if not done.wait(self._timeout):
+            confirmed = confirm() if confirm is not None else None
+            # A signed answer is more precise than the foreground observation (not installed
+            # and refused remain distinct). Give the receiver's already-started local POST a
+            # short chance to finish before accepting the remote's foreground observation.
+            if confirmed is not None and not received:
+                done.wait(min(CONFIRMATION_GRACE, max(0.0, deadline - time.monotonic())))
+            if received:
+                return received[0]
+            if confirmed is not None:
+                return confirmed
+            remaining = max(0.0, deadline - time.monotonic())
+            if not done.wait(remaining):
                 raise OperationTimeoutError(NO_ANSWER)
         finally:
             server.shutdown()
