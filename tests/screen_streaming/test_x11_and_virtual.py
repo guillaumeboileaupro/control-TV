@@ -618,3 +618,27 @@ def test_a_removal_retried_after_a_late_failure_finishes_and_puts_the_desktop_ba
 
     extension.create(1280, 720, consent=True)  # nothing left blocks a new extension
     assert extension.active
+
+
+@pytest.mark.parametrize(
+    "moved",
+    ['[["eDP-1",0]]', '["eDP-1"]', "[[1,0,0]]", '[["eDP-1","0",0]]', '[["eDP-1",0,true]]'],
+)
+def test_a_journal_with_malformed_moved_screens_is_kept(tmp_path: Path, moved: str) -> None:
+    journal = tmp_path / "extended-display.json"
+    content = f'{{"version":1,"output":"HDMI-2","mode":"control-tv-1280x720-60","moved":{moved}}}'
+    journal.write_text(content, encoding="utf-8")
+
+    with pytest.raises(StreamCleanupError, match="restoration is invalid"):
+        XrandrVirtualMonitor(X11, FakeXrandr(), no_wait, journal=journal)
+    assert journal.read_text(encoding="utf-8") == content
+
+
+def test_the_production_extension_journals_in_the_state_directory() -> None:
+    from control_tv.screen_streaming.virtual_display import (
+        extension_journal_path,
+        persistent_virtual_monitor,
+    )
+
+    assert "control-tv-test-state-" in str(extension_journal_path())
+    assert not persistent_virtual_monitor().active

@@ -20,7 +20,6 @@ explicit consent: the caller asks for it, this module only refuses without it.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import re
 import subprocess
@@ -31,11 +30,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from control_tv.json_types import JsonObject
 from control_tv.screen_streaming.model import (
     InvalidStreamConfiguration,
     StreamCleanupError,
     StreamStartError,
 )
+from control_tv.screen_streaming.restore_journal import RestoreJournal, state_path
 from control_tv.screen_streaming.x11_capture import (
     Runner,
     X11Capture,
@@ -77,10 +78,7 @@ class _Extension:
 
 def extension_journal_path(environ: Mapping[str, str] | None = None) -> Path:
     """Private persistent state used only to finish an interrupted D2 restoration."""
-    values = os.environ if environ is None else environ
-    base = values.get("XDG_STATE_HOME")
-    root = Path(base) if base else Path.home() / ".local" / "state"
-    return root / "control-tv" / _JOURNAL_NAME
+    return state_path(_JOURNAL_NAME, environ)
 
 
 def persistent_virtual_monitor() -> XrandrVirtualMonitor:
@@ -107,7 +105,7 @@ class XrandrVirtualMonitor:
         # refuses to delete a mode that is already gone.
         self._removed = 0
         self._lock = threading.Lock()
-        self._journal = journal
+        self._journal = None if journal is None else RestoreJournal(journal)
         self._recover()
 
     @property
@@ -201,13 +199,14 @@ class XrandrVirtualMonitor:
 
     def _recover(self) -> None:
         """Finish a restoration left by a killed process before accepting another extension."""
-        if self._journal is None or not self._journal.exists():
+        if self._journal is None:
             return
         try:
-            value = json.loads(self._journal.read_text(encoding="utf-8"))
-            moved = tuple((item[0], int(item[1]), int(item[2])) for item in value["moved"])
-            extension = _Extension(str(value["output"]), str(value["mode"]), moved)
-        except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
+            value = self._journal.read()
+            if value is None:
+                return
+            extension = _saved_extension(value)
+        except (StreamCleanupError, ValueError) as error:
             raise StreamCleanupError("the saved extended-screen restoration is invalid") from error
         self._forget(extension)
         self._clear_journal_if_restored(extension)
@@ -215,33 +214,13 @@ class XrandrVirtualMonitor:
     def _write_journal(self, extension: _Extension) -> None:
         if self._journal is None:
             return
-        directory = self._journal.parent
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(directory, 0o700)
-        temporary = self._journal.with_suffix(".tmp")
-        payload = {
-            "version": 1,
-            "output": extension.output,
-            "mode": extension.mode,
-            "moved": [list(item) for item in extension.moved],
-        }
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, separators=(",", ":"))
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self._journal)
-            directory_descriptor = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                temporary.unlink()
-            raise
+        self._journal.write(
+            {
+                "output": extension.output,
+                "mode": extension.mode,
+                "moved": [list(item) for item in extension.moved],
+            }
+        )
 
     def _clear_journal_if_restored(self, extension: _Extension) -> None:
         if self._journal is None:
@@ -254,8 +233,7 @@ class XrandrVirtualMonitor:
         moved_back = all(monitors.get(name) == (x, y) for name, x, y in extension.moved)
         if extension.mode in listing or not moved_back:
             raise StreamCleanupError("the saved extended-screen configuration was not restored")
-        with contextlib.suppress(OSError):
-            self._journal.unlink()
+        self._journal.clear()
 
     def _place(self, extension: _Extension, x: int, y: int) -> tuple[tuple[str, ...], _Extension]:
         """The arguments placing the TV at desktop coordinates `x`, `y`. X has no negative
@@ -325,6 +303,22 @@ class XrandrVirtualMonitor:
         if done.returncode != 0:
             raise error_type(f"xrandr {arguments[0]} failed")
         return done.stdout
+
+
+def _saved_extension(value: JsonObject) -> _Extension:
+    """The extension a journal describes; ValueError for any other shape."""
+    output, mode, moved = value.get("output"), value.get("mode"), value.get("moved")
+    if not isinstance(output, str) or not isinstance(mode, str) or not isinstance(moved, list):
+        raise ValueError("unexpected extended-screen journal")
+    screens: list[tuple[str, int, int]] = []
+    for item in moved:
+        if not isinstance(item, list) or len(item) != 3:
+            raise ValueError("unexpected moved screen")
+        name, x, y = item
+        if not isinstance(name, str) or type(x) is not int or type(y) is not int:
+            raise ValueError("unexpected moved screen")
+        screens.append((name, x, y))
+    return _Extension(output, mode, tuple(screens))
 
 
 def _outputs(listing: str) -> tuple[str | None, str | None]:
