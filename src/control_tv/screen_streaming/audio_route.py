@@ -74,8 +74,8 @@ def recover_interrupted_audio_route(
     not be finished (the journal is then kept for the next start), or None."""
     try:
         route().recover()
-    except StreamCleanupError as error:
-        return str(error)
+    except (StreamCleanupError, OSError) as error:
+        return str(error) or type(error).__name__
     return None
 
 
@@ -113,12 +113,20 @@ class PulseAudioRoute:
             raise StreamStartError(
                 f"the previous sound configuration is not restored yet: {error}"
             ) from None
-        previous = self._pactl("get-default-sink").strip()
-        if not previous or previous == TV_SINK:
-            raise StreamStartError("the computer's default sound output cannot be found")
-        self._forget_leftover()
-        if self._journal is not None:
-            self._journal.write({"previous_sink": previous})
+        journal = self._journal
+        if journal is not None and not journal.claim():
+            raise StreamStartError("another control-TV stream already routes the computer's sound")
+        try:
+            previous = self._pactl("get-default-sink").strip()
+            if not previous or previous == TV_SINK:
+                raise StreamStartError("the computer's default sound output cannot be found")
+            self._forget_leftover()
+            if journal is not None:
+                journal.write({"previous_sink": previous})
+        except BaseException:
+            if journal is not None:
+                journal.release()  # nothing changed yet: nothing to own
+            raise
         self._previous, self._restored = previous, 0
         try:
             self._pactl(
@@ -137,19 +145,30 @@ class PulseAudioRoute:
         return TV_SOURCE
 
     def recover(self) -> None:
-        """Finish the restoration a killed run journaled; nothing to do without a journal."""
-        if self._journal is None or self._previous is not None:
+        """Finish the restoration a killed run journaled; nothing to do without a journal or
+        when a live stream (this process or another) owns it. A failure keeps the journal for
+        the next attempt."""
+        journal = self._journal
+        if journal is None or self._previous is not None:
             return
-        saved = self._journal.read()
-        if saved is None:
+        if journal.read() is None or not journal.claim():
             return
-        previous = saved.get("previous_sink")
-        if not isinstance(previous, str) or not previous or previous == TV_SINK:
-            raise StreamCleanupError("the saved sound restoration is invalid")
-        if self._which("pactl") is None:
-            raise StreamCleanupError("pactl is needed to restore the saved sound configuration")
-        self._previous, self._restored = previous, 0
-        self.stop()
+        try:
+            saved = journal.read()  # again: its owner may have restored it meanwhile
+            if saved is None:
+                journal.release()
+                return
+            previous = saved.get("previous_sink")
+            if not isinstance(previous, str) or not previous or previous == TV_SINK:
+                raise StreamCleanupError("the saved sound restoration is invalid")
+            if self._which("pactl") is None:
+                raise StreamCleanupError("pactl is needed to restore the saved sound configuration")
+            self._previous, self._restored = previous, 0
+            self.stop()
+        except BaseException:
+            self._previous, self._restored = None, 0
+            journal.release()
+            raise
 
     def stop(self) -> None:
         """Give the default output back, move the sounds back, remove the null sink, then check

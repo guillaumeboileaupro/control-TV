@@ -133,6 +133,15 @@ def route(
     )
 
 
+def killed_while_streaming(pactl: FakePactl, journal: Path) -> None:
+    """A run that routed the sound to the TV and was then killed: nothing else of it runs, and
+    the kernel drops its lock on the journal, as for a real SIGKILL (tested below)."""
+    audio = route(pactl, journal=journal)
+    audio.start()
+    assert audio._journal is not None
+    audio._journal.release()
+
+
 def test_the_sound_goes_to_a_null_sink_for_the_stream_and_back_after() -> None:
     pactl = FakePactl()
     audio = route(pactl)
@@ -278,7 +287,7 @@ def test_no_sound_setting_changes_when_the_journal_cannot_be_written(tmp_path: P
 def test_a_killed_run_is_restored_by_the_next_start_up(tmp_path: Path) -> None:
     pactl = FakePactl()
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()  # then the process is gone: nothing else runs
+    killed_while_streaming(pactl, journal)  # then the process is gone: nothing else runs
     assert pactl.default == TV_SINK and journal.exists()
 
     route(pactl, journal=journal).recover()
@@ -294,7 +303,7 @@ def test_a_stream_started_after_a_crash_restores_first_instead_of_refusing(
     # Before D4-5 the null sink was still the default, so the next stream was refused.
     pactl = FakePactl()
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()
+    killed_while_streaming(pactl, journal)
 
     audio = route(pactl, journal=journal)
     assert audio.start() == TV_SOURCE
@@ -307,7 +316,7 @@ def test_the_restoration_keeps_a_choice_the_user_made_meanwhile(tmp_path: Path) 
     pactl = FakePactl()
     pactl.sinks["3"] = "bluez_output.headset"
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()
+    killed_while_streaming(pactl, journal)
     pactl.default = "bluez_output.headset"  # chosen in the sound settings while streaming
     pactl.inputs["12"] = "3"  # a sound the user moved there itself
 
@@ -322,7 +331,7 @@ def test_the_restoration_keeps_a_choice_the_user_made_meanwhile(tmp_path: Path) 
 def test_an_output_unplugged_meanwhile_is_left_to_the_sound_server(tmp_path: Path) -> None:
     pactl = FakePactl()
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()
+    killed_while_streaming(pactl, journal)
     del pactl.sinks["1"]  # the speakers' device went away
     pactl.sinks["4"] = "alsa_output.hdmi"
 
@@ -336,7 +345,7 @@ def test_an_output_unplugged_meanwhile_is_left_to_the_sound_server(tmp_path: Pat
 def test_recovery_is_repeatable_and_changes_nothing_once_done(tmp_path: Path) -> None:
     pactl = FakePactl()
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()
+    killed_while_streaming(pactl, journal)
     route(pactl, journal=journal).recover()
     done = mutations(pactl)
 
@@ -350,7 +359,7 @@ def test_recovery_is_repeatable_and_changes_nothing_once_done(tmp_path: Path) ->
 def test_a_failed_recovery_keeps_the_journal_and_blocks_a_new_route(tmp_path: Path) -> None:
     pactl = FakePactl()
     journal = tmp_path / "audio-route.json"
-    route(pactl, journal=journal).start()
+    killed_while_streaming(pactl, journal)
     pactl.fail = "unload-module"
 
     problem = recover_interrupted_audio_route(lambda: route(pactl, journal=journal))
@@ -481,3 +490,69 @@ def test_the_production_route_journals_in_the_state_directory() -> None:
     audio = persistent_audio_route()
     assert not audio.active
     assert "control-tv-test-state-" in str(audio_route_journal_path())
+
+
+def test_a_live_route_is_neither_recovered_nor_doubled_by_another_one(tmp_path: Path) -> None:
+    pactl = FakePactl()
+    journal = tmp_path / "audio-route.json"
+    live = route(pactl, journal=journal)
+    live.start()
+    before = mutations(pactl)
+
+    route(pactl, journal=journal).recover()
+    assert recover_interrupted_audio_route(lambda: route(pactl, journal=journal)) is None
+    with pytest.raises(StreamStartError, match="another control-TV stream"):
+        route(pactl, journal=journal).start()
+
+    assert mutations(pactl) == before and pactl.default == TV_SINK and journal.exists()
+    live.stop()
+    assert pactl.default == SPEAKERS and not journal.exists()
+    route(pactl, journal=journal).start()  # free again
+
+
+def test_a_start_refused_before_any_change_gives_the_ownership_up(tmp_path: Path) -> None:
+    pactl = FakePactl()
+    pactl.default = ""
+    journal = tmp_path / "audio-route.json"
+
+    with pytest.raises(StreamStartError, match="cannot be found"):
+        route(pactl, journal=journal).start()
+
+    pactl.default = SPEAKERS
+    assert route(pactl, journal=journal).start() == TV_SOURCE
+
+
+def test_a_journal_restored_by_its_owner_meanwhile_is_left_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from control_tv.screen_streaming.restore_journal import RestoreJournal
+
+    pactl = FakePactl()
+    journal = tmp_path / "audio-route.json"
+    killed_while_streaming(pactl, journal)
+    real_claim = RestoreJournal.claim
+
+    def claim_after_the_owner(self: RestoreJournal) -> bool:
+        journal.unlink()  # the owner finished between the check and the lock
+        return real_claim(self)
+
+    monkeypatch.setattr(RestoreJournal, "claim", claim_after_the_owner)
+    before = mutations(pactl)
+    route(pactl, journal=journal).recover()
+    monkeypatch.undo()
+
+    assert mutations(pactl) == before
+    assert RestoreJournal(journal).claim()  # not left owned
+
+
+def test_an_unusable_lock_is_reported_at_start_up(tmp_path: Path) -> None:
+    pactl = FakePactl()
+    journal = tmp_path / "audio-route.json"
+    killed_while_streaming(pactl, journal)
+    lock = journal.with_suffix(".lock")
+    lock.unlink()
+    lock.mkdir()
+
+    problem = recover_interrupted_audio_route(lambda: route(pactl, journal=journal))
+
+    assert problem is not None and "Is a directory" in problem and journal.exists()
