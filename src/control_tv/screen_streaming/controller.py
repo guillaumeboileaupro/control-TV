@@ -40,6 +40,7 @@ from control_tv.screen_streaming.virtual_display import (
     REFRESH_RATES,
     Position,
     XrandrVirtualMonitor,
+    persistent_virtual_monitor,
 )
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output
 
@@ -153,7 +154,7 @@ class ScreenStreamController:
         *,
         connect: Connect = tv_and_route,
         capture: Callable[[], X11Capture] = X11Capture,
-        extension: Callable[[], XrandrVirtualMonitor] = XrandrVirtualMonitor,
+        extension: Callable[[], XrandrVirtualMonitor] = persistent_virtual_monitor,
         audio_route: Callable[[], PulseAudioRoute] = PulseAudioRoute,
         build: Assemble = assemble,
         seconds: int = MAX_D1_SECONDS,

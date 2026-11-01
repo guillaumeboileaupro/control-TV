@@ -49,7 +49,11 @@ from control_tv.screen_streaming.model import (
 )
 from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.service import StreamingSessionService, StreamRequest
-from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import (
+    Position,
+    XrandrVirtualMonitor,
+    persistent_virtual_monitor,
+)
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.screencast.capabilities import FfmpegCapabilityProbe
 from control_tv.screencast.model import EncoderPreference
@@ -232,7 +236,7 @@ def assemble(
     if chosen.mode is not Mode.SYNTHETIC:
         capture = capture or X11Capture()
         if chosen.mode is Mode.EXTEND:
-            used_virtual = virtual or XrandrVirtualMonitor()
+            used_virtual = virtual or persistent_virtual_monitor()
             output = used_virtual.create(
                 chosen.width,
                 chosen.height,

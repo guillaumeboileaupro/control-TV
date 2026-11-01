@@ -38,9 +38,9 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
 | P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED : moteur, récepteur, bail, Tauri (#111). IMPLEMENTED sur branche : pertes sans corruption (D1-8), VA-API avec repli `libx264` (D1-3, désactivé par défaut). HARDWARE NOT RUN | 3 / 8 / 5 h | PR D1 après #118/#119, revue, CI ; puis essai GPU/TV autorisé | Claude |
-| P1 | D2 - Extension Rust/X11 | Connecteur forcé MERGED ; écran virtuel indépendant bloqué par décision D2-B1 (`evdi` ou connecteur forcé, root) ; vrai second écran non validé | 4 / 12 / 7 h | Décision D2-B1, puis restauration X11 prouvée | Claude |
+| P1 | D2 - Extension Rust/X11 | Connecteur forcé MERGED et retenu par décision du 01/11 (aucun evdi/nouveau système) ; branche `feat/d2-extended-display` : journal X11 atomique et reprise vérifiée implémentés/testés ; HARDWARE NOT RUN | 4 / 12 / 7 h | Après fusion de #120, ouvrir l'unique PR D2 puis recette X11 autorisée | Codex |
 | P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
-| P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg. IMPLEMENTED sur branche : FFmpeg tué avec son hôte (D4-4). NOT IMPLEMENTED : restauration après panne (D4-5, PR D2). HARDWARE NOT RUN | 2 / 5 / 3 h | D4-5 journal de restauration avec D2 | Claude |
+| P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg. IMPLEMENTED : D4-4 sur #120 ; D4-5 X11 sur branche D2 (journal avant mutation, reprise après plantage simulé). Route PulseAudio persistante restant à faire. HARDWARE NOT RUN | 2 / 5 / 3 h | Compléter la reprise audio puis recette autorisée | Codex / Claude |
 | P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
 | P1 | Audio / synchronisation | Opus/PulseAudio codés ; physique non validé | 1 / 4 / 2 h | Mesurer synchronisation sur TV | Claude |
 | P1 | Latence / performances | HLS ancien 9-11 s ; WebRTC <500 ms non prouvé | 1 / 4 / 2 h | Mesurer médiane, p95, pire, FPS, CPU/GPU | Claude |
@@ -94,6 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |

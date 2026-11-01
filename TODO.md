@@ -24,15 +24,15 @@ essai réel autorisé par le propriétaire.
 | D1-8 | Pertes sous retard réseau : horloge RTP conservée, vidéo resynchronisée sur l'IDR suivante, compteurs de pertes réels | **Branche** | Oui (moteur) | Non |
 | D1-9 | Latence, FPS, pertes, synchro A/V, CPU sur les deux Android TV | Non mesuré | — | **À faire, avec accord** |
 | D2-1 | Écran étendu : mode `cvt` sur un connecteur libre « forcé connecté », placé à gauche/droite/dessus/dessous | Fusionné | Oui (faux `xrandr`) | 1 essai HLS (fenêtre déplacée, 2026-10-20) |
-| D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Bloqué** (décision D2-B1) | — | — |
+| D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Écarté par l'architecture D2 du 2026-11-01** : aucun evdi ni nouveau système ; maintien du connecteur RandR forcé | — | — |
 | D2-3 | Diffuser uniquement l'écran étendu (géométrie du bail = cet écran) | Fusionné | Oui | Non (WebRTC) |
 | D2-4 | Déplacement des fenêtres sur l'écran étendu | Dépend de GNOME | — | 1 observation HLS |
-| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | Fusionné (retrait idempotent et reprenable, cliché `DisplayManager`) | Oui | Non |
+| D2-5 | Restauration exacte de la configuration initiale après Stop/échec | **Branche D2** : retrait idempotent, journal privé atomique avant mutation et reprise vérifiée au prochain processus | Oui (faux `xrandr`, reprise après plantage simulé) | Non |
 | D4-1 | Arrêt fiable : Stop annule attente/négociation/reconnexion, FFmpeg récolté, erreurs combinées | Fusionné | Oui | Non |
 | D4-2 | Reconnexion bornée : au plus 2 essais dans l'échéance absolue, transport/jeton/port neufs | Fusionné | Oui | Non |
 | D4-3 | Nettoyage FFmpeg : handle conservé tant que la récolte n'est pas confirmée | Fusionné | Oui | Non |
 | D4-4 | FFmpeg orphelin après arrêt brutal de l'hôte (SIGKILL) | **Branche** (`PR_SET_PDEATHSIG`) | Oui (processus réels ; le test échoue sans le correctif) | Non |
-| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Non développé** (état en mémoire seulement) | — | — |
+| D4-5 | Restauration après panne : écran étendu, positions déplacées et route PulseAudio restaurés au démarrage suivant | **Partiel sur branche D2** : écran et positions persistants ; route PulseAudio encore sans journal | Oui (X11) | — |
 | D4-6 | Aucune session fantôme : un seul bail émetteur, générations côté récepteur | Fusionné | Oui | Non |
 
 ### D1 — duplication (PR D1, après clôture de #118)
@@ -64,14 +64,18 @@ essai réel autorisé par le propriétaire.
 
 - [x] Extension sur connecteur forcé, retrait reprenable, cliché du gestionnaire d'affichage (D2-1,
   D2-3, D2-5) : fusionnés.
-- [ ] **D2-B1 — décision propriétaire :** écran virtuel indépendant. Xorg `modesetting` sous GNOME
-  n'offre aucune sortie virtuelle ; options : module `evdi` (installation DKMS, root) ou maintien du
-  connecteur forcé (root à chaque démarrage). Aucune installation sans accord.
-- [ ] **D4-5 :** journal persistant de la configuration initiale écrit avant toute modification,
-  restauration au démarrage suivant et à la fermeture, effacé seulement après restauration vérifiée.
-- [ ] Raccorder le moteur D1 à l'écran étendu de bout en bout depuis la carte Tauri et vérifier la
-  restauration exacte (`xrandr --verbose` identique avant/après).
-- **Dépendances :** PR D1 fusionnée ; D2-B1 ; autorisation pour toute modification d'affichage réelle.
+- [x] **D2-B1 — décision propriétaire du 2026-11-01 :** conserver le gestionnaire X11 et le
+  connecteur RandR forcé existants ; aucun `evdi` ni nouveau système d'affichage. GNOME traite ce
+  connecteur comme un véritable second espace de travail, distinct de l'écran principal.
+- [x] **D4-5, partie X11 (branche D2) :** journal privé atomique écrit et synchronisé avant la
+  première mutation RandR ; au prochain processus, retrait du mode, extinction de la sortie et
+  remise en place des écrans déplacés ; journal conservé si la vérification échoue et effacé
+  seulement après restauration vérifiée. Tests automatisés sur faux `xrandr`, matériel NOT RUN.
+- [ ] **D4-5, suite :** journaliser et restaurer la route PulseAudio après un arrêt brutal.
+- [x] Le moteur D1/WebRTC consomme exclusivement la géométrie de l'écran étendu via le bail Python ;
+  Étendre et Arrêter sont raccordés à Tauri. Validation automatisée existante et ciblée ; recette
+  réelle et comparaison `xrandr --verbose` avant/après encore requises avec autorisation.
+- **Dépendances :** PR D1 fusionnée ; autorisation pour toute modification d'affichage réelle.
 - **Critères d'acceptation :** seul l'écran étendu est transmis ; une fenêtre y est déplaçable ;
   après Stop, échec, Ctrl-C ou SIGKILL puis relance, la topologie, les modes et la route audio
   sont identiques à l'état initial ; aucun mode `control-tv-*` restant.
@@ -91,7 +95,7 @@ essai réel autorisé par le propriétaire.
   tête poussée de #119 (`acee470`, tableau de bord) sans modifier la branche de son auteur.
 - **D1-B2 :** dérogations RUSTSEC-2026-0387/RUSTSEC-2025-0141 limitées au réseau local et à leur
   date d'expiration ; `webrtc` 0.21 conserve `digest` 0.10 via `rtc-crypto` et change l'API de transport.
-- **D2-B1 :** écran virtuel indépendant (ci-dessus).
+- **D2-B1 :** résolu par la décision du 2026-11-01 de conserver le connecteur forcé existant.
 - **Matériel :** aucune recette D1/D2/D4 sans autorisation explicite du propriétaire.
 
 - [x] **Sécurité Python — pyasn1 0.6.5 (2026-10-31) :** le verrou remplace `pyasn1` 0.6.4,

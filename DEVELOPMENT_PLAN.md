@@ -62,12 +62,14 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
 
 **D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
 - [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
-- [ ] D2-B1, owner decision: an X11 virtual screen independent of any connector does not exist
-  under GNOME on Xorg `modesetting`; options are `evdi` (DKMS install, root) or keeping the forced
-  connector (root once per boot). No installation without authorization.
-- [ ] D4-5: persistent journal of the initial topology, modes, moved screens and PulseAudio route,
-  written before any change, replayed at next start and at exit, deleted only after a verified
-  restore (the current state lives in memory only and is lost on a crash).
+- [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
+  connector; do not add `evdi` or another display system. GNOME uses that output as a real second
+  workspace, separate from the primary screen.
+- [x] D4-5, X11 part on the D2 branch: a private atomic journal is written and fsynced before the
+  first RandR mutation. A new process removes the D2 mode, disables its output, restores every
+  shifted screen position, verifies the result, and only then deletes the journal; failed recovery
+  keeps it for the next start. Automated fake-`xrandr` tests only, hardware NOT RUN.
+- [ ] D4-5 remainder: persist and restore the PulseAudio route after an abrupt process death.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
@@ -75,7 +77,7 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
 **Blockers:** D1-B1 #118 and #119 open (single open PR rule; this branch merges #119's pushed
 head `acee470` for the dashboard, without touching that branch); D1-B2 WebRTC advisories waived for local
 network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
-`rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
+`rtc-crypto` and changes the transport API; every hardware step needs the owner's
 authorization.
 
 Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`

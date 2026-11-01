@@ -367,6 +367,63 @@ def test_a_removal_that_fails_keeps_the_extension_for_a_retry() -> None:
     assert not extension.active and xrandr.modes == set()
 
 
+def test_a_new_process_restores_a_journaled_extension_after_a_crash(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "state" / "extended-display.json"
+    abandoned = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    abandoned.create(1280, 720, consent=True, x=-1280, y=0)
+    assert journal.exists() and xrandr.enabled is not None
+    assert xrandr.enabled[0] == "HDMI-2"
+    assert xrandr.places != {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+
+    recovered = XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert not recovered.active
+    assert not journal.exists()
+    assert xrandr.enabled is None and xrandr.modes == set()
+    assert xrandr.places == {"eDP-1": (0, 0), "HDMI-1": (1920, 0)}
+
+
+def test_a_failed_crash_recovery_keeps_the_journal_for_the_next_start(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    journal = tmp_path / "extended-display.json"
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal).create(1280, 720, consent=True)
+    xrandr.fail = "--delmode"
+
+    with pytest.raises(StreamCleanupError, match="saved extended-screen configuration"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert journal.exists()
+    xrandr.fail = None
+    XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+    assert not journal.exists()
+
+
+def test_the_journal_is_durable_before_the_first_x11_mutation(tmp_path: Path) -> None:
+    xrandr = FakeXrandr()
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("block", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        XrandrVirtualMonitor(
+            X11, xrandr, no_wait, journal=blocker / "extended-display.json"
+        ).create(1280, 720, consent=True)
+
+    assert xrandr.enabled is None and xrandr.modes == set()
+    assert not any(call[0] in ("--newmode", "--addmode") for call in xrandr.calls)
+
+
+def test_an_invalid_restoration_journal_is_kept_and_changes_nothing(tmp_path: Path) -> None:
+    journal = tmp_path / "extended-display.json"
+    journal.write_text('{"version":1,"moved":"invalid"}\n', encoding="utf-8")
+    xrandr = FakeXrandr()
+
+    with pytest.raises(StreamCleanupError, match="restoration is invalid"):
+        XrandrVirtualMonitor(X11, xrandr, no_wait, journal=journal)
+
+    assert journal.exists() and xrandr.calls == []
+
+
 # The d1 session modes ------------------------------------------------------------------
 
 
