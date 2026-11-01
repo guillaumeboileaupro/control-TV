@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 01/11 | #118, #119 et **#120** fusionnées ; **#121** D2 verte au SHA `29a2611` et **#122** microphone ouverte, en cours d'intégration avec `main` |
+| PR actives vérifiées au 01/11 | #118, #119 et **#120** fusionnées ; **#121** D2 verte au SHA `29a2611` et **#122** microphone ouverte, `main` intégré et régressions locales corrigées |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté ; correction microphone Android implémentée, non testée matériellement |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -49,7 +49,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | Documentation TODO / dashboard | Synchronisation continue nécessaire | 0,5 / 1,5 / 1 h | Actualiser exhaustivement à chaque fin de mission | Agent actif |
 | P2 | Widget Android 4x4 | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests tactiles réels | Claude |
 | P2 | Menu GNOME | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests sur Ubuntu | Claude |
-| P2 | Assistant / microphone | Transfert Android implémenté ; CI et matériel non validés | 2 / 6 / 3 h | CI puis recette autorisée consentement/audio/arrêt | Codex |
+| P2 | Assistant / microphone | PR #122 : transfert Android implémenté ; `main` intégré, contrôles locaux verts ; CI et matériel non validés | 2 / 6 / 3 h | CI puis recette autorisée consentement/audio/arrêt | Codex |
 | P2 | Logos / langues / Power-CEC | Non repris point par point le 30/10 | 1 / 3 / 2 h | Tests ciblés et limites TV | Codex / Claude |
 | P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 fusionné via #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
 | **TOTAL** | **Travaux restants estimés** | **Ne comprend pas de nouvelle anomalie majeure** | **26 / 79,5 / 46 h** | **Réviser après vérification** | **Coordinateur** |
@@ -100,3 +100,4 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-11-01 | Microphone Android : capture avec permission explicite, session vocale Android Remote, arrêt et nettoyage implémentés sur branche dédiée ; APK, Rust, UI et tests Python ciblés validés localement, aucune utilisation d'appareil, CI non exécutée et aucune PR supplémentaire. |
 | 2026-10-31 | Claude, branche `feat/d1-rust-screencast` sans PR : D1-3 VA-API avec repli explicite, D4-4 `PR_SET_PDEATHSIG`, correctif `agent_config.py` sous `python3` 3.7 ; skill `python-project-quality` synchronisé avec `my-skills` (branche `docs/python-cli-interpreter`). Tests locaux uniquement, CI non exécutée, matériel NOT RUN. |
 | 2026-11-01 | Claude, PR #120 : `main` (#118, #119) intégré sans perte ; Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien (et panique supprimée), VA-API par nœud de rendu, test de bout en bout Rust, fuite de script de test corrigée. Tests locaux verts ; matériel NOT RUN. |
+| 2026-11-01 | Codex, PR #122 : `main` après #120 intégré sans perte du microphone ; le double `TvControl` couvre les trois méthodes vocales et le verrou Kotlin respecte le contrôle lexical strict. Local : 12 tests ciblés, contrôle Python complet (2 785 PASS, 8 SKIP) et tests JVM Android PASS ; CI à exécuter, matériel NOT RUN. |

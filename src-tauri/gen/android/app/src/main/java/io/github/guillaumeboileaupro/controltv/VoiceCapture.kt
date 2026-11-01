@@ -72,9 +72,11 @@ class VoiceCapture(
     private val onChunk: (ByteArray) -> Unit,
     private val onEnd: (VoiceEnd) -> Unit,
 ) {
+    private class StateLock
+
     private val running = AtomicBoolean(false)
     private val stopRequested = AtomicBoolean(false)
-    private val stateLock = Any()
+    private val stateLock = StateLock()
 
     val active: Boolean get() = running.get()
 
