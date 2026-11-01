@@ -956,7 +956,26 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
 
 
 def main() -> None:
+    _recover_interrupted_screen_audio()
     run(default_service())
+
+
+def _recover_interrupted_screen_audio() -> None:
+    """Give the computer its sound back if a previous run was killed while streaming (D4-5).
+
+    Nothing is done without a saved restoration (always the case on Android). A restoration
+    that cannot be finished keeps its journal for the next start and is reported on stderr,
+    never on stdout, which carries only protocol lines."""
+    from control_tv.screen_streaming.audio_route import (
+        audio_route_journal_path,
+        recover_interrupted_audio_route,
+    )
+
+    if not audio_route_journal_path().exists():
+        return
+    problem = recover_interrupted_audio_route()
+    if problem is not None:
+        print(f"control-tv: the computer's sound is not restored yet: {problem}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,17 @@ Rules:
 - `stop` is idempotent; a failed step keeps the route for a retry, which resumes after the steps
   already done. A null sink left by an interrupted run is removed before a new one is made.
 - Only `pactl` is run, with fixed arguments: nothing else on the system is changed.
+
+Crash restoration (D4-5), with the D2 journal (`restore_journal`):
+- the previous default output is journaled atomically *before* the null sink is loaded, and the
+  journal is removed only once PulseAudio is seen restored (no null sink of ours, the default
+  output is not it); a failed restoration keeps it;
+- a process killed while streaming (SIGKILL, crash) leaves the journal; `recover` finishes the
+  restoration at the bridge's next start, and `start` does it first too;
+- the restoration never overrides the user: the default output is put back only while it is
+  still the null sink, and only the sounds still playing into the null sink are moved, to the
+  previous output when it still exists (else PulseAudio's own fallback takes them). Repeating it
+  changes nothing.
 """
 
 from __future__ import annotations
@@ -21,13 +32,16 @@ import os
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 
 from control_tv.screen_streaming.model import StreamCleanupError, StreamStartError
+from control_tv.screen_streaming.restore_journal import RestoreJournal, state_path
 
 TV_SINK = "controltv_tv"
 TV_SOURCE = f"{TV_SINK}.monitor"
 DEFAULT_MONITOR = "@DEFAULT_MONITOR@"
 PACTL_TIMEOUT = 5.0
+JOURNAL_NAME = "audio-route.json"
 
 Runner = Callable[[Sequence[str], Mapping[str, str]], subprocess.CompletedProcess[str]]
 
@@ -43,6 +57,28 @@ def _run(argv: Sequence[str], environ: Mapping[str, str]) -> subprocess.Complete
     )
 
 
+def audio_route_journal_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Private persistent state used only to finish an interrupted sound restoration."""
+    return state_path(JOURNAL_NAME, environ)
+
+
+def persistent_audio_route() -> PulseAudioRoute:
+    """The production route, with crash restoration enabled."""
+    return PulseAudioRoute(journal=audio_route_journal_path())
+
+
+def recover_interrupted_audio_route(
+    route: Callable[[], PulseAudioRoute] = persistent_audio_route,
+) -> str | None:
+    """At start-up: finish the sound restoration of a run that was killed. Returns why it could
+    not be finished (the journal is then kept for the next start), or None."""
+    try:
+        route().recover()
+    except StreamCleanupError as error:
+        return str(error)
+    return None
+
+
 class PulseAudioRoute:
     """Routes the computer's sound to a null sink for the stream, then back."""
 
@@ -51,35 +87,46 @@ class PulseAudioRoute:
         run: Runner = _run,
         environ: Mapping[str, str] | None = None,
         which: Callable[[str], str | None] = shutil.which,
+        *,
+        journal: Path | None = None,
     ) -> None:
         self._run, self._which = run, which
         self._environ = dict(os.environ if environ is None else environ)
-        self._module: str | None = None
+        self._journal = None if journal is None else RestoreJournal(journal)
+        # The output to give back while a route is tracked (streaming or not yet restored).
         self._previous: str | None = None
         self._restored = 0
 
     @property
     def active(self) -> bool:
-        return self._module is not None
+        return self._previous is not None
 
     def start(self) -> str:
         """The source to capture: the null sink's monitor, or the default monitor without pactl."""
-        if self._module is not None:
+        if self._previous is not None:
             raise StreamStartError("the computer's sound is already routed to the TV")
         if self._which("pactl") is None:
             return DEFAULT_MONITOR
+        try:
+            self.recover()
+        except StreamCleanupError as error:
+            raise StreamStartError(
+                f"the previous sound configuration is not restored yet: {error}"
+            ) from None
         previous = self._pactl("get-default-sink").strip()
         if not previous or previous == TV_SINK:
             raise StreamStartError("the computer's default sound output cannot be found")
         self._forget_leftover()
-        module = self._pactl(
-            "load-module",
-            "module-null-sink",
-            f"sink_name={TV_SINK}",
-            "sink_properties=device.description=ControlTV-TV",
-        ).strip()
-        self._module, self._previous, self._restored = module, previous, 0
+        if self._journal is not None:
+            self._journal.write({"previous_sink": previous})
+        self._previous, self._restored = previous, 0
         try:
+            self._pactl(
+                "load-module",
+                "module-null-sink",
+                f"sink_name={TV_SINK}",
+                "sink_properties=device.description=ControlTV-TV",
+            )
             self._pactl("set-default-sink", TV_SINK)
             for sink_input in self._sink_inputs(exclude=TV_SINK):
                 self._pactl("move-sink-input", sink_input, TV_SINK)
@@ -89,32 +136,83 @@ class PulseAudioRoute:
             raise
         return TV_SOURCE
 
+    def recover(self) -> None:
+        """Finish the restoration a killed run journaled; nothing to do without a journal."""
+        if self._journal is None or self._previous is not None:
+            return
+        saved = self._journal.read()
+        if saved is None:
+            return
+        previous = saved.get("previous_sink")
+        if not isinstance(previous, str) or not previous or previous == TV_SINK:
+            raise StreamCleanupError("the saved sound restoration is invalid")
+        if self._which("pactl") is None:
+            raise StreamCleanupError("pactl is needed to restore the saved sound configuration")
+        self._previous, self._restored = previous, 0
+        self.stop()
+
     def stop(self) -> None:
-        """Restore the previous output, move the sounds back, remove the null sink."""
-        module, previous = self._module, self._previous
-        if module is None or previous is None:
+        """Give the default output back, move the sounds back, remove the null sink, then check
+        it and forget the journal."""
+        previous = self._previous
+        if previous is None:
             return
         steps: tuple[Callable[[], None], ...] = (
-            lambda: self._cleanup("set-default-sink", previous),
+            lambda: self._give_default_back(previous),
             lambda: self._move_back(previous),
-            lambda: self._cleanup("unload-module", module),
+            self._unload_tv_sinks,
         )
         for step in steps[self._restored :]:
             step()
             self._restored += 1
-        self._module, self._previous, self._restored = None, None, 0
+        if TV_SINK in self._sinks().values() or self._default() == TV_SINK:
+            self._restored = 0  # every step again on a retry; each one is idempotent
+            raise StreamCleanupError("the computer's sound configuration was not restored")
+        if self._journal is not None:
+            self._journal.clear()
+        self._previous, self._restored = None, 0
+
+    def _give_default_back(self, previous: str) -> None:
+        """Only while the null sink is still the default: a choice made since then is kept."""
+        if self._default() == TV_SINK and previous in self._sinks().values():
+            self._cleanup("set-default-sink", previous)
 
     def _move_back(self, previous: str) -> None:
+        if previous not in self._sinks().values():
+            return  # gone (unplugged): removing the null sink lets PulseAudio's fallback take them
         for sink_input in self._sink_inputs(only=TV_SINK, cleanup=True):
             self._cleanup("move-sink-input", sink_input, previous)
 
+    def _unload_tv_sinks(self) -> None:
+        for module in self._tv_modules(cleanup=True):
+            self._cleanup("unload-module", module)
+
     def _forget_leftover(self) -> None:
         """Remove a null sink of an interrupted run (its module), if any."""
-        for line in self._pactl("list", "short", "modules").splitlines():
+        for module in self._tv_modules(cleanup=False):
+            self._pactl("unload-module", module)
+
+    def _tv_modules(self, *, cleanup: bool) -> list[str]:
+        found = []
+        for line in self._call(("list", "short", "modules"), cleanup).splitlines():
             fields = line.split("\t")
-            leftover = len(fields) >= 3 and fields[1] == "module-null-sink"
-            if leftover and f"sink_name={TV_SINK}" in fields[2].split():
-                self._pactl("unload-module", fields[0])
+            ours = len(fields) >= 3 and fields[1] == "module-null-sink"
+            if ours and f"sink_name={TV_SINK}" in fields[2].split():
+                found.append(fields[0])
+        return found
+
+    def _default(self) -> str:
+        return self._call(("get-default-sink",), cleanup=True).strip()
+
+    def _sinks(self) -> dict[str, str]:
+        return {
+            fields[0]: fields[1]
+            for fields in (
+                line.split("\t")
+                for line in self._call(("list", "short", "sinks"), cleanup=True).splitlines()
+            )
+            if len(fields) >= 2
+        }
 
     def _sink_inputs(
         self, *, exclude: str | None = None, only: str | None = None, cleanup: bool = False

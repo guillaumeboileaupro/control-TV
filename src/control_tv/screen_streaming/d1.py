@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from control_tv.ports import TvControl
-from control_tv.screen_streaming.audio_route import PulseAudioRoute
+from control_tv.screen_streaming.audio_route import PulseAudioRoute, persistent_audio_route
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
 from control_tv.screen_streaming.h264_encoder import (
     SYSTEM_AUDIO,
@@ -260,7 +260,7 @@ def assemble(
         source = CapturedVideo(handle)
     # A captured screen goes with the computer's sound, which then plays on the TV only.
     route = audio_route or (
-        PulseAudioRoute() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
+        persistent_audio_route() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
     )
     try:
         sound = route.start() if route is not None else SYSTEM_AUDIO

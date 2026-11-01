@@ -1103,3 +1103,52 @@ def test_a_fixed_volume_is_refused_through_the_bridge_without_sending() -> None:
     assert response["ok"] is False
     assert response["error"]["code"] == "unsupported_operation"
     assert transport.attempted() == []
+
+
+def test_start_up_leaves_the_sound_alone_without_a_saved_restoration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from control_tv.screen_streaming import audio_route
+
+    def never(*_: object) -> str | None:
+        raise AssertionError("no journal: nothing to restore, pactl never runs")
+
+    monkeypatch.setattr(audio_route, "recover_interrupted_audio_route", never)
+    bridge._recover_interrupted_screen_audio()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("problem", [None, "pactl unload-module failed"])
+def test_start_up_finishes_a_killed_run_s_sound_restoration(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    problem: str | None,
+) -> None:
+    from control_tv.screen_streaming import audio_route
+
+    journal = audio_route.audio_route_journal_path()
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text('{"version":1,"previous_sink":"speakers"}\n', encoding="utf-8")
+    calls: list[str] = []
+
+    def recover(*_: object) -> str | None:
+        calls.append("recover")
+        return problem
+
+    monkeypatch.setattr(audio_route, "recover_interrupted_audio_route", recover)
+    try:
+        bridge._recover_interrupted_screen_audio()
+    finally:
+        journal.unlink()
+    assert calls == ["recover"]
+    error = capsys.readouterr().err
+    if problem is None:
+        assert error == ""
+    else:
+        assert "sound is not restored yet" in error and problem in error
+
+
+def test_tests_never_see_the_user_s_real_state_directory() -> None:
+    from control_tv.screen_streaming.audio_route import audio_route_journal_path
+
+    assert "control-tv-test-state-" in str(audio_route_journal_path())
