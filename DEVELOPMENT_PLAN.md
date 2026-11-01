@@ -78,6 +78,12 @@ network only until their expiry, the `webrtc` 0.21 migration still pulls `digest
 `rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
 authorization.
 
+Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
+dependency from 0.6.4 to the patched 0.6.5 release for CVE-2026-119194, CVE-2026-119195,
+CVE-2026-119196 and CVE-2026-119197. The dependency remains supplied through `adb-shell` and
+`rsa`; no direct dependency, audit waiver or security exception is introduced. Validation is
+automated only and does not imply any device or hardware result.
+
 Sprint 1 T-04 observability (2026-10-26): every command entering the Tauri-to-Python boundary now
 gets a correlation id that is also sent as the Python `requestId`. A bounded non-blocking channel
 writes durable JSONL events for receipt, bridge dispatch and terminal completion, failure or
@@ -251,11 +257,13 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   read-only `cmd package query-activities` form to the older `pm query-activities` form only when
   the former is unsupported. Automated validation only; candidate installation and TV acceptance
   remain required.
-- [x] Remote pairing identity correction T-01, 2026-10-26: the former fixed `control-TV` client
-  name is replaced by one stable name per installation. New credentials are generated with that
-  identity; existing certificate/key pairs are retained and receive a deterministic identity
-  derived from the certificate. Offline regression tests cover distinct Ubuntu/Android stores,
-  restart persistence and migration. Same-TV hardware pairing remains required.
+- [x] Remote pairing identity correction T-01, corrected 2026-10-30 after the 2026-10-28 hardware
+  failure: #114 gave each host a stable name but retained both historical `CN=control-TV`
+  certificates, and the TV evicted the other pairing. Each installation now persists one identity
+  and a certificate with the same subject. A historical pair is retained as private `.legacy.pem`
+  evidence and replaced exactly once, making one explicit final pairing per TV unavoidable but
+  durable. Offline regression tests cover Ubuntu/Android coexistence, alternating use, restarts,
+  persistence and bounded migration. Same-TV hardware re-validation remains required.
 - [x] Real trial, 2026-10-25: the phone listed no TV app, since #99 kept only the `adb` program;
   the pure-Python `adb-shell` adapter of `main` is restored (`tv_apps_adb_shell`) and used where
   `adb` is missing, and embedded again in the Android app. The TV receiver gets a name, an icon,
