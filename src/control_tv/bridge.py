@@ -984,7 +984,16 @@ def _recover_interrupted_screen_stream() -> None:
         (audio_route_journal_path(), recover_interrupted_audio_route, "sound is"),
     )
     for journal, recover, what in recoveries:
-        if not journal.exists():
+        try:
+            saved_restoration_exists = journal.exists()
+        except OSError as exc:
+            print(
+                f"control-tv: saved restoration state cannot be read ({what} affected): "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if not saved_restoration_exists:
             continue
         problem = recover()
         if problem is not None:

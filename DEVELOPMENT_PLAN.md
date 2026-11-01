@@ -87,7 +87,10 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
 - [x] PR #121 integration (2026-11-01): merged `main` after #120, then the existing X11 start-up
   restoration branch including its shared D4-5 audio dependency; no history rewrite and no
   architecture change. Targeted local validation: 286 Python, 104 Tauri and 47 WebRTC tests pass;
-  the explicit endurance test remains ignored. Final CI and hardware acceptance remain separate.
+  the explicit endurance test remains ignored. The first CI run exposed an unreadable restoration
+  journal in the frozen-bridge smoke environment; start-up now reports that journal, continues the
+  independent recovery and serves normally. Regression: 157 bridge tests pass; full Python check:
+  2,864 passed, 8 skipped. Corrected CI rerun and hardware acceptance remain separate.
 - [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
 - [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
   connector; do not add `evdi` or another display system. GNOME uses that output as a real second

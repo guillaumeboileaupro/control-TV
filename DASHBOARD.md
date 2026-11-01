@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 01/11 | #118, #119 et **#120** fusionnées ; **#121** D2 et **#122** microphone ouvertes. #121 intègre `main` et les corrections X11/audio ; nouvelle CI à exécuter |
+| PR actives vérifiées au 01/11 | #118, #119 et **#120** fusionnées ; **#121** D2 et **#122** microphone ouvertes. #121 intègre `main` et les corrections X11/audio ; son premier passage CI a trouvé puis fait corriger le refus d'accès au journal dans le pont gelé, nouvelle CI requise |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -38,7 +38,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
 | P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED via #120 : pertes sans corruption, VA-API avec repli `libx264`, Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien et test Rust de bout en bout. HARDWARE NOT RUN | 3 / 8 / 5 h | D1-9 avec autorisation | Claude |
-| P1 | D2 - Extension Rust/X11 | PR #121 : connecteur RandR forcé conservé sans evdi ; journal X11 atomique et reprise après plantage implémentés/testés. HARDWARE NOT RUN | 4 / 12 / 7 h | Intégrer la correction P1 de restauration, CI puis recette autorisée | Codex |
+| P1 | D2 - Extension Rust/X11 | PR #121 : connecteur RandR forcé conservé sans evdi ; journal X11 atomique et reprise après plantage implémentés/testés ; démarrage du pont rendu tolérant à un journal inaccessible. HARDWARE NOT RUN | 4 / 12 / 7 h | CI puis recette autorisée | Codex |
 | P1 | D3 - Interface de diffusion | Auto/WebRTC/HLS codés ; recette incomplète | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter | Claude |
 | P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg et D4-4 via #120. PR #121 : D4-5 X11 et son intégrés, journal partagé, reprise au démarrage après SIGKILL, réglages utilisateur conservés et verrou protégeant une diffusion vivante. HARDWARE PARTIAL 01/11 : son et X11 restaurés séparément sur le poste, sans TV ni application installée | 2 / 5 / 3 h | CI #121 puis recette autorisée SIGKILL pendant une diffusion avec son | Codex / Claude |
 | P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
@@ -105,3 +105,4 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-11-01 | Claude, preuves autorisées sur le poste (sans TV) : son HARDWARE PARTIAL (route réelle, bridge relancé pendant la diffusion sans effet, SIGKILL, démarrage du bridge = état PulseAudio initial, journal effacé). X11 bloqué : aucun connecteur HDMI forcé, étape `sudo` du propriétaire requise. |
 | 2026-11-01 | Claude, preuve X11 autorisée après l'étape `sudo` du propriétaire : 1er passage FAIL (sortie allumée par GNOME éteinte au lieu d'être rendue, disposition remise aussitôt), correctif poussé (état de la sortie journalisé et rendu à l'arrêt, à l'échec et à la reprise), 2e passage HARDWARE PARTIAL : état X11 initial retrouvé. Tests locaux verts, CI non exécutée. |
 | 2026-11-01 | Codex, PR #121 : `main` après #120 et la branche `feat/d2-startup-x11-restore` intégrés sans réécriture ; D2, correction P1 X11 et D4-5 audio réunis. Local : 286 tests Python ciblés, 104 Tauri et 47/48 WebRTC PASS (1 endurance ignoré) ; CI de la tête finale à exécuter, aucun appareil utilisé. |
+| 2026-11-01 | Codex, PR #121 : le premier passage CI du SHA `2dcdbf4` a reproduit un `PermissionError` dans le smoke test du pont gelé (`/root/.local/state` inaccessible). La reprise au démarrage signale désormais un journal illisible sans arrêter le pont et poursuit l'autre restauration ; test de non-régression ajouté. Local : 157 tests bridge et contrôle complet (2 864 PASS, 8 SKIP) ; CI corrigée à relancer, aucun appareil utilisé. |

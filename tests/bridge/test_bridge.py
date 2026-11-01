@@ -15,6 +15,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -1118,6 +1119,50 @@ def test_start_up_leaves_screens_and_sound_alone_without_a_saved_restoration(
     monkeypatch.setattr(virtual_display, "recover_interrupted_extension", never)
     bridge._recover_interrupted_screen_stream()
     assert capsys.readouterr().err == ""
+
+
+def test_start_up_continues_when_a_restoration_journal_cannot_be_inspected(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from control_tv.screen_streaming import audio_route, virtual_display
+
+    unreadable_journal = Path("/unreadable/extended-display.json")
+    real_exists = Path.exists
+
+    def exists(path: Path) -> bool:
+        if path == unreadable_journal:
+            raise PermissionError("restoration directory denied")
+        return real_exists(path)
+
+    calls: list[str] = []
+    monkeypatch.setattr(Path, "exists", exists)
+    monkeypatch.setattr(
+        virtual_display,
+        "extension_journal_path",
+        lambda: unreadable_journal,
+    )
+    monkeypatch.setattr(
+        virtual_display,
+        "recover_interrupted_extension",
+        lambda: calls.append("screens"),
+    )
+    sound_journal = audio_route.audio_route_journal_path()
+    sound_journal.parent.mkdir(parents=True, exist_ok=True)
+    sound_journal.write_text('{"version":1}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        audio_route,
+        "recover_interrupted_audio_route",
+        lambda: calls.append("sound"),
+    )
+    try:
+        bridge._recover_interrupted_screen_stream()
+    finally:
+        sound_journal.unlink()
+
+    assert calls == ["sound"]
+    error = capsys.readouterr().err
+    assert "restoration state cannot be read (screens are affected)" in error
+    assert "PermissionError: restoration directory denied" in error
 
 
 @pytest.mark.parametrize(
