@@ -82,6 +82,10 @@ essai réel autorisé par le propriétaire.
 
 ### D2 — extension (PR D2, après la PR D1)
 
+Intégration #121 du 2026-11-01 : `main` après #120 et la chaîne existante de restauration X11/audio
+ont été fusionnés sans réécriture. Validation locale ciblée : 286 tests Python, 104 tests Tauri et
+47 tests WebRTC PASS ; le test d'endurance explicite reste ignoré. CI et matériel restent distincts.
+
 - [x] Extension sur connecteur forcé, retrait reprenable, cliché du gestionnaire d'affichage (D2-1,
   D2-3, D2-5) : fusionnés.
 - [x] **D2-B1 — décision propriétaire du 2026-11-01 :** conserver le gestionnaire X11 et le

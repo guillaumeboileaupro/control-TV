@@ -84,6 +84,10 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   without A/V drift.
 
 **D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
+- [x] PR #121 integration (2026-11-01): merged `main` after #120, then the existing X11 start-up
+  restoration branch including its shared D4-5 audio dependency; no history rewrite and no
+  architecture change. Targeted local validation: 286 Python, 104 Tauri and 47 WebRTC tests pass;
+  the explicit endurance test remains ignored. Final CI and hardware acceptance remain separate.
 - [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
 - [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
   connector; do not add `evdi` or another display system. GNOME uses that output as a real second
