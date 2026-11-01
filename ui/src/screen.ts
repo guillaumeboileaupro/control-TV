@@ -517,6 +517,18 @@ const WEBRTC_STATES: Record<string, StreamStateName> = {
   failed: "failed",
 };
 
+// The state a Rust engine answer reports, mapped onto the panel's; `null` for another shape.
+function parseWebRtc(value: JsonValue): { state: StreamStateName; error: string | null } | null {
+  if (!isJsonObject(value) || typeof value["state"] !== "string") {
+    return null;
+  }
+  const mapped = WEBRTC_STATES[value["state"]];
+  if (mapped === undefined) {
+    return null;
+  }
+  return { state: mapped, error: typeof value["error"] === "string" ? value["error"] : null };
+}
+
 export function finishWebRtc(
   state: ScreenPanelState,
   answer: { ok: true; result: JsonValue } | { ok: false; failure: BridgeFailure },
@@ -524,21 +536,87 @@ export function finishWebRtc(
   if (!answer.ok) {
     return { ...state, pending: false, failure: answer.failure };
   }
-  if (!isJsonObject(answer.result) || typeof answer.result["state"] !== "string") {
-    return state;
+  const reported = parseWebRtc(answer.result);
+  if (reported === null) {
+    // The request is over either way: an unreadable answer must not leave the controls waiting.
+    return {
+      ...state,
+      pending: false,
+      failure: { code: "unexpected", message: "The stream state could not be read." },
+    };
   }
-  const mapped = WEBRTC_STATES[answer.result["state"]];
-  if (mapped === undefined) {
-    return state;
-  }
-  const error = typeof answer.result["error"] === "string" ? answer.result["error"] : null;
   return {
     ...state,
     pending: false,
     failure: null,
-    transportUsed: mapped === "idle" ? null : "webrtc",
-    stream: { ...state.stream, state: mapped, error },
+    transportUsed: reported.state === "idle" ? null : "webrtc",
+    stream: { ...state.stream, state: reported.state, error: reported.error },
   };
+}
+
+// The stream as both hosts report it, read without sending anything: the Rust engine owns a
+// WebRTC session's transport state, the control layer the capture (mode, screen) of either
+// transport. An active WebRTC session wins; otherwise the control layer's stream is shown, as
+// HLS when it is not idle. A side that did not answer (`null`) never invents or ends a stream.
+export function reconcileStreams(
+  state: ScreenPanelState,
+  capture: JsonValue | null,
+  webrtc: JsonValue | null,
+): ScreenPanelState {
+  const captured = capture === null ? null : parseStream(capture);
+  const engine = webrtc === null ? null : parseWebRtc(webrtc);
+  if (engine !== null && engine.state !== "idle") {
+    return following(state, "webrtc", {
+      state: engine.state,
+      mode: captured?.mode ?? state.stream.mode,
+      screen: captured?.screen ?? state.stream.screen,
+      error: engine.error,
+    });
+  }
+  if (captured === null) {
+    return state;
+  }
+  if (captured.state === "idle") {
+    return { ...state, transportUsed: null, stream: captured };
+  }
+  return following(state, engine === null ? (state.transportUsed ?? "hls") : "hls", captured);
+}
+
+// A stream found running: the mode buttons and the screen show what is streamed, not an older
+// choice, so a running extension is never presented as a duplicate (or the reverse).
+function following(
+  state: ScreenPanelState,
+  transportUsed: ActiveTransport,
+  stream: StreamStatus,
+): ScreenPanelState {
+  const choice =
+    stream.mode === null
+      ? state.choice
+      : {
+          ...state.choice,
+          mode: stream.mode,
+          screen:
+            stream.mode === "duplicate" && stream.screen !== null
+              ? stream.screen
+              : state.choice.screen,
+        };
+  return { ...state, transportUsed, stream, choice, confirming: false };
+}
+
+// The shell's own bound on each stream command, plus a margin: the bridge's screen commands are
+// bounded at 15 s (SCREEN_TIMEOUT); a WebRTC start chains the capture lease, the receiver launch
+// and the hand-off (15 + 90 + 20 s) and may release the lease (15 s), and its state and stop wait
+// for that same operation. Past this deadline the reply is treated as lost, never resent.
+const SCREEN_DEADLINE_MS = 25_000;
+const WEBRTC_DEADLINE_MS = 160_000;
+const WEBRTC_COMMANDS: readonly string[] = [
+  "start_webrtc_stream",
+  "stop_webrtc_stream",
+  "get_webrtc_stream",
+];
+
+export function screenRequestDeadlineMs(command: string): number {
+  return WEBRTC_COMMANDS.includes(command) ? WEBRTC_DEADLINE_MS : SCREEN_DEADLINE_MS;
 }
 
 export function startStop(state: ScreenPanelState): { state: ScreenPanelState; send: boolean } {

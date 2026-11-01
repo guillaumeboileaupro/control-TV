@@ -1063,6 +1063,19 @@ exposure and no permanent server.
     meanwhile, errors shown as sentences;
     the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
     the guard still catches a bundled icon catalogue);
+  - [x] D3 controls hardened (2026-11-01, branch `feat/d3-streaming-controls`, no PR while #120
+    and #121 are open): every screen and display call now ends by a deadline above the shell's
+    own bound (25 s for the bridge's screen commands bounded at 15 s; 160 s for the WebRTC start,
+    state and stop, whose start chains 15 + 90 + 20 s and a 15 s release), so a lost reply is a
+    visible failure and the controls come back, never resent. On opening, the card reads both
+    the control layer's capture and the Rust engine's WebRTC session: a running WebRTC session is
+    no longer shown as idle with a second start offered, and the mode buttons and screen follow
+    what is really streamed. After a start or stop that failed or timed out, the real state is
+    read again without resending. An unreadable WebRTC answer now ends the request instead of
+    leaving the controls waiting; a refresh can no longer overwrite a start or stop in flight.
+    Duplicate, Extend and Stop are unchanged otherwise: a mode change still requires Stop first,
+    and concurrent starts stay refused by the control layer (one lease) and blocked in the UI.
+    UI tests only (430 passing); no device used;
   - [ ] the card used against the TV during the authorized run;
   - [x] GNOME-inspired display-manager UI implemented on PR #97 with Apply, Cancel, Keep and
     timed Revert. Only modes reported by X11 are offered; unsupported/disconnected outputs are
