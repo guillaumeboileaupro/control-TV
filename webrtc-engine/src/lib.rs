@@ -4,6 +4,8 @@
 //! existing D1/D2 source, obtains explicit consent, and owns the session deadline. This crate
 //! owns only bounded media production, WebRTC negotiation and deterministic cleanup.
 
+#[cfg(test)]
+mod end_to_end;
 mod ffmpeg;
 mod model;
 mod session;
@@ -14,6 +16,7 @@ pub use ffmpeg::{FfmpegMediaSource, ProcessRunner};
 pub use model::{
     AudioConfig, CaptureConfig, Diagnostics, EngineError, EngineState, SessionConfig,
     SessionDescription, SessionId, SessionToken, TransportMode, VideoConfig, VideoEncoder,
+    DEFAULT_VAAPI_QP,
 };
 pub use session::{
     Clock, EncoderReport, MediaFrame, MediaSource, MediaStreams, SessionController, SystemClock,

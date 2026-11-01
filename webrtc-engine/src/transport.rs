@@ -198,7 +198,7 @@ impl MediaTransport for WebRtcTransport {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bytes::Bytes;
     use rtp::codecs::h264::H264Packet;
@@ -269,7 +269,7 @@ mod tests {
         assert!(error.to_string().contains("remained disconnected"));
     }
 
-    async fn receiving_peer() -> Arc<RTCPeerConnection> {
+    pub(crate) async fn receiving_peer() -> Arc<RTCPeerConnection> {
         let mut media = MediaEngine::default();
         media.register_default_codecs().expect("default codecs");
         let registry =

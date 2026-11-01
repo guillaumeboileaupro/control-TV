@@ -74,20 +74,48 @@ pub enum VideoEncoder {
     },
 }
 
+/// The constant QP D0 measured on the owner's Intel GPU (#79): 1920x1080 at 30 fps, 4.1x real time.
+pub const DEFAULT_VAAPI_QP: u8 = 24;
+
 impl VideoEncoder {
+    /// VA-API on the first DRM render node under `dri` (normally `/dev/dri`), else `libx264`.
+    /// Only the directory is listed: whether the GPU really encodes is learned when the session
+    /// starts, which falls back to `libx264` and says why.
+    pub fn preferred(dri: &std::path::Path) -> Self {
+        let mut nodes: Vec<String> = std::fs::read_dir(dri)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| render_node_number(name).is_some())
+            .collect();
+        nodes.sort();
+        match nodes.first() {
+            Some(name) => Self::Vaapi {
+                render_node: format!("{}/{name}", dri.display()),
+                qp: DEFAULT_VAAPI_QP,
+            },
+            None => Self::Software,
+        }
+    }
+
     fn is_valid(&self) -> bool {
         match self {
             Self::Software => true,
             Self::Vaapi { render_node, qp } => {
                 (1..=51).contains(qp)
                     && render_node
-                        .strip_prefix("/dev/dri/renderD")
-                        .is_some_and(|number| {
-                            number.len() == 3 && number.bytes().all(|byte| byte.is_ascii_digit())
-                        })
+                        .strip_prefix("/dev/dri/")
+                        .and_then(render_node_number)
+                        .is_some()
             }
         }
     }
+}
+
+/// `renderD128` -> `128`: a DRM render node name, three digits and nothing else.
+fn render_node_number(name: &str) -> Option<&str> {
+    name.strip_prefix("renderD")
+        .filter(|number| number.len() == 3 && number.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -243,6 +271,32 @@ mod tests {
         assert!(first.matches(first.expose_for_pairing()));
         assert!(!first.matches("wrong"));
         assert!(!format!("{first:?}").contains(first.expose_for_pairing()));
+    }
+
+    #[test]
+    fn vaapi_is_preferred_only_when_a_render_node_exists() {
+        let dri = std::env::temp_dir().join(format!("control-tv-dri-{}", std::process::id()));
+        std::fs::create_dir_all(&dri).expect("dri directory");
+        assert_eq!(VideoEncoder::preferred(&dri), VideoEncoder::Software);
+        for name in [
+            "card0",
+            "renderD12",
+            "renderD1280",
+            "renderD129",
+            "renderD128",
+        ] {
+            std::fs::write(dri.join(name), b"").expect("node");
+        }
+        assert_eq!(
+            VideoEncoder::preferred(&dri),
+            VideoEncoder::Vaapi {
+                render_node: format!("{}/renderD128", dri.display()),
+                qp: DEFAULT_VAAPI_QP,
+            }
+        );
+        std::fs::remove_dir_all(&dri).expect("cleanup");
+        assert_eq!(VideoEncoder::preferred(&dri), VideoEncoder::Software);
+        assert!(VideoEncoder::preferred(std::path::Path::new("/dev/dri")).is_valid());
     }
 
     #[test]

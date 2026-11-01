@@ -1,6 +1,6 @@
 # control-TV — TODO
 
-## Diffusion d'écran — D1, D2, D4 (état consolidé, revu sur `main` `3eebf23`)
+## Diffusion d'écran — D1, D2, D4 (état consolidé après fusion de #120, PR #121)
 
 Ce tableau remplace, pour la diffusion d'écran, les états partiels plus bas (conservés comme
 historique). Le moteur Rust WebRTC, le récepteur Android TV et le bail Python D1/D2 sont dans
@@ -8,21 +8,24 @@ historique). Le moteur Rust WebRTC, le récepteur Android TV et le bail Python D
 du 2026-10-26 et du 2026-10-30 ont laissé la diffusion `NOT RUN`. Les seules preuves matérielles
 de diffusion sont les essais HLS des 2026-10-19/20 (latence 9–11 s).
 
-Légende : **Fusionné** = dans `main` ; **Branche** = `feat/d1-rust-screencast`, sans PR (une
-seule PR ouverte au total, #118 d'abord) ; **Auto** = tests automatisés locaux/CI ; **Matériel** =
+Légende : **Fusionné** = dans `main` ; **Branche** = PR #121 non fusionnée ; **Auto** = tests
+automatisés locaux/CI ; **Matériel** =
 essai réel autorisé par le propriétaire.
 
 | Réf. | Fonction | Code | Auto | Matériel |
 |---|---|---|---|---|
 | D1-1 | Capture X11 de la géométrie fournie par le bail Python (`x11grab`, mise à l'échelle séparée) | Fusionné | Oui | HLS seulement ; WebRTC non |
 | D1-2 | H.264 logiciel `libx264` zerolatency baseline, AUD, GOP = 1 s | Fusionné | Oui | Non (WebRTC) |
-| D1-3 | H.264 matériel VA-API avec repli logiciel explicite dans le moteur Rust | **Branche** (désactivé par défaut dans Tauri) | Oui (faux `ffmpeg` : réussite, arrêt, silence, image partielle) | Non (GPU non utilisé) |
+| D1-3 | H.264 matériel VA-API avec repli logiciel explicite dans le moteur Rust | Fusionné via #120 | Oui (faux `ffmpeg` : réussite, arrêt, silence, image partielle ; détection du nœud) | Non (GPU non utilisé) |
 | D1-4 | Audio Opus depuis la source monitor PulseAudio du bail | Fusionné | Oui | Non |
-| D1-5 | WebRTC ICE/DTLS/SRTP, signalisation TLS à jeton unique, LAN uniquement | Fusionné | Oui (deux pairs locaux, décodage FFmpeg) | Non |
+| D1-5 | WebRTC ICE/DTLS/SRTP, signalisation TLS à jeton unique, LAN uniquement | Fusionné via #120 | Oui (deux pairs locaux, décodage FFmpeg ; scan, mauvais jeton, connexion muette) | Non |
 | D1-6 | Récepteur Android TV Kotlin/libwebrtc (écrans d'état, générations, fermeture) | Fusionné | Tests JVM, APK debug CI | Non installé |
 | D1-7 | Start/Stop Tauri, erreurs structurées, choix Auto/WebRTC/HLS | Fusionné | Oui | Non |
 | D1-8 | Pertes sous retard réseau : horloge RTP conservée, vidéo resynchronisée sur l'IDR suivante, compteurs de pertes réels | **Branche** | Oui (moteur) | Non |
 | D1-9 | Latence, FPS, pertes, synchro A/V, CPU sur les deux Android TV | Non mesuré | — | **À faire, avec accord** |
+| D1-10 | Audio Opus livré en temps réel (pages Ogg de 20 ms, vidage immédiat ; avant : rien pendant 2 s) | Fusionné via #120 | Oui (vrai FFmpeg, source synthétique) | Non |
+| D1-11 | Chaîne Rust complète : contrôleur, appairage TLS, WebRTC, source FFmpeg de production → H.264 (IDR) et Opus reçus, FFmpeg arrêtés au Stop | Fusionné via #120 | Oui (test de bout en bout, entrées synthétiques) | Non |
+| D1-12 | Tauri : reconnexion réservée aux pannes de lien ; plus de panique après un échec de `start_media` | Fusionné via #120 | Oui | Non |
 | D2-1 | Écran étendu : mode `cvt` sur un connecteur libre « forcé connecté », placé à gauche/droite/dessus/dessous | Fusionné | Oui (faux `xrandr`) | 1 essai HLS (fenêtre déplacée, 2026-10-20) |
 | D2-2 | Écran virtuel X11 **indépendant** de tout connecteur, sans action root à chaque démarrage | **Écarté par l'architecture D2 du 2026-11-01** : aucun evdi ni nouveau système ; maintien du connecteur RandR forcé | — | — |
 | D2-3 | Diffuser uniquement l'écran étendu (géométrie du bail = cet écran) | Fusionné | Oui | Non (WebRTC) |
@@ -38,8 +41,7 @@ essai réel autorisé par le propriétaire.
 ### D1 — duplication (PR D1, après clôture de #118)
 
 - [x] Moteur, récepteur, bail et intégration Tauri (D1-1, D1-2, D1-4 à D1-7) : fusionnés via #111.
-- [ ] **D1-8 :** pertes sous retard sans corruption ni dérive (implémenté et testé sur la branche ;
-  à publier en PR D1 puis revue indépendante).
+- [x] **D1-8 (#120 fusionnée) :** pertes sous retard sans corruption ni dérive.
 - [x] **D1-3 (branche, automatisé) :** `VideoEncoder::Vaapi { render_node, qp }` (nœud
   `/dev/dri/renderDNNN`, QP 1–51 validés) produit `-vaapi_device`, `format=nv12,hwupload`,
   `h264_vaapi` en QP constant, profil `constrained_baseline`, sans débit cible (mode qui échoue sur
@@ -47,14 +49,32 @@ essai réel autorisé par le propriétaire.
   partielle), le processus VA-API est récolté puis `libx264` démarre ; `video_encoder` et
   `encoder_fallback` le disent dans les diagnostics. Un FFmpeg introuvable reste une erreur, jamais
   un repli. Tauri garde `Software` explicitement.
-- [ ] **D1-3, suite :** proposer VA-API dans Tauri seulement après décodage confirmé sur les deux TV
-  (essai GPU et TV avec autorisation).
+- [x] **D1-3, intégration (PR #120) :** Tauri prend `VideoEncoder::preferred("/dev/dri")` : VA-API
+  (QP 24, mesuré par D0) sur le premier nœud de rendu, sinon `libx264`. Seul le répertoire est lu ;
+  un encodage GPU impossible bascule sur `libx264` au démarrage, motif dans les diagnostics.
+- [ ] **D1-3, preuve :** vérifier sur matériel, avec autorisation, que le flux VA-API est décodé par
+  les deux Android TV (sinon le repli ne s'applique pas : il ne couvre que l'encodeur).
+- [x] **D1-10 (PR #120) :** les pages Ogg d'une seconde et le tampon de 32 Kio retenaient l'audio
+  (mesuré : aucun paquet Opus en 2 s, puis des rafales), d'où un son en retard sur l'image.
+  `-page_duration 20000` et `-flush_packets 1` (aussi pour H.264) ; test avec le vrai FFmpeg qui
+  échoue sur les anciens arguments (« arrived in a burst »).
+- [x] **D1-5, signalisation (PR #120) :** la première connexion TCP n'est plus la seule : un scan,
+  un client sans TLS, un mauvais jeton ou une connexion muette (5 s maximum, 8 en parallèle) sont
+  fermés sans annuler la session ; le jeton reste à usage unique une fois présenté.
+- [x] **D1-12 (PR #120) :** une panne FFmpeg, de capture, de nettoyage ou un refus du récepteur
+  termine la session avec sa cause au lieu de relancer le récepteur ; seules les pannes de
+  transport et l'expiration de négociation consomment le budget de 2 reconnexions. Un échec de
+  `start_media` ne reboucle plus sur un serveur de signalisation consommé (panique).
+- [x] **D1-11 (PR #120) :** test de bout en bout de la chaîne Rust (voir tableau) ; le récepteur
+  Android lui-même reste couvert par ses tests JVM et doit être validé sur TV.
+- [ ] **Latence résiduelle connue :** une image n'est émise qu'à l'AUD suivante (une image de retard,
+  33 ms à 30 i/s) ; à mesurer avec D1-9 avant toute optimisation.
 - [x] **D4-4 (branche, automatisé) :** chaque enfant FFmpeg reçoit `PR_SET_PDEATHSIG` = SIGKILL
   (et s'arrête si l'hôte est déjà mort au moment du `fork`) ; un vrai hôte tué par SIGKILL ne
   laisse plus son enfant vivant. Contrainte : lancer depuis un thread de travail Tokio, jamais
   depuis `spawn_blocking` (le signal suit la fin du thread lanceur).
 - [ ] **D1-9 :** recette matérielle WebRTC sur les deux Android TV (autorisation requise).
-- **Dépendances :** #118 terminée ; revue indépendante ; CI verte ; dérogations WebRTC valides.
+- **Dépendances :** #118, #119 et #120 fusionnées ; dérogations WebRTC valides.
 - **Critères d'acceptation :** démarrage/arrêt répétés sans processus FFmpeg, port ni jeton
   restant ; erreurs visibles et distinctes (récepteur absent, négociation expirée, FFmpeg arrêté) ;
   pertes comptées et image figée (jamais corrompue) jusqu'à l'IDR suivante ; sur matériel : latence
@@ -91,8 +111,7 @@ essai réel autorisé par le propriétaire.
 
 ### Blocages
 
-- **D1-B1 :** #118 et #119 ouvertes — aucune PR Rust avant leur clôture. La branche intègre la
-  tête poussée de #119 (`acee470`, tableau de bord) sans modifier la branche de son auteur.
+- [x] **D1-B1 levé :** #118, #119 et #120 fusionnées ; `main` intégré dans la branche #121.
 - **D1-B2 :** dérogations RUSTSEC-2026-0387/RUSTSEC-2025-0141 limitées au réseau local et à leur
   date d'expiration ; `webrtc` 0.21 conserve `digest` 0.10 via `rtc-crypto` et change l'API de transport.
 - **D2-B1 :** résolu par la décision du 2026-11-01 de conserver le connecteur forcé existant.
