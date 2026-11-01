@@ -61,6 +61,31 @@ def test_one_service_serves_every_request() -> None:
     assert embedded._control is first
 
 
+def test_voice_chunks_use_the_same_service_without_storing_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class VoiceService:
+        def start_remote_voice(self, device_id: object) -> None:
+            calls.append(("start", device_id))
+
+        def send_remote_voice(self, device_id: object, chunk: bytes) -> None:
+            calls.append(("send", device_id, len(chunk)))
+
+        def stop_remote_voice(self, device_id: object) -> None:
+            calls.append(("stop", device_id))
+
+    monkeypatch.setattr(embedded, "_control", VoiceService())
+
+    embedded.start_voice("tv-1")
+    embedded.send_voice("tv-1", b"\x00\x01" * 4096)
+    embedded.stop_voice("tv-1")
+
+    assert calls == [("start", "tv-1"), ("send", "tv-1", 8192), ("stop", "tv-1")]
+    assert not hasattr(embedded, "voice_recording")
+
+
 def test_the_embedded_runtime_uses_protobufs_pure_python_implementation() -> None:
     """Android has no protobuf native extension: the Cast transport must import with the
     pure-Python implementation, chosen by `embedded` before protobuf is first imported."""

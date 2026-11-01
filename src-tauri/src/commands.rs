@@ -354,6 +354,46 @@ pub(crate) async fn bridge_press_remote_key(
 }
 
 #[tauri::command]
+pub(crate) const fn android_voice_available() -> bool {
+    cfg!(target_os = "android")
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub(crate) async fn bridge_start_remote_voice(
+    app: tauri::AppHandle,
+    device_id: String,
+) -> Result<(), BridgeFailure> {
+    crate::android::start_voice(app, device_id).await
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub(crate) async fn bridge_start_remote_voice(device_id: String) -> Result<(), BridgeFailure> {
+    let _ = device_id;
+    Err(BridgeFailure::new(
+        "unsupported_operation",
+        "microphone forwarding is available in the Android app",
+    ))
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub(crate) async fn bridge_stop_remote_voice(
+    app: tauri::AppHandle,
+    device_id: String,
+) -> Result<(), BridgeFailure> {
+    crate::android::stop_voice(app, device_id).await
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub(crate) async fn bridge_stop_remote_voice(device_id: String) -> Result<(), BridgeFailure> {
+    let _ = device_id;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn bridge_type_remote_text(
     state: tauri::State<'_, SharedBridgeState>,
     device_id: String,

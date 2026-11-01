@@ -146,4 +146,30 @@ class VoiceCaptureTest {
         assertEquals(1, microphone.started)
         assertEquals(1, microphone.stopped)
     }
+
+    @Test
+    fun stopBeforeTheWorkerStartsIsNotLostAndANewCaptureCanRun() {
+        val queued = mutableListOf<Runnable>()
+        val ends = mutableListOf<VoiceEnd>()
+        lateinit var voice: VoiceCapture
+        var reads = 0
+        val microphone = FakeMicrophone(mutableListOf()) { if (++reads == 1) voice.stop() }
+        voice = capture(
+            microphone,
+            ends = ends,
+            executor = Executor { queued.add(it) },
+        )
+
+        assertTrue(voice.start())
+        voice.stop()
+        queued.removeAt(0).run()
+        assertEquals(0, reads)
+
+        assertTrue(voice.start())
+        queued.removeAt(0).run()
+        assertEquals(1, reads)
+        assertEquals(listOf(VoiceEnd.STOPPED, VoiceEnd.STOPPED), ends)
+        assertEquals(2, microphone.started)
+        assertEquals(2, microphone.stopped)
+    }
 }

@@ -597,6 +597,15 @@ class ControlService:
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
         return self._channels.type_remote_text(device_id, text)
 
+    def start_remote_voice(self, device_id: DeviceId) -> None:
+        self._channels.start_remote_voice(device_id)
+
+    def send_remote_voice(self, device_id: DeviceId, chunk: bytes) -> None:
+        self._channels.send_remote_voice(device_id, chunk)
+
+    def stop_remote_voice(self, device_id: DeviceId) -> None:
+        self._channels.stop_remote_voice(device_id)
+
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         return self._channels.list_tv_apps(device_id)
 

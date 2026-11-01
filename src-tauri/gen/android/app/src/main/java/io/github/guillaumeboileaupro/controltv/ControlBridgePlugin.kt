@@ -1,16 +1,21 @@
 package io.github.guillaumeboileaupro.controltv
 
 import android.app.Activity
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.util.Log
 import android.webkit.WebView
+import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "control-tv"
 
@@ -23,6 +28,11 @@ class HandleArgs {
 class SelectionArgs {
     lateinit var deviceId: String
     var name: String = ""
+}
+
+@InvokeArg
+class VoiceArgs {
+    lateinit var deviceId: String
 }
 
 /**
@@ -46,6 +56,9 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
     // The process-wide bridge, shared with the home-screen widget (one request at a time).
     private val relay = EmbeddedBridge.relay(activity)
     private val widgetStore = PreferencesWidgetStore(activity.applicationContext)
+    private val voiceStarting = AtomicBoolean(false)
+    private val voiceStopRequested = AtomicBoolean(false)
+    @Volatile private var voiceCapture: VoiceCapture? = null
 
     override fun load(webView: WebView) {
         holdMulticast()
@@ -70,6 +83,8 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
     override fun onDestroy() {
         // The relay is process-wide (the widget uses it too): it is not shut down here.
         multicast.release()
+        voiceStopRequested.set(true)
+        voiceCapture?.stop()
     }
 
     private fun holdMulticast() {
@@ -115,6 +130,98 @@ class ControlBridgePlugin(private val activity: Activity) : Plugin(activity) {
         Log.i(TAG, "widget TV chosen in the app (changed=$changed)")
         if (changed) ControlTvWidget.renderAll(activity.applicationContext)
         invoke.resolve()
+    }
+
+    /** Start one bounded push-to-talk session after Android grants RECORD_AUDIO explicitly. */
+    @Command
+    fun startVoice(invoke: Invoke) {
+        val args = invoke.parseArgs(VoiceArgs::class.java)
+        if (args.deviceId.isBlank()) {
+            invoke.reject("not a device id", "invalid_argument")
+            return
+        }
+        if (!voiceStarting.compareAndSet(false, true)) {
+            invoke.reject("a voice session is already active", "command_rejected")
+            return
+        }
+        voiceStopRequested.set(false)
+        val begin: (Boolean) -> Unit = { granted ->
+            if (!granted) {
+                voiceStarting.set(false)
+                invoke.reject("microphone permission was not granted", "permission_denied")
+            } else {
+                runVoice(args.deviceId, invoke)
+            }
+        }
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED) {
+            begin(true)
+        } else {
+            (activity as MainActivity).requestMicrophonePermission(begin)
+        }
+    }
+
+    /** Stop capture immediately; ending the TV session stays ordered after its last PCM chunk. */
+    @Command
+    fun stopVoice(invoke: Invoke) {
+        voiceStopRequested.set(true)
+        voiceCapture?.stop()
+        invoke.resolve()
+    }
+
+    private fun runVoice(deviceId: String, invoke: Invoke) {
+        try {
+            relay.execute(
+                task = {
+                    val embedded = EmbeddedBridge.embedded(activity)
+                    var sessionStarted = false
+                    try {
+                        embedded.callAttr("start_voice", deviceId)
+                        sessionStarted = true
+                        var ended = VoiceEnd.STOPPED
+                        val capture = VoiceCapture(
+                            microphone = ::AudioRecordMicrophone,
+                            permitted = {
+                                ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+                                    PackageManager.PERMISSION_GRANTED
+                            },
+                            // The bridge worker owns the whole session. Other commands wait, the widget
+                            // reports busy, and PCM chunks cannot interleave with another Python call.
+                            executor = Executor { it.run() },
+                            onChunk = { embedded.callAttr("send_voice", deviceId, it) },
+                            onEnd = { end ->
+                                ended = end
+                                Log.i(TAG, "voice capture ended (${end.name.lowercase()})")
+                            },
+                        )
+                        voiceCapture = capture
+                        if (voiceStopRequested.get()) capture.stop()
+                        if (!capture.start()) {
+                            throw IllegalStateException("microphone capture did not start")
+                        }
+                        if (ended == VoiceEnd.MICROPHONE_ERROR) {
+                            throw IllegalStateException("microphone capture or TV voice transport failed")
+                        }
+                    } finally {
+                        voiceCapture = null
+                        if (sessionStarted) embedded.callAttr("stop_voice", deviceId)
+                        voiceStarting.set(false)
+                    }
+                    invoke.resolve()
+                },
+                onFailure = { error -> rejectVoice(invoke, error) },
+            )
+        } catch (error: Exception) {
+            rejectVoice(invoke, error)
+        }
+    }
+
+    private fun rejectVoice(invoke: Invoke, error: Throwable) {
+        voiceCapture?.stop()
+        voiceCapture = null
+        voiceStarting.set(false)
+        Log.e(TAG, "voice session failed", error)
+        invoke.reject(error.message ?: "voice session failed", "voice_failed")
     }
 }
 

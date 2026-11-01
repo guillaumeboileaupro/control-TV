@@ -1528,6 +1528,15 @@ h2 {
   font-weight: 600;
 }
 
+.btn-assistant.voice-active {
+  color: #fff;
+  background: var(--accent);
+}
+
+.btn-assistant.voice-active .icon {
+  color: currentColor;
+}
+
 /* Desktop layout: a computer window is not a stretched phone. The context (which TV, what it
    plays, its Cast sound, the screen sent to it) stays in a left column; the remote, the main
    action, takes the rest, with the TV's apps beside it on a wide window. Same elements, same
