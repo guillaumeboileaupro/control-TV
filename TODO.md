@@ -271,7 +271,8 @@ APK Android compris ; matériel toujours NOT RUN.
   leur motif 8 bits. `stop()` est terminal pour l'objet de capture : avant `start()` ou avant le worker, il
   interdit l'ouverture du microphone ; l'ouverture elle-même et l'arrêt partagent le même verrou. Local :
   11 tests Python ciblés, contrôle complet 2 870 PASS / 8 SKIP, couverture 98,85 %, 10 tests JVM ciblés PASS.
-  Nouvelle CI, revue/fusion et validation matérielle restent à faire.
+  SHA `75c8806` vert en CI (`41684462930`, audit `41684463917`) : qualité/couverture, Tauri, paquet
+  Linux et APK/JVM Android PASS. Revue/fusion et validation matérielle restent à faire.
 - [ ] **Micro vers l'Assistant — validation matérielle :** après autorisation explicite du propriétaire,
   vérifier sur téléphone et TV le consentement, le démarrage/arrêt, le refus d'autorisation, la déconnexion et
   l'absence de nouvelle capture après arrêt. Le transfert du microphone du PC n'est pas inclus dans cette

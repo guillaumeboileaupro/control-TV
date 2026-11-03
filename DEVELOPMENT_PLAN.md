@@ -312,7 +312,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   every 8-bit value. `VoiceCapture.stop()` permanently cancels that capture object; start/worker races cannot
   open the microphone after cancellation because the actual open and stop decision share one lock. Local:
   11 targeted Python tests, full check 2,870 passed / 8 skipped, 98.85% coverage, and 10 targeted Android JVM
-  tests pass. New CI, independent review/merge and hardware acceptance remain open; no device was used.
+  tests pass. SHA `75c8806` is green in CI (`41684462930`, audit `41684463917`), including
+  quality/coverage, Tauri, Linux package and Android APK/JVM jobs. Independent review/merge and hardware
+  acceptance remain open; no device was used.
 - [x] Owner request, 2026-10-25: the Freebox editions are named as the owner's TV shows them, the
   receiver shows control-TV's own logo and the Freebox Disney+ entry the Disney+ logo; no other logo
   with a shippable licence exists (OQEE and TFOU on Commons are CC BY-SA), so the initials stay.
