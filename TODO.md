@@ -262,10 +262,21 @@ APK Android compris ; matériel toujours NOT RUN.
   validation visuelle sur le bureau GNOME installé encore requise.
 - [ ] **Validation matérielle (2026-10-25) :** à faire avec le propriétaire selon `docs/QUICK_ACCEPTANCE.md`
   (Ubuntu, téléphone, Liberté boîte, Chromecast) ; aucune fonctionnalité n'est déclarée validée par la seule CI.
-- [ ] **Micro (décision du propriétaire, 2026-10-25, remplace « pas de micro ») :** envoyer la voix du téléphone
-  ou du PC à l'Assistant de la TV (`androidtvremote2.start_voice`, PCM 16 bits mono 8 kHz).
-  Fait côté Android : `VoiceCapture` (capture à la demande, permission, arrêt garanti, 8 tests). Reste : session
-  vocale dans l'adaptateur de télécommande et le bridge, puis permission `RECORD_AUDIO` et bouton.
+- [x] **Micro Android (décision du propriétaire, 2026-10-25, implémenté le 2026-11-01) :** la touche
+  Assistant du téléphone demande explicitement `RECORD_AUDIO`, ouvre la session vocale existante
+  `androidtvremote2`, transmet en mémoire le PCM 16 bits mono 8 kHz, puis ferme la session et libère le
+  microphone sur arrêt, refus, erreur ou déconnexion. Aucun audio n'est journalisé ni conservé ; Ubuntu garde
+  la touche Assistant existante. PR #122 remise à jour avec `main` après la fusion de #121. Les valeurs
+  signées du `ByteArray` Chaquopy sont converties en véritables `bytes` Python avant le service, sans changer
+  leur motif 8 bits. `stop()` est terminal pour l'objet de capture : avant `start()` ou avant le worker, il
+  interdit l'ouverture du microphone ; l'ouverture elle-même et l'arrêt partagent le même verrou. Local :
+  11 tests Python ciblés, contrôle complet 2 870 PASS / 8 SKIP, couverture 98,85 %, 10 tests JVM ciblés PASS.
+  SHA `75c8806` vert en CI (`41684462930`, audit `41684463917`) : qualité/couverture, Tauri, paquet
+  Linux et APK/JVM Android PASS. Revue/fusion et validation matérielle restent à faire.
+- [ ] **Micro vers l'Assistant — validation matérielle :** après autorisation explicite du propriétaire,
+  vérifier sur téléphone et TV le consentement, le démarrage/arrêt, le refus d'autorisation, la déconnexion et
+  l'absence de nouvelle capture après arrêt. Le transfert du microphone du PC n'est pas inclus dans cette
+  livraison Android et reste un chantier distinct si le propriétaire le demande.
 - [x] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** tranchée le 2026-10-25 par une dérogation datée et ciblée (entrée
   « Dérogations WebRTC » ci-dessus, `webrtc-engine/cargo-audit-waivers.json`, `osv-scanner.toml`) ;

@@ -20,9 +20,9 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 01/11 | #118, #119 et **#120** fusionnées ; **#121** D2 et **#122** microphone ouvertes. #121 intègre `main` et les corrections X11/audio ; CI `41351653298` et audit `41351653694` verts au SHA `d505d9f` |
+| PR actives vérifiées au 03/11 | #118 à **#121** fusionnées ; **#122** microphone ouverte, `main` après #121 intégré ; deux P1 corrigés, SHA `75c8806` vert et `MERGEABLE` |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
-| Défaut P2 observé | Assistant sans effet sur Liberté |
+| Défaut P2 observé | Assistant sans effet sur Liberté ; correction microphone Android implémentée, non testée matériellement |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
 | Contrôles techniques | Rust/WebRTC, widget Android et menu GNOME testés automatiquement, mais pas totalement sur matériel |
 | Nettoyage local rapporté | 3 worktrees + 4 branches locales de PR supprimés, anciens dist réduits à 435 Mio ; nouveaux APK de recette à préserver |
@@ -49,7 +49,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | P1 | Documentation TODO / dashboard | Synchronisation continue nécessaire | 0,5 / 1,5 / 1 h | Actualiser exhaustivement à chaque fin de mission | Agent actif |
 | P2 | Widget Android 4x4 | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests tactiles réels | Claude |
 | P2 | Menu GNOME | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests sur Ubuntu | Claude |
-| P2 | Assistant / microphone | Assistant sans effet sur Liberté | 2 / 6 / 3 h | Clarifier capacités et chemin vocal | Codex |
+| P2 | Assistant / microphone | PR #122 : `main` après #121 intégré ; PCM Java converti en `bytes` Python et annulation terminale synchronisée avant ouverture du micro ; local et CI verts, matériel NOT RUN | 2 / 6 / 3 h | Revue indépendante, fusion autorisée, puis recette autorisée consentement/audio/arrêt | Codex |
 | P2 | Logos / langues / Power-CEC | Non repris point par point le 30/10 | 1 / 3 / 2 h | Tests ciblés et limites TV | Codex / Claude |
 | P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 fusionné via #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
 | **TOTAL** | **Travaux restants estimés** | **Ne comprend pas de nouvelle anomalie majeure** | **26 / 79,5 / 46 h** | **Réviser après vérification** | **Coordinateur** |
@@ -98,8 +98,12 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
 | 2026-10-31 | PR #119 : le rerun confirme la correction du lien puis révèle quatre avis sur `pyasn1` 0.6.4 ; verrou mis à jour vers 0.6.5 sans dérogation, audit et CI à relancer. |
+| 2026-11-01 | Microphone Android : capture avec permission explicite, session vocale Android Remote, arrêt et nettoyage implémentés sur branche dédiée ; APK, Rust, UI et tests Python ciblés validés localement, aucune utilisation d'appareil, CI non exécutée et aucune PR supplémentaire. |
 | 2026-10-31 | Claude, branche `feat/d1-rust-screencast` sans PR : D1-3 VA-API avec repli explicite, D4-4 `PR_SET_PDEATHSIG`, correctif `agent_config.py` sous `python3` 3.7 ; skill `python-project-quality` synchronisé avec `my-skills` (branche `docs/python-cli-interpreter`). Tests locaux uniquement, CI non exécutée, matériel NOT RUN. |
 | 2026-11-01 | Claude, PR #120 : `main` (#118, #119) intégré sans perte ; Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien (et panique supprimée), VA-API par nœud de rendu, test de bout en bout Rust, fuite de script de test corrigée. Tests locaux verts ; matériel NOT RUN. |
+| 2026-11-01 | Codex, PR #122 : `main` après #120 intégré sans perte du microphone ; le double `TvControl` couvre les trois méthodes vocales et le verrou Kotlin respecte le contrôle lexical strict. Local : 12 tests ciblés, contrôle Python complet (2 785 PASS, 8 SKIP) et tests JVM Android PASS ; CI à exécuter, matériel NOT RUN. |
+| 2026-11-03 | Codex, finalisation #121/#122 : vérification live des têtes `29a2611` et `7ad13d9`, toutes deux `MERGEABLE`. #122 : CI `41353404166` et audit `41353404430` verts (qualité/couverture, Tauri, paquet Linux, APK/JVM Android, audits) ; matériel NOT RUN, fusion non effectuée. |
+| 2026-11-03 | Codex, correction P1 #122 : `main` contenant #121 intégré ; les tableaux PCM signés de Chaquopy deviennent des `bytes` Python avant `ControlService`, et `VoiceCapture.stop()` annule définitivement une capture en sérialisant l'ouverture réelle avec l'arrêt. Local : 11 tests Python ciblés, contrôle complet 2 870 PASS / 8 SKIP, couverture 98,85 %, 10 tests JVM ciblés PASS. SHA `75c8806` : CI `41684462930` et audit `41684463917` verts ; matériel NOT RUN. |
 | 2026-11-01 | Claude, D4-5 son sur `feat/d4-5-audio-restore` (sans PR, empilée sur #121) : journal atomique partagé avec D2, restauration PulseAudio après arrêt normal, erreur ou SIGKILL, au démarrage suivant ; tests isolés de l'état réel. Tests locaux verts, matériel NOT RUN. |
 | 2026-11-01 | Claude, `feat/d2-startup-x11-restore` (sans PR, issue de D4-5) : restauration X11 d'un processus tué dès le démarrage du bridge, réglages du propriétaire conservés, verrou `flock` du journal partagé ; corrige le démontage de l'extension vivante par `extension_output()`. Tests locaux verts, CI non exécutée (aucune PR autorisée), matériel NOT RUN. |
 | 2026-11-01 | Claude, preuves autorisées sur le poste (sans TV) : son HARDWARE PARTIAL (route réelle, bridge relancé pendant la diffusion sans effet, SIGKILL, démarrage du bridge = état PulseAudio initial, journal effacé). X11 bloqué : aucun connecteur HDMI forcé, étape `sudo` du propriétaire requise. |
