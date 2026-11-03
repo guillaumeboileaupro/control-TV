@@ -213,7 +213,9 @@ essai réel autorisé par le propriétaire.
   microphone sur arrêt, refus, erreur ou déconnexion. Aucun audio n'est journalisé ni conservé ; Ubuntu garde
   la touche Assistant existante. PR #122 remise à jour avec `main` après #120 ; contrat `TvControl` du test
   et contrôle lexical Kotlin corrigés. Local : 12 tests ciblés, contrôle Python complet (2 785 PASS, 8 SKIP)
-  et tests JVM Android PASS. CI et validation matérielle à faire.
+  et tests JVM Android PASS. SHA `7ad13d9` vert en CI (`41353404166`, audit `41353404430`) :
+  qualité/couverture, Tauri, paquet Linux et APK/JVM Android PASS. Revue/fusion et validation matérielle
+  restent à faire.
 - [ ] **Micro vers l'Assistant — validation matérielle :** après autorisation explicite du propriétaire,
   vérifier sur téléphone et TV le consentement, le démarrage/arrêt, le refus d'autorisation, la déconnexion et
   l'absence de nouvelle capture après arrêt. Le transfert du microphone du PC n'est pas inclus dans cette
