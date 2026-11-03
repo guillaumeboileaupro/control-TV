@@ -266,11 +266,12 @@ APK Android compris ; matériel toujours NOT RUN.
   Assistant du téléphone demande explicitement `RECORD_AUDIO`, ouvre la session vocale existante
   `androidtvremote2`, transmet en mémoire le PCM 16 bits mono 8 kHz, puis ferme la session et libère le
   microphone sur arrêt, refus, erreur ou déconnexion. Aucun audio n'est journalisé ni conservé ; Ubuntu garde
-  la touche Assistant existante. PR #122 remise à jour avec `main` après #120 ; contrat `TvControl` du test
-  et contrôle lexical Kotlin corrigés. Local : 12 tests ciblés, contrôle Python complet (2 785 PASS, 8 SKIP)
-  et tests JVM Android PASS. SHA `7ad13d9` vert en CI (`41353404166`, audit `41353404430`) :
-  qualité/couverture, Tauri, paquet Linux et APK/JVM Android PASS. Revue/fusion et validation matérielle
-  restent à faire.
+  la touche Assistant existante. PR #122 remise à jour avec `main` après la fusion de #121. Les valeurs
+  signées du `ByteArray` Chaquopy sont converties en véritables `bytes` Python avant le service, sans changer
+  leur motif 8 bits. `stop()` est terminal pour l'objet de capture : avant `start()` ou avant le worker, il
+  interdit l'ouverture du microphone ; l'ouverture elle-même et l'arrêt partagent le même verrou. Local :
+  11 tests Python ciblés, contrôle complet 2 870 PASS / 8 SKIP, couverture 98,85 %, 10 tests JVM ciblés PASS.
+  Nouvelle CI, revue/fusion et validation matérielle restent à faire.
 - [ ] **Micro vers l'Assistant — validation matérielle :** après autorisation explicite du propriétaire,
   vérifier sur téléphone et TV le consentement, le démarrage/arrêt, le refus d'autorisation, la déconnexion et
   l'absence de nouvelle capture après arrêt. Le transfert du microphone du PC n'est pas inclus dans cette

@@ -307,12 +307,12 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   TV awake only while streaming; every remote key is tested end to end and pinned to the TV protocol's key
   codes. On 2026-11-01 the Android `VoiceCapture` was wired through the embedded bridge and the existing
   `androidtvremote2` voice session: explicit runtime permission, bounded push-to-talk, in-memory PCM only,
-  stop/disconnect/error cleanup and no automatic retry. PR #122 now includes `main` after #120; its port-test
-  double implements the full voice contract and the Kotlin lock passes the strict source vocabulary gate.
-  Local validation: 12 targeted tests, full Python check (2,785 passed, 8 skipped) and Android JVM tests pass.
-  SHA `7ad13d9` is green in CI (`41353404166`, audit `41353404430`): quality/coverage, Tauri,
-  Linux package and Android APK/JVM jobs all pass. Independent review/merge and hardware acceptance remain
-  open; automated validation only, no device was used.
+  stop/disconnect/error cleanup and no automatic retry. PR #122 now includes `main` after #121. Its embedded
+  boundary converts Chaquopy's signed Java PCM array into Python `bytes` before `ControlService`, preserving
+  every 8-bit value. `VoiceCapture.stop()` permanently cancels that capture object; start/worker races cannot
+  open the microphone after cancellation because the actual open and stop decision share one lock. Local:
+  11 targeted Python tests, full check 2,870 passed / 8 skipped, 98.85% coverage, and 10 targeted Android JVM
+  tests pass. New CI, independent review/merge and hardware acceptance remain open; no device was used.
 - [x] Owner request, 2026-10-25: the Freebox editions are named as the owner's TV shows them, the
   receiver shows control-TV's own logo and the Freebox Disney+ entry the Disney+ logo; no other logo
   with a shippable licence exists (OQEE and TFOU on Commons are CC BY-SA), so the initials stay.

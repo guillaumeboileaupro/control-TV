@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+from collections.abc import Iterable
 from pathlib import Path
 
 import control_tv
@@ -75,9 +76,15 @@ def start_voice(device_id: str) -> None:
     _service().start_remote_voice(DeviceId(device_id))
 
 
-def send_voice(device_id: str, chunk: bytes) -> None:
-    """Forward one bounded PCM chunk to the active TV voice session."""
-    _service().send_remote_voice(DeviceId(device_id), chunk)
+def send_voice(device_id: str, chunk: bytes | bytearray | Iterable[int]) -> None:
+    """Forward one bounded PCM chunk to the active TV voice session.
+
+    Chaquopy exposes Kotlin ``ByteArray`` values as an iterable of signed Java bytes. Convert
+    that host value at the Python boundary: the remote adapter must only ever receive Python
+    ``bytes``, with the original 8-bit PCM pattern preserved.
+    """
+    pcm = chunk if isinstance(chunk, bytes) else bytes(int(value) & 0xFF for value in chunk)
+    _service().send_remote_voice(DeviceId(device_id), pcm)
 
 
 def stop_voice(device_id: str) -> None:

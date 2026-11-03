@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 
 import pytest
 
@@ -84,6 +85,28 @@ def test_voice_chunks_use_the_same_service_without_storing_audio(
 
     assert calls == [("start", "tv-1"), ("send", "tv-1", 8192), ("stop", "tv-1")]
     assert not hasattr(embedded, "voice_recording")
+
+
+def test_a_signed_java_pcm_array_becomes_python_bytes_before_the_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[bytes] = []
+
+    class VoiceService:
+        def send_remote_voice(self, device_id: object, chunk: bytes) -> None:
+            assert device_id == "tv-1"
+            received.append(chunk)
+
+    class JavaByteArray:
+        def __iter__(self) -> Iterator[int]:
+            return iter((-128, -1, 0, 1, 127))
+
+    monkeypatch.setattr(embedded, "_control", VoiceService())
+
+    embedded.send_voice("tv-1", JavaByteArray())
+
+    assert received == [b"\x80\xff\x00\x01\x7f"]
+    assert type(received[0]) is bytes
 
 
 def test_the_embedded_runtime_uses_protobufs_pure_python_implementation() -> None:

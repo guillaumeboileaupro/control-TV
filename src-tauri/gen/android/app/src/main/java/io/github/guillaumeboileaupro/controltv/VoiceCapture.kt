@@ -84,17 +84,22 @@ class VoiceCapture(
     fun start(): Boolean {
         if (!permitted()) return false
         synchronized(stateLock) {
-            if (!running.compareAndSet(false, true)) return false
-            stopRequested.set(false)
+            if (stopRequested.get() || !running.compareAndSet(false, true)) return false
         }
-        executor.execute { capture() }
+        try {
+            executor.execute { capture() }
+        } catch (error: RuntimeException) {
+            running.set(false)
+            stopRequested.set(true)
+            throw error
+        }
         return true
     }
 
-    /** Ends the running capture (no effect when none runs). */
+    /** Ends this capture permanently, including when its worker has not started yet. */
     fun stop() {
         synchronized(stateLock) {
-            if (running.get()) stopRequested.set(true)
+            stopRequested.set(true)
         }
     }
 
@@ -103,8 +108,13 @@ class VoiceCapture(
         var end = VoiceEnd.STOPPED
         var source: Microphone? = null
         try {
-            source = microphone()
-            source.start()
+            synchronized(stateLock) {
+                if (!stopRequested.get()) {
+                    source = microphone()
+                    source?.start()
+                }
+            }
+            val activeSource = source ?: return
             val buffer = ByteArray(VoiceFormat.CHUNK_BYTES / 4)
             var total = 0
             while (!stopRequested.get()) {
@@ -112,7 +122,7 @@ class VoiceCapture(
                     end = VoiceEnd.TIME_LIMIT
                     break
                 }
-                val read = source.read(buffer)
+                val read = activeSource.read(buffer)
                 if (read < 0) {
                     end = VoiceEnd.MICROPHONE_ERROR
                     break

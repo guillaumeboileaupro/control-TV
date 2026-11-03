@@ -133,13 +133,13 @@ class VoiceCaptureTest {
     @Test
     fun onlyOneCaptureRunsAtATime() {
         val queued = mutableListOf<Runnable>()
-        val microphone = FakeMicrophone(mutableListOf())
-        val voice = capture(microphone, executor = Executor { queued.add(it) })
+        lateinit var voice: VoiceCapture
+        val microphone = FakeMicrophone(mutableListOf()) { voice.stop() }
+        voice = capture(microphone, executor = Executor { queued.add(it) })
 
         assertTrue(voice.start())
         assertFalse("a second capture waits for the first to end", voice.start())
         assertTrue(voice.active)
-        voice.stop()
         queued.single().run()
 
         assertFalse(voice.active)
@@ -148,13 +148,12 @@ class VoiceCaptureTest {
     }
 
     @Test
-    fun stopBeforeTheWorkerStartsIsNotLostAndANewCaptureCanRun() {
+    fun stopBeforeTheWorkerStartsPreventsTheMicrophoneAndIsPermanent() {
         val queued = mutableListOf<Runnable>()
         val ends = mutableListOf<VoiceEnd>()
-        lateinit var voice: VoiceCapture
         var reads = 0
-        val microphone = FakeMicrophone(mutableListOf()) { if (++reads == 1) voice.stop() }
-        voice = capture(
+        val microphone = FakeMicrophone(mutableListOf()) { reads++ }
+        val voice = capture(
             microphone,
             ends = ends,
             executor = Executor { queued.add(it) },
@@ -164,12 +163,24 @@ class VoiceCaptureTest {
         voice.stop()
         queued.removeAt(0).run()
         assertEquals(0, reads)
+        assertFalse("a cancelled capture cannot be restarted", voice.start())
+        assertTrue(queued.isEmpty())
+        assertEquals(listOf(VoiceEnd.STOPPED), ends)
+        assertEquals(0, microphone.started)
+        assertEquals(0, microphone.stopped)
+    }
 
-        assertTrue(voice.start())
-        queued.removeAt(0).run()
-        assertEquals(1, reads)
-        assertEquals(listOf(VoiceEnd.STOPPED, VoiceEnd.STOPPED), ends)
-        assertEquals(2, microphone.started)
-        assertEquals(2, microphone.stopped)
+    @Test
+    fun stopBeforeStartRefusesTheCaptureWithoutSchedulingWork() {
+        val queued = mutableListOf<Runnable>()
+        val microphone = FakeMicrophone(mutableListOf())
+        val voice = capture(microphone, executor = Executor { queued.add(it) })
+
+        voice.stop()
+
+        assertFalse(voice.start())
+        assertFalse(voice.active)
+        assertTrue(queued.isEmpty())
+        assertEquals(0, microphone.started)
     }
 }
