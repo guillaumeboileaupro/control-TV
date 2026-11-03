@@ -487,6 +487,17 @@ Deliverables:
 - [x] extend `clean` / `dist-clean` / disk-usage coverage to Tauri, Rust and Android output; PR #4 added the allowlisted paths/tests and validated cleanup against real generated Tauri/Rust/frontend artifacts;
 - [x] small, reviewable iterations and Conventional Commit / pull-request workflow.
 - [x] Graphify integrated in the shared agent configuration (owner decision to keep it, 2026-10-23, branch `chore/graphify-agent-integration`): one skill `graphify` in `.agents/skills/` linked from `.claude/skills/`, its 793-line entry split verbatim into a short `SKILL.md` and `references/build-pipeline.md`, generic `~/` examples written `$HOME/`; rules in `AGENTS.md` (local AST-only graph per worktree, query first and verify in the source, stale-graph check), not restated in `CLAUDE.md`; `/graphify-out/` and `/.worktrees/` git-ignored and enforced by `agent_config.py check` as local-only paths. The untracked pre-archive copies of `local-device-mcp-bridge` and `project-bootstrap-context` in older checkouts are documented in `.agents/inactive-skills/README.md` and left for the owner to remove. Configuration checks and tests only; the local `graphify` CLI and hooks are not versioned.
+- [x] GitHub Spec Kit installed for Claude Code and Codex (owner request, 2026-11-03, branch
+  `chore/spec-kit`, no PR): official `specify-cli` v1.2.6 run through `uvx` with Python 3.12 (no
+  global install), `specify init --here --integration claude` then `specify integration install
+  codex --skills`. Neither command changed an existing file. Its ten `speckit-*` skills are kept
+  as one source in `.agents/skills/` (the Claude version, a superset; Codex ignores the extra front
+  matter) linked from `.claude/skills/`, so `agent_config.py check` stays at 0 errors; Spec Kit's
+  own `integration status` then reports the expected `managed-files-modified (codex)` warning.
+  `.specify/memory/constitution.md` is written for Control-TV and defers to `AGENTS.md`; Spec Kit
+  serves only features the owner asks to specify, never retroactive specs, diagnostic-only work or
+  branch creation (its `git` extension is not installed). Usage: `docs/SPEC_KIT.md`; one sentence
+  added to `AGENTS.md`. Configuration checks and tests only; no real feature specified yet.
 
 Exit criteria:
 - [x] project-owned versus shared caches are clearly distinguished;

@@ -570,6 +570,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 - [x] Compétence `code-solid` appliquée ; plus de `Any` ni de `unknown` dans le code (les tests peuvent en garder) ; mypy refuse désormais tout `Any` explicite hors tests.
 - [x] 2026-10-23 (branche `chore/graphify-agent-integration`) : Graphify intégré proprement à la configuration des agents (skill unique `.agents/skills/graphify` lié pour Claude, règles dans `AGENTS.md`, `/graphify-out/` et `/.worktrees/` ignorés et vérifiés par `agent_config.py check`).
+- [x] 2026-11-03 (branche `chore/spec-kit`, sans PR) : GitHub Spec Kit `specify-cli` v1.2.6 installé pour Claude Code et Codex (`.specify/`, dix skills `speckit-*` en source unique dans `.agents/skills/` liés depuis `.claude/skills/`), constitution adaptée qui renvoie à `AGENTS.md`, usage limité aux fonctionnalités que le propriétaire demande de spécifier (`docs/SPEC_KIT.md`). Aucun fichier existant écrasé ; `agent_config.py check` à 0 erreur. Aucune spécification rétroactive.
+- [ ] Spec Kit : premier usage réel sur une fonctionnalité choisie par le propriétaire, puis vérifier que `specify` → `plan` → `tasks` → `implement` fonctionne pour Claude (`/speckit-…`) et pour Codex (`$speckit-…`).
 - [ ] Après accord du propriétaire, dans le checkout principal : retirer les copies non suivies `local-device-mcp-bridge` et `project-bootstrap-context` de `.agents/skills/` et `.claude/skills/` (identiques à `507e052`, archivées), et remplacer la copie locale `.claude/skills/graphify/` par le lien versionné lors de la mise à jour de `main`.
 
 ## 1 quater. Corrections de l'audit de `main` (2026-10-13)

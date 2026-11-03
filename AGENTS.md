@@ -114,6 +114,8 @@ quality: `python-project-quality`, `solid-code-design`, `typescript-no-any`,
 diagnosis, dependency review, release audit, accessibility; code navigation: `graphify`.
 Inactive (discovered by neither agent): `.agents/inactive-skills/`. Usage:
 `docs/AGENT_INSTRUCTIONS.md`; consistency check: `python3 scripts/agent_config.py check`.
+Spec Kit (`speckit-*` skills, `.specify/`): only for a feature the owner asks to specify; its
+constitution defers to this file; usage in `docs/SPEC_KIT.md`.
 
 ## Code knowledge graph (graphify)
 
