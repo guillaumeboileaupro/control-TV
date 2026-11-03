@@ -15,7 +15,7 @@ cleanup errors and receiver generations are covered by tests. **No WebRTC hardwa
 the 2026-10-26 and 2026-10-30 acceptance campaigns left streaming `NOT RUN`; the only streaming
 hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved onto the TV).
 
-**D1 — duplication (PR #120, branch `feat/d1-rust-screencast`, `main` merged after #118/#119):**
+**D1 — duplication (merged via PR #120):**
 - [x] branch `feat/d1-rust-screencast` (worktree `../control-TV-d1`, no PR): late-transport drops
   no longer corrupt the receiver's timeline. Before, a frame discarded on a full queue lost its
   duration (video RTP clock drifted against audio) and the next P-frames referenced a picture the
@@ -84,20 +84,73 @@ hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved
   without A/V drift.
 
 **D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
+- [x] PR #121 integration (2026-11-01): merged `main` after #120, then the existing X11 start-up
+  restoration branch including its shared D4-5 audio dependency; no history rewrite and no
+  architecture change. Targeted local validation: 286 Python, 104 Tauri and 47 WebRTC tests pass;
+  the explicit endurance test remains ignored. The first CI run exposed an unreadable restoration
+  journal in the frozen-bridge smoke environment; start-up now reports that journal, continues the
+  independent recovery and serves normally. Regression: 157 bridge tests pass; full Python check:
+  2,864 passed, 8 skipped. Corrected SHA `d505d9f` is green in CI (`41351653298`, audit
+  `41351653694`), including the Linux package and Android APK; hardware acceptance remains open.
 - [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
-- [ ] D2-B1, owner decision: an X11 virtual screen independent of any connector does not exist
-  under GNOME on Xorg `modesetting`; options are `evdi` (DKMS install, root) or keeping the forced
-  connector (root once per boot). No installation without authorization.
-- [ ] D4-5: persistent journal of the initial topology, modes, moved screens and PulseAudio route,
-  written before any change, replayed at next start and at exit, deleted only after a verified
-  restore (the current state lives in memory only and is lost on a crash).
+- [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
+  connector; do not add `evdi` or another display system. GNOME uses that output as a real second
+  workspace, separate from the primary screen.
+- [x] D4-5, X11 part on the D2 branch: a private atomic journal is written and fsynced before the
+  first RandR mutation. A new process removes the D2 mode, disables its output, restores every
+  shifted screen position, verifies the result, and only then deletes the journal; failed recovery
+  keeps it for the next start. Automated fake-`xrandr` tests only, hardware NOT RUN.
+- [x] D4-5 sound part (integrated into PR #121): the D2 journal is extracted into
+  `screen_streaming/restore_journal.py` and
+  shared, unchanged in behaviour (private 0700/0600, fsynced temporary file, atomic rename,
+  directory fsync; an impossible path means nothing pending). `PulseAudioRoute` journals the
+  previous default sink before `load-module` and clears it only once PulseAudio shows no
+  `controltv_tv` sink and another default. After a SIGKILL the null sink stayed the default (a
+  silent computer) and the next start was refused; now the bridge's `main` finishes the
+  restoration at the next start (stderr report, journal kept on failure) and `start` recovers
+  first. Restoring never overrides the user: the default is given back only while it is still the
+  null sink, only sounds still on it move, a vanished output is left to PulseAudio's fallback,
+  and repeating it changes nothing. The test suite now runs with a temporary `XDG_STATE_HOME`, so
+  no test can replay a real journal against the owner's display or sound server. Tests: a real
+  SIGKILLed child whose fake PulseAudio state outlives it, journal-before-change, user choices
+  kept, unplugged output, repeatability, unconfirmed and invalid journals; probes confirm the
+  journal and start-up recovery tests fail without the fix. Python 2,822 passed / 8 skipped,
+  coverage 98.89 %. Hardware NOT RUN.
+- [x] D2/D4-5 start-up X11 restoration (integrated into PR #121): `bridge.main` recovers a killed
+  run's extended screen
+  (`recover_interrupted_extension`) then its sound, each independently, stderr report and journal
+  kept on failure, retried at the next start. The recovery undoes only what is still the killed
+  run's: screens are moved back only while at the journaled shift (new `shift` field; an older
+  journal keeps the full put-back), the output is turned off only while it shows the TV mode, an
+  unplugged screen no longer pins the journal. `RestoreJournal` gains an owner `flock` on a
+  sibling `.lock` file (claimed before any change, released at verified clear, freed by the kernel
+  on SIGKILL), so no recovery undoes a live stream. Fixed: `extension_output()` built a monitor
+  whose recovery tore down the running extension; a refused `create` cleaned another stream's TV
+  output; a recovery outside X11 raised an unhandled `InvalidStreamConfiguration` at start-up.
+  Probes: removing the start-up call or the owner check fails the new tests. Python 2,851 passed
+  / 8 skipped, coverage 98.91 % (virtual_display and restore_journal 100 %). Hardware NOT RUN.
+- [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
+  check the sound returns to the original output. HARDWARE PARTIAL 2026-11-01 (authorized,
+  `e6e5b82`, owner's desktop, no TV, no Tauri app): a real PulseAudio route survives a bridge
+  start during the stream, a SIGKILL leaves the computer muted with its journal, the real bridge
+  start-up restores default sink, sinks, stream placement and modules exactly and deletes the
+  journal. Remaining: the same with the app streaming to the TV.
+- [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
+  restart without streaming, compare `xrandr --verbose` with the initial state. HARDWARE
+  PARTIAL 2026-11-01 (authorized, owner's desktop, forced HDMI connector, no TV, no Tauri app):
+  first run FAIL, GNOME had lit the forced connector by itself (1024x768) and the restoration
+  turned it off; fixed by journaling what the output displayed (`before`: mode, rate, position,
+  rotation) and giving it back on stop, failed create and recovery. Second run: `xrandr
+  --verbose` identical to the initial state apart from X timestamps, no `control-tv-*` mode,
+  journal deleted. Python 2,863 passed / 8 skipped, coverage 98.92 %. Remaining: the same with
+  the app streaming to the TV, and a normal stop on hardware.
 - Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
   failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
   initial state and no `control-tv-*` mode remains.
 
-**Blockers:** D1-B1 lifted (#118 and #119 merged, #120 is the only open PR); D1-B2 WebRTC advisories waived for local
+**Blockers:** D1-B1 lifted (#118, #119 and #120 merged); D1-B2 WebRTC advisories waived for local
 network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
-`rtc-crypto` and changes the transport API; D2-B1 above; every hardware step needs the owner's
+`rtc-crypto` and changes the transport API; every hardware step needs the owner's
 authorization.
 
 Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
