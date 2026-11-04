@@ -425,6 +425,12 @@ class ControlService:
             device.id: replace(device, known=device.id in remembered, available=True)
             for device in discovered
         }
+        # Refresh coordinates only for identities the owner already retained. A scan
+        # neither pairs a new TV nor treats an announcement as a connected session.
+        if self._device_memory is not None:
+            for device in live.values():
+                if device.known and not self._device_memory.remember(device):
+                    raise StorageUnavailableError("could not update the known TV coordinates")
         self._devices = {**remembered, **live}
         return list(self._devices.values())
 
@@ -641,19 +647,34 @@ class ControlService:
     # one control surface the bridge and the MCP adapter call.
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
-        return self._channels.get_remote_status(device_id)
+        observed = self._channels.get_remote_status(device_id)
+        # Successful authenticated observation also migrates an existing pairing
+        # into device memory, without touching its certificates or pairing again.
+        if self._device_memory is not None:
+            self.remember_device(device_id)
+        return observed
 
     def start_remote_pairing(self, device_id: DeviceId) -> None:
         self._channels.start_remote_pairing(device_id)
 
     def finish_remote_pairing(self, device_id: DeviceId, code: str) -> None:
         self._channels.finish_remote_pairing(device_id, code)
+        self.remember_device(device_id)
 
     def press_remote_key(self, device_id: DeviceId, key: RemoteKey) -> RemoteKeyResult:
         return self._channels.press_remote_key(device_id, key)
 
     def type_remote_text(self, device_id: DeviceId, text: str) -> RemoteTextResult:
         return self._channels.type_remote_text(device_id, text)
+
+    def start_remote_voice(self, device_id: DeviceId) -> None:
+        self._channels.start_remote_voice(device_id)
+
+    def send_remote_voice(self, device_id: DeviceId, chunk: bytes) -> None:
+        self._channels.send_remote_voice(device_id, chunk)
+
+    def stop_remote_voice(self, device_id: DeviceId) -> None:
+        self._channels.stop_remote_voice(device_id)
 
     def list_tv_apps(self, device_id: DeviceId) -> list[TvApp]:
         return self._channels.list_tv_apps(device_id)
@@ -666,6 +687,7 @@ class ControlService:
 
     def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
         self._channels.pair_tv_apps(device_id, pairing_endpoint, code)
+        self.remember_device(device_id)
 
     def open_tv_apps_port(self, device_id: DeviceId) -> None:
         self._channels.open_tv_apps_port(device_id)

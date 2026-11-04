@@ -1,6 +1,9 @@
 """Shared test fixtures.
 
-Every test run, and every Python process a test starts, uses this checkout's own code.
+Every test run, and every Python process a test starts, uses this checkout's own code, and
+never the user's real control-TV state: the D2 and D4-5 restoration journals (and anything else
+under `$XDG_STATE_HOME`) go to a private directory removed after the run, so no test can find a
+real journal and replay it against the real display or sound server.
 
 pytest's `pythonpath` puts `src/` first for the tests themselves; a test that starts `python -m
 control_tv...` gets a new interpreter, which reads `PYTHONPATH` but not pytest's path, and would
@@ -9,7 +12,10 @@ otherwise import whatever the virtual environment installed (possibly another wo
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -17,6 +23,10 @@ import pytest
 _SOURCE = str(Path(__file__).resolve().parents[1] / "src")
 _INHERITED = os.environ.get("PYTHONPATH", "")
 os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [_SOURCE, _INHERITED]))
+
+_STATE = tempfile.mkdtemp(prefix="control-tv-test-state-")
+os.environ["XDG_STATE_HOME"] = _STATE
+atexit.register(shutil.rmtree, _STATE, ignore_errors=True)
 
 # Whether `adb` is on PATH, so `ping`'s `tvApps` never depends on the host (bridge tests).
 

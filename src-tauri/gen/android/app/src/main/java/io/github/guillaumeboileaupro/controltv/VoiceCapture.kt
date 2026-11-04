@@ -12,9 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * The phone's voice for the TV's Google Assistant, in the format the TV's remote protocol takes
  * (`androidtvremote2.start_voice`: 16-bit PCM, mono, 8000 Hz, chunks of at least 8 KB).
  *
- * Capture only: handing the chunks to the TV needs a voice session in the control layer (Python
- * bridge and TV remote adapter), which is not wired yet. Nothing here records unless asked to,
- * and every capture stops by itself after [VoiceFormat.MAX_SECONDS].
+ * Nothing here records unless asked to, and every capture stops by itself after
+ * [VoiceFormat.MAX_SECONDS]. Chunks are streamed directly to the control layer; they are never
+ * persisted.
  */
 object VoiceFormat {
     const val SAMPLE_RATE = 8000
@@ -72,23 +72,35 @@ class VoiceCapture(
     private val onChunk: (ByteArray) -> Unit,
     private val onEnd: (VoiceEnd) -> Unit,
 ) {
+    private class StateLock
+
     private val running = AtomicBoolean(false)
     private val stopRequested = AtomicBoolean(false)
+    private val stateLock = StateLock()
 
     val active: Boolean get() = running.get()
 
     /** Whether a capture started; false without the permission or while one runs. */
     fun start(): Boolean {
         if (!permitted()) return false
-        if (!running.compareAndSet(false, true)) return false
-        stopRequested.set(false)
-        executor.execute { capture() }
+        synchronized(stateLock) {
+            if (stopRequested.get() || !running.compareAndSet(false, true)) return false
+        }
+        try {
+            executor.execute { capture() }
+        } catch (error: RuntimeException) {
+            running.set(false)
+            stopRequested.set(true)
+            throw error
+        }
         return true
     }
 
-    /** Ends the running capture (no effect when none runs). */
+    /** Ends this capture permanently, including when its worker has not started yet. */
     fun stop() {
-        stopRequested.set(true)
+        synchronized(stateLock) {
+            stopRequested.set(true)
+        }
     }
 
     private fun capture() {
@@ -96,8 +108,13 @@ class VoiceCapture(
         var end = VoiceEnd.STOPPED
         var source: Microphone? = null
         try {
-            source = microphone()
-            source.start()
+            synchronized(stateLock) {
+                if (!stopRequested.get()) {
+                    source = microphone()
+                    source?.start()
+                }
+            }
+            val activeSource = source ?: return
             val buffer = ByteArray(VoiceFormat.CHUNK_BYTES / 4)
             var total = 0
             while (!stopRequested.get()) {
@@ -105,7 +122,7 @@ class VoiceCapture(
                     end = VoiceEnd.TIME_LIMIT
                     break
                 }
-                val read = source.read(buffer)
+                val read = activeSource.read(buffer)
                 if (read < 0) {
                     end = VoiceEnd.MICROPHONE_ERROR
                     break
@@ -145,21 +162,24 @@ class AudioRecordMicrophone : Microphone {
             encoding,
             maxOf(minimum, VoiceFormat.CHUNK_BYTES),
         )
-        check(created.state == AudioRecord.STATE_INITIALIZED) { "the microphone cannot be opened" }
+        // Own it before either validation or start can fail, so VoiceCapture's finally block
+        // always reaches release().
         record = created
+        check(created.state == AudioRecord.STATE_INITIALIZED) { "the microphone cannot be opened" }
         created.startRecording()
     }
 
     override fun read(buffer: ByteArray): Int = record?.read(buffer, 0, buffer.size) ?: -1
 
     override fun stop() {
-        record?.let {
+        val current = record
+        record = null
+        current?.let {
             try {
-                it.stop()
+                if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop()
             } finally {
                 it.release()
             }
         }
-        record = null
     }
 }

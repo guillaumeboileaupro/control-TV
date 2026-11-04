@@ -13,7 +13,8 @@ Rules this adapter keeps:
 - Only an allowlist of keys can be sent (`RemoteKey`), and text only to the TV's active text
   field (`type_text`), never logged or echoed. Apps are opened through ControlTV Receiver's
   links (`open_receiver_link`): some Google TVs refuse `market://launch` (`ActivityNotFound`,
-  recette 2026-10-26), so no such link is ever sent. Voice is not exposed here.
+  recette 2026-10-26), so no such link is ever sent. Voice is a bounded, explicit session whose
+  PCM chunks are forwarded in memory and never retained.
 - One connection per TV, reused only while it is demonstrably open: the library has not
   reported it lost and its transport is not closing (the TV pings it every 5 s and the
   library closes it after 16 s without a message). It is closed after `KEEP_OPEN` seconds
@@ -38,6 +39,7 @@ import secrets
 import stat
 import threading
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
@@ -66,6 +68,9 @@ CLIENT_NAME = "control-TV"
 CERT_FILE = "client-cert.pem"
 KEY_FILE = "client-key.pem"
 IDENTITY_FILE = "client-identity"
+CERTIFICATE_IDENTITY_FILE = "certificate-identity"
+LEGACY_CERT_FILE = "client-cert.legacy.pem"
+LEGACY_KEY_FILE = "client-key.legacy.pem"
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_SETTLE = 1.0
 # A TV that wakes or goes to standby reports its new power state later than a volume change;
@@ -73,6 +78,7 @@ DEFAULT_SETTLE = 1.0
 DEFAULT_POWER_SETTLE = 4.0
 # How long a connection stays open after its last use, for the next key to reuse it.
 KEEP_OPEN = 30.0
+MAX_VOICE_CHUNK = 20 * 1024
 # The only links this adapter opens: ControlTV Receiver's app list and app launch.
 _REPLY = r"reply=http://\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}/{path}&token=[A-Za-z0-9_-]{16,64}"
 RECEIVER_LINK = re.compile(
@@ -97,6 +103,9 @@ class RemoteClient(Protocol):
     @property
     def volume_info(self) -> object: ...
 
+    @property
+    def is_voice_enabled(self) -> object: ...
+
     async def async_start_pairing(self) -> None: ...
     async def async_finish_pairing(self, code: str) -> None: ...
     async def async_connect(self) -> None: ...
@@ -104,10 +113,18 @@ class RemoteClient(Protocol):
     def send_key_command(self, key: str) -> None: ...
     def send_text(self, text: str) -> None: ...
     def send_launch_app_command(self, app_link_or_app_id: str) -> None: ...
+    async def start_voice(self) -> VoiceSession: ...
+
+
+class VoiceSession(Protocol):
+    def send_chunk(self, chunk: bytes) -> bool: ...
+
+    def end(self) -> None: ...
 
 
 RemoteFactory = Callable[[str, str, str, str], RemoteClient]
 CertGenerator = Callable[[str], tuple[bytes, bytes]]
+CertificateNameReader = Callable[[bytes], str]
 IdentityGenerator = Callable[[], str]
 
 
@@ -227,7 +244,7 @@ def _default_remote_factory(
     # carries text to the TV's active field and reports the app in front.
     return cast(
         RemoteClient,
-        AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True),
+        AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True, enable_voice=True),
     )
 
 
@@ -235,6 +252,22 @@ def _default_cert_generator(client_name: str) -> tuple[bytes, bytes]:
     from androidtvremote2.certificate_generator import generate_selfsigned_cert
 
     return generate_selfsigned_cert(client_name)
+
+
+def _default_certificate_name(certificate: bytes) -> str:
+    """Return the certificate's single common name without accepting an ambiguous subject."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    try:
+        names = x509.load_pem_x509_certificate(certificate).subject.get_attributes_for_oid(
+            NameOID.COMMON_NAME
+        )
+    except ValueError:
+        raise RuntimeError("the stored remote certificate is invalid") from None
+    if len(names) != 1 or not isinstance(names[0].value, str):
+        raise RuntimeError("the stored remote certificate has no unique client name")
+    return names[0].value
 
 
 class TvRemoteChannel:
@@ -256,6 +289,7 @@ class TvRemoteChannel:
         keep_open: float = KEEP_OPEN,
         remote_factory: RemoteFactory = _default_remote_factory,
         cert_generator: CertGenerator = _default_cert_generator,
+        certificate_name_reader: CertificateNameReader = _default_certificate_name,
         identity_generator: IdentityGenerator = _new_identity_suffix,
     ) -> None:
         self._dir = Path(credentials_dir)
@@ -266,12 +300,14 @@ class TvRemoteChannel:
         self._keep_open = keep_open
         self._remote_factory = remote_factory
         self._cert_generator = cert_generator
+        self._certificate_name_reader = certificate_name_reader
         self._identity_generator = identity_generator
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pairing: dict[str, RemoteClient] = {}
         self._connections: dict[str, RemoteClient] = {}
         self._expiry: dict[str, asyncio.TimerHandle] = {}
+        self._voice: dict[str, VoiceSession] = {}
 
     # Public operations ---------------------------------------------------------------------
 
@@ -407,6 +443,58 @@ class TvRemoteChannel:
 
         self._run(lambda: self._session(host, send))
 
+    def start_voice(self, host: str) -> None:
+        """Open one Assistant voice session; no audio is retained by this adapter."""
+        host = _checked_host(host)
+
+        async def start(remote: RemoteClient, fresh: bool) -> None:
+            del fresh
+            if host in self._voice:
+                raise CommandRejectedError("a voice session is already active")
+            if remote.is_voice_enabled is not True:
+                raise UnsupportedOperationError("this TV does not accept remote microphone audio")
+            self._voice[host] = await remote.start_voice()
+
+        self._run(lambda: self._session(host, start))
+
+    def send_voice(self, host: str, chunk: bytes) -> None:
+        """Send one in-memory PCM chunk to the active session, once."""
+        host = _checked_host(host)
+        if not isinstance(chunk, bytes) or not 0 < len(chunk) <= MAX_VOICE_CHUNK:
+            raise InvalidArgumentError(
+                "voice audio must be a non-empty PCM chunk of at most 20 KiB"
+            )
+
+        async def send() -> None:
+            remote = self._connections.get(host)
+            session = self._voice.get(host)
+            if remote is None or session is None or not _open(remote):
+                self._drop_connection(host)
+                raise DeviceUnavailableError("the TV voice session is not connected")
+            if not session.send_chunk(chunk):
+                self._drop_connection(host)
+                raise DeviceUnavailableError("the TV voice session ended")
+            self._expire_later(host)
+
+        self._run(send)
+
+    def stop_voice(self, host: str) -> None:
+        """End an active voice session. Repeated cleanup is harmless."""
+        host = _checked_host(host)
+
+        async def stop() -> None:
+            session = self._voice.pop(host, None)
+            if session is None:
+                return
+            try:
+                session.end()
+            except BaseException:
+                self._drop_connection(host)
+                raise
+            self._expire_later(host)
+
+        self._run(stop)
+
     def close(self) -> None:
         """Drop a pending pairing and stop the event loop thread."""
         with self._lock:
@@ -463,6 +551,10 @@ class TvRemoteChannel:
         handle = self._expiry.pop(host, None)
         if handle is not None:
             handle.cancel()
+        session = self._voice.pop(host, None)
+        if session is not None:
+            with suppress(Exception):
+                session.end()
         remote = self._connections.pop(host, None)
         if remote is not None:
             # Closing the connection flushes what was written to it before closing.
@@ -487,15 +579,17 @@ class TvRemoteChannel:
     def _credentials(self) -> tuple[str, str, str]:
         """The persistent installation identity, certificate and private key.
 
-        Older installations have only the certificate and key. Their identity is derived from
-        that certificate, so upgrading neither regenerates it nor asks the TV to pair again.
+        Older installations have a certificate named only ``control-TV``. Their stable identity
+        is derived from that certificate, then that legacy pair is backed up and replaced once:
+        the TV requires one explicit final pairing, after which both installations can coexist.
         """
         self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self._dir, 0o700)
-        cert, key, identity_file = (
+        cert, key, identity_file, certificate_identity_file = (
             self._dir / CERT_FILE,
             self._dir / KEY_FILE,
             self._dir / IDENTITY_FILE,
+            self._dir / CERTIFICATE_IDENTITY_FILE,
         )
         complete = cert.is_file() and key.is_file()
         identity = self._read_identity(identity_file)
@@ -509,14 +603,40 @@ class TvRemoteChannel:
                 raise RuntimeError("the generated remote identity is invalid")
             identity = f"{self._client_name} {suffix}"
             _write_private(identity_file, identity.encode("utf-8"))
-        if not complete:
+        certificate_identity = self._read_identity(certificate_identity_file)
+        if complete and certificate_identity != identity:
+            if self._certificate_name_reader(cert.read_bytes()) != identity:
+                self._migrate_legacy_credentials(cert, key, identity)
+            _write_private(certificate_identity_file, identity.encode("utf-8"))
+        elif not complete:
             cert_pem, key_pem = self._cert_generator(identity)
             _write_private(key, key_pem)
             _write_private(cert, cert_pem)
-        for path in (identity_file, cert, key):
+            _write_private(certificate_identity_file, identity.encode("utf-8"))
+        private_files = [identity_file, certificate_identity_file, cert, key]
+        private_files.extend(
+            path
+            for path in (self._dir / LEGACY_CERT_FILE, self._dir / LEGACY_KEY_FILE)
+            if path.is_file()
+        )
+        for path in private_files:
             if stat.S_IMODE(path.stat().st_mode) != 0o600:
                 os.chmod(path, 0o600)
         return identity, str(cert), str(key)
+
+    def _migrate_legacy_credentials(self, cert: Path, key: Path, identity: str) -> None:
+        """Replace a legacy named pair once, retaining its exact bytes as private evidence."""
+        legacy_cert = self._dir / LEGACY_CERT_FILE
+        legacy_key = self._dir / LEGACY_KEY_FILE
+        if not legacy_cert.exists():
+            _write_private(legacy_cert, cert.read_bytes())
+        if not legacy_key.exists():
+            _write_private(legacy_key, key.read_bytes())
+        cert_pem, key_pem = self._cert_generator(identity)
+        # Key first is deliberate: an interruption leaves the old certificate name in place,
+        # so the next launch retries the bounded migration instead of accepting a mismatched pair.
+        _write_private(key, key_pem)
+        _write_private(cert, cert_pem)
 
     def _read_identity(self, path: Path) -> str | None:
         if not path.is_file():
@@ -539,7 +659,11 @@ class TvRemoteChannel:
         except ControlError:
             raise
         except invalid_auth:
-            raise PairingRequiredError("this TV must be paired with control-TV first") from None
+            if (self._dir / LEGACY_CERT_FILE).is_file():
+                message = "pair this TV once after control-TV updated its installation identity"
+            else:
+                message = "this TV must be paired with control-TV first"
+            raise PairingRequiredError(message) from None
         except (cannot_connect, connection_closed, OSError):
             raise DeviceUnavailableError("the TV's remote channel could not be reached") from None
 

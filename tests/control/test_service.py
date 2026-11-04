@@ -1072,6 +1072,57 @@ def test_status_of_restored_tv_rediscovers_before_reconnecting() -> None:
     assert [name for name, _ in transport.calls[:2]] == ["discover", "get_status"]
 
 
+def test_rediscovery_persists_new_coordinates_without_duplicates() -> None:
+    old = Device(id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009)
+    new = dataclasses.replace(old, host="192.0.2.2")
+    memory = DeviceMemoryFake((old,))
+    service = ControlService(DiscoverySequence([[new, new]]), device_memory=memory)
+    assert len(service.discover_devices()) == 1
+    restarted = ControlService(DiscoverySequence([[]]), device_memory=memory)
+    offline = restarted.discover_devices()
+    assert len(offline) == 1
+    assert offline[0].host == new.host
+    assert offline[0].known and not offline[0].available
+
+
+def test_rediscovery_reports_coordinate_storage_failure() -> None:
+    old = Device(id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009)
+    service = ControlService(DiscoverySequence([[old]]), device_memory=FailingDeviceMemory((old,)))
+    with pytest.raises(StorageUnavailableError):
+        service.discover_devices()
+
+
+def test_existing_pairing_is_remembered_after_authenticated_observation() -> None:
+    from test_remote_control import FakeRemote
+
+    remote = FakeRemote()
+    memory = DeviceMemoryFake()
+    service = ControlService(FakeTransport(), remote=remote, device_memory=memory)
+    service.discover_devices()
+    service.get_remote_status(DEVICE_ID)
+    assert [device.id for device in memory.devices] == [DEVICE_ID]
+    assert [call[0] for call in remote.calls] == ["observe"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_only_successful_pairing_automatically_remembers_tv(failure: bool) -> None:
+    from test_remote_control import FakeRemote
+
+    remote = FakeRemote()
+    if failure:
+        remote.error = DeviceUnavailableError("offline")
+    memory = DeviceMemoryFake()
+    service = ControlService(FakeTransport(), remote=remote, device_memory=memory)
+    service.discover_devices()
+    if failure:
+        with pytest.raises(DeviceUnavailableError):
+            service.finish_remote_pairing(DEVICE_ID, "123456")
+        assert memory.devices == ()
+    else:
+        service.finish_remote_pairing(DEVICE_ID, "123456")
+        assert [device.id for device in memory.devices] == [DEVICE_ID]
+
+
 def test_two_chosen_tvs_are_restored_and_only_explicit_forget_removes_one() -> None:
     other_id = DeviceId("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     first = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
