@@ -212,6 +212,8 @@ Rediscovery persists updated coordinates by stable identity, without duplicates.
 lint and strict typing pass; CI not triggered (no new PR), hardware NOT RUN.
 Python suite: 2,886 PASS, 8 SKIP (PyInstaller missing), coverage 98.07%; final migration path:
 369 targeted tests PASS. Review and authorized hardware acceptance remain outstanding.
+Functional commit `369ffcb` pushed; final cumulative coverage 98.53% after targeted tests.
+Cleanup removed 18 MiB of caches/coverage data; no native build was produced.
 Known TVs are stored in a private registry separate from certificates, restored as unavailable after application restart,
 and reconciled with live discovery. Reconnection performs a bounded rediscovery before reading
 status, so stale identity or address data never becomes a false connection or availability claim.

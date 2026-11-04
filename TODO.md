@@ -209,6 +209,8 @@ APK Android compris ; matériel toujours NOT RUN.
   Tests ciblés, lint et typage PASS ; CI non lancée (aucune nouvelle PR), matériel NOT RUN.
   Suite Python : 2 886 PASS, 8 SKIP (PyInstaller absent), couverture 98,07 % ; dernier
   parcours de migration : 369 tests ciblés PASS. Revue et recette matérielle restent à faire.
+  Livraison fonctionnelle `369ffcb` poussée ; couverture cumulée finale 98,53 % après les tests
+  ciblés. Nettoyage : 18 Mio de caches/rapport supprimés, aucun build natif produit.
   Les TV connues sont conservées dans un registre privé distinct des certificats, restaurées hors ligne au
   redémarrage et réconciliées avec la découverte réseau sans inventer un état connecté. L'oubli
   reste une action utilisateur explicite et ne supprime ni certificat ni préférence. Les tests

@@ -94,6 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-04 | Livraison T-06 `369ffcb` poussée sans PR ; couverture cumulée finale 98,53 % après les 369 tests ciblés. Nettoyage des caches et données de couverture : 18 Mio supprimés ; aucun build natif produit. Validation native Ubuntu/Android et recette matérielle non exécutées dans cette reprise. |
 | 2026-11-04 | T-06 : reprise de `f6a1a2c`, intégration de main après #122 et résolution documentaire sans perte. Mémorisation après appairage/lecture authentifiée et actualisation des coordonnées ajoutées ; 2 886 tests Python PASS, 8 SKIP (PyInstaller absent), couverture 98,07 %, lint/format/typage PASS. Dernier parcours : 369 tests ciblés PASS. CI non lancée, aucune nouvelle PR ni utilisation matérielle ; #123/#124 préservées. |
 | 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
