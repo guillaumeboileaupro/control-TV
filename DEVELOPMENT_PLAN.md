@@ -1252,6 +1252,10 @@ exposure and no permanent server.
     chosen side only; the shell now forwards it to the bridge, which already accepted it. Rust
     and UI regression tests; local UI 433, Tauri 105, Python 2 870 passed / 8 skipped
     (98.85 %); no device used;
+  - [ ] required WebRTC/receiver audit green again: RUSTSEC-2026-0441 (`pin-utils` 0.1.1
+    unmaintained, no known vulnerability, no fixed version) reaches `webrtc 0.14` through
+    `nix 0.26` and `webrtc-util 0.12`; published after #122 merged, it fails `main` too. Owner
+    decision needed (documented waiver until the `webrtc 0.21` migration, or that migration);
   - [ ] the card used against the TV during the authorized run;
   - [x] GNOME-inspired display-manager UI implemented on PR #97 with Apply, Cancel, Keep and
     timed Revert. Only modes reported by X11 are offered; unsupported/disconnected outputs are
