@@ -12,6 +12,8 @@ Keep domain behavior testable, interfaces thin, and verification reproducible in
 - Read repository instructions, dependency files, test configuration, CI workflows, and the current module boundaries.
 - Use the project's virtual environment and invoke tools through its Python interpreter when possible.
 - If global pytest plugins interfere, diagnose the environment before changing project code. `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is a diagnostic option, not a default project setting.
+- Before blaming the code for a missing import or type error, rebuild the environment with the repository's own setup command: an ad-hoc `uv run` or `pip install` can silently drop optional extras.
+- Scripts documented as `python3 scripts/<tool>.py` run on whichever `python3` the shell finds, not on the project environment. Keep them to the standard-library API of the oldest interpreter they support, or stop early with an explicit version message, and run each documented command once with that interpreter.
 
 ## Architecture
 
@@ -26,6 +28,7 @@ Keep domain behavior testable, interfaces thin, and verification reproducible in
 - Add focused unit tests for domain rules, edge cases, invalid input, and state transitions.
 - Add API tests for request validation, response shape, status codes, persistence, and complete user flows.
 - Use isolated temporary databases and deterministic fixtures.
+- Test command-line tools as users run them: a subprocess per command, asserting the exit status and that no traceback reaches stderr, beside the unit tests of their functions.
 - Run the repository's own commands for tests, strict type checking, linting, formatting, and packaging.
 - Preserve or raise the existing coverage threshold. Do not weaken tests or exclusions merely to make CI green.
 - Review warnings and skipped tests. Report them rather than hiding them.

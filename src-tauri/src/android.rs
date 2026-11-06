@@ -25,6 +25,12 @@ struct SelectionArgs {
     name: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceArgs {
+    device_id: String,
+}
+
 /// The registered Kotlin plugin, shared by every launch of the bridge.
 pub(super) struct EmbeddedBridge(pub(super) Arc<PluginHandle<tauri::Wry>>);
 
@@ -85,4 +91,43 @@ pub(crate) async fn remember_selection(
     tauri::async_runtime::spawn_blocking(move || store_selection(&handle, device_id, name))
         .await
         .map_err(|error| error.to_string())?
+}
+
+async fn voice_call(
+    app: tauri::AppHandle,
+    command: &'static str,
+    device_id: String,
+) -> Result<(), BridgeFailure> {
+    let handle = Arc::clone(&app.state::<EmbeddedBridge>().0);
+    tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .run_mobile_plugin::<serde_json::Value>(command, VoiceArgs { device_id })
+            .map(|_| ())
+            .map_err(|error| match error {
+                PluginInvokeError::InvokeRejected(rejection) => BridgeFailure::new(
+                    rejection.code.as_deref().unwrap_or("voice_failed"),
+                    rejection
+                        .message
+                        .as_deref()
+                        .unwrap_or("voice session failed"),
+                ),
+                other => BridgeFailure::transport(other.to_string()),
+            })
+    })
+    .await
+    .map_err(|error| BridgeFailure::transport(error.to_string()))?
+}
+
+pub(crate) async fn start_voice(
+    app: tauri::AppHandle,
+    device_id: String,
+) -> Result<(), BridgeFailure> {
+    voice_call(app, "startVoice", device_id).await
+}
+
+pub(crate) async fn stop_voice(
+    app: tauri::AppHandle,
+    device_id: String,
+) -> Result<(), BridgeFailure> {
+    voice_call(app, "stopVoice", device_id).await
 }

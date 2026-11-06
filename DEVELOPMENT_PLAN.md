@@ -1,5 +1,158 @@
 # Development plan
 
+## Screen streaming — D1, D2, D4 (consolidated, reviewed on `main` `3eebf23`, 2026-10-31)
+
+This section is the current state of screen streaming; the dated entries below are history. The
+task-level table (references D1-1 … D4-6) is at the top of [`TODO.md`](TODO.md).
+
+**Delivered in `main` (#111, `88f08d3`), automation-validated only:** the Rust engine
+`webrtc-engine` (bounded session, X11 capture and `libx264` H.264, PulseAudio Opus, ICE/DTLS/SRTP,
+one-time TLS pairing token, LAN-only bind), the Kotlin/libwebrtc Android TV receiver, the Python
+D1/D2 capture lease that owns geometry, consent and restoration, and the Tauri start/stop/status
+commands with the Auto/WebRTC/HLS selector. Bounded reconnection (two attempts inside the absolute
+deadline, fresh transport/token/port), FFmpeg reaping that keeps unconfirmed handles, combined
+cleanup errors and receiver generations are covered by tests. **No WebRTC hardware run exists**:
+the 2026-10-26 and 2026-10-30 acceptance campaigns left streaming `NOT RUN`; the only streaming
+hardware evidence is HLS on 2026-10-19/20 (9–11 s latency, one D2 window moved onto the TV).
+
+**D1 — duplication (merged via PR #120):**
+- [x] branch `feat/d1-rust-screencast` (worktree `../control-TV-d1`, no PR): late-transport drops
+  no longer corrupt the receiver's timeline. Before, a frame discarded on a full queue lost its
+  duration (video RTP clock drifted against audio) and the next P-frames referenced a picture the
+  receiver never got (corrupted image until the next IDR); `dropped_frames` was never incremented
+  and `captured_frames` counted sent frames. Now each discarded unit is carried as
+  `MediaFrame::dropped_before` into WebRTC `Sample::prev_dropped_packets` (RTP time and sequence
+  numbers skipped, so the receiver conceals a loss), video waits for the next keyframe after a
+  drop (brief freeze instead of corruption; GOP = 1 s bounds it), and diagnostics report produced,
+  sent and dropped video frames and dropped audio packets. `MediaTransport::send_video/send_audio`
+  now take the `MediaFrame`. Engine: fmt, Clippy `-D warnings`, 34 tests; Tauri host: 102 tests.
+  Hardware: not run.
+- [x] D1-3 (branch, automation only): `VideoEncoder::Vaapi { render_node, qp }` reuses D0's
+  validated shape (`-vaapi_device`, `format=nv12,hwupload`, `h264_vaapi` constant QP, no bitrate
+  target) with `constrained_baseline`, no B-frames, GOP = fps and AUDs. A VA-API process that
+  ends, stays silent or emits only a partial picture within 3 s is reaped, then `libx264` starts and
+  the diagnostics report `video_encoder` and `encoder_fallback`; a missing FFmpeg stays an error.
+  If the failed process cannot be reaped the start fails and it stays tracked. Tauri passes
+  `VideoEncoder::Software` explicitly until a VA-API stream is decoded on both TVs (GPU and TV use
+  need authorization).
+- [x] D4-4 (branch, automation only): every FFmpeg child gets `PR_SET_PDEATHSIG` = SIGKILL, and
+  exits if its host already died between `fork` and `prctl`. A real-process test SIGKILLs a host
+  that spawned a child from a Tokio worker and fails without the fix ("the child outlived its
+  killed host"). Constraint: Linux ties the signal to the spawning thread, so spawning stays on
+  runtime workers, never `spawn_blocking`. `libc` becomes a direct Linux dependency (already
+  locked: 0.2.191 engine, 0.2.189 Tauri; no new crate).
+- [x] Agent-configuration CLI (branch): `python3 scripts/agent_config.py check` crashed with
+  `AttributeError` on the system Python 3.7 because `Path.readlink`/`Path.is_relative_to` need
+  3.9; it now uses `os.readlink` and `resolved.parents`, with a test without those APIs and a
+  subprocess test of the real command. Verified on Python 3.7 and 3.10. The `mypy` import errors
+  seen earlier came from an ad-hoc `uv run` without extras, not from the repository:
+  `dev.py setup` installs them.
+- Local checks at the end of this slice (no CI: no PR may open while #118/#119 are open): engine
+  fmt, Clippy `-D warnings`, 40 tests (the D1-3 commit alone: 38); Tauri `dev.py rust-check` 102
+  tests; `dev.py check` 2,777 passed / 8 skipped with the system Python 3.7; coverage 98.87 %;
+  `rust-audit`, `webrtc-audit` (waivers only) and `npm-audit` pass. `python-audit` **fails on
+  `main` too**: `pyasn1` 0.6.4 has CVE-2026-119194…119197, fixed in 0.6.5; this branch does not
+  touch `uv.lock`, and the bump belongs to a separate security change, so CI will fail until it
+  lands.
+- [x] PR #120 finalisation (automation only): (1) Opus left FFmpeg in one-second Ogg pages behind
+  a 32 KiB pipe buffer — measured, no packet within two seconds, then bursts, so sound lagged the
+  picture; `-page_duration 20000` and `-flush_packets 1` (also for H.264, explicit rather than
+  version-dependent). Real-FFmpeg tests replace only the live input with a real-time `lavfi`
+  source and assert pacing measured from the first unit (≥ 10 units spread ≥ 500 ms in the next
+  second), robust under load; the Opus one fails on the old arguments. (2) Pairing accepted only the
+  first TCP connection, so a LAN scan or an aborted receiver attempt cancelled the session; now
+  connections authenticate concurrently (8 at most, 5 s each), the first one with the token wins,
+  others are closed, and the token stays single-use. (3) Tauri relaunched the receiver for any
+  media error, including local FFmpeg, capture and cleanup failures; only transport failures and
+  negotiation timeouts now consume the two-attempt budget. A failed `start_media` looped back to a
+  consumed signaling server and panicked; it now returns. (4) VA-API is selected through
+  `VideoEncoder::preferred("/dev/dri")` (first render node, QP 24) with the automatic `libx264`
+  fallback. (5) An end-to-end test drives the session controller, TLS pairing with a simulated
+  receiver, WebRTC and the production `FfmpegMediaSource` (synthetic inputs via a stand-in
+  `ffmpeg` that execs the real one) until H.264 with an IDR and Opus samples arrive, then checks
+  that both FFmpeg processes are gone after Stop. (6) A Tauri test leaked one fake bridge script
+  per run in the temporary directory. Local results: engine 47 tests (3 consecutive runs),
+  Tauri 104, Python 2,780 passed / 8 skipped, coverage 98.87 %, all four audits pass.
+- [ ] D1-3 hardware proof (authorization): the fallback covers the encoder only, not a stream a TV
+  cannot decode; confirm VA-API decoding on both Android TVs.
+- [ ] Known latency floor: a picture is emitted at the next AUD (one frame, 33 ms at 30 fps);
+  measure with D1-9 before optimizing.
+- [ ] D1-9 (owner authorization): latency median/p95/worst, FPS, drops, A/V sync, CPU on both
+  Android TVs.
+- Acceptance: repeated start/stop leaves no FFmpeg, port or token; distinct visible errors; drops
+  counted and the picture frozen, never corrupted; on hardware median latency < 500 ms and 10 min
+  without A/V drift.
+
+**D2 — extension (PR after D1):** reuses the D1 engine through the existing lease.
+- [x] PR #121 integration (2026-11-01): merged `main` after #120, then the existing X11 start-up
+  restoration branch including its shared D4-5 audio dependency; no history rewrite and no
+  architecture change. Targeted local validation: 286 Python, 104 Tauri and 47 WebRTC tests pass;
+  the explicit endurance test remains ignored. The first CI run exposed an unreadable restoration
+  journal in the frozen-bridge smoke environment; start-up now reports that journal, continues the
+  independent recovery and serves normally. Regression: 157 bridge tests pass; full Python check:
+  2,864 passed, 8 skipped. Corrected SHA `d505d9f` is green in CI (`41351653298`, audit
+  `41351653694`), including the Linux package and Android APK; hardware acceptance remains open.
+- [x] extension on a free connector forced connected, removal resumable, display-manager snapshot.
+- [x] D2-B1, owner decision on 2026-11-01: keep the existing X11 display manager and forced RandR
+  connector; do not add `evdi` or another display system. GNOME uses that output as a real second
+  workspace, separate from the primary screen.
+- [x] D4-5, X11 part on the D2 branch: a private atomic journal is written and fsynced before the
+  first RandR mutation. A new process removes the D2 mode, disables its output, restores every
+  shifted screen position, verifies the result, and only then deletes the journal; failed recovery
+  keeps it for the next start. Automated fake-`xrandr` tests only, hardware NOT RUN.
+- [x] D4-5 sound part (integrated into PR #121): the D2 journal is extracted into
+  `screen_streaming/restore_journal.py` and
+  shared, unchanged in behaviour (private 0700/0600, fsynced temporary file, atomic rename,
+  directory fsync; an impossible path means nothing pending). `PulseAudioRoute` journals the
+  previous default sink before `load-module` and clears it only once PulseAudio shows no
+  `controltv_tv` sink and another default. After a SIGKILL the null sink stayed the default (a
+  silent computer) and the next start was refused; now the bridge's `main` finishes the
+  restoration at the next start (stderr report, journal kept on failure) and `start` recovers
+  first. Restoring never overrides the user: the default is given back only while it is still the
+  null sink, only sounds still on it move, a vanished output is left to PulseAudio's fallback,
+  and repeating it changes nothing. The test suite now runs with a temporary `XDG_STATE_HOME`, so
+  no test can replay a real journal against the owner's display or sound server. Tests: a real
+  SIGKILLed child whose fake PulseAudio state outlives it, journal-before-change, user choices
+  kept, unplugged output, repeatability, unconfirmed and invalid journals; probes confirm the
+  journal and start-up recovery tests fail without the fix. Python 2,822 passed / 8 skipped,
+  coverage 98.89 %. Hardware NOT RUN.
+- [x] D2/D4-5 start-up X11 restoration (integrated into PR #121): `bridge.main` recovers a killed
+  run's extended screen
+  (`recover_interrupted_extension`) then its sound, each independently, stderr report and journal
+  kept on failure, retried at the next start. The recovery undoes only what is still the killed
+  run's: screens are moved back only while at the journaled shift (new `shift` field; an older
+  journal keeps the full put-back), the output is turned off only while it shows the TV mode, an
+  unplugged screen no longer pins the journal. `RestoreJournal` gains an owner `flock` on a
+  sibling `.lock` file (claimed before any change, released at verified clear, freed by the kernel
+  on SIGKILL), so no recovery undoes a live stream. Fixed: `extension_output()` built a monitor
+  whose recovery tore down the running extension; a refused `create` cleaned another stream's TV
+  output; a recovery outside X11 raised an unhandled `InvalidStreamConfiguration` at start-up.
+  Probes: removing the start-up call or the owner check fails the new tests. Python 2,851 passed
+  / 8 skipped, coverage 98.91 % (virtual_display and restore_journal 100 %). Hardware NOT RUN.
+- [ ] D4-5 hardware proof (authorization): kill the app while streaming with sound, restart, and
+  check the sound returns to the original output. HARDWARE PARTIAL 2026-11-01 (authorized,
+  `e6e5b82`, owner's desktop, no TV, no Tauri app): a real PulseAudio route survives a bridge
+  start during the stream, a SIGKILL leaves the computer muted with its journal, the real bridge
+  start-up restores default sink, sinks, stream placement and modules exactly and deletes the
+  journal. Remaining: the same with the app streaming to the TV.
+- [ ] D2/D4-5 X11 hardware proof (authorization): kill the app while extended (TV on the left),
+  restart without streaming, compare `xrandr --verbose` with the initial state. HARDWARE
+  PARTIAL 2026-11-01 (authorized, owner's desktop, forced HDMI connector, no TV, no Tauri app):
+  first run FAIL, GNOME had lit the forced connector by itself (1024x768) and the restoration
+  turned it off; fixed by journaling what the output displayed (`before`: mode, rate, position,
+  rotation) and giving it back on stop, failed create and recovery. Second run: `xrandr
+  --verbose` identical to the initial state apart from X timestamps, no `control-tv-*` mode,
+  journal deleted. Python 2,863 passed / 8 skipped, coverage 98.92 %. Remaining: the same with
+  the app streaming to the TV, and a normal stop on hardware.
+- Acceptance: only the extended screen is sent; a window can be moved onto it; after Stop,
+  failure, Ctrl-C or SIGKILL then restart, `xrandr --verbose` and the audio route match the
+  initial state and no `control-tv-*` mode remains.
+
+**Blockers:** D1-B1 lifted (#118, #119 and #120 merged); D1-B2 WebRTC advisories waived for local
+network only until their expiry, the `webrtc` 0.21 migration still pulls `digest` 0.10 through
+`rtc-crypto` and changes the transport API; every hardware step needs the owner's
+authorization.
+
 Security maintenance (2026-10-31, PR #119): the Python lock moves the transitive `pyasn1`
 dependency from 0.6.4 to the patched 0.6.5 release for CVE-2026-119194, CVE-2026-119195,
 CVE-2026-119196 and CVE-2026-119197. The dependency remains supplied through `adb-shell` and
@@ -87,7 +240,8 @@ now refuses deleting a missing or attached mode, like the real one (assumed, not
 hardware). Automated validation only; no display or TV was used.
 
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
-- [ ] **Open, owner decision:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
+- [x] **Owner decision taken 2026-10-25 (waiver below); the `webrtc` 0.21 migration stays open as
+  D1-B2:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
   constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`
   0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13. Only `crypto-bigint` >= 0.7.6 is
   patched; the newest `dtls` (0.17.2) still requires `p256` ^0.13, and `webrtc` 0.21 moves to the
@@ -151,8 +305,16 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   101x101 grid and measured in Chromium and WebKitGTK; the TV receiver maps its session states to clear
   screens, ignores late callbacks of a replaced session (no ghost session), ends it on stop and keeps the
   TV awake only while streaming; every remote key is tested end to end and pinned to the TV protocol's key
-  codes. The Android `VoiceCapture` records the phone's voice in the TV's voice format on demand only; the
-  voice session in the TV remote adapter and the bridge is still to wire. Automated validation only.
+  codes. On 2026-11-01 the Android `VoiceCapture` was wired through the embedded bridge and the existing
+  `androidtvremote2` voice session: explicit runtime permission, bounded push-to-talk, in-memory PCM only,
+  stop/disconnect/error cleanup and no automatic retry. PR #122 now includes `main` after #121. Its embedded
+  boundary converts Chaquopy's signed Java PCM array into Python `bytes` before `ControlService`, preserving
+  every 8-bit value. `VoiceCapture.stop()` permanently cancels that capture object; start/worker races cannot
+  open the microphone after cancellation because the actual open and stop decision share one lock. Local:
+  11 targeted Python tests, full check 2,870 passed / 8 skipped, 98.85% coverage, and 10 targeted Android JVM
+  tests pass. SHA `75c8806` is green in CI (`41684462930`, audit `41684463917`), including
+  quality/coverage, Tauri, Linux package and Android APK/JVM jobs. Independent review/merge and hardware
+  acceptance remain open; no device was used.
 - [x] Owner request, 2026-10-25: the Freebox editions are named as the owner's TV shows them, the
   receiver shows control-TV's own logo and the Freebox Disney+ entry the Disney+ logo; no other logo
   with a shippable licence exists (OQEE and TFOU on Commons are CC BY-SA), so the initials stay.
@@ -161,8 +323,8 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   560 px phone column; the phone keeps the single column. Checked on screenshots.
 - [x] Owner request, 2026-10-25: the window offers the whole Google TV remote (digits, Input, Settings,
   Info, Guide, channels, subtitles, audio track, colour keys, media keys, Google Assistant key); every
-  window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone":
-  streaming the voice to the TV's Assistant (`androidtvremote2.start_voice`) is the next step.
+  window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone"; the
+  Android phone-to-TV Assistant stream is implemented as of 2026-11-01 and awaits hardware acceptance.
 - [x] Audio/latency correction, 2026-10-25: the WebRTC capture lease now owns the same retryable
   `PulseAudioRoute` as HLS and gives its monitor source to the existing Opus FFmpeg process; release
   restores the prior Ubuntu output even when another cleanup step fails. The UI no longer disables
@@ -207,6 +369,9 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   media pipeline (it already did). Automated validation only.
 
 ## Rust/WebRTC — état logiciel au 2026-10-21
+
+Historique : cette branche est dans `main` depuis #111 (`88f08d3`) ; l'état courant est dans la
+section « Screen streaming — D1, D2, D4 » en tête de ce plan.
 
 La branche `feat/rust-webrtc-streaming`, empilée sur #97, ajoute le premier chemin WebRTC réel sans modifier les gestionnaires D1/D2 existants. `webrtc-engine` isole session bornée, capture/encodage FFmpeg, signalisation authentifiée et transport WebRTC. Tauri expose start/stop/status ; `android-tv-receiver` fournit l'application Leanback Kotlin/libwebrtc. La négociation et un paquet H.264 ont été validés entre deux pairs locaux ; l'APK debug compile et ses tests JVM passent.
 
@@ -256,7 +421,10 @@ Two kinds of evidence are kept apart everywhere in this plan (see "Progress rule
 - Capabilities are per device and per endpoint and are never assumed for all TVs.
 - `docs/REQUIREMENTS_TRACEABILITY.md` keeps the requirement history (issue #34); where it describes ChatGPT, voice, MCP tools or Windows, those parts are abandoned (see above).
 
-**Not requested:** a microphone, speech-to-text or voice assistant; a natural-language parser; a search interface or search results; a video player in control-TV; ChatGPT or any AI service in the control path; Windows.
+**Not requested:** speech-to-text, a natural-language parser, a search interface or search results, a video
+player in control-TV, ChatGPT or any AI service in the control path, or Windows. The narrowly scoped Android
+push-to-talk microphone for the TV's own Assistant is requested and implemented; it adds no AI service to
+control-TV and retains no recording.
 
 ## Architecture constraints
 
@@ -528,7 +696,9 @@ Deliverables:
 - [ ] the TV's applications shown and launched on the TV, per capability (item Q, R11-R12);
 - [ ] power on and off, the TV's audible volume and mute, and navigation, per capability (item Q, R7-R10);
 
-Not part of the window (owner, 2026-10-08): a microphone, a voice assistant, a search interface or a video player.
+Not part of the original window scope (owner, 2026-10-08): a search interface or a video player. The later
+owner decision of 2026-10-25 adds Android push-to-talk to the TV's own Assistant; implemented on 2026-11-01,
+automated validation only.
 
 Exit criteria:
 - [ ] application controls a TV manually, with no AI service in the path (needs a recorded real-hardware command result; with the restored scope this covers the TV's applications, power, audible sound, playback and navigation per capability, items M and Q);

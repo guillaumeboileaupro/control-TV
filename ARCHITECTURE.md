@@ -5,7 +5,7 @@
 control-TV is two standalone remotes, Ubuntu and Android, over one engine, usable in parallel on the same TV with no permanent server (issue #37; `docs/REQUIREMENTS_TRACEABILITY.md`). The voice entry point restored on 2026-10-08 (issue #34) was abandoned on 2026-10-12 with MCP development and Windows:
 
 - **Abandoned on 2026-10-12: ChatGPT's own voice (or text) mode** calling control-TV's tools (MCP), which drive the shared control service. The local MCP adapter stays in the code as it is, without further development; whether ChatGPT's voice mode could call custom MCP tools was never observed.
-- **control-TV, a standalone graphical TV remote** (Debian/Ubuntu and Android; Windows abandoned on 2026-10-12): TVs, the TV's applications launched on the TV, power, audible sound, playback and navigation, each per proven capability. It has no microphone, speech-to-text, voice assistant, intent parser, search interface or video player.
+- **control-TV, a standalone graphical TV remote** (Debian/Ubuntu and Android; Windows abandoned on 2026-10-12): TVs, the TV's applications launched on the TV, power, audible sound, playback and navigation, each per proven capability. Android also has explicit push-to-talk to the TV's own Assistant through the existing remote protocol; audio stays in memory. It has no speech-to-text, intent parser, search interface or video player.
 
 Manual control must work without ChatGPT, MCP, an OpenAI API key or a cloud dependency.
 
