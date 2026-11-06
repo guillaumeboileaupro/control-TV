@@ -1849,6 +1849,8 @@ Règle du propriétaire : appliquer la compétence `code-solid` et ne plus avoir
 
 After the one receiver link, foreground observation is retried only within the existing deadline; no launch is resent. Targeted simulated tests: 223 PASS; CI and hardware NOT RUN. Independent review and authorized hardware validation remain open.
 
+Review fixes (Claude, 2026-11-06, PR #125, owner-approved): P1, when the app was already in front before the link, only the receiver's answer confirms it until the end of the window, so a late refusal wins; the quick confirmation applies only when another app was in front. P2, every foreground read, connection included, is bounded by the time left (`front_app(..., limit)`). Local: 2,877 passed / 8 skipped, coverage 98.83%; hardware NOT RUN.
+
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 
 - **PR #38 APPROVED techniquement** au commit `c55bc4d6b58a5f8d5964a84165bc2a0884aad1ac`. **Aucune fusion autorisée ni réalisée.**

@@ -94,6 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-06 | Claude, PR #125 : Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1, si l'app était déjà au premier plan avant le lien, seule la réponse du récepteur la confirme jusqu'à la fin de la fenêtre (un refus tardif l'emporte) ; la confirmation rapide ne vaut que si une autre app était devant. P2, chaque lecture du premier plan (y compris la connexion) est bornée par le temps restant (`front_app(..., limit)`). Local : 2 877 PASS / 8 SKIP, couverture 98,83 % ; matériel NOT RUN. |
 | 2026-11-06 | T-02 : `main` après #122 intégré dans la branche existante. Après le lien récepteur unique, la confirmation Android relit le package au premier plan dans l'échéance bornée sans renvoyer de commande ; 223 tests simulés PASS. CI et matériel NOT RUN ; #123/#124 inchangées. |
 | 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |

@@ -642,6 +642,8 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 Après le lien récepteur unique, l’observation Android TV Remote du package au premier plan est relue dans l’échéance existante, sans second lien ni nouvelle commande. Tests simulés ciblés : 223 PASS ; CI et matériel NOT RUN. Revue indépendante et recette autorisée restent ouvertes.
 
+Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1, si l'app était déjà au premier plan avant le lien, seule la réponse du récepteur la confirme jusqu'à la fin de la fenêtre (un refus tardif l'emporte) ; la confirmation rapide ne vaut que si une autre app était devant. P2, chaque lecture du premier plan (y compris la connexion) est bornée par le temps restant (`front_app(..., limit)`). Local : 2 877 PASS / 8 SKIP, couverture 98,83 % ; matériel NOT RUN.
+
 ## Suivi
 
 | Lot | Avancement | Prochaine preuve |
