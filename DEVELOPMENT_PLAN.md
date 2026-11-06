@@ -224,6 +224,7 @@ Forgetting a TV remains an explicit user action and preserves pairing credential
 Regression tests cover network disappearance, restart, redetection, reconnection, two known TVs
 and pairing-data preservation. The 2026-10-30 hardware FAIL remains open for a later authorized
 retest after integration; no hardware test was run for this implementation.
+Review fixes (Claude, 2026-11-06, PR #126, owner-approved): P1, a TV restored from memory is never reached at its saved address (remote, text, voice, apps) before a discovery sees it again under its own identity; P2, the status of a restored TV shares one 8 s deadline between rediscovery and the read (under the shell's 10 s); P2 UI, Forget is tracked as pending and blocks selection, discovery and commands until it settles. Local: 2,890 passed / 8 skipped, coverage 98.67%, UI 426 passed; hardware NOT RUN.
 
 Security maintenance (2026-10-27): GHSA-qwgh-2vcv-g2f7 affected `block-buffer` 0.10.4 in both
 Rust lockfiles through `digest` 0.10.7. Directly selecting 0.12.1 is incompatible with the

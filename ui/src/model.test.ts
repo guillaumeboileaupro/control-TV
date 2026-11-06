@@ -15,6 +15,7 @@ import {
   describeStatus,
   failDiscovery,
   finishDiscovery,
+  forgetFailed,
   finishStatusRead,
   formatClock,
   initialState,
@@ -27,6 +28,7 @@ import {
   selectDevice,
   chosenDevice,
   startDiscovery,
+  startForget,
   forgetDevice,
   rememberDevice,
   toBridgeFailure,
@@ -309,6 +311,21 @@ describe("discovery", () => {
       ).devices,
       [],
     );
+  });
+
+  test("while a TV is being forgotten, nothing else starts, and a failure restores the controls", () => {
+    const found = rememberDevice(discovered(device("a"), device("b")), "a");
+    const forgetting = startForget(found, "a");
+
+    assert.equal(forgetting.send, true);
+    assert.equal(canSelect(forgetting.state), false);
+    assert.equal(canDiscover(forgetting.state), false);
+    assert.equal(selectDevice(forgetting.state, "b").request, null); // no newer selection to clear
+    assert.equal(startForget(forgetting.state, "b").send, false);
+    assert.equal(canSelect(forgetDevice(forgetting.state, "a")), true);
+    const failed = forgetFailed(forgetting.state);
+    assert.equal(canSelect(failed), true);
+    assert.equal(failed.devices[0]?.known, true);
   });
 
   test("a failed discovery keeps the selection and reports the failure", () => {

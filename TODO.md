@@ -220,6 +220,7 @@ APK Android compris ; matériel toujours NOT RUN.
   couvrent disparition réseau, redémarrage, redécouverte, reconnexion, deux TV et absence de perte
   d'appairage. Le FAIL matériel du 2026-10-30 reste à retester après intégration ; aucun test
   matériel n'a été lancé pour cette correction.
+  Corrections de revue (Claude, 2026-11-06, PR #126, accord du propriétaire) : P1, une TV restaurée de la mémoire n'est jamais utilisée à son adresse sauvegardée (télécommande, texte, voix, applications) avant qu'une découverte la revoie sous son identité ; P2, statut d'une TV restaurée borné par une échéance unique de 8 s pour la redécouverte et la lecture (sous les 10 s du shell) ; P2 UI, « Oublier » est suivi comme opération en cours et bloque sélection, découverte et commandes jusqu'à la réponse. Local : 2 890 PASS / 8 SKIP, couverture 98,67 %, UI 426 PASS ; matériel NOT RUN.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.

@@ -22,10 +22,13 @@ from control_tv.domain import (
     DiscoveryError,
     ErrorCode,
     InvalidArgumentError,
+    KeyPress,
     MediaRequest,
     MediaStatus,
     OperationTimeoutError,
     PlaybackState,
+    RemoteKey,
+    RemoteObservation,
     StorageUnavailableError,
     UnsupportedOperationError,
     VolumeControlType,
@@ -1070,6 +1073,85 @@ def test_status_of_restored_tv_rediscovers_before_reconnecting() -> None:
 
     assert status.device_id == DEVICE_ID
     assert [name for name, _ in transport.calls[:2]] == ["discover", "get_status"]
+
+
+class SlowDiscovery(DiscoverySequence):
+    """Discovery that takes its whole timeout plus the remote-capability browse after it."""
+
+    def __init__(self, results: list[list[Device]], clock: FakeClock) -> None:
+        super().__init__(results)
+        self.timer = clock
+        self.timeouts: list[float] = []
+
+    def discover(self, *, timeout: float) -> list[Device]:
+        found = super().discover(timeout=timeout)
+        self.timeouts.append(timeout)
+        self.timer.sleep(timeout + 1.5)
+        return found
+
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        self.timeouts.append(timeout)
+        return super().get_status(device_id, timeout=timeout)
+
+
+def test_status_of_restored_tv_shares_one_deadline_with_its_rediscovery() -> None:
+    live = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    clock = FakeClock()
+    transport = SlowDiscovery([[live]], clock)
+    service = ControlService(
+        transport, device_memory=DeviceMemoryFake((live,)), clock=clock.monotonic
+    )
+    started = clock.monotonic()
+
+    service.get_status(DEVICE_ID)
+
+    discovery, read = transport.timeouts
+    assert discovery + 1.5 + read <= 8.0  # within the shell's 10 s status bound
+    assert clock.monotonic() - started <= 8.0
+
+
+class KeyRemote:
+    """Records where each key goes; nothing else is used by these tests."""
+
+    def __init__(self) -> None:
+        self.hosts: list[str] = []
+
+    def press(self, host: str, key: RemoteKey) -> KeyPress:
+        self.hosts.append(host)
+        observed = RemoteObservation(is_on=True, volume=None)
+        return KeyPress(key=key, before=observed, after=observed)
+
+
+def test_a_restored_tv_receives_nothing_until_it_is_found_again() -> None:
+    saved = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    remote = KeyRemote()
+    transport = DiscoverySequence([[]])
+    service = ControlService(
+        transport,
+        device_memory=DeviceMemoryFake((saved,)),
+        remote=remote,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(DeviceUnavailableError):
+        service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)
+    assert remote.hosts == []  # the saved address may now be another TV
+    assert [name for name, _ in transport.calls] == ["discover"]
+
+
+def test_a_restored_tv_found_at_a_new_address_is_reached_there() -> None:
+    saved = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    moved = dataclasses.replace(saved, host="192.0.2.7")
+    remote = KeyRemote()
+    service = ControlService(
+        DiscoverySequence([[moved]]),
+        device_memory=DeviceMemoryFake((saved,)),
+        remote=remote,  # type: ignore[arg-type]
+    )
+
+    service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)
+    service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)  # found once, not every key
+
+    assert remote.hosts == ["192.0.2.7", "192.0.2.7"]
 
 
 def test_rediscovery_persists_new_coordinates_without_duplicates() -> None:

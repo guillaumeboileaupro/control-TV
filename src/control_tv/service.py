@@ -69,6 +69,10 @@ class Observation:
 ExpectedState = Callable[[DeviceStatus], Observation]
 
 DEFAULT_DISCOVERY_TIMEOUT = 5.0
+# Finding a TV restored from memory again, then reading it: under the shell's 10 s status bound,
+# with room for the remote-capability browse that follows a discovery.
+RECONNECT_BUDGET = 8.0
+REDISCOVERY_SHARE = 3 / 8
 DEFAULT_CONFIRM_TIMEOUT = 5.0
 DEFAULT_STATUS_TIMEOUT = 5.0
 DEFAULT_POLL_INTERVAL = 0.25
@@ -396,7 +400,7 @@ class ControlService:
         # independent observer has recorded the session change. None in normal use.
         self._gate = gate
         self._channels = TvChannels(
-            self._discovered,
+            self._reachable,
             remote=remote,
             apps=apps,
             memory=app_memory,
@@ -460,16 +464,33 @@ class ControlService:
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
         device_id = _checked_id(device_id)
         known = self._devices.get(device_id)
-        if known is not None and not known.available:
+        if known is None or known.available:
+            return self._transport.get_status(device_id, timeout=self._status_timeout)
+        # One deadline for finding the TV again and reading it, within the shell's own bound.
+        deadline = self._clock() + max(self._status_timeout, RECONNECT_BUDGET)
+        self._found_again(device_id, (deadline - self._clock()) * REDISCOVERY_SHARE)
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise OperationTimeoutError(
+                "the TV was found again too late to be read", device_id=device_id
+            )
+        return self._transport.get_status(device_id, timeout=min(self._status_timeout, remaining))
+
+    def _found_again(self, device_id: DeviceId, timeout: float) -> None:
+        """A TV restored from memory is used only once a discovery sees it again.
+
+        Its saved address may since belong to another TV paired with this installation, so
+        nothing is sent there before the TV announces itself again under its own identity.
+        """
+        if timeout > 0:
             with suppress(DiscoveryError):
-                self.discover_devices(timeout=self._status_timeout)
-            refreshed = self._devices.get(device_id)
-            if refreshed is None or not refreshed.available:
-                raise DeviceUnavailableError(
-                    f"known device {device_id} is not available on the network",
-                    device_id=device_id,
-                )
-        return self._transport.get_status(device_id, timeout=self._status_timeout)
+                self.discover_devices(timeout=timeout)
+        refreshed = self._devices.get(device_id)
+        if refreshed is None or not refreshed.available:
+            raise DeviceUnavailableError(
+                f"known device {device_id} is not available on the network",
+                device_id=device_id,
+            )
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> CommandResult:
         device_id = _checked_id(device_id)
@@ -692,9 +713,17 @@ class ControlService:
     def open_tv_apps_port(self, device_id: DeviceId) -> None:
         self._channels.open_tv_apps_port(device_id)
 
-    def _discovered(self, device_id: DeviceId) -> Device | None:
-        """The device of the last discovery with this id, or None."""
-        return self._devices.get(_checked_id(device_id))
+    def _reachable(self, device_id: DeviceId) -> Device | None:
+        """The device of the last discovery with this id, or None.
+
+        A TV restored from memory is first found again on the network, so its remote, text,
+        voice and apps never reach a stale address.
+        """
+        device_id = _checked_id(device_id)
+        known = self._devices.get(device_id)
+        if known is not None and not known.available:
+            self._found_again(device_id, RECONNECT_BUDGET * REDISCOVERY_SHARE)
+        return self._devices.get(device_id)
 
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout

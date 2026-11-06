@@ -12,6 +12,7 @@ import {
   describeStatus,
   failDiscovery,
   forgetDevice,
+  forgetFailed,
   finishDiscovery,
   finishStatusRead,
   HEALTHY,
@@ -24,6 +25,7 @@ import {
   setHostCapabilities,
   chosenDevice,
   startDiscovery,
+  startForget,
   toBridgeFailure,
   type AppState,
   type BridgeFailure,
@@ -705,10 +707,12 @@ function start(elements: Elements): void {
   }
 
   function onForget(deviceId: string): void {
-    if (!canSelect(state)) return;
+    const next = startForget(state, deviceId);
+    update(next.state);
+    if (!next.send) return;
     void invoke("bridge_forget_device", { deviceId })
       .then(() => update(forgetDevice(state, deviceId)))
-      .catch(() => undefined);
+      .catch(() => update(forgetFailed(state)));
   }
 
   function onRefresh(): void {

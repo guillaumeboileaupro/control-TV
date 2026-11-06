@@ -109,6 +109,8 @@ export interface AppState {
   remote: RemoteView;
   notice: string | null;
   nextRequestId: number;
+  // The TV whose forgetting the bridge has not answered yet: nothing else is started meanwhile.
+  forgetting: string | null;
 }
 
 export interface StatusRequest {
@@ -226,6 +228,7 @@ export function initialState(): AppState {
     remote: REMOTE_IDLE,
     notice: null,
     nextRequestId: 1,
+    forgetting: null,
   };
 }
 
@@ -251,7 +254,8 @@ export function idle(state: AppState): boolean {
     state.discovery.kind !== "running" &&
     state.status.kind !== "loading" &&
     state.command.kind !== "pending" &&
-    state.remote.pending === null
+    state.remote.pending === null &&
+    state.forgetting === null
   );
 }
 
@@ -313,7 +317,20 @@ export function rememberDevice(state: AppState, deviceId: string): AppState {
   return { ...state, devices, selected };
 }
 
+// Asks to forget a TV; nothing else starts until the bridge answers (`forgetDevice` or
+// `forgetFailed`). Refused while another request is in flight.
+export function startForget(state: AppState, deviceId: string): { state: AppState; send: boolean } {
+  if (!canSelect(state)) return { state, send: false };
+  return { state: { ...state, forgetting: deviceId }, send: true };
+}
+
+// The bridge did not forget the TV: it stays as it was and the controls come back.
+export function forgetFailed(state: AppState): AppState {
+  return { ...state, forgetting: null };
+}
+
 export function forgetDevice(state: AppState, deviceId: string): AppState {
+  state = { ...state, forgetting: null };
   const devices = state.devices.flatMap((device) => {
     if (device.id !== deviceId) return [device];
     return device.available === false ? [] : [{ ...device, known: false }];
