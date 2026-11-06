@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from control_tv.ports import TvControl
-from control_tv.screen_streaming.audio_route import PulseAudioRoute
+from control_tv.screen_streaming.audio_route import PulseAudioRoute, persistent_audio_route
 from control_tv.screen_streaming.cast_receiver import CastHlsReceiver
 from control_tv.screen_streaming.h264_encoder import (
     SYSTEM_AUDIO,
@@ -49,7 +49,11 @@ from control_tv.screen_streaming.model import (
 )
 from control_tv.screen_streaming.ports import StreamReceiver
 from control_tv.screen_streaming.service import StreamingSessionService, StreamRequest
-from control_tv.screen_streaming.virtual_display import Position, XrandrVirtualMonitor
+from control_tv.screen_streaming.virtual_display import (
+    Position,
+    XrandrVirtualMonitor,
+    persistent_virtual_monitor,
+)
 from control_tv.screen_streaming.x11_capture import X11Capture
 from control_tv.screencast.capabilities import FfmpegCapabilityProbe
 from control_tv.screencast.model import EncoderPreference
@@ -232,7 +236,7 @@ def assemble(
     if chosen.mode is not Mode.SYNTHETIC:
         capture = capture or X11Capture()
         if chosen.mode is Mode.EXTEND:
-            used_virtual = virtual or XrandrVirtualMonitor()
+            used_virtual = virtual or persistent_virtual_monitor()
             output = used_virtual.create(
                 chosen.width,
                 chosen.height,
@@ -256,7 +260,7 @@ def assemble(
         source = CapturedVideo(handle)
     # A captured screen goes with the computer's sound, which then plays on the TV only.
     route = audio_route or (
-        PulseAudioRoute() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
+        persistent_audio_route() if chosen.mode is not Mode.SYNTHETIC and encoder is None else None
     )
     try:
         sound = route.start() if route is not None else SYSTEM_AUDIO

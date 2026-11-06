@@ -170,6 +170,20 @@ def test_the_remote_confirms_a_start_when_the_phone_cannot_receive_the_reply() -
     assert tv.front_reads == 1
 
 
+def test_delayed_foreground_is_read_again_without_relaunching() -> None:
+    class DelayedTv(FakeReceiverTv):
+        def front_app(self, host: str, package: str) -> str | None:
+            self.front_reads += 1
+            return package if self.front_reads == 2 else None
+
+    tv = DelayedTv(None)
+    launched = lister(tv, timeout=1).launch_app(HOST, "tv.arte.plus7")
+
+    assert launched == AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    assert len(tv.links) == 1
+    assert tv.front_reads == 2
+
+
 def test_an_explicit_refusal_wins_over_the_foreground_observation() -> None:
     tv = launch_tv("refused")
     tv.front = "tv.arte.plus7"

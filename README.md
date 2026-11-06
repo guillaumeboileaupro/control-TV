@@ -5,7 +5,7 @@ A standalone graphical remote for a Google TV, on Ubuntu and on Android, both ov
 ## Goals
 
 - **Abandoned on 2026-10-12 (issue #37): by voice, in the ChatGPT app,** through control-TV's tools (MCP). The local MCP adapter stays in the code as it is, without further development; whether ChatGPT's voice mode could call these tools was never established.
-- **control-TV, a graphical TV remote** (Ubuntu/Debian and Android, two standalone remotes on the same TV): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation, each where the TV supports it. It has no microphone, voice assistant, search interface or video player.
+- **control-TV, a graphical TV remote** (Ubuntu/Debian and Android, two standalone remotes on the same TV): discover and select TVs, show the TV's applications and launch them on the TV, power on and off, the TV's audible volume and mute, playback and navigation, each where the TV supports it. On Android, an explicit push-to-talk action can stream the phone microphone to the TV's own Assistant without retaining audio. It has no speech-to-text, search interface or video player.
 - Standalone manual TV control that works without ChatGPT, MCP, an OpenAI API key or any cloud dependency.
 - One authoritative control/domain layer shared by the Ubuntu window, the Android app and the MCP adapter (kept as is, not developed).
 - Python for the Chromecast integration (`pychromecast` where it matches the required Cast capabilities); Rust only for native or performance-sensitive components that justify it.

@@ -8,7 +8,7 @@ Le chemin faible latence complète, sans remplacer, `ControlService` et le repli
 
 - Python garde découverte, sélection X11, D1/D2 et restauration de l'affichage.
 - Tauri vérifie le consentement et construit une session Rust unique.
-- `FfmpegMediaSource` lance sans shell une capture X11 H.264 baseline/zerolatency et, si demandé, le moniteur PulseAudio en Opus low-delay. Les enfants sont `kill_on_drop` et explicitement attendus à l'arrêt.
+- `FfmpegMediaSource` lance sans shell une capture X11 H.264 baseline/zerolatency et, si demandé, le moniteur PulseAudio en Opus low-delay. Les enfants sont `kill_on_drop` et explicitement attendus à l'arrêt. Quand le transport est en retard, les lecteurs continuent de vider FFmpeg et abandonnent les nouvelles unités (files 1 vidéo / 4 audio) : chaque abandon est reporté sur l'unité suivante (`MediaFrame::dropped_before` → `Sample::prev_dropped_packets`), ce qui conserve l'horloge RTP et signale une perte au récepteur ; après un abandon vidéo, les images P suivantes sont aussi abandonnées jusqu'à la prochaine IDR, afin de figer brièvement l'image plutôt que de la corrompre. Les diagnostics séparent images produites, envoyées et abandonnées, et paquets audio abandonnés.
 - `WebRtcTransport` crée les pistes H.264/Opus, négocie SDP/ICE et draine RTCP.
 - `PairingServer` écoute uniquement l'adresse choisie, sur un port éphémère, pour un échange unique borné. Un jeton aléatoire de 48 caractères est requis et masqué dans `Debug`.
 - `SessionController` impose une session, un délai de négociation et une durée maximale d'une heure.

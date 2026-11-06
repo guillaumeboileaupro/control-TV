@@ -181,6 +181,7 @@ function problem(
 
 function start(elements: Elements): void {
   let state = initialState();
+  let androidVoice = false;
   let health: ServiceHealth = HEALTHY;
   // Numbers every bridge request when it starts, so only a request started after a service
   // problem was recorded can show that the service answers again.
@@ -787,6 +788,7 @@ function start(elements: Elements): void {
     try {
       const result = await invoke<PingResult>("bridge_ping");
       update(setHostCapabilities(state, result.tvApps === true, result.tvAppsPort === true));
+      androidVoice = await invoke<boolean>("android_voice_available").catch(() => false);
       noteAnswer(number, null);
     } catch (error) {
       const next = recordServiceFailure(health, toBridgeFailure(error), requestsStarted);
@@ -822,6 +824,31 @@ function start(elements: Elements): void {
     filterApps: (filter) => update(setAppFilter(state, filter)),
     focusElsewhere: () =>
       (elements.refreshButton.hidden ? elements.pickerSummary : elements.refreshButton).focus(),
+    voice: {
+      available: () => androidVoice,
+      start: async () => {
+        const deviceId = state.selected?.id;
+        if (deviceId === undefined) return "Choose a TV before using the microphone.";
+        try {
+          await invoke("bridge_start_remote_voice", { deviceId });
+          return null;
+        } catch (error) {
+          const failure = describeFailure(toBridgeFailure(error), "use the TV Assistant");
+          return `${failure.title}. ${failure.hint}`;
+        }
+      },
+      stop: async () => {
+        const deviceId = state.selected?.id;
+        if (deviceId === undefined) return null;
+        try {
+          await invoke("bridge_stop_remote_voice", { deviceId });
+          return null;
+        } catch (error) {
+          const failure = describeFailure(toBridgeFailure(error), "stop the TV Assistant");
+          return `${failure.title}. ${failure.hint}`;
+        }
+      },
+    },
   });
 
   const sound = createSoundController({

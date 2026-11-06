@@ -210,19 +210,22 @@ class ReceiverAppList:
             deadline = time.monotonic() + self._timeout
             port = server.server_address[1]
             self._link.open_receiver_link(host, make_link(f"http://{address}:{port}{path}", token))
-            confirmed = confirm() if confirm is not None else None
-            # A signed answer is more precise than the foreground observation (not installed
-            # and refused remain distinct). Give the receiver's already-started local POST a
-            # short chance to finish before accepting the remote's foreground observation.
-            if confirmed is not None and not received:
-                done.wait(min(CONFIRMATION_GRACE, max(0.0, deadline - time.monotonic())))
-            if received:
-                return received[0]
-            if confirmed is not None:
-                return confirmed
-            remaining = max(0.0, deadline - time.monotonic())
-            if not done.wait(remaining):
-                raise OperationTimeoutError(NO_ANSWER)
+            while not received:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise OperationTimeoutError(NO_ANSWER)
+                confirmed = confirm() if confirm is not None else None
+                # The correlated receiver answer takes precedence over an observation.
+                # Poll only the foreground app; never resend the launch command.
+                remaining = max(0.0, deadline - time.monotonic())
+                if confirmed is not None:
+                    done.wait(min(CONFIRMATION_GRACE, remaining))
+                    if received:
+                        return received[0]
+                    if remaining > 0:
+                        return confirmed
+                    raise OperationTimeoutError(NO_ANSWER)
+                done.wait(min(CONFIRMATION_GRACE, remaining) if confirm else remaining)
         finally:
             server.shutdown()
             server.server_close()
