@@ -1847,7 +1847,7 @@ Règle du propriétaire : appliquer la compétence `code-solid` et ne plus avoir
 
 #### Mise à jour T-02 — 2026-11-06
 
-After the one receiver link, foreground observation is retried only within the existing deadline; no launch is resent. Targeted simulated tests PASS; CI and hardware NOT RUN. Independent review and authorized hardware validation remain open.
+After the one receiver link, foreground observation is retried only within the existing deadline; no launch is resent. Targeted simulated tests: 223 PASS; CI and hardware NOT RUN. Independent review and authorized hardware validation remain open.
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 

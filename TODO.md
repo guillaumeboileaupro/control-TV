@@ -640,7 +640,7 @@ sur le réseau domestique. Aucun serveur permanent ni exposition Internet n'est 
 
 ## Mise à jour T-02 — 2026-11-06
 
-Après le lien récepteur unique, l’observation Android TV Remote du package au premier plan est relue dans l’échéance existante, sans second lien ni nouvelle commande. Tests simulés ciblés PASS ; CI et matériel NOT RUN. Revue indépendante et recette autorisée restent ouvertes.
+Après le lien récepteur unique, l’observation Android TV Remote du package au premier plan est relue dans l’échéance existante, sans second lien ni nouvelle commande. Tests simulés ciblés : 223 PASS ; CI et matériel NOT RUN. Revue indépendante et recette autorisée restent ouvertes.
 
 ## Suivi
 

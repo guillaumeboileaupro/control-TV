@@ -94,7 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
-| 2026-11-06 | T-02 : `main` après #122 intégré dans la branche existante. Après le lien récepteur unique, la confirmation Android relit le package au premier plan dans l'échéance bornée sans renvoyer de commande ; test de régression simulé ajouté. CI et matériel NOT RUN ; #123/#124 inchangées. |
+| 2026-11-06 | T-02 : `main` après #122 intégré dans la branche existante. Après le lien récepteur unique, la confirmation Android relit le package au premier plan dans l'échéance bornée sans renvoyer de commande ; 223 tests simulés PASS. CI et matériel NOT RUN ; #123/#124 inchangées. |
 | 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |
 | 2026-10-31 | Première consolidation exhaustive du tableau de bord et des règles d'itération. |
 | 2026-10-31 | PR #119 : cause du job qualité identifiée (skill Claude copié au lieu d'un lien relatif) ; lien corrigé localement, T-03/T-04/T-05 et nouveau défaut T-06 synchronisés dans TODO et plan ; validation/CI à relancer. |
