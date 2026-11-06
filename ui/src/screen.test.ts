@@ -366,6 +366,17 @@ describe("the stream both hosts report", () => {
     assert.equal(describeScreen(idle, true).canChoose, true);
   });
 
+  test("a WebRTC failure still holding the capture is dismissed through WebRTC", () => {
+    const sent = {
+      ...consentedStart(confirming(), "tv-1").state,
+      transportUsed: "webrtc" as const,
+    };
+    const failed = reconcileStreams(sent, stream("failed"), { state: "idle" });
+    assert.equal(failed.transportUsed, "webrtc");
+    assert.equal(failed.stream.state, "failed");
+    assert.equal(describeScreen(failed, true).stopLabel, "Dismiss");
+  });
+
   test("a side that did not answer neither invents nor ends a stream", () => {
     const running = {
       ...finishPoll(available(), stream("running")),

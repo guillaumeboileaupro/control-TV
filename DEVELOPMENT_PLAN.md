@@ -1252,6 +1252,12 @@ exposure and no permanent server.
     chosen side only; the shell now forwards it to the bridge, which already accepted it. Rust
     and UI regression tests; local UI 433, Tauri 105, Python 2 870 passed / 8 skipped
     (98.85 %); no device used;
+  - [x] Dismissing a WebRTC failure releases what it still holds (2026-11-06, PR #124, Codex
+    review P1): when a WebRTC start failed and restoring the extended screen or sound failed
+    too, the card took the idle engine for HLS and Dismiss cleared the failure while both stayed
+    held. `ScreenStreamController.stop()` now restores them for any host and keeps the failure
+    shown until it succeeds; the card keeps the known WebRTC transport. Python and UI tests;
+    local UI 434, Python 2 872 passed / 8 skipped; no device used;
   - [x] required WebRTC/receiver audit green again: RUSTSEC-2026-0441 (`pin-utils` 0.1.1
     unmaintained, no known vulnerability, no fixed version) reaches `webrtc 0.14` through
     `nix 0.26` and `webrtc-util 0.12`; published after #122 merged, it fails `main` too. Owner

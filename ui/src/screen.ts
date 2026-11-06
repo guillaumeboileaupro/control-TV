@@ -579,7 +579,9 @@ export function reconcileStreams(
   if (captured.state === "idle") {
     return { ...state, transportUsed: null, stream: captured };
   }
-  return following(state, engine === null ? (state.transportUsed ?? "hls") : "hls", captured);
+  // An idle engine says nothing about who owns the capture: a WebRTC start whose cleanup failed
+  // still holds its screen and sound in the control layer, and only a WebRTC stop releases them.
+  return following(state, state.transportUsed ?? "hls", captured);
 }
 
 // A stream found running: the mode buttons and the screen show what is streamed, not an older
