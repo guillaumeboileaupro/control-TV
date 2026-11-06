@@ -1246,6 +1246,12 @@ exposure and no permanent server.
     Duplicate, Extend and Stop are unchanged otherwise: a mode change still requires Stop first,
     and concurrent starts stay refused by the control layer (one lease) and blocked in the UI.
     UI tests only (430 passing); no device used;
+  - [x] Extended screen placed where it is shown (2026-11-06, PR #124, `main` after #122
+    merged in): the corner chosen by dragging the TV's screen in the display manager (`x`, `y`)
+    was dropped by the three Tauri commands that start a stream, so the screen landed on the
+    chosen side only; the shell now forwards it to the bridge, which already accepted it. Rust
+    and UI regression tests; local UI 433, Tauri 105, Python 2 870 passed / 8 skipped
+    (98.85 %); no device used;
   - [ ] the card used against the TV during the authorized run;
   - [x] GNOME-inspired display-manager UI implemented on PR #97 with Apply, Cancel, Keep and
     timed Revert. Only modes reported by X11 are offered; unsupported/disconnected outputs are

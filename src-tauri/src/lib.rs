@@ -957,7 +957,8 @@ done"#,
                 true,
                 &Placement {
                     refresh: 60,
-                    position: "right"
+                    position: "right",
+                    origin: None,
                 }
             ),
             json!({"deviceId": "uuid-1", "mode": "duplicate", "screen": "eDP-1",
@@ -974,11 +975,40 @@ done"#,
                 false,
                 &Placement {
                     refresh: 50,
-                    position: "below"
+                    position: "below",
+                    origin: None,
                 }
             )["screen"],
             Value::Null
         );
+    }
+
+    #[test]
+    fn an_extension_moved_in_the_window_carries_its_exact_corner() {
+        let placed = |origin| {
+            screen_stream_request(
+                "uuid-1",
+                "extend",
+                None,
+                (1920, 1080),
+                60,
+                true,
+                &Placement {
+                    refresh: 60,
+                    position: "left",
+                    origin,
+                },
+            )
+        };
+
+        let moved = placed(Some((-1920, 120)));
+        assert_eq!(
+            (moved["x"].clone(), moved["y"].clone()),
+            (json!(-1920), json!(120))
+        );
+        assert_eq!(moved["position"], "left");
+        let unmoved = placed(None);
+        assert!(unmoved.get("x").is_none() && unmoved.get("y").is_none());
     }
 
     #[test]
@@ -1004,6 +1034,7 @@ done"#,
             &Placement {
                 refresh: 50,
                 position: "left",
+                origin: None,
             },
         );
 

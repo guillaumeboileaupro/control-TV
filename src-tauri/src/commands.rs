@@ -471,10 +471,12 @@ pub(crate) async fn bridge_open_tv_apps_port(
 }
 
 /// Where and how "extend" places the TV's screen: its refresh rate and its side of the primary
-/// screen ("left", "right", "above" or "below"), as the window's extension menu chose them.
+/// screen ("left", "right", "above" or "below"), as the window's extension menu chose them, and
+/// the exact top-left corner when the screen was moved in the window's display manager.
 pub(crate) struct Placement<'a> {
     pub(crate) refresh: u32,
     pub(crate) position: &'a str,
+    pub(crate) origin: Option<(i32, i32)>,
 }
 
 /// The request that starts streaming this computer's screen to the TV: "duplicate" one screen or
@@ -489,7 +491,7 @@ pub(crate) fn screen_stream_request(
     consent: bool,
     placement: &Placement<'_>,
 ) -> Value {
-    json!({
+    let mut request = json!({
         "deviceId": device_id,
         "mode": mode,
         "screen": screen,
@@ -499,7 +501,12 @@ pub(crate) fn screen_stream_request(
         "consent": consent,
         "refresh": placement.refresh,
         "position": placement.position,
-    })
+    });
+    if let Some((x, y)) = placement.origin {
+        request["x"] = json!(x);
+        request["y"] = json!(y);
+    }
+    request
 }
 
 /// Forwards one screen stream request: no retry, no state of its own; the session lives in the
@@ -549,10 +556,13 @@ pub(crate) async fn bridge_prepare_webrtc_capture(
     consent: bool,
     refresh: Option<u32>,
     position: Option<String>,
+    x: Option<i32>,
+    y: Option<i32>,
 ) -> Result<Value, BridgeFailure> {
     let placement = Placement {
         refresh: refresh.unwrap_or(60),
         position: position.as_deref().unwrap_or("right"),
+        origin: x.zip(y),
     };
     let params = screen_stream_request(
         &device_id,
@@ -599,10 +609,13 @@ pub(crate) async fn bridge_start_screen_stream(
     consent: bool,
     refresh: Option<u32>,
     position: Option<String>,
+    x: Option<i32>,
+    y: Option<i32>,
 ) -> Result<Value, BridgeFailure> {
     let placement = Placement {
         refresh: refresh.unwrap_or(60),
         position: position.as_deref().unwrap_or("right"),
+        origin: x.zip(y),
     };
     let params = screen_stream_request(
         &device_id,

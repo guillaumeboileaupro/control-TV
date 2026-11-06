@@ -176,6 +176,19 @@ describe("consent", () => {
     );
     assert.equal(extend.request?.args.screen, null);
   });
+
+  test("an extension moved in the display manager starts where it is shown", () => {
+    const moved = moveExtension(choose(available(), { mode: "extend" }), -1920, 0);
+    const next = consentedStart(askConsent(moved, true), "tv-1");
+    assert.notEqual(moved.choice.x, null);
+    assert.equal(next.request?.args.x, moved.choice.x);
+    assert.equal(next.request?.args.y, moved.choice.y);
+    const duplicate = consentedStart(
+      askConsent(choose(moved, { mode: "duplicate" }), true),
+      "tv-1",
+    );
+    assert.equal(duplicate.request?.args.x, undefined);
+  });
 });
 
 describe("the stream", () => {
