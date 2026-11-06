@@ -12,3 +12,8 @@ reason = "crypto-bigint 0.5.5 via webrtc 0.14 -> dtls -> p256/p384 0.13: no comp
 id = "RUSTSEC-2025-0141"
 ignoreUntil = 2026-11-30T23:59:59Z
 reason = "bincode 1.3.3 is unmaintained (no known vulnerability), pulled in by webrtc 0.14; removed by the webrtc 0.21 migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0441"
+ignoreUntil = 2026-11-30T23:59:59Z
+reason = "pin-utils 0.1.1 is unmaintained (no known vulnerability or fixed release), pulled in by webrtc 0.14 -> webrtc-util 0.12 -> nix 0.26; removed by the webrtc 0.21 migration."
