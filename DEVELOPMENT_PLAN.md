@@ -214,6 +214,9 @@ Python suite: 2,886 PASS, 8 SKIP (PyInstaller missing), coverage 98.07%; final m
 369 targeted tests PASS. Review and authorized hardware acceptance remain outstanding.
 Functional commit `369ffcb` pushed; final cumulative coverage 98.53% after targeted tests.
 Cleanup removed 18 MiB of caches/coverage data; no native build was produced.
+Final integration 2026-11-06: `main` is already an ancestor through #122 (#124 remains open).
+Registry/service/bridge: 534 targeted tests PASS, lint and format PASS; Ubuntu and Android models
+consume `available` and label an offline known TV without claiming a connection.
 Known TVs are stored in a private registry separate from certificates, restored as unavailable after application restart,
 and reconciled with live discovery. Reconnection performs a bounded rediscovery before reading
 status, so stale identity or address data never becomes a false connection or availability claim.

@@ -35,7 +35,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 | Priorité | Chantier | État | Temps restant (min / max / méd.) | Prochaine action | Responsable |
 |---|---|---|---|---|---|
 | P1 | T-01 - Appairage durable | #118 ouverte ; FAIL matériel avant migration | 0,5 / 2 / 1 h | Finaliser #118, revue, fusion, recette | Codex / Claude |
-| P1 | T-06 - Découverte persistante | Branche existante reprise avec main : mémorisation automatique après appairage/lecture authentifiée, coordonnées actualisées, hors ligne distinct ; tests locaux PASS, matériel NOT RUN | 2 / 5 / 3 h | Revue autorisée puis recette ; aucune nouvelle PR dans cette mission | Codex |
+| P1 | T-06 - Découverte persistante | Branche prête à intégrer : main jusqu’à #122 déjà intégré ; registre, bridge, Ubuntu/Android `available` cohérents, 534 tests ciblés PASS ; matériel NOT RUN. #124 ouverte, non intégrée | 2 / 5 / 3 h | Revue autorisée puis recette ; aucune nouvelle PR dans cette mission | Codex |
 | P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
 | P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED via #120 : pertes sans corruption, VA-API avec repli `libx264`, Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien et test Rust de bout en bout. HARDWARE NOT RUN | 3 / 8 / 5 h | D1-9 avec autorisation | Claude |
 | P1 | D2 - Extension Rust/X11 | PR #121 : connecteur RandR forcé conservé sans evdi ; journal X11 atomique et reprise après plantage implémentés/testés ; démarrage du pont rendu tolérant à un journal inaccessible. HARDWARE NOT RUN | 4 / 12 / 7 h | CI puis recette autorisée | Codex |
@@ -94,6 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-06 | Finalisation T-06 : vérification de #124 ouverte, donc absente de main ; `main` jusqu’à #122 déjà ancêtre de la branche. Registre/service/bridge : 534 tests ciblés PASS, lint/format PASS. UI Ubuntu et sélecteur Android lisent `available` et distinguent une TV connue hors ligne ; matériel et CI NOT RUN. |
 | 2026-11-04 | Livraison T-06 `369ffcb` poussée sans PR ; couverture cumulée finale 98,53 % après les 369 tests ciblés. Nettoyage des caches et données de couverture : 18 Mio supprimés ; aucun build natif produit. Validation native Ubuntu/Android et recette matérielle non exécutées dans cette reprise. |
 | 2026-11-04 | T-06 : reprise de `f6a1a2c`, intégration de main après #122 et résolution documentaire sans perte. Mémorisation après appairage/lecture authentifiée et actualisation des coordonnées ajoutées ; 2 886 tests Python PASS, 8 SKIP (PyInstaller absent), couverture 98,07 %, lint/format/typage PASS. Dernier parcours : 369 tests ciblés PASS. CI non lancée, aucune nouvelle PR ni utilisation matérielle ; #123/#124 préservées. |
 | 2026-11-01 | Codex, branche `feat/d2-extended-display` sans PR : D2 réutilise le bail Rust/WebRTC existant ; journal X11 privé atomique, restauration au prochain processus et conservation sur échec implémentés. Tests ciblés locaux PASS, matériel NOT RUN ; #120 reste l'unique PR ouverte. Route PulseAudio persistante encore ouverte. |

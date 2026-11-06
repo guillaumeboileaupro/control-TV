@@ -211,6 +211,9 @@ APK Android compris ; matériel toujours NOT RUN.
   parcours de migration : 369 tests ciblés PASS. Revue et recette matérielle restent à faire.
   Livraison fonctionnelle `369ffcb` poussée ; couverture cumulée finale 98,53 % après les tests
   ciblés. Nettoyage : 18 Mio de caches/rapport supprimés, aucun build natif produit.
+  Intégration finale 2026-11-06 : `main` est déjà ancêtre de la branche (jusqu’à #122 ; #124 reste
+  ouverte). Registre/service/bridge : 534 tests ciblés PASS, lint et format PASS ; les modèles
+  Ubuntu et Android consomment `available` et signalent l’indisponibilité sans état connecté fictif.
   Les TV connues sont conservées dans un registre privé distinct des certificats, restaurées hors ligne au
   redémarrage et réconciliées avec la découverte réseau sans inventer un état connecté. L'oubli
   reste une action utilisateur explicite et ne supprime ni certificat ni préférence. Les tests
