@@ -101,6 +101,7 @@ impl WebRtcTransport {
             RTCRtpCodec {
                 mime_type: MIME_TYPE_H264.to_owned(),
                 clock_rate: 90_000,
+                sdp_fmtp_line: H264_CONSTRAINED_BASELINE.to_owned(),
                 ..Default::default()
             },
         )
@@ -127,8 +128,14 @@ impl WebRtcTransport {
     }
 }
 
-/// Adds one sending track. Its codec names only the MIME type and clock rate, so the default
-/// codec of that type is matched, as in 0.14.
+/// H.264 as both encoders produce it (libx264 baseline, VA-API constrained baseline). 0.21 offers
+/// only the codec a track matches; without this line that was Baseline (42001f), which libwebrtc
+/// does not treat as Constrained Baseline: the TV rejected the video and its answer then carried a
+/// second set of ICE credentials, refused as "conflicting ice-ufrag values" (seen on 2026-11-07).
+const H264_CONSTRAINED_BASELINE: &str =
+    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
+
+/// Adds one sending track, matched to the default codec of its type that fits it.
 async fn outbound(
     peer: &Arc<dyn PeerConnection>,
     kind: RtpCodecKind,
@@ -606,6 +613,19 @@ pub(crate) mod tests {
             ));
         }
         stream
+    }
+
+    #[tokio::test]
+    async fn the_offer_proposes_h264_constrained_baseline_as_the_tv_decodes_it() {
+        let transport = WebRtcTransport::new().await.expect("transport");
+        let offer = transport.create_offer().await.expect("offer");
+
+        assert!(offer.sdp.contains("a=group:BUNDLE"));
+        assert!(offer.sdp.lines().any(|line| line.starts_with("a=fmtp:")
+            && line.contains("packetization-mode=1")
+            && line.contains("profile-level-id=42e01f")));
+        assert!(!offer.sdp.contains("profile-level-id=42001f"));
+        transport.close().await.expect("close");
     }
 
     #[tokio::test]

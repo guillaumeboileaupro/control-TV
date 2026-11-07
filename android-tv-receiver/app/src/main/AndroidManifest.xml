@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- libwebrtc's NetworkMonitor reads the active network when a session starts; without this
+         permission the receiver aborts (seen on the TV, 2026-11-07). Normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Android 11+ shows an app only the launcher apps it declares it looks for. -->
     <queries>
         <intent>

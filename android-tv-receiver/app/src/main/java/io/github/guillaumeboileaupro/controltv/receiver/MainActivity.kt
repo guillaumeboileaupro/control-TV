@@ -25,9 +25,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // ControlTV on Ubuntu types the one-time session code into this field through the TV's
-        // remote channel; nobody has to type it. It stays focused so that input reaches it.
-        val handoff = field("Code de session (rempli automatiquement)").apply {
+        // remote channel; nobody has to type it. It stays focused so that input reaches it, and
+        // stays out of sight: a visible field made the owner look for a code to enter.
+        val handoff = field("").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            alpha = 0f
+            contentDescription = "Connexion automatique à l'ordinateur"
         }
         val title = TextView(this).apply {
             text = "ControlTV — écran de l'ordinateur"; textSize = 22f; gravity = Gravity.CENTER
