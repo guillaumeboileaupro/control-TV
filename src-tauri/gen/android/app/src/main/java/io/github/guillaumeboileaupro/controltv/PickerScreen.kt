@@ -60,7 +60,8 @@ object PickerScreens {
 
     private fun row(tv: PickableTv, current: Boolean): PickerRow {
         val name = tv.name.ifBlank { UNNAMED }
-        val subtitle = tv.model?.takeIf { it.isNotBlank() }
+        val model = tv.model?.takeIf { it.isNotBlank() }
+        val subtitle = if (tv.available) model else listOfNotNull(model, "Known, currently unavailable").joinToString(" · ")
         val spoken = listOfNotNull(name, subtitle, if (current) "current TV" else null).joinToString(", ")
         return PickerRow(tv, name, subtitle, current, spoken)
     }

@@ -97,5 +97,5 @@ The package is CC0-1.0, but its disclaimer says individual icons may have separa
 trademark rights are granted. Each catalogue change therefore still requires an exact product
 identity and a review of the icon's current source and brand guidelines.
 
-The production build rejects more than 96 KiB of uncompressed application JavaScript. This guards
+The production build rejects more than 112 KiB of uncompressed application JavaScript. This guards
 the targeted imports against accidentally bundling the complete Simple Icons catalogue.

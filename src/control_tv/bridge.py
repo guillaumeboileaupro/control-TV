@@ -24,7 +24,10 @@ Read-only methods:
                         build embeds the TV's own remote channel and its app list
 - `discover_devices` -> {"devices": [...]}; optional param `timeoutSeconds`. Each device
                         carries `androidTvRemote`: whether it advertises the Android TV
-                        Remote service (`true`/`false`), or `null` when undetermined
+                        Remote service (`true`/`false`), or `null` when undetermined, plus
+                        factual `known` and latest-discovery `available` flags
+- `remember_device` / `forget_device` -> {}; update only the private known-device list;
+                        credentials are never removed
 - `get_status`       -> {"status": {...}}; required param `deviceId` (the stable id from
                         discovery, never a display name). Fields the TV did not report are
                         `null`, never a default: `null` means not reported, not "off" or "zero".
@@ -173,6 +176,8 @@ def _device_to_json(device: Device) -> JsonObject:
         "kind": device.kind.value,
         "modelName": device.model_name,
         "androidTvRemote": device.android_tv_remote,
+        "known": device.known,
+        "available": device.available,
     }
 
 
@@ -258,6 +263,16 @@ def _handle_discover_devices(control: TvControl, params: JsonObject) -> JsonObje
 
 def _handle_get_status(control: TvControl, params: JsonObject) -> JsonObject:
     return {"status": _status_to_json(control.get_status(_device_id_param(params)))}
+
+
+def _handle_remember_device(control: TvControl, params: JsonObject) -> JsonObject:
+    control.remember_device(_device_id_param(params))
+    return {}
+
+
+def _handle_forget_device(control: TvControl, params: JsonObject) -> JsonObject:
+    control.forget_device(_device_id_param(params))
+    return {}
 
 
 def _handle_play(control: TvControl, params: JsonObject) -> JsonObject:
@@ -827,6 +842,8 @@ def _handle_get_screen_stream(control: TvControl, params: JsonObject) -> JsonObj
 _HANDLERS: dict[str, Handler] = {
     "ping": _handle_ping,
     "discover_devices": _handle_discover_devices,
+    "remember_device": _handle_remember_device,
+    "forget_device": _handle_forget_device,
     "get_status": _handle_get_status,
     "play": _handle_play,
     "pause": _handle_pause,
@@ -931,6 +948,7 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     (`docs/COMMAND_TRACE.md`), or by the Android debug build through `tracing`. A configuration
     that names no valid role is refused rather than guessed."""
     from control_tv.adapters import PyChromecastTransport
+    from control_tv.adapters.device_memory import FileDeviceMemory
     from control_tv.adapters.receiver_apps import ReceiverAppList
     from control_tv.adapters.tv_apps import AdbAppInventory, find_adb
     from control_tv.adapters.tv_apps_adb_shell import AdbShellAppInventory
@@ -944,6 +962,7 @@ def default_service(tracing: AcceptanceTracing | None = None) -> ControlService:
     remote = TvRemoteChannel(credentials)
     return ControlService(
         PyChromecastTransport(),
+        device_memory=FileDeviceMemory(credentials.parent / "known-devices.json"),
         remote=remote,
         # The `adb` program where it exists (Ubuntu, with Wireless debugging pairing); the pure
         # Python classic ADB of `adb-shell` where it does not (the phone).

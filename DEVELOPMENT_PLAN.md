@@ -205,10 +205,26 @@ never retries or replays the possibly delivered key. Automated tests cover lost 
 answers and host failures. During the targeted 2026-10-30 hardware recipe, the Ubuntu interface
 remained usable after two Assistant clicks (PASS for that scenario only).
 
-T-06 persistent discovery (hardware FAIL P1, 2026-10-30): one awake TV that was announced on the
-network remained absent from three consecutive discovery attempts on Ubuntu and the phone. No
-correction is implemented. The next change must keep an already paired TV visible and reconnectable
-without turning stale identity or address data into a false availability claim.
+T-06 persistent discovery (automated implementation, 2026-11-01).
+2026-11-04 follow-up: integrated main after #122 on the existing branch. Successful pairing and
+authenticated observation now retain the TV automatically, without changing certificates.
+Rediscovery persists updated coordinates by stable identity, without duplicates. Targeted tests,
+lint and strict typing pass; CI not triggered (no new PR), hardware NOT RUN.
+Python suite: 2,886 PASS, 8 SKIP (PyInstaller missing), coverage 98.07%; final migration path:
+369 targeted tests PASS. Review and authorized hardware acceptance remain outstanding.
+Functional commit `369ffcb` pushed; final cumulative coverage 98.53% after targeted tests.
+Cleanup removed 18 MiB of caches/coverage data; no native build was produced.
+Final integration 2026-11-06: `main` is already an ancestor through #122 (#124 remains open).
+Registry/service/bridge: 534 targeted tests PASS, lint and format PASS; Ubuntu and Android models
+consume `available` and label an offline known TV without claiming a connection.
+Known TVs are stored in a private registry separate from certificates, restored as unavailable after application restart,
+and reconciled with live discovery. Reconnection performs a bounded rediscovery before reading
+status, so stale identity or address data never becomes a false connection or availability claim.
+Forgetting a TV remains an explicit user action and preserves pairing credentials and preferences.
+Regression tests cover network disappearance, restart, redetection, reconnection, two known TVs
+and pairing-data preservation. The 2026-10-30 hardware FAIL remains open for a later authorized
+retest after integration; no hardware test was run for this implementation.
+Review fixes (Claude, 2026-11-06, PR #126, owner-approved): P1, a TV restored from memory is never reached at its saved address (remote, text, voice, apps) before a discovery sees it again under its own identity; P2, the status of a restored TV shares one 8 s deadline between rediscovery and the read (under the shell's 10 s); P2 UI, Forget is tracked as pending and blocks selection, discovery and commands until it settles. Local: 2,890 passed / 8 skipped, coverage 98.67%, UI 426 passed; hardware NOT RUN.
 
 Security maintenance (2026-10-27): GHSA-qwgh-2vcv-g2f7 affected `block-buffer` 0.10.4 in both
 Rust lockfiles through `digest` 0.10.7. Directly selecting 0.12.1 is incompatible with the
@@ -1237,6 +1253,8 @@ exposure and no permanent server.
     shell; fixed after that check: unavailable controls dimmed like the rest of the window
     (`aria-disabled`), the start button hidden while a stream runs or failed, the choice frozen
     meanwhile, errors shown as sentences;
+    (2026-11-07, PR #126: budget raised again, 96 to 112 KiB, once D3 and T-06 added up to
+    98.7 kB; local modules only)
     the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
     the guard still catches a bundled icon catalogue);
   - [x] D3 controls hardened (2026-11-01, branch `feat/d3-streaming-controls`, no PR while #120

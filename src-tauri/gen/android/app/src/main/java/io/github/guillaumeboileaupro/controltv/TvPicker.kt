@@ -3,7 +3,12 @@ package io.github.guillaumeboileaupro.controltv
 import org.json.JSONObject
 
 /** A TV the picker can offer: its stable id (the target) and what it is called (display). */
-data class PickableTv(val deviceId: String, val name: String, val model: String?)
+data class PickableTv(
+    val deviceId: String,
+    val name: String,
+    val model: String?,
+    val available: Boolean = true,
+)
 
 /** What a discovery from the widget's TV picker found. */
 sealed interface PickerDiscovery {
@@ -82,6 +87,7 @@ class TvPicker(
                 deviceId = device.getString("id"),
                 name = device.optString("friendlyName", ""),
                 model = if (device.isNull("modelName")) null else device.optString("modelName"),
+                available = device.optBoolean("available", true),
             )
         }
     }
