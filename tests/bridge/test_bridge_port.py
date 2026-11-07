@@ -29,6 +29,7 @@ from control_tv.domain import (
 )
 from control_tv.json_types import JsonObject, as_object
 from control_tv.ports import TvControl
+from control_tv.tv_channels import RECEIVER_PACKAGE as RECEIVER
 from fakes import DEVICE_ID, OBSERVED_AT
 
 
@@ -110,6 +111,9 @@ class StubControl:
     def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
         self.calls.append(("browse_tv_apps", device_id))
         return AppListing(apps=tuple(self.apps), source="tv")
+
+    def screen_receiver_installed(self, device_id: DeviceId) -> bool:
+        return any(app.package == RECEIVER for app in self.list_tv_apps(device_id))
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         raise _unexpected("launch_tv_app")
@@ -237,6 +241,18 @@ def test_screen_capabilities_distinguish_absent_and_inaccessible_receiver() -> N
         "webrtcConfirmed": False,
         "reason": "debugging_off",
     }
+
+
+def test_screen_capabilities_accept_the_receivers_own_answer_without_the_tvs_debugging() -> None:
+    class AnsweringReceiverStub(ReachableStub):
+        def screen_receiver_installed(self, device_id: DeviceId) -> bool:
+            self.calls.append(("screen_receiver_installed", device_id))
+            return True  # the TV's debugging is off; the receiver answered itself
+
+    stub = AnsweringReceiverStub()
+
+    assert capabilities(stub)["webrtcConfirmed"] is True
+    assert ("list_tv_apps", str(DEVICE_ID)) not in stub.calls
 
 
 def test_screen_capabilities_stop_after_the_selected_device_is_unavailable() -> None:

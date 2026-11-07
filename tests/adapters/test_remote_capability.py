@@ -70,11 +70,11 @@ def discover_with(hosts: frozenset[str] | None) -> dict[str, bool | None]:
     return {str(d.id): d.android_tv_remote for d in transport.discover(timeout=1.0)}
 
 
-def test_a_tv_at_an_address_advertising_the_service_offers_it_and_the_others_do_not() -> None:
+def test_a_tv_advertising_the_service_offers_it_and_one_not_heard_stays_unknown() -> None:
     found = discover_with(frozenset({"192.0.2.10"}))
 
     assert found[TV_A] is True
-    assert found[TV_B] is False
+    assert found[TV_B] is None  # slow to answer the short browse is not without the channel
 
 
 def test_a_cast_group_never_borrows_its_member_tvs_remote_channel() -> None:

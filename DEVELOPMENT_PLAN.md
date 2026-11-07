@@ -255,6 +255,14 @@ virtual monitor behind; every step now runs, then the interrupt is raised first.
 now refuses deleting a missing or attached mode, like the real one (assumed, not checked on
 hardware). Automated validation only; no display or TV was used.
 
+- [x] **WebRTC capability from the receiver itself (2026-11-07, branch `fix/webrtc-capability`):**
+  with `d8ea896` installed everywhere, both TVs showed "WebRTC is not confirmed". One had no
+  ADB on port 5555, so its app list could not be read; the other, restored from memory, was
+  recorded without a remote channel by a short mDNS browse that had missed it. ControlTV
+  Receiver now counts as installed when the TV's debugging lists it *or* when it answers itself
+  through the paired remote (T-02's path, no TV setting), for the capability read and the WebRTC
+  start alike. A remote channel not heard in the browse stays unknown instead of absent, and one
+  seen before is kept. Automated tests only; the WebRTC run on both TVs is still to do.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload

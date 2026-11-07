@@ -43,13 +43,14 @@ from control_tv.screen_streaming.virtual_display import (
     persistent_virtual_monitor,
 )
 from control_tv.screen_streaming.x11_capture import X11Capture, X11Output
+from control_tv.tv_channels import RECEIVER_PACKAGE
 
 SIZES = ((1280, 720), (1920, 1080))
 # 60 is not offered: the TV's Cast receiver did not keep up with 1080p60 (hardware, 2026-10-20).
 RATES = (25, 30)
 _POLL_SECONDS = 0.5
 _CLOSE_SECONDS = 20.0
-WEBRTC_RECEIVER_PACKAGE = "io.github.guillaumeboileaupro.controltv.receiver"
+WEBRTC_RECEIVER_PACKAGE = RECEIVER_PACKAGE
 
 
 class StreamState(StrEnum):
@@ -280,8 +281,7 @@ class ScreenStreamController:
         audio_route: PulseAudioRoute | None = None
         try:
             control, address = self._connect(checked.device_id)
-            installed = control.list_tv_apps(DeviceId(checked.device_id))
-            if not any(app.package == WEBRTC_RECEIVER_PACKAGE for app in installed):
+            if not control.screen_receiver_installed(DeviceId(checked.device_id)):
                 raise InvalidStreamConfiguration(
                     "ControlTV Receiver is not installed or accessible on the selected TV"
                 )
