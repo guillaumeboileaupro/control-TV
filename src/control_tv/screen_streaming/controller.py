@@ -347,7 +347,12 @@ class ScreenStreamController:
                     with self._lock:
                         self._webrtc_extension = extension
             with self._lock:
+                # The cause is shown as the TV or the computer reported it, never a bare
+                # "failed" that leaves the person guessing.
+                cause = getattr(caught, "message", None)
                 detail = "WebRTC preparation failed"
+                if isinstance(cause, str) and cause:
+                    detail += f": {cause}"
                 if cleanup_errors:
                     detail += "; " + "; ".join(cleanup_errors)
                 if generation == self._webrtc_generation or cleanup_errors:

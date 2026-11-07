@@ -263,6 +263,11 @@ hardware). Automated validation only; no display or TV was used.
   through the paired remote (T-02's path, no TV setting), for the capability read and the WebRTC
   start alike. A remote channel not heard in the browse stays unknown instead of absent, and one
   seen before is kept. Automated tests only; the WebRTC run on both TVs is still to do.
+  In the run that followed (`.deb` 541c1b0, Chambre), the message was gone but Duplicate
+  failed with "WebRTC preparation failed" (`unsupported_operation`): the stream reached the TV
+  through a bare `ControlService` of its own, with no remote, ADB or receiver, so no WebRTC
+  start from the app could ever succeed. It now goes through the bridge's control layer
+  (`d1.through`), and the error names its cause.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
