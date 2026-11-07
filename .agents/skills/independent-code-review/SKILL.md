@@ -6,7 +6,7 @@ description: Review another agent's pull request at an exact SHA without modifyi
 # Independent code review
 
 - The reviewer is not the author. A review of your own work is a **self-review** and must say so;
-  it never replaces the independent one before a merge.
+  an independent review is optional and never substitutes for the owner's merge authorization.
 - Review the exact SHA: `git worktree add --detach <scratchpad>/review <SHA>`; read the diff, the
   PR's review threads (`gh api repos/<o>/<r>/pulls/<n>/comments`) and the relevant docs. Remove
   the worktree afterwards. No branch, commit, push or PR edit.

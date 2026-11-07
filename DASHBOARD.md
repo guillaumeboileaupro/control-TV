@@ -32,27 +32,22 @@
 
 Estimations min / max / médiane en **heures**, à réviser après chaque livraison.
 
-| Priorité | Chantier | État | Temps restant (min / max / méd.) | Prochaine action | Responsable |
-|---|---|---|---|---|---|
-| P1 | T-01 - Appairage durable | #118 ouverte ; FAIL matériel avant migration | 0,5 / 2 / 1 h | Finaliser #118, revue, fusion, recette | Codex / Claude |
-| P1 | T-06 - Découverte persistante | Chambre FAIL 3/3 | 2 / 5 / 3 h | Garder TV appairée visible et reconnectable | Codex |
-| P1 | T-02 - Applications Android | Liberté FAIL 4/4 ; Ubuntu PASS | 2 / 5 / 3 h | Relever version récepteur et corriger | Codex |
-| P1 | D1 - Duplication Rust/WebRTC/HLS | MERGED via #120 : pertes sans corruption, VA-API avec repli `libx264`, Opus temps réel, signalisation tolérante, reconnexion limitée aux pannes de lien et test Rust de bout en bout. HARDWARE NOT RUN | 3 / 8 / 5 h | D1-9 avec autorisation | Claude |
-| P1 | D2 - Extension Rust/X11 | PR #121 : connecteur RandR forcé conservé sans evdi ; journal X11 atomique et reprise après plantage implémentés/testés ; démarrage du pont rendu tolérant à un journal inaccessible. HARDWARE NOT RUN | 4 / 12 / 7 h | CI puis recette autorisée | Codex |
-| P1 | D3 - Interface de diffusion | MERGED via #124 : contrôles fiabilisés (délais, état réel Rust + bridge, reprise après erreur), position glissée de l'écran étendu transmise au moteur Rust/WebRTC et P1 de nettoyage WebRTC corrigé. CI verte (qualité, Tauri, `.deb` Linux, APK Android, audits) ; matériel NOT RUN | 1 / 3 / 2 h | Valider Dupliquer/Étendre/Arrêter sur TV avec autorisation | Claude |
-| P1 | D4 - Robustesse | MERGED : arrêt, reconnexion bornée, récolte FFmpeg et D4-4 via #120. PR #121 : D4-5 X11 et son intégrés, journal partagé, reprise au démarrage après SIGKILL, réglages utilisateur conservés et verrou protégeant une diffusion vivante. HARDWARE PARTIAL 01/11 : son et X11 restaurés séparément sur le poste, sans TV ni application installée | 2 / 5 / 3 h | CI #121 puis recette autorisée SIGKILL pendant une diffusion avec son | Codex / Claude |
-| P1 | Récepteur Android TV | Code présent, 2 TV non validées | 2 / 6 / 3 h | Décodage, audio, plein écran, fermeture | Claude |
-| P1 | Audio / synchronisation | Opus/PulseAudio codés ; physique non validé | 1 / 4 / 2 h | Mesurer synchronisation sur TV | Claude |
-| P1 | Latence / performances | HLS ancien 9-11 s ; WebRTC <500 ms non prouvé | 1 / 4 / 2 h | Mesurer médiane, p95, pire, FPS, CPU/GPU | Claude |
-| P1 | Skill sécurité dépendances | dependency-update-review existe, nouveau skill manquant | 1 / 3 / 2 h | my-skills puis control-TV | Codex |
-| P1 | Recette Chambre / Liberté | T-03/04/05 PASS ciblés ; reste incomplet | 2 / 6 / 4 h | Tests réels autorisés, scénario par scénario | Claude |
-| P1 | Documentation TODO / dashboard | Synchronisation continue nécessaire | 0,5 / 1,5 / 1 h | Actualiser exhaustivement à chaque fin de mission | Agent actif |
-| P2 | Widget Android 4x4 | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests tactiles réels | Claude |
-| P2 | Menu GNOME | Développé, recette incomplète | 0,5 / 2 / 1 h | Tests sur Ubuntu | Claude |
-| P2 | Assistant / microphone | PR #122 : `main` après #121 intégré ; PCM Java converti en `bytes` Python et annulation terminale synchronisée avant ouverture du micro ; local et CI verts, matériel NOT RUN | 2 / 6 / 3 h | Revue indépendante, fusion autorisée, puis recette autorisée consentement/audio/arrêt | Codex |
-| P2 | Logos / langues / Power-CEC | Non repris point par point le 30/10 | 1 / 3 / 2 h | Tests ciblés et limites TV | Codex / Claude |
-| P2 | CI / sécurité / maintenance / nettoyage | `pyasn1` 0.6.5 fusionné via #119 ; anciennes dérogations WebRTC à revoir avant 30/11 | 0,5 / 2 / 1 h | Audits et nettoyage après chaque livraison | Agent actif |
-| **TOTAL** | **Travaux restants estimés** | **Ne comprend pas de nouvelle anomalie majeure** | **26 / 79,5 / 46 h** | **Réviser après vérification** | **Coordinateur** |
+| Priorité | Travail restant | Temps restant (min / max / méd.) |
+|---|---|---|
+| P1 | #126 - Corriger les 3 remarques et intégrer T-06 | 1 / 3 / 2 h |
+| P1 | #125 - Corriger les 2 remarques et intégrer T-02 | 1 / 3 / 2 h |
+| P1 | Valider l'appairage et la découverte sur les TV | 0,5 / 1,5 / 1 h |
+| P1 | Valider le lancement des applications Android | 0,5 / 1,5 / 1 h |
+| P1 | Tester duplication, extension et récepteur TV | 1 / 3 / 2 h |
+| P1 | Valider la restauration X11 et audio | 0,5 / 1,5 / 1 h |
+| P1 | Mesurer synchronisation et latence | 0,5 / 2 / 1 h |
+| P2 | Valider microphone / Assistant | 0,5 / 1,5 / 1 h |
+| P2 | Tester widget Android et menu GNOME | 0,5 / 1,5 / 1 h |
+| P2 | Finaliser logos, langues et Power-CEC | 1 / 3 / 2 h |
+| P2 | Intégrer Spec Kit | 0,5 / 1 / 0,75 h |
+| P2 | Créer le skill de sécurité demandé | 1 / 2 / 1,5 h |
+| P2 | Clôturer #123, redondante | 0,1 / 0,3 / 0,2 h |
+| TOTAL | Travail restant estimé | 8,1 / 24,8 / 16,45 h |
 
 ## Dernière recette matérielle - 30/10
 
