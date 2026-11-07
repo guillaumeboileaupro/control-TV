@@ -427,6 +427,8 @@ pub(crate) async fn start_webrtc_stream(
     consent: bool,
     refresh: Option<u32>,
     position: Option<String>,
+    x: Option<i32>,
+    y: Option<i32>,
 ) -> Result<StartReply, String> {
     if !consent {
         return Err("explicit screen-sharing consent is required".into());
@@ -435,6 +437,7 @@ pub(crate) async fn start_webrtc_stream(
     let placement = Placement {
         refresh: refresh.unwrap_or(60),
         position: position.as_deref().unwrap_or("right"),
+        origin: x.zip(y),
     };
     let request = screen_stream_request(
         &device_id,
