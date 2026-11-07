@@ -665,7 +665,10 @@ def test_the_notices_copy_every_license_text_and_name_what_is_missing(tmp_path: 
     assert not (licenses / "certifi-2026.7.22" / "METADATA").exists()
     assert "zeroconf 0.151.3\n  License: LGPL-2.1-or-later" in text
     assert "certifi 2026.7.22\n  License: MPL-2.0" in text
-    assert "OpenSSL (Apache-2.0)" in text and "Texts: MISSING" in text
+    assert "OpenSSL (Apache-2.0)" in text
+    static = licenses / f"{cpython_dir}-static-libraries"
+    for library in ("openssl-3", "sqlite", "zlib", "libedit", "libffi", "liblzma", "hacl"):
+        assert (static / f"LICENSE.{library}.txt").stat().st_size > 0, library
     assert "libstdc++.so.6 (copied from the build system)" in text
     assert "libgcc_s.so.1" not in text  # not in this bundle
     assert "not a legal review" in text

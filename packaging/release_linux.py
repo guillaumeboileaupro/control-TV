@@ -44,9 +44,13 @@ REQUIRED_ENTRIES = {
     f"{INSTALL_ROOT}/python-bridge/{bridge.NAME}": 0o755,
     f"{INSTALL_ROOT}/python-bridge/{bridge.LICENSES_DIR}/{bridge.NOTICES_FILE}": None,
     f"usr/share/doc/{APPLICATION}/copyright": None,
+    f"usr/share/doc/{APPLICATION}/SOURCE-OFFER.md": None,
     f"usr/share/doc/{APPLICATION}/rust-licenses/{bridge.NOTICES_FILE}": None,
 }
 RUST_LICENSE_HINTS = ("LICEN", "COPYING", "NOTICE", "UNLICENSE", "COPYRIGHT")
+# Texts taken from upstream for crates whose published package ships none (see
+# docs/PACKAGING_LICENSES.md); the `unic-*` crates share one repository and its texts.
+UPSTREAM_RUST_LICENSES = REPO_ROOT / "packaging" / "licenses" / "rust"
 # Permission bits in `ls -l` order, as `dpkg-deb -c` prints them.
 _MODE_BITS = (0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001)
 
@@ -145,10 +149,19 @@ def _crate_license_files(package: Mapping[str, object]) -> list[Path]:
     return sorted(found, key=lambda path: path.name)
 
 
+def _upstream_license_files(name: str, upstream: Path) -> list[Path]:
+    folder = upstream / ("unic" if name.startswith("unic-") else name)
+    return sorted(folder.iterdir(), key=lambda path: path.name) if folder.is_dir() else []
+
+
 def write_rust_notices(
-    crates: Iterable[Mapping[str, object]], std_docs: Path | None, destination: Path
+    crates: Iterable[Mapping[str, object]],
+    std_docs: Path | None,
+    destination: Path,
+    upstream: Path = UPSTREAM_RUST_LICENSES,
 ) -> tuple[Path, list[str]]:
-    """Copy each linked crate's license files; return the notices and the crates that have none."""
+    """Copy each linked crate's license files, or the upstream texts kept for a crate that ships
+    none; return the notices and the crates still without any text."""
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
@@ -172,7 +185,7 @@ def write_rust_notices(
     without: list[str] = []
     for crate in crates:
         folder = f"{crate['name']}-{crate['version']}"
-        files = _crate_license_files(crate)
+        files = _crate_license_files(crate) or _upstream_license_files(str(crate["name"]), upstream)
         lines += [f"{crate['name']} {crate['version']}", f"  License: {crate.get('license')}"]
         if files:
             (destination / folder).mkdir()
@@ -271,7 +284,12 @@ def release() -> Path:
     notices, without = write_rust_notices(
         linked_crates(cargo_metadata()), std_docs(), RUST_NOTICES_DIR
     )
-    print(f"wrote {notices} ({len(without)} crates ship no license file)")
+    if without:
+        raise SystemExit(
+            "these linked crates have no license text (add it under packaging/licenses/rust): "
+            + ", ".join(without)
+        )
+    print(f"wrote {notices} (every linked crate has its license text)")
 
     environment = dict(os.environ)
     environment["CARGO_ENCODED_RUSTFLAGS"] = encoded_rustflags(environment, remapped_prefixes())

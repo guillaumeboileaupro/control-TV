@@ -75,7 +75,8 @@ SMOKE_TIMEOUT_SECONDS = 30
 
 # Libraries python-build-standalone links statically into the bundled `libpython` (identified
 # from the interpreter's built-in modules and version strings). uv's Python install ships no
-# license text for them, so the notices name them and say their texts are still missing.
+# license text for them: the texts are kept under packaging/licenses/libpython, taken from the
+# python-build-standalone full archive of the same build (see the README there).
 STATICALLY_LINKED_INTO_LIBPYTHON = (
     "OpenSSL (Apache-2.0)",
     "SQLite (public domain)",
@@ -88,8 +89,10 @@ STATICALLY_LINKED_INTO_LIBPYTHON = (
     "mpdecimal (BSD-2-Clause)",
     "expat (MIT)",
     "util-linux libuuid (BSD-3-Clause)",
-    "HACL* (MIT or Apache-2.0)",
+    "HACL* (MIT)",
 )
+
+LIBPYTHON_LICENSES = REPO_ROOT / "packaging" / "licenses" / "libpython"
 
 # Debian packages whose shared libraries PyInstaller copies from the build system, with the
 # copyright file that carries their license (GPL-3.0 with the GCC Runtime Library Exception).
@@ -378,9 +381,12 @@ def write_python_notices(
         [cpython_license],
         f"CPython-{python_version}",
     )
-    lines.append("Libraries statically linked into libpython by python-build-standalone:")
-    lines.extend(f"  - {name}" for name in STATICALLY_LINKED_INTO_LIBPYTHON)
-    lines.extend(["  Texts: MISSING (not shipped by the uv Python install; still to collect)", ""])
+    section(
+        "Libraries statically linked into libpython by python-build-standalone",
+        "; ".join(STATICALLY_LINKED_INTO_LIBPYTHON),
+        sorted(LIBPYTHON_LICENSES.glob("LICENSE.*.txt")),
+        f"CPython-{python_version}-static-libraries",
+    )
     if pyinstaller is not None:
         section(
             f"PyInstaller {pyinstaller.version} bootloader",

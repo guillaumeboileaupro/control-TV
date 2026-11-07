@@ -1,6 +1,7 @@
 [package]
 name = "control-tv"
-version = "0.1.0"
+version = "0.2.0"
+license = "GPL-3.0-or-later"
 description = "Lightweight Chromecast / Google TV controller - Tauri application shell"
 authors = ["control-TV contributors"]
 edition = "2021"

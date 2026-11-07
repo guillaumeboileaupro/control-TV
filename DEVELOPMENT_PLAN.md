@@ -290,6 +290,12 @@ hardware). Automated validation only; no display or TV was used.
   thirds of it and about 2 s late. The receiver now hides its panel while streaming, and the
   PulseAudio capture, which had no `-fragment_size` and so recorded in default fragments of
   about two seconds that the TV then synchronised the picture to, uses 20 ms (one Opus frame).
+- [x] **Release 0.2.0 prepared (2026-11-07, branch `chore/release-0.2.0`):** owner request for a
+  public release. Version 0.2.0 everywhere, license `GPL-3.0-or-later` declared, the five license
+  blockers of `docs/PACKAGING_LICENSES.md` resolved (libpython and crate texts kept under
+  `packaging/licenses/`, a release gate for crates without text, zeroconf rebuild procedure, source
+  offer shipped in the `.deb`), release notes in `docs/RELEASE_NOTES_0.2.0.md`. APKs stay signed
+  with the development key (owner decision). No legal review took place.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload

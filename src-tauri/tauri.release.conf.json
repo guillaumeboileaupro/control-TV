@@ -14,6 +14,7 @@
         ],
         "files": {
           "/usr/share/doc/control-tv/copyright": "../LICENSE",
+          "/usr/share/doc/control-tv/SOURCE-OFFER.md": "../docs/SOURCE_OFFER.md",
           "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses"
         }
       }

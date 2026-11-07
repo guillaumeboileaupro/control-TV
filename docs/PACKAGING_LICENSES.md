@@ -15,7 +15,7 @@ and the artifact/license inventory is updated in the same release change.
 
 | Component | Version | How it is shipped | License | Text in the package |
 |---|---|---|---|---|
-| control-TV | 0.1.0 | Rust binary, frozen Python bridge | GPL-3.0 (version not stated as "only" or "or later") | `/usr/share/doc/control-tv/copyright` |
+| control-TV | 0.2.0 | Rust binary, frozen Python bridge | GPL-3.0-or-later (owner decision, 2026-11-07) | `/usr/share/doc/control-tv/copyright`, source offer `/usr/share/doc/control-tv/SOURCE-OFFER.md` |
 | CPython (libpython, standard library) | 3.12.15 (`packaging/release-python-version`) | `libpython3.12.so.1.0`, `base_library.zip`, frozen archive | PSF-2.0 | `python-bridge/licenses/CPython-3.12.15/` |
 | Libraries linked statically into that libpython by python-build-standalone | OpenSSL 3.5.9, SQLite 3.53.1, zlib 1.3.2, libedit, libffi, xz, bzip2, ncurses/terminfo, mpdecimal, expat, libuuid, HACL* | inside `libpython3.12.so.1.0` | Apache-2.0, public domain, Zlib, BSD, MIT, 0BSD, bzip2, X11 | **missing** |
 | PyInstaller bootloader | 6.22.3 | the `control-tv-bridge` executable | GPL-2.0-or-later with the bootloader exception | `python-bridge/licenses/PyInstaller-6.22.3/` |
@@ -46,12 +46,22 @@ What the LGPL asks of someone distributing a program that contains the library, 
 
 How the bundle stands against the last point: the compiled `.so` modules are separate files and can be replaced, but the pure-Python modules are inside the archive appended to the executable and cannot be replaced without rebuilding it. The build is reproducible from the public repository (`dev.py bridge-build`), which is the usual way to satisfy relinking for a frozen application, and control-TV itself is GPL-3.0, with which LGPL-2.1-or-later is compatible; whether that is sufficient, or whether zeroconf must be collected as loose replaceable files, has not been decided.
 
-**Release blocker:** an owner decision (with legal advice if needed) on how the zeroconf obligations are met, before any public distribution.
+**Owner decision (2026-11-07), not a legal review:** zeroconf's source is attached to each release
+and `docs/SOURCE_OFFER.md` (installed as `/usr/share/doc/control-tv/SOURCE-OFFER.md`) explains how
+to rebuild the package from the public release tag with a modified zeroconf.
 
-## Blockers before a public release
+## Former blockers before a public release (resolved 2026-11-07 for 0.2.0)
 
-1. License texts of the libraries statically linked into python-build-standalone's libpython are not shipped (uv's install does not contain them).
-2. Nine Rust crates publish no license file (`alloc-stdlib`, `dlopen2`, `libappindicator-sys`, `selectors`, `unic-char-property`, `unic-char-range`, `unic-common`, `unic-ucd-ident`, `unic-ucd-version`); their texts have to be taken from upstream.
-3. The zeroconf decision above.
-4. control-TV's own license is not declared in `pyproject.toml`, `Cargo.toml` or `package.json`, and "GPL-3.0-only" versus "GPL-3.0-or-later" is not stated.
-5. A source offer covering the GPL/LGPL/MPL components (control-TV, zeroconf, certifi, the MPL-2.0 crates, the PyInstaller bootloader, the GCC runtime) is not written.
+1. Texts of the libraries statically linked into libpython: kept under
+   `packaging/licenses/libpython/` (python-build-standalone `20261003` full archive, HACL* from
+   CPython v3.12.15) and shipped in `python-bridge/licenses/CPython-3.12.15-static-libraries/`.
+2. The nine crates without a license file: their upstream texts are kept under
+   `packaging/licenses/rust/` and shipped with the other crate notices; `release-deb` now fails
+   if any linked crate has no text.
+3. zeroconf: the decision above.
+4. control-TV's license: `GPL-3.0-or-later`, declared in `pyproject.toml`, both `Cargo.toml` and
+   `ui/package.json` (the WebRTC engine was wrongly declared MIT).
+5. Source offer: `docs/SOURCE_OFFER.md`, shipped in the `.deb`; the release page keeps the
+   source archives it lists.
+
+These are engineering measures; no legal validation has taken place.

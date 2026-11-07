@@ -140,7 +140,9 @@ def test_rust_notices_copy_license_files_and_name_crates_without_any(tmp_path: P
     (std / "COPYRIGHT-library.html").write_text("std", encoding="utf-8")
     (std / "licenses" / "MIT.txt").write_text("MIT", encoding="utf-8")
 
-    notices, missing = release.write_rust_notices([with_files, without], std, tmp_path / "out")
+    notices, missing = release.write_rust_notices(
+        [with_files, without], std, tmp_path / "out", upstream=tmp_path / "no-upstream"
+    )
 
     text = notices.read_text(encoding="utf-8")
     assert (tmp_path / "out" / "serde-1.0.0" / "LICENSE-APACHE").is_file()
@@ -150,6 +152,37 @@ def test_rust_notices_copy_license_files_and_name_crates_without_any(tmp_path: P
     assert "serde 1.0.0\n  License: MIT OR Apache-2.0\n  Text: serde-1.0.0/LICENSE-APACHE" in text
     assert "unic-common 1.0.0\n  License: MIT/Apache-2.0\n  Text: MISSING" in text
     assert "Rust standard library" in text and "not a legal review" in text
+
+
+def test_a_crate_without_a_license_file_gets_the_text_kept_from_upstream(tmp_path: Path) -> None:
+    unic = crate(tmp_path, "unic-common", "MIT/Apache-2.0", ("README.md",))
+    upstream = tmp_path / "upstream" / "unic"
+    upstream.mkdir(parents=True)
+    (upstream / "LICENSE-MIT").write_text("MIT", encoding="utf-8")
+
+    notices, missing = release.write_rust_notices(
+        [unic], None, tmp_path / "out", upstream=tmp_path / "upstream"
+    )
+
+    assert missing == []
+    assert (tmp_path / "out" / "unic-common-1.0.0" / "LICENSE-MIT").is_file()
+    assert "Text: unic-common-1.0.0/LICENSE-MIT" in notices.read_text(encoding="utf-8")
+
+
+def test_every_crate_without_a_published_license_has_its_upstream_text() -> None:
+    for name in (
+        "alloc-stdlib",
+        "dlopen2",
+        "libappindicator-sys",
+        "selectors",
+        "unic-char-property",
+        "unic-char-range",
+        "unic-common",
+        "unic-ucd-ident",
+        "unic-ucd-version",
+    ):
+        texts = release._upstream_license_files(name, release.UPSTREAM_RUST_LICENSES)
+        assert texts and all(text.stat().st_size > 300 for text in texts), name
 
 
 def test_a_declared_license_file_is_copied(tmp_path: Path) -> None:
@@ -174,6 +207,7 @@ LISTING = "\n".join(
         ("-rwxr-xr-x", f"{BRIDGE}/_internal/libpython3.12.so.1.0"),
         ("-rw-r--r--", f"{BRIDGE}/licenses/THIRD_PARTY_NOTICES.txt"),
         ("-rw-r--r--", f"{DOC}/copyright"),
+        ("-rw-r--r--", f"{DOC}/SOURCE-OFFER.md"),
         ("-rw-r--r--", f"{DOC}/rust-licenses/THIRD_PARTY_NOTICES.txt"),
         ("lrwxrwxrwx", "./usr/lib/control-tv/link -> python-bridge"),
     ]
@@ -255,6 +289,7 @@ def test_the_release_overlay_ships_the_bridge_the_notices_and_the_project_licens
     ]
     assert overlay["bundle"]["linux"]["deb"]["files"] == {
         "/usr/share/doc/control-tv/copyright": "../LICENSE",
+        "/usr/share/doc/control-tv/SOURCE-OFFER.md": "../docs/SOURCE_OFFER.md",
         "/usr/share/doc/control-tv/rust-licenses": "../dist/rust-licenses",
     }
 
