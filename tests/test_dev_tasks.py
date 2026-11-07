@@ -12,7 +12,6 @@ import os
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -1068,9 +1067,7 @@ def test_an_unreadable_unsound_warning_fails_closed(unsound: object) -> None:
 GLIB_ADVISORY = "RUSTSEC-2024-0429"
 
 
-CRYPTO_BIGINT_ADVISORY = "RUSTSEC-2026-0387"
-PIN_UTILS_ADVISORY = "RUSTSEC-2026-0441"
-LAST_WEBRTC_WAIVER_DAY = dev.date(2026, 11, 30)
+WEBRTC_ADVISORIES = ("RUSTSEC-2026-0387", "RUSTSEC-2025-0141", "RUSTSEC-2026-0441")
 
 
 def _repo_rust_waivers(crate: str = "src-tauri") -> list[object]:
@@ -1087,45 +1084,29 @@ def _scope(waivers: list[object]) -> list[tuple[str, str | None, object]]:
     return scoped
 
 
-def test_the_rust_waiver_files_waive_only_glib_and_the_webrtc_crypto_bigint() -> None:
-    crypto_bigint = (CRYPTO_BIGINT_ADVISORY, "crypto-bigint", LAST_WEBRTC_WAIVER_DAY)
-    assert _scope(_repo_rust_waivers()) == [
-        (GLIB_ADVISORY, "glib", dev.date(2027, 1, 15)),
-        crypto_bigint,
-    ]
-    assert _scope(_repo_rust_waivers("webrtc-engine")) == [crypto_bigint]
+def test_the_rust_waiver_files_waive_only_glib() -> None:
+    assert _scope(_repo_rust_waivers()) == [(GLIB_ADVISORY, "glib", dev.date(2027, 1, 15))]
+    assert _scope(_repo_rust_waivers("webrtc-engine")) == []
 
 
 @pytest.mark.parametrize("crate", ["src-tauri", "webrtc-engine"])
-def test_the_crypto_bigint_waiver_ends_on_30_november_2026_and_covers_nothing_else(
-    crate: str,
-) -> None:
-    waivers = _repo_rust_waivers(crate)
-    finding = dev.AuditFinding("crypto-bigint", "vulnerability", CRYPTO_BIGINT_ADVISORY)
-    others = [
-        dev.AuditFinding("crypto-bigint", "vulnerability", "RUSTSEC-2099-0003"),
-        dev.AuditFinding("elliptic-curve", "vulnerability", CRYPTO_BIGINT_ADVISORY),
+def test_after_the_webrtc_migration_its_old_advisories_block_again(crate: str) -> None:
+    findings = [
+        dev.AuditFinding("crypto-bigint", "vulnerability", "RUSTSEC-2026-0387"),
+        dev.AuditFinding("bincode", "unmaintained", "RUSTSEC-2025-0141"),
+        dev.AuditFinding("pin-utils", "unmaintained", "RUSTSEC-2026-0441"),
     ]
 
-    last_day = dev.audit_verdict([finding, *others], waivers, LAST_WEBRTC_WAIVER_DAY, None)
-    expired = dev.audit_verdict([finding], waivers, dev.date(2026, 12, 1), None)
+    verdict = dev.audit_verdict(findings, _repo_rust_waivers(crate), dev.date(2026, 11, 7), None)
 
-    assert last_day.waived == (finding,) and last_day.blocking == tuple(others)
-    assert not expired.passed and expired.blocking == (finding,)
-    assert CRYPTO_BIGINT_ADVISORY in [w.advisory for w in expired.expired]
+    assert verdict.waived == () and verdict.blocking == tuple(findings)
 
 
-def test_the_osv_waivers_name_only_the_three_webrtc_advisories_until_30_november_2026() -> None:
+def test_the_osv_config_waives_nothing() -> None:
     config = tomllib.loads((DEV_PATH.parents[1] / "osv-scanner.toml").read_text(encoding="utf-8"))
 
-    ignored = {entry["id"]: entry for entry in config["IgnoredVulns"]}
-
-    assert set(ignored) == {CRYPTO_BIGINT_ADVISORY, "RUSTSEC-2025-0141", PIN_UTILS_ADVISORY}
-    assert set(config) == {"IgnoredVulns"}
-    for entry in ignored.values():
-        assert entry["ignoreUntil"] == datetime(2026, 11, 30, 23, 59, 59, tzinfo=UTC)
-        assert entry["reason"]
-    assert "pin-utils 0.1.1" in ignored[PIN_UTILS_ADVISORY]["reason"]
+    assert config.get("IgnoredVulns", []) == []
+    assert not any(advisory in str(config) for advisory in WEBRTC_ADVISORIES)
 
 
 def test_the_glib_waiver_lifts_that_advisory_until_it_expires() -> None:

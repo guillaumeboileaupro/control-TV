@@ -20,7 +20,7 @@
 |---|---|
 | Référence de recette du 30/10 | `main 3eebf23` sur Ubuntu, téléphone, récepteur Chambre ; version récepteur Liberté inconnue |
 | PR #113 à #117 | Fusionnées : #113 `fb87687`, #114 `3eebf23`, #115 `8515a42`, #116 `e577adb`, #117 `f7f1ca2` |
-| PR actives vérifiées au 07/11 | #118 à **#122**, **#124** (D3, `8a1f3e9`) et **#125** (T-02, `4d80fce`) fusionnées ; **#123** redondante avec #121 (ne pas toucher) ; **#126** T-06 ouverte, `main` après #125 intégré |
+| PR actives vérifiées au 07/11 | #118 à **#122** et **#124** à **#126** fusionnées ; **#123** redondante avec #121 (ne pas toucher) ; **#127** gouvernance ouverte (autre auteur) ; migration `webrtc` 0.21 sur `chore/webrtc-0.21` |
 | Défauts P1 observés | 3 : appairage durable, découverte Chambre, lancement Android Liberté |
 | Défaut P2 observé | Assistant sans effet sur Liberté ; correction microphone Android implémentée, non testée matériellement |
 | Deux chantiers structurants | **D1 duplication** et **D2 extension**, à terminer et valider séparément |
@@ -94,6 +94,7 @@ Estimations min / max / médiane en **heures**, à réviser après chaque livrai
 
 | Date | Événement |
 |---|---|
+| 2026-11-07 | Claude, branche `chore/webrtc-0.21` (D1-B2, accord du propriétaire) : moteur WebRTC migré de `webrtc` 0.14 à 0.21 (pile `rtc`, `ring`) ; `crypto-bigint`, `bincode`, `pin-utils` absents des deux lockfiles, cinq dérogations WebRTC supprimées. Moteur 47 PASS / 1 ignoré (décodage H.264/Opus et bout en bout inclus). #124 (`8a1f3e9`), #125 (`4d80fce`) et #126 (`bb1689a`) fusionnées. Matériel NOT RUN : diffusion réelle à revalider. |
 | 2026-11-07 | Claude, PR #126 : `main` après #124 et #125 intégré (conflits `DASHBOARD.md` seuls). CI de `d2027e4` : paquet Linux, APK et shell Tauri en échec sur le budget du bundle UI (98 664 octets pour 98 304) ; budget relevé à 112 Kio et documenté (`docs/APP_LOGOS.md`), garde-fou conservé contre le catalogue d'icônes. Matériel NOT RUN. |
 | 2026-11-06 | Claude, PR #126 : Corrections de revue (Claude, 2026-11-06, PR #126, accord du propriétaire) : P1, une TV restaurée de la mémoire n'est jamais utilisée à son adresse sauvegardée (télécommande, texte, voix, applications) avant qu'une découverte la revoie sous son identité ; P2, statut d'une TV restaurée borné par une échéance unique de 8 s pour la redécouverte et la lecture (sous les 10 s du shell) ; P2 UI, « Oublier » est suivi comme opération en cours et bloque sélection, découverte et commandes jusqu'à la réponse. Local : 2 890 PASS / 8 SKIP, couverture 98,67 %, UI 426 PASS ; matériel NOT RUN. |
 | 2026-11-06 | Finalisation T-06 : vérification de #124 ouverte, donc absente de main ; `main` jusqu’à #122 déjà ancêtre de la branche. Registre/service/bridge : 534 tests ciblés PASS, lint/format PASS. UI Ubuntu et sélecteur Android lisent `available` et distinguent une TV connue hors ligne ; matériel et CI NOT RUN. |

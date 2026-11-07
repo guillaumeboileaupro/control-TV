@@ -86,30 +86,13 @@ entries and the two vendored directories together.
   to use `VariantStrIter`. On 2027-01-15 the waiver expires and the build fails until the owner
   reviews it again.
 
-### RUSTSEC-2026-0387 (crypto-bigint), RUSTSEC-2025-0141 (bincode) and RUSTSEC-2026-0441 (pin-utils), waived until 2026-11-30
+### RUSTSEC-2026-0387 (crypto-bigint), RUSTSEC-2025-0141 (bincode) and RUSTSEC-2026-0441 (pin-utils), resolved 2026-11-07
 
-- **Advisories:** timing variability in operations of `crypto-bigint` < 0.7.6 meant to be
-  constant-time (fixed only in 0.7.6); `bincode` 1.3.3 and `pin-utils` 0.1.1 unmaintained (no
-  known vulnerability, blocking only in OSV-Scanner).
-- **Why they are in the build:** the WebRTC screen stream only (`webrtc-engine/` and, through it,
-  `src-tauri/`): `webrtc` 0.14 -> `dtls` 0.13 -> `p256`/`p384` 0.13 -> `elliptic-curve` 0.13 ->
-  `crypto-bigint` 0.5.5 and `bincode` 1.3.3; `webrtc` also brings `pin-utils` 0.1.1 through
-  `webrtc-util` 0.12 -> `nix` 0.26. No compatible fix exists: `dtls` 0.17.2 still needs
-  `p256` ^0.13, and `pin-utils` has no maintained replacement release (rechecked 2026-11-06).
-- **Why the risk is accepted:** the constant-time fixes of 0.7.6 address code that 0.5.5 lacks
-  (`UintRef`, `BoxedMontyForm`, the `borrowing_sub` change of 2025-12) or that this chain never
-  calls (CTZ, `div_rem`, Montgomery multiplication); `p256` and `p384` do their field arithmetic
-  themselves. DTLS signatures and the certificate use `ring`; `p256`/`p384` only compute
-  single-use ECDHE keys, and a timing attack needs many measurements of one secret. The stream
-  has no STUN/TURN server, refuses to bind every interface, needs the owner's consent and a
-  48-character token over TLS, and lasts at most one session.
-- **Residual risk:** not checked at machine-code level (`cargo checkct`), and the curve the TV
-  negotiates was not observed (libwebrtc offers X25519 first, which never uses `crypto-bigint`).
-  An attacker on the local network measuring one handshake's timing is the only exposure for
-  `crypto-bigint`; `bincode` and `pin-utils` have no known vulnerability, but their future
-  maintenance risk remains.
-- **Use:** local-network trials only; no exposure beyond the LAN while the waivers last.
-- **Removal:** the migration to `webrtc` 0.21 (its `rtc` stack uses `aws-lc-rs`/`ring`, no
-  `p256` 0.13) removes these dependencies; delete the five WebRTC waiver entries then (two Cargo
-  Audit entries for `crypto-bigint`, plus the three OSV entries). On 2026-12-01 they expire and
-  the audits fail until the owner reviews them again.
+- **What they were:** timing variability in `crypto-bigint` < 0.7.6, and `bincode` 1.3.3 and
+  `pin-utils` 0.1.1 unmaintained, all brought by `webrtc` 0.14 (`dtls` 0.13 -> `p256`/`p384`
+  0.13, and `webrtc-util` 0.12 -> `nix` 0.26). They were waived until 2026-11-30 for
+  local-network trials only.
+- **Resolution:** the WebRTC engine moved to `webrtc` 0.21 and its `rtc` stack (with `ring`), and
+  its tests to `rtc`'s own RTP depacketizers. None of the three crates is in `webrtc-engine/` or
+  `src-tauri/` any longer, and the five waiver entries (two Cargo Audit, three OSV) are deleted:
+  any of these advisories would block the audits again.

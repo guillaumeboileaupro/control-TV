@@ -12,9 +12,8 @@ addresses, kept apart from CI results.
 - The three builds come from the CI run of the #111 commit under test (7-day artifacts):
   `control-tv-linux-release` (`.deb`), `control-tv-android-arm64-debug` (phone remote) and
   `control-tv-android-tv-receiver-debug` (TV receiver). Compare each SHA-256 with the run summary.
-- Phone, TV and Ubuntu computer on the same local network; WebRTC trials only there (the
-  RUSTSEC-2026-0387 / RUSTSEC-2025-0141 waivers allow local-network trials only, until
-  2026-11-30, see `SECURITY.md`).
+- Phone, TV and Ubuntu computer on the same local network; the WebRTC stream is meant for the
+  local network only (see `SECURITY.md`).
 - A debug APK signed with another key cannot update the installed one: the previous app must be
   uninstalled first, which drops its pairing (the owner decides).
 
