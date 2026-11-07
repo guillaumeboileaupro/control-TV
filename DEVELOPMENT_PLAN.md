@@ -276,6 +276,10 @@ hardware). Automated validation only; no display or TV was used.
   announced field filled it. Branch `fix/session-code-handoff`: the remote adapter records the
   announced field per connection and addresses text to it, never logging the text; the full
   stream still needs its hardware run.
+  With that build, the TV's log (read with the owner's authorization) showed the code arriving
+  and the receiver starting its WebRTC session, then aborting: libwebrtc's NetworkMonitor needs
+  `ACCESS_NETWORK_STATE`, which the receiver did not declare. The manifest now declares it (a
+  normal permission, no prompt), with a regression test.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
