@@ -22,6 +22,7 @@ import json
 import secrets
 import socket
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol, TypeVar
@@ -37,6 +38,8 @@ from control_tv.domain import (
 )
 
 DEFAULT_TIMEOUT = 8.0
+CONFIRMATION_GRACE = 0.25
+FINAL_LOOK = 1.0
 MAX_BODY = 256 * 1024
 MAX_APPS = 500
 MAX_LABEL = 80
@@ -47,7 +50,7 @@ T = TypeVar("T")
 class ReceiverLink(Protocol):
     def open_receiver_link(self, host: str, link: str) -> None: ...
 
-    def front_app(self, host: str, package: str) -> str | None: ...
+    def front_app(self, host: str, package: str, limit: float | None = None) -> str | None: ...
 
 
 def _address_towards(host: str) -> str:
@@ -130,8 +133,9 @@ class ReceiverAppList:
         return self._ask(host, "/apps", link, parse_app_list)
 
     def launch_app(self, host: str, package: str) -> AppLaunch:
-        """Open `package` once through the receiver; `started` only on its word."""
+        """Open `package` once; accept only a receiver answer or its reported front app."""
         package = checked_package(package)
+        confirmed_front: list[str] = []
 
         def link(reply: str, token: str) -> str:
             return f"controltv-receiver://launch?package={package}&reply={reply}&token={token}"
@@ -139,16 +143,39 @@ class ReceiverAppList:
         def parse(body: bytes, token: str) -> str | None:
             return parse_launch_answer(body, token, package)
 
-        result = self._ask(host, "/launch", link, parse)
+        def confirm(budget: float) -> str | None:
+            """Use the existing outbound remote when a phone cannot receive the HTTP reply."""
+            front = self._front(host, package, budget)
+            if front != package:
+                return None
+            confirmed_front.append(front)
+            return "started"
+
+        # Seeing `package` in front proves a launch only when another app was there before:
+        # otherwise the receiver may still refuse it, so its answer is awaited to the end.
+        before = self._front(host, package, CONFIRMATION_GRACE)
+        early = before is not None and before != package
+        deadline = time.monotonic() + self._timeout
+        result = self._ask(
+            host, "/launch", link, parse, confirm=confirm, early=early, deadline=deadline
+        )
         if result == "not_installed":
             raise CommandRejectedError("this app is not installed on the TV; nothing was opened")
         if result == "refused":
             raise CommandRejectedError("the TV refused to open this app")
-        try:
-            front = self._link.front_app(host, package)
-        except ControlError:
-            front = None  # started, as the TV said; only the app in front is unknown
+        if confirmed_front:
+            return AppLaunch(package=package, front_app=confirmed_front[0], started=True)
+        # Started, as the TV said; the app in front is read within what is left of the time.
+        remaining = deadline - time.monotonic()
+        front = self._front(host, package, remaining) if remaining > 0 else None
         return AppLaunch(package=package, front_app=front, started=True)
+
+    def _front(self, host: str, package: str, budget: float) -> str | None:
+        """The app the TV reports in front within `budget` seconds, or `None` when unknown."""
+        try:
+            return self._link.front_app(host, package, budget)
+        except ControlError:
+            return None
 
     def _ask(
         self,
@@ -156,6 +183,10 @@ class ReceiverAppList:
         path: str,
         make_link: Callable[[str, str], str],
         parse: Callable[[bytes, str], T | None],
+        *,
+        confirm: Callable[[float], T | None] | None = None,
+        early: bool = False,
+        deadline: float | None = None,
     ) -> T:
         """Open one receiver link and wait for its single answer on a one-request listener."""
         try:
@@ -189,9 +220,37 @@ class ReceiverAppList:
         thread.daemon = True
         thread.start()
         try:
+            if deadline is None:
+                deadline = time.monotonic() + self._timeout
             port = server.server_address[1]
             self._link.open_receiver_link(host, make_link(f"http://{address}:{port}{path}", token))
-            if not done.wait(self._timeout):
+            # The correlated receiver answer takes precedence over an observation. Only the
+            # foreground app is polled, within the time left; the launch is never resent.
+            while early and confirm is not None and not received:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise OperationTimeoutError(NO_ANSWER)
+                confirmed = confirm(min(remaining, FINAL_LOOK))
+                remaining = max(0.0, deadline - time.monotonic())
+                if confirmed is not None:
+                    done.wait(min(CONFIRMATION_GRACE, remaining))
+                    if received:
+                        return received[0]
+                    if remaining > 0:
+                        return confirmed
+                    raise OperationTimeoutError(NO_ANSWER)
+                done.wait(min(CONFIRMATION_GRACE, remaining))
+            if not received and confirm is not None:
+                # Wait for the answer, then look at the app in front only at the end.
+                done.wait(max(0.0, deadline - time.monotonic() - FINAL_LOOK))
+                remaining = deadline - time.monotonic()
+                confirmed = confirm(remaining) if not received and remaining > 0 else None
+                done.wait(max(0.0, deadline - time.monotonic()))
+                if not received and confirmed is not None:
+                    return confirmed
+            elif not received:
+                done.wait(max(0.0, deadline - time.monotonic()))
+            if not received:
                 raise OperationTimeoutError(NO_ANSWER)
         finally:
             server.shutdown()

@@ -93,7 +93,7 @@ class FakeRemote:
 
     front: str | None = None
 
-    def front_app(self, host: str, package: str) -> str | None:
+    def front_app(self, host: str, package: str, limit: float | None = None) -> str | None:
         self.calls.append(("front_app", host, package))
         self._maybe_fail()
         return self.front
