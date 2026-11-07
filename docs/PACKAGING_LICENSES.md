@@ -30,7 +30,7 @@ and the artifact/license inventory is updated in the same release change.
 | idna | 3.20 | frozen archive | BSD-3-Clause | yes |
 | ifaddr | 0.2.0 | frozen archive | MIT | yes |
 | typing_extensions | 4.16.0 | frozen archive | PSF-2.0 | yes |
-| Rust crates linked into the binary | 216 crates | `/usr/bin/control-tv` | mostly MIT and/or Apache-2.0; also Unicode-3.0, MPL-2.0 (4), Zlib, BSD-3-Clause, Unlicense | `/usr/share/doc/control-tv/rust-licenses/` (**9 crates publish no license file**) |
+| Rust crates linked into the binary | 316 crates (0.2.0, after the `webrtc` 0.21 migration) | `/usr/bin/control-tv` | mostly MIT and/or Apache-2.0; also Unicode-3.0, MPL-2.0 (4), Zlib, BSD-3-Clause, Unlicense | `/usr/share/doc/control-tv/rust-licenses/` (**9 crates publish no license file**) |
 | Rust standard library | toolchain | `/usr/bin/control-tv` | MIT OR Apache-2.0 | `rust-licenses/rust-std/` |
 | Simple Icons | 16.33.0 | selected TV-app SVG paths compiled into the UI | CC0-1.0 package; individual icon terms and trademarks remain with their respective owners | **none**: only the compiled paths are distributed; the npm lockfile, upstream disclaimer and [`APP_LOGOS.md`](APP_LOGOS.md) remain source-tree records and are not embedded in the `.deb` or APK |
 | Official TV-app logo files | checked 2026-10-17 | 8 SVG files in `assets/app-logos/`, shipped with the frontend (`.deb` and APK) | public domain (PD-textlogo / PD-ineligible) or CC0 on Wikimedia Commons; trademarks remain with their owners | **none required**: no attribution is legally required; sources are listed in [`APP_LOGOS.md`](APP_LOGOS.md), which stays in the source tree |
@@ -55,9 +55,11 @@ to rebuild the package from the public release tag with a modified zeroconf.
 1. Texts of the libraries statically linked into libpython: kept under
    `packaging/licenses/libpython/` (python-build-standalone `20261003` full archive, HACL* from
    CPython v3.12.15) and shipped in `python-bridge/licenses/CPython-3.12.15-static-libraries/`.
-2. The nine crates without a license file: their upstream texts are kept under
-   `packaging/licenses/rust/` and shipped with the other crate notices; `release-deb` now fails
-   if any linked crate has no text.
+2. The crates without a license file (nine before the `webrtc` 0.21 migration, then also the 15
+   `rtc-*` crates, `crc-catalog` and `yasna`): their upstream texts are kept under
+   `packaging/licenses/rust/` and shipped with the other crate notices; control-TV's own WebRTC
+   engine carries the project `LICENSE`; `release-deb` now fails if any linked crate has no text
+   (it caught the 0.21 crates in CI).
 3. zeroconf: the decision above.
 4. control-TV's license: `GPL-3.0-or-later`, declared in `pyproject.toml`, both `Cargo.toml` and
    `ui/package.json` (the WebRTC engine was wrongly declared MIT).

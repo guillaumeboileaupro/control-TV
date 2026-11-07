@@ -149,9 +149,22 @@ def _crate_license_files(package: Mapping[str, object]) -> list[Path]:
     return sorted(found, key=lambda path: path.name)
 
 
+# Crates published from one repository share its texts.
+_SHARED_REPOSITORIES = (("unic-", "unic"), ("rtc-", "rtc"))
+
+
 def _upstream_license_files(name: str, upstream: Path) -> list[Path]:
-    folder = upstream / ("unic" if name.startswith("unic-") else name)
+    shared = next(
+        (folder for prefix, folder in _SHARED_REPOSITORIES if name.startswith(prefix)), None
+    )
+    folder = upstream / (shared or name)
     return sorted(folder.iterdir(), key=lambda path: path.name) if folder.is_dir() else []
+
+
+def _project_license_files(package: Mapping[str, object]) -> list[Path]:
+    """control-TV's own crates (the WebRTC engine) are under the project's license."""
+    manifest = Path(_text(package.get("manifest_path"), "a crate manifest path")).resolve()
+    return [REPO_ROOT / "LICENSE"] if manifest.is_relative_to(REPO_ROOT.resolve()) else []
 
 
 def write_rust_notices(
@@ -185,7 +198,11 @@ def write_rust_notices(
     without: list[str] = []
     for crate in crates:
         folder = f"{crate['name']}-{crate['version']}"
-        files = _crate_license_files(crate) or _upstream_license_files(str(crate["name"]), upstream)
+        files = (
+            _crate_license_files(crate)
+            or _project_license_files(crate)
+            or _upstream_license_files(str(crate["name"]), upstream)
+        )
         lines += [f"{crate['name']} {crate['version']}", f"  License: {crate.get('license')}"]
         if files:
             (destination / folder).mkdir()

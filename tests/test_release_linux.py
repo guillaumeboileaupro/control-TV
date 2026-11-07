@@ -180,9 +180,21 @@ def test_every_crate_without_a_published_license_has_its_upstream_text() -> None
         "unic-common",
         "unic-ucd-ident",
         "unic-ucd-version",
+        "rtc-shared",
+        "rtc-dtls",
+        "crc-catalog",
+        "yasna",
     ):
         texts = release._upstream_license_files(name, release.UPSTREAM_RUST_LICENSES)
         assert texts and all(text.stat().st_size > 300 for text in texts), name
+
+
+def test_the_projects_own_crates_carry_the_project_license() -> None:
+    engine = {"manifest_path": str(release.REPO_ROOT / "webrtc-engine" / "Cargo.toml")}
+    outside = {"manifest_path": "/registry/serde-1.0.0/Cargo.toml"}
+
+    assert release._project_license_files(engine) == [release.REPO_ROOT / "LICENSE"]
+    assert release._project_license_files(outside) == []
 
 
 def test_a_declared_license_file_is_copied(tmp_path: Path) -> None:

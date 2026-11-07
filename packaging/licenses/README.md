@@ -11,8 +11,9 @@ none of their own (see `docs/PACKAGING_LICENSES.md`). They are copied as publish
   DB are not in that `libpython`, so their texts are not kept. `LICENSE.hacl.txt` is the MIT
   notice at the top of CPython v3.12.15's `Modules/_hacl/Hacl_Hash_SHA2.c`.
 - `rust/`: the crates whose published package ships no license file, from their upstream
-  repositories (`unic/` serves the five `unic-*` crates of one repository); `selectors/` is the
-  official MPL-2.0 text from mozilla.org.
+  repositories (`unic/` serves the five `unic-*` crates and `rtc/` the fifteen `rtc-*` crates of
+  one repository each); `selectors/` is the official MPL-2.0 text from mozilla.org. control-TV's
+  own crates use the project `LICENSE`.
 
 When `packaging/release-python-version` or the python-build-standalone build changes, take the
 texts again from the matching full archive.
