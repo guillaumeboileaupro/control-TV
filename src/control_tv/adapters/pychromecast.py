@@ -364,9 +364,15 @@ class PyChromecastTransport:
         info = cast_device.cast_info
         kind = _KIND_MAP.get(info.cast_type or "", DeviceKind.OTHER)
         # A Cast group's address is one of its member TVs': matching it would credit the group
-        # with that TV's remote channel, so a group's stays not reported.
+        # with that TV's remote channel, so a group's stays not reported. Only an announcement
+        # proves the channel: a TV slow to answer the short browse (in standby, for one) is not
+        # one without it, so it stays not reported rather than refused.
         android_tv_remote = (
-            None if remote_hosts is None or kind is DeviceKind.GROUP else info.host in remote_hosts
+            True
+            if remote_hosts is not None
+            and kind is not DeviceKind.GROUP
+            and info.host in remote_hosts
+            else None
         )
         return Device(
             id=DeviceId(str(info.uuid)),

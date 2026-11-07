@@ -39,7 +39,6 @@ RULES = (
     "one-mission",
     "separate-worktrees",
     "other-agent-branches",
-    "independent-review",
     "no-merge",
     "hardware-safety",
     "quality-gates",

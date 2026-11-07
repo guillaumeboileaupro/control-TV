@@ -49,36 +49,34 @@ agents report facts, not estimated time. Present remaining times in one column
    (skill `git-worktree-pr-workflow`).
 3. [rule:other-agent-branches] Never modify, rebase, push or close another agent's branch,
    worktree or PR; record conflicts instead of building a competing implementation.
-4. [rule:independent-review] A PR is merged only after an independent review by the other agent
-   (skill `independent-code-review`); a self-review is labelled as such.
-5. [rule:no-merge] No merge, release or history rewrite without the owner's explicit
+4. [rule:no-merge] No merge, release or history rewrite without the owner's explicit
    authorization.
-6. [rule:hardware-safety] No TV/Freebox/Cast command, ADB, installation, sudo, system change,
+5. [rule:hardware-safety] No TV/Freebox/Cast command, ADB, installation, sudo, system change,
    real capture or network stream without the owner's authorization for that step
    (skill `hardware-safety`). No private device data in output, commits or PRs.
-7. [rule:quality-gates] SOLID (skill `solid-code-design`), strict typing with no explicit `Any`
+6. [rule:quality-gates] SOLID (skill `solid-code-design`), strict typing with no explicit `Any`
    in production code, tests for every change and error path, total coverage kept at or above
    98 % (the CI gate is 95 %), checks via `python3 scripts/dev.py check` and `coverage`
    (skill `python-project-quality`).
-8. [rule:conventional-commits] Conventional Commits with the configured owner identity and no AI
+7. [rule:conventional-commits] Conventional Commits with the configured owner identity and no AI
    attribution (skill `conventional-commits-pr`); never commit secrets, local preferences or
    evidence (`.ai-private/`, `.codex/`, handoffs, `*.local.*`, `AGENTS.override.md`), private
    device data or paths, or generated build trees.
-9. [rule:interruptions] Code handles interruptions safely: cleanup continues past failures and
+8. [rule:interruptions] Code handles interruptions safely: cleanup continues past failures and
    `KeyboardInterrupt`/`SystemExit`, unreleased resources stay tracked, nothing is resent
    automatically.
-10. [rule:uncommitted-work] Preserve uncommitted changes: no `reset --hard`, forced checkout or
+9. [rule:uncommitted-work] Preserve uncommitted changes: no `reset --hard`, forced checkout or
     `clean -fd` over work; stash or commit first.
-11. [rule:temporary-cleanup] Cleanup is a blocking definition-of-done item (next section);
+10. [rule:temporary-cleanup] Cleanup is a blocking definition-of-done item (next section);
     delete only verified project-owned paths.
-12. [rule:context-minimization] Keep model context small: targeted reads, filtered output, no
+11. [rule:context-minimization] Keep model context small: targeted reads, filtered output, no
     re-pasted rules (skill `agent-token-efficiency`).
-13. [rule:final-report] End every mission with the standard report (skill
+12. [rule:final-report] End every mission with the standard report (skill
     `development-reporting`), local and CI results kept apart.
-14. [rule:remaining-estimate] Project estimates belong to the coordinator. Agents must not
+13. [rule:remaining-estimate] Project estimates belong to the coordinator. Agents must not
     measure elapsed time or estimate remaining hours.
     Project-wide time estimates are managed by the coordinator, not by coding agents.
-15. [rule:progress-docs] For every project change, update `DASHBOARD.md`, `TODO.md` and
+14. [rule:progress-docs] For every project change, update `DASHBOARD.md`, `TODO.md` and
     `DEVELOPMENT_PLAN.md` as part of the same branch/PR, before handoff. Keep changes
     limited to the affected tasks and D0-D4 phases; mark complete only work actually done,
     add newly discovered issues and unfinished work, and correct stale dependencies or

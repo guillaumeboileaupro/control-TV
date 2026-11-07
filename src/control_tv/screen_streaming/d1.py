@@ -293,6 +293,19 @@ def assemble(
     )
 
 
+def through(control: TvControl) -> Callable[[str], tuple[TvControl, str]]:
+    """Reach a TV through `control`, a running control layer, and the LAN address this computer
+    reaches it from: the stream then uses that layer's remote, app list and ControlTV Receiver."""
+
+    def connect(device_id: str) -> tuple[TvControl, str]:
+        for device in control.discover_devices():
+            if str(device.id) == device_id:
+                return control, lan_address_towards(device.host)
+        raise InvalidStreamConfiguration("that TV was not found on the home network")
+
+    return connect
+
+
 def tv_and_route(device_id: str) -> tuple[TvControl, str]:  # pragma: no cover - a real TV
     """The shared control layer and the LAN address this computer reaches `device_id` from."""
     from control_tv.adapters import PyChromecastTransport

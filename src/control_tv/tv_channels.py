@@ -33,6 +33,9 @@ from control_tv.domain import (
 )
 from control_tv.ports import AppMemory, ReceiverApps, TvApps, TvRemote
 
+# The screen-to-TV receiver, ControlTV Receiver (WebRTC and the app list without TV settings).
+RECEIVER_PACKAGE = "io.github.guillaumeboileaupro.controltv.receiver"
+
 
 def _key_outcome(press: KeyPress) -> tuple[Confirmation, str]:
     """Whether the TV's own reports show the effect of the key that was sent."""
@@ -188,6 +191,17 @@ class TvChannels:
                 return self._receiver_apps.list_apps(self._tv_host(device_id, remote=True))
             except ControlError:
                 raise debugging_error from None
+
+    def receiver_answers(self, device_id: DeviceId) -> bool:
+        """Whether ControlTV Receiver answers itself, through the TV's paired remote: it then is
+        installed and reachable, with no TV setting (its signed answer is the proof)."""
+        if self._receiver_apps is None or self._remote is None:
+            return False
+        try:
+            self._receiver_apps.list_apps(self._tv_host(device_id, remote=True))
+        except ControlError:
+            return False
+        return True
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         """Open an installed app on the TV, once. `CONFIRMED` only when the TV then reports

@@ -50,7 +50,7 @@ from control_tv.domain import (
     VolumeControlType,
 )
 from control_tv.ports import AppMemory, CastTransport, DeviceMemory, ReceiverApps, TvApps, TvRemote
-from control_tv.tv_channels import TvChannels
+from control_tv.tv_channels import RECEIVER_PACKAGE, TvChannels
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +340,16 @@ def _muted_is(muted: bool) -> ExpectedState:
     return check
 
 
+def _remote_channel(live: Device, remembered: Device | None) -> bool | None:
+    """What a scan says of a TV's own remote channel, or else what an earlier one saw of it.
+
+    A scan that did not report the channel does not undo one seen offering it before.
+    """
+    if live.android_tv_remote is not None:
+        return live.android_tv_remote
+    return True if remembered is not None and remembered.android_tv_remote else None
+
+
 class ControlService:
     """Authoritative implementation of `TvControl`.
 
@@ -426,7 +436,12 @@ class ControlService:
             self._devices = remembered
             return list(remembered.values())
         live = {
-            device.id: replace(device, known=device.id in remembered, available=True)
+            device.id: replace(
+                device,
+                known=device.id in remembered,
+                available=True,
+                android_tv_remote=_remote_channel(device, remembered.get(device.id)),
+            )
             for device in discovered
         }
         # Refresh coordinates only for identities the owner already retained. A scan
@@ -702,6 +717,20 @@ class ControlService:
 
     def browse_tv_apps(self, device_id: DeviceId) -> AppListing:
         return self._channels.browse_tv_apps(device_id)
+
+    def screen_receiver_installed(self, device_id: DeviceId) -> bool:
+        """Whether ControlTV Receiver is on the TV: its debugging lists it, or the receiver
+        answers itself through the TV's paired remote, which needs no TV setting. When neither
+        can tell, the debugging's error is raised."""
+        try:
+            listed = self.list_tv_apps(device_id)
+        except ControlError:
+            if self._channels.receiver_answers(device_id):
+                return True
+            raise
+        if any(app.package == RECEIVER_PACKAGE for app in listed):
+            return True
+        return self._channels.receiver_answers(device_id)
 
     def launch_tv_app(self, device_id: DeviceId, package: str) -> AppLaunchResult:
         return self._channels.launch_tv_app(device_id, package)

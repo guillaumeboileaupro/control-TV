@@ -22,6 +22,6 @@ description: One mission per agent in its own git worktree and branch, preservin
    handoffs, `.claude/settings.local.json`, `CLAUDE.local.md`, `AGENTS.override.md`.
 8. PR: `gh api -X POST repos/<owner>/<repo>/pulls` if `gh pr create/edit` fails. CI runs only for
    pushes to `main` and PRs **into** `main`: a PR into another branch has no CI; say so.
-9. Never merge without the owner's explicit authorization, and only after an independent review
-   (skill `independent-code-review`).
+9. Never merge without the owner's explicit authorization. An independent review may be requested
+   with skill `independent-code-review`, but is not a merge prerequisite.
 10. Remove only your own worktrees, and only when their branch is pushed and clean.

@@ -75,6 +75,23 @@ def test_a_public_or_unreachable_route_is_refused() -> None:
         d1.lan_address_towards("x", lambda family, kind: unreachable)  # type: ignore[arg-type,return-value]
 
 
+def test_a_stream_reaches_its_tv_through_the_running_control_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from control_tv.service import ControlService
+    from fakes import DEVICE_ID, FakeTransport
+
+    control = ControlService(FakeTransport())
+    monkeypatch.setattr(d1, "lan_address_towards", lambda host: "192.168.1.20")
+
+    reached, address = d1.through(control)(str(DEVICE_ID))
+
+    assert reached is control  # its remote, apps and receiver, never a bare service
+    assert address == "192.168.1.20"
+    with pytest.raises(InvalidStreamConfiguration, match="not found"):
+        d1.through(control)("uuid-elsewhere")
+
+
 def test_the_no_receiver_only_shows_the_url() -> None:
     shown: list[str] = []
     receiver = d1.NoReceiver(shown.append)

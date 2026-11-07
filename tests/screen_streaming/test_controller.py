@@ -336,7 +336,9 @@ def test_webrtc_preparation_fails_closed_without_the_exact_receiver(tmp_path: Pa
     with pytest.raises(InvalidStreamConfiguration, match="not installed or accessible"):
         controller.prepare_webrtc_capture(DUPLICATE)
 
-    assert controller.status().state is StreamState.FAILED
+    failed = controller.status()
+    assert failed.state is StreamState.FAILED
+    assert failed.error is not None and "not installed or accessible" in failed.error
     assert rig.xrandr.enabled is None
 
 
@@ -542,7 +544,7 @@ def test_the_bridge_lists_screens_and_runs_a_stream(screen: Rig) -> None:
         consent=True,
     )
     assert started["state"] == "starting"
-    controller = bridge._screen()
+    controller = bridge._screen(None)  # type: ignore[arg-type]
     assert wait_for(controller, StreamState.RUNNING) is StreamState.RUNNING
     status = stream("get_screen_stream")
     assert status == {
@@ -638,8 +640,9 @@ def test_the_bridge_creates_one_controller_and_closes_it_when_it_exits(
 ) -> None:
     monkeypatch.setattr(bridge, "_screen_controller", None)
     bridge.close_screen_stream()  # nothing was ever started: nothing to close
-    first = bridge._screen()
-    assert bridge._screen() is first
+    control = ControlService(FakeTransport())
+    first = bridge._screen(control)
+    assert bridge._screen(control) is first
     closed: list[bool] = []
     monkeypatch.setattr(first, "close", lambda: closed.append(True))
 

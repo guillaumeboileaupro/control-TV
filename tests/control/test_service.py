@@ -1154,6 +1154,37 @@ def test_a_restored_tv_found_at_a_new_address_is_reached_there() -> None:
     assert remote.hosts == ["192.0.2.7", "192.0.2.7"]
 
 
+def test_a_remote_channel_seen_once_is_kept_when_a_scan_does_not_report_it() -> None:
+    seen = Device(
+        id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009, android_tv_remote=True
+    )
+    unheard = dataclasses.replace(seen, android_tv_remote=None)
+    service = ControlService(
+        DiscoverySequence([[unheard]]), device_memory=DeviceMemoryFake((seen,))
+    )
+
+    (device,) = service.discover_devices()
+
+    assert device.available and device.android_tv_remote is True
+
+
+def test_a_scan_reporting_the_remote_channel_overrides_what_was_remembered() -> None:
+    remembered = Device(
+        id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009, android_tv_remote=False
+    )
+    unheard = dataclasses.replace(remembered, android_tv_remote=None)
+    seen = dataclasses.replace(remembered, android_tv_remote=True)
+    memory = DeviceMemoryFake((remembered,))
+
+    (first,) = ControlService(
+        DiscoverySequence([[unheard]]), device_memory=memory
+    ).discover_devices()
+    (second,) = ControlService(DiscoverySequence([[seen]]), device_memory=memory).discover_devices()
+
+    assert first.android_tv_remote is None  # an old "without" is not kept once seen live
+    assert second.android_tv_remote is True
+
+
 def test_rediscovery_persists_new_coordinates_without_duplicates() -> None:
     old = Device(id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009)
     new = dataclasses.replace(old, host="192.0.2.2")
