@@ -27,6 +27,10 @@ export interface Device {
   // false when discovery looked for it, null when undetermined. Optional: an older control backend
   // does not send it, which reads as undetermined. Only `true` offers the TV remote panel.
   androidTvRemote?: boolean | null;
+  // `known` is an explicit local choice. `available` means only that the latest network
+  // discovery saw it; neither value claims that a connection or pairing is active.
+  known?: boolean;
+  available?: boolean;
 }
 
 export interface ReceiverStatus {
@@ -105,6 +109,8 @@ export interface AppState {
   remote: RemoteView;
   notice: string | null;
   nextRequestId: number;
+  // The TV whose forgetting the bridge has not answered yet: nothing else is started meanwhile.
+  forgetting: string | null;
 }
 
 export interface StatusRequest {
@@ -222,6 +228,7 @@ export function initialState(): AppState {
     remote: REMOTE_IDLE,
     notice: null,
     nextRequestId: 1,
+    forgetting: null,
   };
 }
 
@@ -247,7 +254,8 @@ export function idle(state: AppState): boolean {
     state.discovery.kind !== "running" &&
     state.status.kind !== "loading" &&
     state.command.kind !== "pending" &&
-    state.remote.pending === null
+    state.remote.pending === null &&
+    state.forgetting === null
   );
 }
 
@@ -297,6 +305,47 @@ export function finishDiscovery(state: AppState, devices: Device[]): AppState {
     volumeDraft: null,
     remote: REMOTE_IDLE,
     notice: "The selected device was not found by the latest discovery. Select a device again.",
+  };
+}
+
+export function rememberDevice(state: AppState, deviceId: string): AppState {
+  const devices = state.devices.map((device) =>
+    device.id === deviceId ? { ...device, known: true } : device,
+  );
+  const selected =
+    state.selected?.id === deviceId ? { ...state.selected, known: true } : state.selected;
+  return { ...state, devices, selected };
+}
+
+// Asks to forget a TV; nothing else starts until the bridge answers (`forgetDevice` or
+// `forgetFailed`). Refused while another request is in flight.
+export function startForget(state: AppState, deviceId: string): { state: AppState; send: boolean } {
+  if (!canSelect(state)) return { state, send: false };
+  return { state: { ...state, forgetting: deviceId }, send: true };
+}
+
+// The bridge did not forget the TV: it stays as it was and the controls come back.
+export function forgetFailed(state: AppState): AppState {
+  return { ...state, forgetting: null };
+}
+
+export function forgetDevice(state: AppState, deviceId: string): AppState {
+  state = { ...state, forgetting: null };
+  const devices = state.devices.flatMap((device) => {
+    if (device.id !== deviceId) return [device];
+    return device.available === false ? [] : [{ ...device, known: false }];
+  });
+  if (state.selected?.id !== deviceId) return { ...state, devices };
+  return {
+    ...state,
+    devices,
+    selected: null,
+    status: { kind: "none" },
+    command: { kind: "idle" },
+    seekDraft: null,
+    volumeDraft: null,
+    remote: REMOTE_IDLE,
+    notice: "This TV was forgotten on this installation. Pairing credentials were preserved.",
   };
 }
 
@@ -522,7 +571,14 @@ export function describeDevice(device: Device, all: Device[]): DeviceDescription
   );
   return {
     name: device.friendlyName,
-    subtitle: shared ? `${kind} · ${device.host}:${device.port}` : kind,
+    subtitle:
+      device.available === false
+        ? `${kind} · Known, currently unavailable`
+        : shared
+          ? `${kind} · ${device.host}:${device.port}`
+          : device.known === true
+            ? `${kind} · Known`
+            : kind,
   };
 }
 

@@ -14,6 +14,7 @@ from control_tv.domain import (
     CommandResult,
     Confirmation,
     ConnectionState,
+    Device,
     DeviceId,
     DeviceNotFoundError,
     DeviceStatus,
@@ -21,10 +22,14 @@ from control_tv.domain import (
     DiscoveryError,
     ErrorCode,
     InvalidArgumentError,
+    KeyPress,
     MediaRequest,
     MediaStatus,
     OperationTimeoutError,
     PlaybackState,
+    RemoteKey,
+    RemoteObservation,
+    StorageUnavailableError,
     UnsupportedOperationError,
     VolumeControlType,
 )
@@ -979,6 +984,251 @@ def test_discovery_returns_the_transport_devices(
 
     assert [device.id for device in devices] == [DEVICE_ID]
     assert transport.calls == [("discover", (2.0,))]
+
+
+@dataclass
+class DeviceMemoryFake:
+    devices: tuple[Device, ...] = ()
+
+    def recall(self) -> tuple[Device, ...]:
+        return self.devices
+
+    def remember(self, device: Device) -> bool:
+        current = {known.id: known for known in self.devices}
+        current[device.id] = device
+        self.devices = tuple(current.values())
+        return True
+
+    def forget(self, device_id: DeviceId) -> bool:
+        self.devices = tuple(device for device in self.devices if device.id != device_id)
+        return True
+
+
+class DiscoverySequence(FakeTransport):
+    def __init__(self, results: list[list[Device]]) -> None:
+        super().__init__()
+        self.results = results
+
+    def discover(self, *, timeout: float) -> list[Device]:
+        self.calls.append(("discover", (timeout,)))
+        return self.results.pop(0)
+
+
+class FailingDeviceMemory(DeviceMemoryFake):
+    def remember(self, device: Device) -> bool:
+        del device
+        return False
+
+    def forget(self, device_id: DeviceId) -> bool:
+        del device_id
+        return False
+
+
+def test_chosen_tv_survives_network_disappearance_without_becoming_available() -> None:
+    live = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    memory = DeviceMemoryFake((live,))
+    transport = DiscoverySequence([[]])
+
+    devices = ControlService(transport, device_memory=memory).discover_devices(timeout=1.0)
+
+    assert [(device.id, device.known, device.available) for device in devices] == [
+        (DEVICE_ID, True, False)
+    ]
+
+
+def test_known_tv_remains_visible_when_network_discovery_itself_fails() -> None:
+    live = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    memory = DeviceMemoryFake((live,))
+    transport = FakeTransport(discover_error=DiscoveryError("network unavailable"))
+
+    devices = ControlService(transport, device_memory=memory).discover_devices(timeout=1.0)
+
+    assert [(device.id, device.available) for device in devices] == [(DEVICE_ID, False)]
+
+
+def test_explicit_choice_survives_application_restart_and_rediscovery() -> None:
+    first_transport = FakeTransport()
+    memory = DeviceMemoryFake()
+    first = ControlService(first_transport, device_memory=memory)
+    first.discover_devices(timeout=1.0)
+    first.remember_device(DEVICE_ID)
+
+    live_again = Device(id=DEVICE_ID, friendly_name="Renamed bedroom", host="192.0.2.2", port=8009)
+    restarted = ControlService(DiscoverySequence([[], [live_again]]), device_memory=memory)
+    offline = restarted.discover_devices(timeout=1.0)
+    online = restarted.discover_devices(timeout=1.0)
+
+    assert offline[0].known is True and offline[0].available is False
+    assert online[0].friendly_name == "Renamed bedroom"
+    assert online[0].known is True and online[0].available is True
+
+
+def test_status_of_restored_tv_rediscovers_before_reconnecting() -> None:
+    live = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    memory = DeviceMemoryFake((live,))
+    transport = DiscoverySequence([[live]])
+    service = ControlService(transport, device_memory=memory)
+
+    status = service.get_status(DEVICE_ID)
+
+    assert status.device_id == DEVICE_ID
+    assert [name for name, _ in transport.calls[:2]] == ["discover", "get_status"]
+
+
+class SlowDiscovery(DiscoverySequence):
+    """Discovery that takes its whole timeout plus the remote-capability browse after it."""
+
+    def __init__(self, results: list[list[Device]], clock: FakeClock) -> None:
+        super().__init__(results)
+        self.timer = clock
+        self.timeouts: list[float] = []
+
+    def discover(self, *, timeout: float) -> list[Device]:
+        found = super().discover(timeout=timeout)
+        self.timeouts.append(timeout)
+        self.timer.sleep(timeout + 1.5)
+        return found
+
+    def get_status(self, device_id: DeviceId, *, timeout: float) -> DeviceStatus:
+        self.timeouts.append(timeout)
+        return super().get_status(device_id, timeout=timeout)
+
+
+def test_status_of_restored_tv_shares_one_deadline_with_its_rediscovery() -> None:
+    live = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    clock = FakeClock()
+    transport = SlowDiscovery([[live]], clock)
+    service = ControlService(
+        transport, device_memory=DeviceMemoryFake((live,)), clock=clock.monotonic
+    )
+    started = clock.monotonic()
+
+    service.get_status(DEVICE_ID)
+
+    discovery, read = transport.timeouts
+    assert discovery + 1.5 + read <= 8.0  # within the shell's 10 s status bound
+    assert clock.monotonic() - started <= 8.0
+
+
+class KeyRemote:
+    """Records where each key goes; nothing else is used by these tests."""
+
+    def __init__(self) -> None:
+        self.hosts: list[str] = []
+
+    def press(self, host: str, key: RemoteKey) -> KeyPress:
+        self.hosts.append(host)
+        observed = RemoteObservation(is_on=True, volume=None)
+        return KeyPress(key=key, before=observed, after=observed)
+
+
+def test_a_restored_tv_receives_nothing_until_it_is_found_again() -> None:
+    saved = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    remote = KeyRemote()
+    transport = DiscoverySequence([[]])
+    service = ControlService(
+        transport,
+        device_memory=DeviceMemoryFake((saved,)),
+        remote=remote,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(DeviceUnavailableError):
+        service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)
+    assert remote.hosts == []  # the saved address may now be another TV
+    assert [name for name, _ in transport.calls] == ["discover"]
+
+
+def test_a_restored_tv_found_at_a_new_address_is_reached_there() -> None:
+    saved = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    moved = dataclasses.replace(saved, host="192.0.2.7")
+    remote = KeyRemote()
+    service = ControlService(
+        DiscoverySequence([[moved]]),
+        device_memory=DeviceMemoryFake((saved,)),
+        remote=remote,  # type: ignore[arg-type]
+    )
+
+    service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)
+    service.press_remote_key(DEVICE_ID, RemoteKey.VOLUME_UP)  # found once, not every key
+
+    assert remote.hosts == ["192.0.2.7", "192.0.2.7"]
+
+
+def test_rediscovery_persists_new_coordinates_without_duplicates() -> None:
+    old = Device(id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009)
+    new = dataclasses.replace(old, host="192.0.2.2")
+    memory = DeviceMemoryFake((old,))
+    service = ControlService(DiscoverySequence([[new, new]]), device_memory=memory)
+    assert len(service.discover_devices()) == 1
+    restarted = ControlService(DiscoverySequence([[]]), device_memory=memory)
+    offline = restarted.discover_devices()
+    assert len(offline) == 1
+    assert offline[0].host == new.host
+    assert offline[0].known and not offline[0].available
+
+
+def test_rediscovery_reports_coordinate_storage_failure() -> None:
+    old = Device(id=DEVICE_ID, friendly_name="TV", host="192.0.2.1", port=8009)
+    service = ControlService(DiscoverySequence([[old]]), device_memory=FailingDeviceMemory((old,)))
+    with pytest.raises(StorageUnavailableError):
+        service.discover_devices()
+
+
+def test_existing_pairing_is_remembered_after_authenticated_observation() -> None:
+    from test_remote_control import FakeRemote
+
+    remote = FakeRemote()
+    memory = DeviceMemoryFake()
+    service = ControlService(FakeTransport(), remote=remote, device_memory=memory)
+    service.discover_devices()
+    service.get_remote_status(DEVICE_ID)
+    assert [device.id for device in memory.devices] == [DEVICE_ID]
+    assert [call[0] for call in remote.calls] == ["observe"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_only_successful_pairing_automatically_remembers_tv(failure: bool) -> None:
+    from test_remote_control import FakeRemote
+
+    remote = FakeRemote()
+    if failure:
+        remote.error = DeviceUnavailableError("offline")
+    memory = DeviceMemoryFake()
+    service = ControlService(FakeTransport(), remote=remote, device_memory=memory)
+    service.discover_devices()
+    if failure:
+        with pytest.raises(DeviceUnavailableError):
+            service.finish_remote_pairing(DEVICE_ID, "123456")
+        assert memory.devices == ()
+    else:
+        service.finish_remote_pairing(DEVICE_ID, "123456")
+        assert [device.id for device in memory.devices] == [DEVICE_ID]
+
+
+def test_two_chosen_tvs_are_restored_and_only_explicit_forget_removes_one() -> None:
+    other_id = DeviceId("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    first = Device(id=DEVICE_ID, friendly_name="Bedroom", host="192.0.2.1", port=8009)
+    second = Device(id=other_id, friendly_name="Living room", host="192.0.2.2", port=8009)
+    memory = DeviceMemoryFake((first, second))
+    service = ControlService(DiscoverySequence([[]]), device_memory=memory)
+
+    assert {device.id for device in service.discover_devices(timeout=1.0)} == {
+        DEVICE_ID,
+        other_id,
+    }
+    service.forget_device(DEVICE_ID)
+
+    assert {device.id for device in memory.devices} == {other_id}
+
+
+def test_failed_persistence_never_claims_that_remember_or_forget_succeeded() -> None:
+    service = ControlService(FakeTransport(), device_memory=FailingDeviceMemory())
+    service.discover_devices(timeout=1.0)
+
+    with pytest.raises(StorageUnavailableError):
+        service.remember_device(DEVICE_ID)
+    with pytest.raises(StorageUnavailableError):
+        service.forget_device(DEVICE_ID)
 
 
 @pytest.mark.parametrize("timeout", [0.0, -1.0, math.nan, math.inf])

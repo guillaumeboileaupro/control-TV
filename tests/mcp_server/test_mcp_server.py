@@ -135,6 +135,8 @@ def test_discovery_returns_ids_and_names_but_never_addresses(transport: FakeTran
                 "kind": "other",
                 "modelName": None,
                 "androidTvRemote": None,
+                "known": False,
+                "available": True,
             }
         ]
     }

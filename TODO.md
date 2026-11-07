@@ -202,10 +202,25 @@ APK Android compris ; matériel toujours NOT RUN.
   la borne Tauri de 20 s. Une réponse hôte perdue devient un `bridge_timeout` visible, libère l'état
   occupé et ne renvoie jamais la commande. Tests automatisés, puis recette matérielle ciblée du
   2026-10-30 : interface Ubuntu restée utilisable après deux clics Assistant (PASS).
-- [ ] **T-06 — découverte persistante (FAIL matériel P1, 2026-10-30) :** une TV éveillée et
-  annoncée sur le réseau est restée absente de trois découvertes successives sur Ubuntu et le
-  téléphone. Garder une TV déjà appairée visible et reconnectable reste à concevoir et tester ;
-  aucun correctif n'est encore implémenté.
+- [x] **T-06 — découverte persistante (implémentation automatisée, 2026-11-01) :**
+  Mise à jour 2026-11-04 : `main` après #122 intégré dans la branche existante ; appairage réussi
+  et lecture authentifiée mémorisent automatiquement la TV, sans modifier ses certificats.
+  Une redécouverte met à jour durablement ses coordonnées par identifiant stable, sans doublon.
+  Tests ciblés, lint et typage PASS ; CI non lancée (aucune nouvelle PR), matériel NOT RUN.
+  Suite Python : 2 886 PASS, 8 SKIP (PyInstaller absent), couverture 98,07 % ; dernier
+  parcours de migration : 369 tests ciblés PASS. Revue et recette matérielle restent à faire.
+  Livraison fonctionnelle `369ffcb` poussée ; couverture cumulée finale 98,53 % après les tests
+  ciblés. Nettoyage : 18 Mio de caches/rapport supprimés, aucun build natif produit.
+  Intégration finale 2026-11-06 : `main` est déjà ancêtre de la branche (jusqu’à #122 ; #124 reste
+  ouverte). Registre/service/bridge : 534 tests ciblés PASS, lint et format PASS ; les modèles
+  Ubuntu et Android consomment `available` et signalent l’indisponibilité sans état connecté fictif.
+  Les TV connues sont conservées dans un registre privé distinct des certificats, restaurées hors ligne au
+  redémarrage et réconciliées avec la découverte réseau sans inventer un état connecté. L'oubli
+  reste une action utilisateur explicite et ne supprime ni certificat ni préférence. Les tests
+  couvrent disparition réseau, redémarrage, redécouverte, reconnexion, deux TV et absence de perte
+  d'appairage. Le FAIL matériel du 2026-10-30 reste à retester après intégration ; aucun test
+  matériel n'a été lancé pour cette correction.
+  Corrections de revue (Claude, 2026-11-06, PR #126, accord du propriétaire) : P1, une TV restaurée de la mémoire n'est jamais utilisée à son adresse sauvegardée (télécommande, texte, voix, applications) avant qu'une découverte la revoie sous son identité ; P2, statut d'une TV restaurée borné par une échéance unique de 8 s pour la redécouverte et la lecture (sous les 10 s du shell) ; P2 UI, « Oublier » est suivi comme opération en cours et bloque sélection, découverte et commandes jusqu'à la réponse. Local : 2 890 PASS / 8 SKIP, couverture 98,67 %, UI 426 PASS ; matériel NOT RUN.
 - [x] **Sécurité Rust — RUSTSEC-2026-0386 :** le lockfile Tauri résout désormais Tokio 1.53.3,
   premier correctif compatible de la ligne LTS 1.53. Les audits restent actifs et aucune
   dérogation n'a été ajoutée. Validation automatisée uniquement, sans interaction matérielle.
@@ -655,3 +670,5 @@ Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1,
 | Phase 1 : autonomie et convergence |  tests simulés 100 %, fusionnés (#38) ; matériel partiel, non classé | Recette matérielle R1–R4 autorisée |
 | Phase 2 : commandes, applications, clavier |  son validé sur Ubuntu ; le reste codé, 0 % confirmé sur TV ; applications 0 % | Commandes sur TV et décision ADB du propriétaire |
 | Phase 3 : livraison |  CI `d95fc7b` verte, APK et `.deb` construits, `.deb` installé/testé/purgé en CI ; recette matérielle finale à faire | Installation et recette finale autorisées |
+
+- [x] **T-06, budget du bundle UI (2026-11-07, PR #126) :** D3 et T-06 cumulés portent le JavaScript à 98 664 octets ; limite relevée de 96 à 112 Kio, toujours bien en dessous d'un catalogue d'icônes complet.

@@ -16,7 +16,8 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 
 from control_tv.command_trace import CommandTrace, ConfirmationGate, HoldRequest, TraceRecorder
 from control_tv.domain import (
@@ -30,7 +31,10 @@ from control_tv.domain import (
     ControlError,
     Device,
     DeviceId,
+    DeviceNotFoundError,
     DeviceStatus,
+    DeviceUnavailableError,
+    DiscoveryError,
     InvalidArgumentError,
     MediaRequest,
     MediaStatus,
@@ -40,11 +44,12 @@ from control_tv.domain import (
     RemoteKeyResult,
     RemoteObservation,
     RemoteTextResult,
+    StorageUnavailableError,
     TvApp,
     UnsupportedOperationError,
     VolumeControlType,
 )
-from control_tv.ports import AppMemory, CastTransport, ReceiverApps, TvApps, TvRemote
+from control_tv.ports import AppMemory, CastTransport, DeviceMemory, ReceiverApps, TvApps, TvRemote
 from control_tv.tv_channels import TvChannels
 
 
@@ -64,6 +69,10 @@ class Observation:
 ExpectedState = Callable[[DeviceStatus], Observation]
 
 DEFAULT_DISCOVERY_TIMEOUT = 5.0
+# Finding a TV restored from memory again, then reading it: under the shell's 10 s status bound,
+# with room for the remote-capability browse that follows a discovery.
+RECONNECT_BUDGET = 8.0
+REDISCOVERY_SHARE = 3 / 8
 DEFAULT_CONFIRM_TIMEOUT = 5.0
 DEFAULT_STATUS_TIMEOUT = 5.0
 DEFAULT_POLL_INTERVAL = 0.25
@@ -352,6 +361,7 @@ class ControlService:
         remote: TvRemote | None = None,
         apps: TvApps | None = None,
         app_memory: AppMemory | None = None,
+        device_memory: DeviceMemory | None = None,
         receiver_apps: ReceiverApps | None = None,
         trace: TraceRecorder | None = None,
         gate: ConfirmationGate | None = None,
@@ -385,27 +395,102 @@ class ControlService:
         self._clock = clock
         self._sleep = sleep
         self._trace = trace or TraceRecorder()
+        self._device_memory = device_memory
         # Acceptance only (C6): holds a sent playback command's confirmation until an
         # independent observer has recorded the session change. None in normal use.
         self._gate = gate
         self._channels = TvChannels(
-            self._discovered,
+            self._reachable,
             remote=remote,
             apps=apps,
             memory=app_memory,
             receiver_apps=receiver_apps,
         )
-        self._devices: dict[DeviceId, Device] = {}
+        recalled = () if device_memory is None else device_memory.recall()
+        self._devices: dict[DeviceId, Device] = {
+            device.id: replace(device, known=True, available=False) for device in recalled
+        }
 
     def discover_devices(self, *, timeout: float = DEFAULT_DISCOVERY_TIMEOUT) -> list[Device]:
         timeout = _number(timeout, "discovery timeout")
         _require(timeout > 0, f"discovery timeout must be a finite number > 0: {timeout}")
-        devices = list(self._transport.discover(timeout=timeout))
-        self._devices = {device.id: device for device in devices}
-        return devices
+        remembered = {
+            device.id: replace(device, known=True, available=False)
+            for device in (() if self._device_memory is None else self._device_memory.recall())
+        }
+        try:
+            discovered = list(self._transport.discover(timeout=timeout))
+        except DiscoveryError:
+            if not remembered:
+                raise
+            self._devices = remembered
+            return list(remembered.values())
+        live = {
+            device.id: replace(device, known=device.id in remembered, available=True)
+            for device in discovered
+        }
+        # Refresh coordinates only for identities the owner already retained. A scan
+        # neither pairs a new TV nor treats an announcement as a connected session.
+        if self._device_memory is not None:
+            for device in live.values():
+                if device.known and not self._device_memory.remember(device):
+                    raise StorageUnavailableError("could not update the known TV coordinates")
+        self._devices = {**remembered, **live}
+        return list(self._devices.values())
+
+    def remember_device(self, device_id: DeviceId) -> None:
+        device_id = _checked_id(device_id)
+        device = self._devices.get(device_id)
+        if device is None:
+            raise DeviceNotFoundError(
+                f"device {device_id} has not been discovered", device_id=device_id
+            )
+        if self._device_memory is not None and not self._device_memory.remember(device):
+            raise StorageUnavailableError("could not persist the known TV on this installation")
+        self._devices[device_id] = replace(device, known=True)
+
+    def forget_device(self, device_id: DeviceId) -> None:
+        device_id = _checked_id(device_id)
+        if self._device_memory is not None and not self._device_memory.forget(device_id):
+            raise StorageUnavailableError("could not forget the known TV on this installation")
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        if device.available:
+            self._devices[device_id] = replace(device, known=False)
+        else:
+            self._devices.pop(device_id, None)
 
     def get_status(self, device_id: DeviceId) -> DeviceStatus:
-        return self._transport.get_status(_checked_id(device_id), timeout=self._status_timeout)
+        device_id = _checked_id(device_id)
+        known = self._devices.get(device_id)
+        if known is None or known.available:
+            return self._transport.get_status(device_id, timeout=self._status_timeout)
+        # One deadline for finding the TV again and reading it, within the shell's own bound.
+        deadline = self._clock() + max(self._status_timeout, RECONNECT_BUDGET)
+        self._found_again(device_id, (deadline - self._clock()) * REDISCOVERY_SHARE)
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise OperationTimeoutError(
+                "the TV was found again too late to be read", device_id=device_id
+            )
+        return self._transport.get_status(device_id, timeout=min(self._status_timeout, remaining))
+
+    def _found_again(self, device_id: DeviceId, timeout: float) -> None:
+        """A TV restored from memory is used only once a discovery sees it again.
+
+        Its saved address may since belong to another TV paired with this installation, so
+        nothing is sent there before the TV announces itself again under its own identity.
+        """
+        if timeout > 0:
+            with suppress(DiscoveryError):
+                self.discover_devices(timeout=timeout)
+        refreshed = self._devices.get(device_id)
+        if refreshed is None or not refreshed.available:
+            raise DeviceUnavailableError(
+                f"known device {device_id} is not available on the network",
+                device_id=device_id,
+            )
 
     def load_media(self, device_id: DeviceId, request: MediaRequest) -> CommandResult:
         device_id = _checked_id(device_id)
@@ -583,13 +668,19 @@ class ControlService:
     # one control surface the bridge and the MCP adapter call.
 
     def get_remote_status(self, device_id: DeviceId) -> RemoteObservation:
-        return self._channels.get_remote_status(device_id)
+        observed = self._channels.get_remote_status(device_id)
+        # Successful authenticated observation also migrates an existing pairing
+        # into device memory, without touching its certificates or pairing again.
+        if self._device_memory is not None:
+            self.remember_device(device_id)
+        return observed
 
     def start_remote_pairing(self, device_id: DeviceId) -> None:
         self._channels.start_remote_pairing(device_id)
 
     def finish_remote_pairing(self, device_id: DeviceId, code: str) -> None:
         self._channels.finish_remote_pairing(device_id, code)
+        self.remember_device(device_id)
 
     def press_remote_key(self, device_id: DeviceId, key: RemoteKey) -> RemoteKeyResult:
         return self._channels.press_remote_key(device_id, key)
@@ -617,13 +708,22 @@ class ControlService:
 
     def pair_tv_apps(self, device_id: DeviceId, pairing_endpoint: str, code: str) -> None:
         self._channels.pair_tv_apps(device_id, pairing_endpoint, code)
+        self.remember_device(device_id)
 
     def open_tv_apps_port(self, device_id: DeviceId) -> None:
         self._channels.open_tv_apps_port(device_id)
 
-    def _discovered(self, device_id: DeviceId) -> Device | None:
-        """The device of the last discovery with this id, or None."""
-        return self._devices.get(_checked_id(device_id))
+    def _reachable(self, device_id: DeviceId) -> Device | None:
+        """The device of the last discovery with this id, or None.
+
+        A TV restored from memory is first found again on the network, so its remote, text,
+        voice and apps never reach a stale address.
+        """
+        device_id = _checked_id(device_id)
+        known = self._devices.get(device_id)
+        if known is not None and not known.available:
+            self._found_again(device_id, RECONNECT_BUDGET * REDISCOVERY_SHARE)
+        return self._devices.get(device_id)
 
     def _confirmation_deadline(self) -> float | None:
         timeout = self._confirm_timeout

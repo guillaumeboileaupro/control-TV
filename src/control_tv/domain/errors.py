@@ -23,6 +23,7 @@ class ErrorCode(StrEnum):
     TIMEOUT = "timeout"
     PAIRING_REQUIRED = "pairing_required"
     DEBUGGING_OFF = "debugging_off"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
 
 
 class ControlError(Exception):
@@ -101,3 +102,9 @@ class DebuggingOffError(ControlError):
     """The TV accepts no debugging connection: its network debugging (ADB) is turned off."""
 
     code = ErrorCode.DEBUGGING_OFF
+
+
+class StorageUnavailableError(ControlError):
+    """Private installation state could not be durably updated."""
+
+    code = ErrorCode.STORAGE_UNAVAILABLE

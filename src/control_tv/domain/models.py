@@ -120,7 +120,12 @@ def _valid_content_type(value: str) -> bool:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Device:
-    """A discovered device, identified by `id`; `friendly_name` is display-only."""
+    """A device identified by `id`; `friendly_name` is display-only.
+
+    `available` says only whether the latest discovery saw the device. `known` says the
+    person explicitly kept it on this installation. Neither flag claims a connection or
+    pairing state.
+    """
 
     id: DeviceId
     friendly_name: str
@@ -129,6 +134,8 @@ class Device:
     kind: DeviceKind = DeviceKind.OTHER
     model_name: str | None = None
     android_tv_remote: bool | None = None
+    known: bool = False
+    available: bool = True
     """Whether the device advertises the Android TV Remote service (protocol v2), the channel
     its own remote uses for keys such as volume and power: True or False when discovery looked
     for it, None when undetermined (not looked for, the look failed, or a Cast group). control-TV
@@ -141,6 +148,11 @@ class Device:
         _require(
             self.android_tv_remote is None or isinstance(self.android_tv_remote, bool),
             f"android_tv_remote must be a boolean or None: {self.android_tv_remote!r}",
+        )
+        _require(isinstance(self.known, bool), f"known must be a boolean: {self.known!r}")
+        _require(
+            isinstance(self.available, bool),
+            f"available must be a boolean: {self.available!r}",
         )
 
 
