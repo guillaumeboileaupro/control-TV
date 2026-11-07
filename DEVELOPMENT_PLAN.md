@@ -280,6 +280,12 @@ hardware). Automated validation only; no display or TV was used.
   and the receiver starting its WebRTC session, then aborting: libwebrtc's NetworkMonitor needs
   `ACCESS_NETWORK_STATE`, which the receiver did not declare. The manifest now declares it (a
   normal permission, no prompt), with a regression test.
+  The receiver then stayed up, but Ubuntu refused its answer ("conflicting ice-ufrag values").
+  Under `webrtc` 0.21 the offer carries only the codec its track matches, and a track naming
+  H.264 without fmtp matched Baseline 42001f, which libwebrtc does not take as Constrained
+  Baseline: the TV rejected the video, and the rejected section brought its own ICE credentials.
+  The video track now names Constrained Baseline 42e01f, the profile both encoders produce, and
+  a test checks the offer.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
