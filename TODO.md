@@ -670,3 +670,5 @@ Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1,
 | Phase 1 : autonomie et convergence |  tests simulés 100 %, fusionnés (#38) ; matériel partiel, non classé | Recette matérielle R1–R4 autorisée |
 | Phase 2 : commandes, applications, clavier |  son validé sur Ubuntu ; le reste codé, 0 % confirmé sur TV ; applications 0 % | Commandes sur TV et décision ADB du propriétaire |
 | Phase 3 : livraison |  CI `d95fc7b` verte, APK et `.deb` construits, `.deb` installé/testé/purgé en CI ; recette matérielle finale à faire | Installation et recette finale autorisées |
+
+- [x] **T-06, budget du bundle UI (2026-11-07, PR #126) :** D3 et T-06 cumulés portent le JavaScript à 98 664 octets ; limite relevée de 96 à 112 Kio, toujours bien en dessous d'un catalogue d'icônes complet.

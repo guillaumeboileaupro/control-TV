@@ -1253,6 +1253,8 @@ exposure and no permanent server.
     shell; fixed after that check: unavailable controls dimmed like the rest of the window
     (`aria-disabled`), the start button hidden while a stream runs or failed, the choice frozen
     meanwhile, errors shown as sentences;
+    (2026-11-07, PR #126: budget raised again, 96 to 112 KiB, once D3 and T-06 added up to
+    98.7 kB; local modules only)
     the frontend bundle budget raised from 64 to 72 KiB for it (62.0 kB before, 69.0 kB after;
     the guard still catches a bundled icon catalogue);
   - [x] D3 controls hardened (2026-11-01, branch `feat/d3-streaming-controls`, no PR while #120
