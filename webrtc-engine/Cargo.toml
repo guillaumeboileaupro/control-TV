@@ -17,15 +17,12 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-webrtc = "0.14"
+rtc = { version = "0.21.1", default-features = false }
+webrtc = "0.21"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # PR_SET_PDEATHSIG: a capture/encoder child must not outlive a killed host (D4-4).
 libc = "0.2"
-
-[dev-dependencies]
-rtp = "0.14"
-webrtc-media = "0.11"
 
 [patch.crates-io]
 # Keep standalone engine builds on the same panic-safe digest source as the Tauri workspace.

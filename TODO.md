@@ -240,7 +240,7 @@ APK Android compris ; matériel toujours NOT RUN.
   télécommande.
 - [x] **Dérogations WebRTC — risque accepté par le propriétaire le 2026-10-25 :** RUSTSEC-2026-0387 et
   RUSTSEC-2025-0141 jusqu'au 30/11/2026, essais en réseau local uniquement (voir `SECURITY.md`).
-- [ ] **Avant le 30/11/2026 :** migrer vers `webrtc` 0.21 (pile `rtc`) et retirer les trois dérogations.
+- [x] **Migration `webrtc` 0.21 (2026-11-07, branche `chore/webrtc-0.21`) :** moteur et tests portés sur la pile `rtc` (`ring`) ; `crypto-bigint`, `bincode` et `pin-utils` absents des deux lockfiles ; les cinq dérogations WebRTC (deux Cargo Audit, trois OSV) supprimées. Tests du moteur 47 PASS / 1 ignoré, dont H.264 et Opus décodés de bout en bout. Matériel NOT RUN : diffusion réelle vers la TV à revalider.
 - [x] **Applis TV sur le téléphone (2026-10-25) :** #99 ne gardait que le programme `adb`, absent du téléphone ;
   l'adaptateur Python `adb-shell` de `main` est rétabli et choisi quand `adb` manque. Récepteur TV : nom,
   icône et bannière, consigne claire à l'écran. Validation automatisée ; essai réel en cours.
@@ -295,7 +295,7 @@ APK Android compris ; matériel toujours NOT RUN.
 - [x] **Décision propriétaire — RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `webrtc` → `dtls` →
   `p256`/`p384`) :** tranchée le 2026-10-25 par une dérogation datée et ciblée (entrée
   « Dérogations WebRTC » ci-dessus, `webrtc-engine/cargo-audit-waivers.json`, `osv-scanner.toml`) ;
-  la migration `webrtc` 0.21 reste ouverte (D1-B2).
+  la migration `webrtc` 0.21 est faite le 2026-11-07 et les dérogations retirées (D1-B2).
 - [x] **CI :** `webrtc-engine` exécute fmt, Clippy, tests de reconnexion/décodage et son propre
   audit Cargo ; `android-tv-receiver` exécute ses tests JVM avec verrou Gradle. Un audit OSV
   bloquant couvre les deux verrous sans ajouter un second build Android coûteux.

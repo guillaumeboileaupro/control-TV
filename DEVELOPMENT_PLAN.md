@@ -256,6 +256,14 @@ now refuses deleting a missing or attached mode, like the real one (assumed, not
 hardware). Automated validation only; no display or TV was used.
 
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
+- [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
+  and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
+  type each track uses is read from the accepted answer, ICE still gathers every non-loopback
+  interface (the pairing server alone is bound to the lease address). Its tests use `rtc`'s RTP
+  depacketizers, so `rtp` 0.14 and `webrtc-media` 0.11 are gone. `crypto-bigint`, `bincode` and
+  `pin-utils` are absent from both lockfiles and the five WebRTC waivers are deleted. Engine
+  tests 47 passed / 1 ignored (endurance), the H.264/Opus decode and the production-source end
+  to end included; hardware NOT RUN, so the real stream to the TV needs revalidation.
 - [x] **Owner decision taken 2026-10-25 (waiver below); the `webrtc` 0.21 migration stays open as
   D1-B2:** RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5, timing variability in
   constant-time operations, published 2026-10-23) reaches both Rust lockfiles through `webrtc`

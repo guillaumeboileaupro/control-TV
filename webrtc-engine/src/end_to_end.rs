@@ -3,14 +3,12 @@
 //! Only the live inputs are synthetic: a stand-in `ffmpeg` swaps `x11grab` and `pulse` for real-time
 //! `lavfi` sources and runs the real FFmpeg with every other production argument.
 
-use crate::transport::tests::receiving_peer;
+use crate::transport::tests::{receiving_peer, ReceivingPeer};
 use crate::{
     AudioConfig, CaptureConfig, EngineState, FfmpegMediaSource, MediaTransport, PairingEndpoint,
     PairingServer, ProcessRunner, SessionConfig, SessionController, SessionDescription,
     SystemClock, VideoConfig, VideoEncoder, WebRtcTransport,
 };
-use rtp::codecs::h264::H264Packet;
-use rtp::codecs::opus::OpusPacket;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -18,12 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
-use webrtc::api::media_engine::MIME_TYPE_H264;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
-use webrtc_media::io::sample_builder::SampleBuilder;
 
 const WRAPPER: &str = r#"#!/usr/bin/env python3
 import os, sys
@@ -96,7 +89,7 @@ fn running(pid: u32) -> bool {
 async fn pair_like_the_receiver(
     endpoint: PairingEndpoint,
     token: String,
-    peer: Arc<RTCPeerConnection>,
+    peer: Arc<ReceivingPeer>,
 ) {
     let stream = TcpStream::connect(endpoint.address).await.expect("connect");
     let mut roots = rustls::RootCertStore::empty();
@@ -124,55 +117,12 @@ async fn pair_like_the_receiver(
         .expect("offer");
     let offer: serde_json::Value = serde_json::from_str(&line).expect("offer JSON");
     let sdp = offer["offer"].as_str().expect("offer SDP").to_owned();
-    peer.set_remote_description(RTCSessionDescription::offer(sdp).expect("offer"))
-        .await
-        .expect("set offer");
-    let answer = peer.create_answer(None).await.expect("answer");
-    let mut gathering = peer.gathering_complete_promise().await;
-    peer.set_local_description(answer)
-        .await
-        .expect("set answer");
-    let _ = gathering.recv().await;
-    let answer = peer.local_description().await.expect("local answer").sdp;
+    let answer = peer.answer(sdp).await;
     let reply = serde_json::json!({ "accepted": true, "answer": answer }).to_string();
     writer
         .write_all(format!("{reply}\n").as_bytes())
         .await
         .expect("answer");
-}
-
-/// Forwards each received sample as `(is_video, payload)`.
-fn collect_samples(peer: &RTCPeerConnection) -> mpsc::Receiver<(bool, bytes::Bytes)> {
-    let (sender, receiver) = mpsc::channel(512);
-    peer.on_track(Box::new(move |track, _, _| {
-        let sender = sender.clone();
-        Box::pin(async move {
-            tokio::spawn(async move {
-                if track.codec().capability.mime_type == MIME_TYPE_H264 {
-                    let mut builder = SampleBuilder::new(64, H264Packet::default(), 90_000);
-                    while let Ok((packet, _)) = track.read_rtp().await {
-                        builder.push(packet);
-                        while let Some(sample) = builder.pop() {
-                            if sender.send((true, sample.data)).await.is_err() {
-                                return;
-                            }
-                        }
-                    }
-                } else {
-                    let mut builder = SampleBuilder::new(64, OpusPacket, 48_000);
-                    while let Ok((packet, _)) = track.read_rtp().await {
-                        builder.push(packet);
-                        while let Some(sample) = builder.pop() {
-                            if sender.send((false, sample.data)).await.is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-            });
-        })
-    }));
-    receiver
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -213,8 +163,8 @@ async fn a_paired_receiver_gets_h264_and_opus_from_the_production_media_source()
         .expect("prepare");
     let token = controller.pairing_token().expect("token").clone();
 
-    let receiver = receiving_peer().await;
-    let mut samples = collect_samples(&receiver);
+    let (receiver, mut samples) = receiving_peer().await;
+    let receiver = Arc::new(receiver);
     let client = tokio::spawn(pair_like_the_receiver(
         endpoint,
         token.expose_for_pairing().to_owned(),
@@ -277,5 +227,5 @@ async fn a_paired_receiver_gets_h264_and_opus_from_the_production_media_source()
     for pid in pids {
         assert!(!running(pid), "FFmpeg {pid} survived Stop");
     }
-    let _ = receiver.close().await;
+    receiver.close().await;
 }
