@@ -2,6 +2,28 @@
 
 A standalone graphical remote for a Google TV, on Ubuntu and on Android, both over one shared control layer and usable in parallel on the same TV, with no permanent server.
 
+## Download and install (0.2.0)
+
+**Latest release: [control-TV 0.2.0](https://github.com/guillaumeboileaupro/control-TV/releases/tag/v0.2.0)**
+([all releases](https://github.com/guillaumeboileaupro/control-TV/releases), release notes in
+[`docs/RELEASE_NOTES_0.2.0.md`](docs/RELEASE_NOTES_0.2.0.md)).
+
+| Device | File | Install |
+|---|---|---|
+| Ubuntu 22.04 (amd64) | `control-tv_0.2.0_amd64.deb` | `sudo dpkg -i control-tv_0.2.0_amd64.deb` (needs `adb`, `ffmpeg`, `libayatana-appindicator3-1`, `x11-xserver-utils`; `sudo apt-get -f install` adds them if missing) |
+| Android phone (arm64) | `control-tv-phone-0.2.0.apk` | sideload it (allow installs from your file manager or browser) |
+| Google TV | `controltv-receiver-0.2.0.apk` | `adb install -r controltv-receiver-0.2.0.apk` (TV debugging on): needed for Screen to TV and for opening apps |
+
+Check every file against `SHA256SUMS` from the same release (`sha256sum -c SHA256SUMS`). The APKs
+are signed with a development key, not a store key: they update an installation made with the
+same key only. Extending the desktop onto the TV needs a free video output, enabled once per boot:
+`echo on-digital | sudo tee /sys/class/drm/card1-HDMI-A-1/status`.
+
+What 0.2.0 does, checked on the owner's devices: the TV remote and its apps from Ubuntu and the
+phone, one pairing per device, remembered TVs, Google Assistant, and Duplicate or Extend the
+Ubuntu screen on the TV (WebRTC, about one second of delay). License: GPL-3.0-or-later (see
+[License](#license)).
+
 ## Goals
 
 - **Abandoned on 2026-10-12 (issue #37): by voice, in the ChatGPT app,** through control-TV's tools (MCP). The local MCP adapter stays in the code as it is, without further development; whether ChatGPT's voice mode could call these tools was never established.
