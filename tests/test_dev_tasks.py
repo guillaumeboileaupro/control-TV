@@ -1069,6 +1069,7 @@ GLIB_ADVISORY = "RUSTSEC-2024-0429"
 
 
 CRYPTO_BIGINT_ADVISORY = "RUSTSEC-2026-0387"
+PIN_UTILS_ADVISORY = "RUSTSEC-2026-0441"
 LAST_WEBRTC_WAIVER_DAY = dev.date(2026, 11, 30)
 
 
@@ -1114,16 +1115,17 @@ def test_the_crypto_bigint_waiver_ends_on_30_november_2026_and_covers_nothing_el
     assert CRYPTO_BIGINT_ADVISORY in [w.advisory for w in expired.expired]
 
 
-def test_the_osv_waivers_name_only_the_two_webrtc_advisories_until_30_november_2026() -> None:
+def test_the_osv_waivers_name_only_the_three_webrtc_advisories_until_30_november_2026() -> None:
     config = tomllib.loads((DEV_PATH.parents[1] / "osv-scanner.toml").read_text(encoding="utf-8"))
 
     ignored = {entry["id"]: entry for entry in config["IgnoredVulns"]}
 
-    assert set(ignored) == {CRYPTO_BIGINT_ADVISORY, "RUSTSEC-2025-0141"}
+    assert set(ignored) == {CRYPTO_BIGINT_ADVISORY, "RUSTSEC-2025-0141", PIN_UTILS_ADVISORY}
     assert set(config) == {"IgnoredVulns"}
     for entry in ignored.values():
         assert entry["ignoreUntil"] == datetime(2026, 11, 30, 23, 59, 59, tzinfo=UTC)
         assert entry["reason"]
+    assert "pin-utils 0.1.1" in ignored[PIN_UTILS_ADVISORY]["reason"]
 
 
 def test_the_glib_waiver_lifts_that_advisory_until_it_expires() -> None:
