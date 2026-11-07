@@ -39,8 +39,9 @@ the release tag with your version:
 ```bash
 git clone --branch v0.2.0 https://github.com/guillaumeboileaupro/control-TV.git
 cd control-TV
-# replace zeroconf with your modified source, for example:
-uv add --frozen ./path/to/your/zeroconf
+# replace zeroconf with your modified source; this also records it in uv.lock, which the
+# package build requires (it installs with --locked):
+uv add ./path/to/your/zeroconf
 python3 scripts/dev.py release-deb   # builds dist/control-tv_<version>_amd64.deb with it
 sudo dpkg -i dist/control-tv_*_amd64.deb
 ```
