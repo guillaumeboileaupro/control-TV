@@ -46,6 +46,7 @@ class FakeReceiverTv:
         self.wrong_first = wrong_first
         self.delay = delay  # how late the receiver answers, as from its background thread
         self.links: list[str] = []
+        self.senders: list[threading.Thread] = []
         self.statuses: list[int] = []
         self.front: str | None = None
         self.fronts: list[str | None] = []  # read first, in order, before `front`
@@ -78,7 +79,15 @@ class FakeReceiverTv:
             body = json.dumps({**answer, "token": token.group(1)}).encode()
             self.statuses.append(post(reply.group(1), body))
 
-        threading.Thread(target=send).start()
+        sender = threading.Thread(target=send)
+        self.senders.append(sender)
+        sender.start()
+
+    def answered(self) -> list[int]:
+        """The HTTP statuses of the receiver's posts, once each post has finished."""
+        for sender in self.senders:
+            sender.join(timeout=5)
+        return self.statuses
 
 
 def lister(tv: FakeReceiverTv, timeout: float = 3.0) -> ReceiverAppList:
@@ -102,7 +111,7 @@ def test_the_receiver_sends_the_tvs_apps_with_its_own_labels() -> None:
 
     assert apps == (TvApp("com.netflix.ninja", "Netflix"), TvApp("fr.free.oqee", "OQEE by Free"))
     assert len(tv.links) == 1  # the link is opened once
-    assert tv.statuses[0] == 400  # a list with another token is refused
+    assert tv.answered()[0] == 400  # a list with another token is refused
 
 
 def test_without_the_receiver_the_wait_ends_and_the_listener_is_closed() -> None:
@@ -200,7 +209,7 @@ def test_a_late_refusal_wins_when_the_app_was_already_in_front() -> None:
 
     with pytest.raises(CommandRejectedError, match="refused"):
         lister(tv, timeout=1).launch_app(HOST, "tv.arte.plus7")
-    assert tv.statuses == [204]  # the refusal was received, not cut off
+    assert tv.answered() == [204]  # the refusal was received, not cut off
 
 
 def test_every_read_of_the_app_in_front_fits_in_the_time_left() -> None:
@@ -261,7 +270,7 @@ def test_an_answer_for_another_app_or_request_is_ignored() -> None:
 
     with pytest.raises(OperationTimeoutError):
         lister(other_app, timeout=0.5).launch_app(HOST, "tv.arte.plus7")
-    assert other_app.statuses == [400]
+    assert other_app.answered() == [400]
     assert (
         parse_launch_answer(b'{"token": "x", "package": "a.b", "result": "started"}', TOKEN, "a.b")
         is None

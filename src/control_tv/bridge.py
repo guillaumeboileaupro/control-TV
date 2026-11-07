@@ -463,8 +463,9 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
     """Probe only the selected device through existing control-layer reads.
 
     A successful Cast status proves that the selected equipment is reachable and can use the
-    existing HLS path. The ADB inventory separately proves whether the exact receiver package is
-    installed and accessible; inability to read that inventory stays distinct from absence. A
+    existing HLS path. The TV's debugging, or else the receiver's own answer through the paired
+    remote, separately proves whether the exact receiver package is installed and accessible;
+    inability to tell stays distinct from absence. A
     WebRTC confirmation additionally requires the already-paired Android Remote channel used for
     the one-time secret handoff.
     """
@@ -484,7 +485,7 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
             }
         }
     try:
-        apps = control.list_tv_apps(device_id)
+        installed = control.screen_receiver_installed(device_id)
     except ControlError as error:
         return {
             "capabilities": {
@@ -497,9 +498,6 @@ def _handle_get_screen_receiver_capabilities(control: TvControl, params: JsonObj
                 "reason": error.code.value,
             }
         }
-    from control_tv.screen_streaming.controller import WEBRTC_RECEIVER_PACKAGE
-
-    installed = any(app.package == WEBRTC_RECEIVER_PACKAGE for app in apps)
     if not installed:
         return {
             "capabilities": {
@@ -569,12 +567,15 @@ def _handle_open_tv_apps_port(control: TvControl, params: JsonObject) -> JsonObj
 _screen_controller: ScreenStreamController | None = None
 
 
-def _screen() -> ScreenStreamController:
+def _screen(control: TvControl) -> ScreenStreamController:
+    """The one controller, reaching TVs through this bridge's control layer: its remote,
+    app list and ControlTV Receiver, never a second, bare service of its own."""
     global _screen_controller
     if _screen_controller is None:
         from control_tv.screen_streaming.controller import ScreenStreamController
+        from control_tv.screen_streaming.d1 import through
 
-        _screen_controller = ScreenStreamController()
+        _screen_controller = ScreenStreamController(connect=through(control))
     return _screen_controller
 
 
@@ -690,12 +691,12 @@ def _strict_int(params: JsonObject, name: str) -> int:
 
 
 def _handle_list_screens(control: TvControl, params: JsonObject) -> JsonObject:
-    del control, params
+    del params
 
     from control_tv.screen_streaming.virtual_display import REFRESH_RATES, SIZES
 
     def listed() -> JsonObject:
-        controller = _screen()
+        controller = _screen(control)
         screens: list[JsonValue] = [
             {
                 "name": output.name,
@@ -762,16 +763,14 @@ def _screen_request(params: JsonObject) -> ScreenRequest:
 
 
 def _handle_start_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
     request = _screen_request(params)
-    return _screen_call(lambda: {"stream": _screen_status_to_json(_screen().start(request))})
+    return _screen_call(lambda: {"stream": _screen_status_to_json(_screen(control).start(request))})
 
 
 def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
 
     def prepare() -> JsonObject:
-        lease = _screen().prepare_webrtc_capture(_screen_request(params))
+        lease = _screen(control).prepare_webrtc_capture(_screen_request(params))
         return {
             "capture": {
                 "bindAddress": lease.bind_address,
@@ -788,25 +787,24 @@ def _handle_prepare_webrtc_capture(control: TvControl, params: JsonObject) -> Js
 
 
 def _handle_activate_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
-    del control, params
+    del params
     return _screen_call(
-        lambda: {"stream": _screen_status_to_json(_screen().activate_webrtc_capture())}
+        lambda: {"stream": _screen_status_to_json(_screen(control).activate_webrtc_capture())}
     )
 
 
 def _handle_release_webrtc_capture(control: TvControl, params: JsonObject) -> JsonObject:
-    del control
     error = params.get("error")
     if error is not None and not isinstance(error, str):
         raise InvalidArgumentError("error must be a string or null")
     return _screen_call(
-        lambda: {"stream": _screen_status_to_json(_screen().release_webrtc_capture(error))}
+        lambda: {"stream": _screen_status_to_json(_screen(control).release_webrtc_capture(error))}
     )
 
 
 def _handle_stop_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control, params
-    return {"stream": _screen_status_to_json(_screen().stop())}
+    del params
+    return {"stream": _screen_status_to_json(_screen(control).stop())}
 
 
 def _handle_get_display_layout(control: TvControl, params: JsonObject) -> JsonObject:
@@ -835,8 +833,8 @@ def _handle_revert_display_layout(control: TvControl, params: JsonObject) -> Jso
 
 
 def _handle_get_screen_stream(control: TvControl, params: JsonObject) -> JsonObject:
-    del control, params
-    return {"stream": _screen_status_to_json(_screen().status())}
+    del params
+    return {"stream": _screen_status_to_json(_screen(control).status())}
 
 
 _HANDLERS: dict[str, Handler] = {

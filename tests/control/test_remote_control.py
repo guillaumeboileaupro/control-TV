@@ -982,6 +982,44 @@ def test_without_the_tvs_debugging_its_receiver_lists_the_apps_and_they_are_kept
     assert memory.kept[DEVICE_ID] == receiver.apps
 
 
+RECEIVER_APP = TvApp("io.github.guillaumeboileaupro.controltv.receiver", "ControlTV Receiver")
+
+
+def test_the_screen_receiver_listed_by_the_tvs_debugging_is_installed() -> None:
+    receiver = ReceiverApps()
+    service = with_receiver(FakeApps(apps=(RECEIVER_APP,)), receiver, MemoryApps())
+
+    assert service.screen_receiver_installed(DEVICE_ID) is True
+    assert receiver.hosts == []  # the debugging's list is enough: the receiver is not opened
+
+
+def test_without_the_tvs_debugging_the_receivers_own_answer_proves_it_installed() -> None:
+    receiver = ReceiverApps((TvApp("fr.free.oqee", "OQEE by Free"),))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, MemoryApps())
+
+    assert service.screen_receiver_installed(DEVICE_ID) is True
+    assert receiver.hosts == [HOST]
+
+
+def test_a_receiver_not_in_the_debuggings_list_is_still_found_when_it_answers() -> None:
+    answering = ReceiverApps()
+    silent = ReceiverApps(error=OperationTimeoutError("no answer"))
+
+    found = with_receiver(FakeApps(), answering, MemoryApps())
+    absent = with_receiver(FakeApps(), silent, MemoryApps())
+
+    assert found.screen_receiver_installed(DEVICE_ID) is True
+    assert absent.screen_receiver_installed(DEVICE_ID) is False
+
+
+def test_when_neither_can_tell_the_debuggings_error_is_raised() -> None:
+    silent = ReceiverApps(error=OperationTimeoutError("no answer"))
+    service = with_receiver(FakeApps(error=DebuggingOffError("off")), silent, MemoryApps())
+
+    with pytest.raises(DebuggingOffError):
+        service.screen_receiver_installed(DEVICE_ID)
+
+
 def test_when_neither_answers_the_debuggings_reason_is_given() -> None:
     receiver = ReceiverApps(error=OperationTimeoutError("no receiver"))
     service = with_receiver(FakeApps(error=DebuggingOffError("off")), receiver, MemoryApps())

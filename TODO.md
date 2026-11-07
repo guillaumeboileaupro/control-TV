@@ -673,3 +673,6 @@ Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1,
 | Phase 3 : livraison |  CI `d95fc7b` verte, APK et `.deb` construits, `.deb` installé/testé/purgé en CI ; recette matérielle finale à faire | Installation et recette finale autorisées |
 
 - [x] **T-06, budget du bundle UI (2026-11-07, PR #126) :** D3 et T-06 cumulés portent le JavaScript à 98 664 octets ; limite relevée de 96 à 112 Kio, toujours bien en dessous d'un catalogue d'icônes complet.
+
+- [x] **WebRTC non confirmé malgré le récepteur installé (2026-11-07, branche `fix/webrtc-capability`) :** le récepteur est confirmé par l'ADB de la TV ou par sa propre réponse via la télécommande appairée (sans réglage TV), pour la détection comme pour le démarrage ; une télécommande non entendue lors d'une courte écoute mDNS n'est plus enregistrée comme absente. Tests automatisés PASS ; essai WebRTC sur les deux TV à refaire après installation.
+- [x] **Démarrage WebRTC impossible depuis l'application (2026-11-07, PR #129) :** la diffusion se connectait à la TV par un service de contrôle nu, sans télécommande, ADB ni récepteur ; elle passe désormais par le service du bridge, et « WebRTC preparation failed » donne la cause réelle. Constat en recette (Chambre) ; nouvel essai à faire.
