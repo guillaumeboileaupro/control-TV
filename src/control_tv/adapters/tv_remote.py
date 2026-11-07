@@ -111,7 +111,10 @@ class RemoteClient(Protocol):
     async def async_connect(self) -> None: ...
     def disconnect(self) -> None: ...
     def send_key_command(self, key: str) -> None: ...
-    def send_text(self, text: str) -> None: ...
+    @property
+    def active_text_field(self) -> int | None: ...
+
+    def send_text_to_field(self, text: str, field: int) -> None: ...
     def send_launch_app_command(self, app_link_or_app_id: str) -> None: ...
     async def start_voice(self) -> VoiceSession: ...
 
@@ -180,8 +183,8 @@ def _observe(remote: RemoteClient) -> RemoteObservation:
 def _open(remote: RemoteClient) -> bool:
     """Whether the library still holds this connection open (lost or closing: not open).
 
-    Read from the library's protocol object, like `_field_reported`; a missing attribute
-    reads as "not open", so the next call connects again.
+    Read from the library's protocol object; a missing attribute reads as "not open", so the
+    next call connects again.
     """
     protocol = getattr(remote, "_remote_message_protocol", None)
     lost = getattr(protocol, "on_con_lost", None)
@@ -192,15 +195,10 @@ def _open(remote: RemoteClient) -> bool:
     return callable(closing) and closing() is False
 
 
-def _field_reported(remote: RemoteClient) -> bool:
-    """Whether the TV reported an active text field (its input-method edit counters).
-
-    The library keeps them on its protocol object only; `androidtvremote2` is pinned, and a
-    missing attribute reads as "not reported", never as an active field.
-    """
-    protocol = getattr(remote, "_remote_message_protocol", None)
-    counter = getattr(protocol, "ime_field_counter", 0)
-    return isinstance(counter, int) and not isinstance(counter, bool) and counter > 0
+def _active_field(remote: RemoteClient) -> int | None:
+    """The text field the TV announced as active, or None; anything else reads as no field."""
+    field = getattr(remote, "active_text_field", None)
+    return field if isinstance(field, int) and not isinstance(field, bool) and field > 0 else None
 
 
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
@@ -238,13 +236,13 @@ def _library_errors() -> tuple[type[Exception], type[Exception], type[Exception]
 def _default_remote_factory(
     client_name: str, certfile: str, keyfile: str, host: str
 ) -> RemoteClient:
-    from androidtvremote2 import AndroidTVRemote
+    from control_tv.adapters.tv_remote_text_field import TextFieldRemote
 
     # Built inside the running loop, which the library requires. The input method is on: it
-    # carries text to the TV's active field and reports the app in front.
+    # carries text to the field the TV announces as active and reports the app in front.
     return cast(
         RemoteClient,
-        AndroidTVRemote(client_name, certfile, keyfile, host, enable_ime=True, enable_voice=True),
+        TextFieldRemote(client_name, certfile, keyfile, host, enable_ime=True, enable_voice=True),
     )
 
 
@@ -403,11 +401,13 @@ class TvRemoteChannel:
 
         async def send(remote: RemoteClient, fresh: bool) -> TextEntry:
             del fresh
-            await self._wait_for(lambda: _field_reported(remote))
-            reported = _field_reported(remote)
-            if reported:
-                remote.send_text(text)
-            return TextEntry(length=len(text), field_reported=reported, observed=_observe(remote))
+            await self._wait_for(lambda: _active_field(remote) is not None)
+            field = _active_field(remote)
+            if field is not None:
+                remote.send_text_to_field(text, field)
+            return TextEntry(
+                length=len(text), field_reported=field is not None, observed=_observe(remote)
+            )
 
         return self._run(lambda: self._session(host, send))
 

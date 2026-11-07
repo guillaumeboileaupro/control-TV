@@ -29,6 +29,9 @@ pub struct ProcessRunner {
     executable: String,
 }
 
+/// One 20 ms Opus frame of the captured sound (48 kHz, stereo, 16-bit): 48 000 x 2 x 2 / 50.
+const PULSE_FRAGMENT_BYTES: u32 = 3840;
+
 impl ProcessRunner {
     pub fn new(executable: impl Into<String>) -> Self {
         Self {
@@ -112,6 +115,11 @@ impl ProcessRunner {
             "warning".into(),
             "-f".into(),
             "pulse".into(),
+            // Without it PulseAudio records in its default fragments of about two seconds, and
+            // the TV holds the picture back to stay in sync with that late sound (about 2 s of
+            // delay, seen on 2026-11-07). 3840 bytes: 20 ms of 48 kHz stereo 16-bit, one Opus frame.
+            "-fragment_size".into(),
+            PULSE_FRAGMENT_BYTES.to_string(),
             "-i".into(),
             device.clone(),
             "-vn".into(),
@@ -780,6 +788,12 @@ mod tests {
     fn audio_command_uses_only_the_selected_monitor() {
         let args = ProcessRunner::audio_arguments(&capture()).expect("audio command");
         assert!(args.contains(&"sink.monitor".into()));
+        // A 20 ms capture buffer, set on the PulseAudio input itself (before its `-i`).
+        let fragment = args
+            .windows(2)
+            .position(|item| item == ["-fragment_size", "3840"])
+            .expect("capture buffer");
+        assert!(fragment < args.iter().position(|item| item == "-i").expect("input"));
         assert!(args
             .windows(2)
             .any(|item| item == ["-application", "lowdelay"]));

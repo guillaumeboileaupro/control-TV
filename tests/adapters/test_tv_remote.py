@@ -61,6 +61,7 @@ class FakeTv:
         self.connect_delay = 0.0
         self.current_app = ""
         self.field_counter = 0
+        self.fields: list[int] = []  # the field each text was addressed to
         self.texts: list[str] = []
         self.log: list[tuple[str, ...]] = []
         self.remotes: list[FakeRemote] = []
@@ -100,7 +101,8 @@ class FakeRemote:
         self.is_on: bool | None = None
         self.volume_info: dict[str, Any] | None = None
         self.current_app: str = ""
-        self._remote_message_protocol = SimpleNamespace(ime_field_counter=0)
+        self._remote_message_protocol = SimpleNamespace()
+        self.active_text_field: int | None = None
         self.disconnected = 0
 
     @property
@@ -116,7 +118,7 @@ class FakeRemote:
         self.is_on = self.tv.is_on
         self.volume_info = None if self.tv.volume is None else dict(self.tv.volume)
         self.current_app = self.tv.current_app
-        self._remote_message_protocol.ime_field_counter = self.tv.field_counter
+        self.active_text_field = self.tv.field_counter or None
         if self.tv.keeps_open:
             self._remote_message_protocol.on_con_lost = asyncio.get_running_loop().create_future()
             self._remote_message_protocol.transport = SimpleNamespace(is_closing=lambda: False)
@@ -149,9 +151,10 @@ class FakeRemote:
         if self.tv.opens_launched_app:
             self.current_app = app_link_or_app_id
 
-    def send_text(self, text: str) -> None:
+    def send_text_to_field(self, text: str, field: int) -> None:
         self.tv.log.append(("text", str(len(text))))  # the length only, like a real log
         self.tv.texts.append(text)
+        self.tv.fields.append(field)
         if self.tv.send_error is not None:
             raise self.tv.send_error
 
@@ -882,6 +885,7 @@ def test_text_is_sent_once_to_the_active_field(channel: TvRemoteChannel, tv: Fak
     entry = channel.type_text(HOST, "héllo wörld")
 
     assert tv.texts == ["héllo wörld"]
+    assert tv.fields == [3]  # addressed to the field the TV announced
     assert entry.length == 11 and entry.field_reported is True
     assert tv.log == [("connect",), ("text", "11"), ("disconnect",)]
 

@@ -268,6 +268,28 @@ hardware). Automated validation only; no display or TV was used.
   through a bare `ControlService` of its own, with no remote, ADB or receiver, so no WebRTC
   start from the app could ever succeed. It now goes through the bridge's control layer
   (`d1.through`), and the error names its cause.
+  The next run opened ControlTV Receiver but its session-code field stayed empty. With the
+  owner's authorization, the TV's remote messages were observed (types and counters only): the
+  TV announces its active field in its input-method key-inject and show request, while
+  `androidtvremote2` 0.3.2 addresses text with the counter of its last edit message. Two harmless
+  "test" texts through the library's `send_text` left the field empty; one addressed to the
+  announced field filled it. Branch `fix/session-code-handoff`: the remote adapter records the
+  announced field per connection and addresses text to it, never logging the text; the full
+  stream still needs its hardware run.
+  With that build, the TV's log (read with the owner's authorization) showed the code arriving
+  and the receiver starting its WebRTC session, then aborting: libwebrtc's NetworkMonitor needs
+  `ACCESS_NETWORK_STATE`, which the receiver did not declare. The manifest now declares it (a
+  normal permission, no prompt), with a regression test.
+  The receiver then stayed up, but Ubuntu refused its answer ("conflicting ice-ufrag values").
+  Under `webrtc` 0.21 the offer carries only the codec its track matches, and a track naming
+  H.264 without fmtp matched Baseline 42001f, which libwebrtc does not take as Constrained
+  Baseline: the TV rejected the video, and the rejected section brought its own ICE credentials.
+  The video track now names Constrained Baseline 42e01f, the profile both encoders produce, and
+  a test checks the offer.
+  With that, Duplicate showed the computer's screen on the TV (owner, 2026-11-07), on two
+  thirds of it and about 2 s late. The receiver now hides its panel while streaming, and the
+  PulseAudio capture, which had no `-fragment_size` and so recorded in default fragments of
+  about two seconds that the TV then synchronised the picture to, uses 20 ms (one Opus frame).
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
