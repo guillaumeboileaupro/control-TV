@@ -286,6 +286,10 @@ hardware). Automated validation only; no display or TV was used.
   Baseline: the TV rejected the video, and the rejected section brought its own ICE credentials.
   The video track now names Constrained Baseline 42e01f, the profile both encoders produce, and
   a test checks the offer.
+  With that, Duplicate showed the computer's screen on the TV (owner, 2026-11-07), on two
+  thirds of it and about 2 s late. The receiver now hides its panel while streaming, and the
+  PulseAudio capture, which had no `-fragment_size` and so recorded in default fragments of
+  about two seconds that the TV then synchronised the picture to, uses 20 ms (one Opus frame).
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload

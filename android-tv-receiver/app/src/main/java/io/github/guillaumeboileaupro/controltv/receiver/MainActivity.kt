@@ -108,6 +108,9 @@ class MainActivity : AppCompatActivity() {
     private fun show(view: ReceiverView) {
         headline.text = view.title
         detail.text = view.detail
+        // While the stream is shown, the computer's screen takes the whole TV; the panel comes
+        // back for a wait, a reconnection or an error.
+        form.visibility = if (view.phase == ReceiverPhase.STREAMING) View.GONE else View.VISIBLE
         if (view.keepScreenOn) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
