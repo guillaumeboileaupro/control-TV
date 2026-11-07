@@ -1287,6 +1287,9 @@ exposure and no permanent server.
     `nix 0.26` and `webrtc-util 0.12`; published after #122 merged, it fails `main` too. Owner
     asked for the fix on 2026-11-06: OSV waiver until 2026-11-30, reasoned in `SECURITY.md`,
     like the `bincode` and `crypto-bigint` ones; the `webrtc 0.21` migration still removes all three;
+  - [x] Governance (2026-11-07): the owner removed the AGENTS requirement for an independent
+    approval before a merge. Green CI and explicit owner merge authorization remain required;
+    this does not substitute for the pending hardware validation;
   - [ ] the card used against the TV during the authorized run;
   - [x] GNOME-inspired display-manager UI implemented on PR #97 with Apply, Cancel, Keep and
     timed Revert. Only modes reported by X11 are offered; unsupported/disconnected outputs are
