@@ -220,14 +220,23 @@ class ScreenStreamController:
             return self._status
 
     def stop(self) -> ScreenStatus:
-        """Ask the session to stop (everything is stopped by its thread); idempotent."""
+        """Ask the session to stop (everything is stopped by its thread); idempotent.
+
+        A failure that still holds a WebRTC screen or sound route is dismissed by restoring them,
+        whichever host asks: the failure stays shown until they really are.
+        """
         with self._lock:
+            retained = self._status.state is StreamState.FAILED and (
+                self._webrtc_extension is not None or self._webrtc_audio_route is not None
+            )
             if self._status.state in (StreamState.STARTING, StreamState.RUNNING):
                 self._status = replace(self._status, state=StreamState.STOPPING)
-            elif self._status.state is StreamState.FAILED:
+            elif self._status.state is StreamState.FAILED and not retained:
                 self._status = ScreenStatus(StreamState.IDLE)
             self._stop.set()
-            return self._status
+            if not retained:
+                return self._status
+        return self.release_webrtc_capture()
 
     def close(self) -> None:
         """Stop the session and wait for its cleanup (the bridge is exiting)."""

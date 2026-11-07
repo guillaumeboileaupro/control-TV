@@ -211,6 +211,34 @@ def test_webrtc_audio_cleanup_failure_is_retained_and_retryable(tmp_path: Path) 
     assert audio.stopped == 2 and not audio.active
 
 
+def test_dismissing_a_webrtc_failure_restores_what_it_still_holds(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    audio = FakeAudioRoute(fail_stops=2)
+    controller = rig.controller(audio_route=lambda: audio)
+    controller.prepare_webrtc_capture(DUPLICATE)
+    assert controller.release_webrtc_capture("the Rust engine stopped").state is StreamState.FAILED
+
+    still = controller.stop()
+    assert still.state is StreamState.FAILED
+    assert still.error == "the computer sound was not restored: stuck"
+    assert audio.active
+
+    assert controller.stop().state is StreamState.IDLE
+    assert not audio.active
+
+
+def test_dismissing_a_failure_holding_nothing_only_clears_it(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.install_receiver()
+    controller = rig.controller()
+    controller.prepare_webrtc_capture(DUPLICATE)
+    assert controller.release_webrtc_capture("the Rust engine stopped").state is StreamState.FAILED
+
+    assert controller.stop().state is StreamState.IDLE
+    assert rig.audio.stopped == 1
+
+
 def test_webrtc_extension_is_restored_on_release_and_bridge_close(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     rig.install_receiver()
