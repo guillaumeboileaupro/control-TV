@@ -686,3 +686,5 @@ Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1,
 - [x] **Bouton Google Assistant sans effet (2026-11-07, branche `fix/assistant-voice`) :** la TV ignore `KEYCODE_ASSIST` par le canal de télécommande et ouvre l'Assistant sur `KEYCODE_SEARCH` (constaté sur la TV) ; la touche Assistant envoie désormais `KEYCODE_SEARCH`.
 - [ ] **Session vocale du téléphone (#122) sur la TV :** la TV visible annonce VOICE ; un essai micro depuis le téléphone reste à faire, avec autorisation.
 - [ ] **Journal des commandes :** noter le nom de la touche envoyée (sans donnée privée) pour pouvoir auditer les appuis.
+- [x] **Release 0.2.0 (2026-11-07, branche `chore/release-0.2.0`) :** version, licence GPL-3.0-or-later, bloquants de licence levés (textes libpython et crates, zeroconf, offre de source), notes de version. Reste : fusion, tag `v0.2.0`, page de release avec `.deb`, APK, sources et `SHA256SUMS`.
+- [ ] **Signature Android de release :** les APK 0.2.0 sont signés avec la clé de développement de l'ordinateur (choix du propriétaire) ; une clé de release dédiée imposera une désinstallation unique.
