@@ -268,6 +268,14 @@ hardware). Automated validation only; no display or TV was used.
   through a bare `ControlService` of its own, with no remote, ADB or receiver, so no WebRTC
   start from the app could ever succeed. It now goes through the bridge's control layer
   (`d1.through`), and the error names its cause.
+  The next run opened ControlTV Receiver but its session-code field stayed empty. With the
+  owner's authorization, the TV's remote messages were observed (types and counters only): the
+  TV announces its active field in its input-method key-inject and show request, while
+  `androidtvremote2` 0.3.2 addresses text with the counter of its last edit message. Two harmless
+  "test" texts through the library's `send_text` left the field empty; one addressed to the
+  announced field filled it. Branch `fix/session-code-handoff`: the remote adapter records the
+  announced field per connection and addresses text to it, never logging the text; the full
+  stream still needs its hardware run.
 Final reconciliation findings (2026-10-25, branch `integration/final-candidate`):
 - [x] **D1-B2 done 2026-11-07 (branch `chore/webrtc-0.21`):** the engine moved to `webrtc` 0.21
   and its `rtc` stack (`ring`): same default codecs and fuzzy codec match as 0.14, the payload
