@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -38,18 +39,24 @@ def post(url: str, body: bytes) -> int:
 
 
 class FakeReceiverTv:
-    def __init__(self, answer: dict[str, object] | None, *, wrong_first: bool = False) -> None:
+    def __init__(
+        self, answer: dict[str, object] | None, *, wrong_first: bool = False, delay: float = 0.0
+    ) -> None:
         self.answer = answer
         self.wrong_first = wrong_first
+        self.delay = delay  # how late the receiver answers, as from its background thread
         self.links: list[str] = []
         self.statuses: list[int] = []
         self.front: str | None = None
+        self.fronts: list[str | None] = []  # read first, in order, before `front`
         self.front_reads = 0
+        self.limits: list[float | None] = []
 
-    def front_app(self, host: str, package: str) -> str | None:
+    def front_app(self, host: str, package: str, limit: float | None = None) -> str | None:
         assert host == HOST
         self.front_reads += 1
-        return self.front
+        self.limits.append(limit)
+        return self.fronts.pop(0) if self.fronts else self.front
 
     def open_receiver_link(self, host: str, link: str) -> None:
         assert host == HOST
@@ -63,6 +70,7 @@ class FakeReceiverTv:
         assert reply and token
 
         def send() -> None:
+            time.sleep(self.delay)
             if self.wrong_first:
                 self.statuses.append(
                     post(reply.group(1), json.dumps({"token": "x" * 32, "apps": []}).encode())
@@ -142,8 +150,8 @@ def test_labels_are_trimmed_and_bounded() -> None:
 # Opening an app through the receiver (recette 2026-10-26: market://launch refused) ------------
 
 
-def launch_tv(result: str, **extra: object) -> FakeReceiverTv:
-    return FakeReceiverTv({"package": "tv.arte.plus7", "result": result, **extra})
+def launch_tv(result: str, *, delay: float = 0.0, **extra: object) -> FakeReceiverTv:
+    return FakeReceiverTv({"package": "tv.arte.plus7", "result": result, **extra}, delay=delay)
 
 
 def test_the_receiver_starts_the_app_and_the_app_in_front_is_then_read() -> None:
@@ -159,6 +167,74 @@ def test_the_receiver_starts_the_app_and_the_app_in_front_is_then_read() -> None
     assert "market://" not in tv.links[0]
 
 
+def test_the_remote_confirms_a_start_when_the_phone_cannot_receive_the_reply() -> None:
+    tv = FakeReceiverTv(None)
+    tv.front = "tv.arte.plus7"
+
+    tv.fronts = ["com.google.android.tvlauncher"]  # what was in front before the launch
+    started = time.monotonic()
+
+    launched = lister(tv, timeout=3).launch_app(HOST, "tv.arte.plus7")
+
+    assert launched == AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    assert len(tv.links) == 1
+    assert tv.front_reads == 2
+    assert time.monotonic() - started < 1  # confirmed at once, not at the end of the window
+
+
+def test_an_app_already_in_front_is_confirmed_only_at_the_end_of_the_window() -> None:
+    tv = FakeReceiverTv(None)
+    tv.front = "tv.arte.plus7"
+    started = time.monotonic()
+
+    launched = lister(tv, timeout=0.3).launch_app(HOST, "tv.arte.plus7")
+
+    assert launched == AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    assert time.monotonic() - started >= 0.3
+    assert len(tv.links) == 1
+
+
+def test_a_late_refusal_wins_when_the_app_was_already_in_front() -> None:
+    tv = launch_tv("refused", delay=0.35)
+    tv.front = "tv.arte.plus7"
+
+    with pytest.raises(CommandRejectedError, match="refused"):
+        lister(tv, timeout=1).launch_app(HOST, "tv.arte.plus7")
+    assert tv.statuses == [204]  # the refusal was received, not cut off
+
+
+def test_every_read_of_the_app_in_front_fits_in_the_time_left() -> None:
+    tv = FakeReceiverTv(None)
+    tv.front = "com.google.android.tvlauncher"
+
+    with pytest.raises(OperationTimeoutError):
+        lister(tv, timeout=0.5).launch_app(HOST, "tv.arte.plus7")
+    assert all(limit is not None and limit <= 0.5 for limit in tv.limits)
+
+
+def test_delayed_foreground_is_read_again_without_relaunching() -> None:
+    class DelayedTv(FakeReceiverTv):
+        def front_app(self, host: str, package: str, limit: float | None = None) -> str | None:
+            self.front_reads += 1
+            return package if self.front_reads == 2 else None
+
+    tv = DelayedTv(None)
+    launched = lister(tv, timeout=1).launch_app(HOST, "tv.arte.plus7")
+
+    assert launched == AppLaunch(package="tv.arte.plus7", front_app="tv.arte.plus7", started=True)
+    assert len(tv.links) == 1
+    assert tv.front_reads == 2
+
+
+def test_an_explicit_refusal_wins_over_the_foreground_observation() -> None:
+    tv = launch_tv("refused")
+    tv.front = "tv.arte.plus7"
+
+    with pytest.raises(CommandRejectedError, match="refused"):
+        lister(tv).launch_app(HOST, "tv.arte.plus7")
+    assert tv.front_reads == 1
+
+
 @pytest.mark.parametrize(
     ("result", "message"),
     [("not_installed", "not installed"), ("refused", "refused")],
@@ -168,7 +244,7 @@ def test_an_app_the_tv_did_not_start_is_an_error_never_sent(result: str, message
 
     with pytest.raises(CommandRejectedError, match=message):
         lister(tv).launch_app(HOST, "tv.arte.plus7")
-    assert tv.front_reads == 0
+    assert tv.front_reads == 1
 
 
 def test_no_answer_is_an_error_that_says_to_check_the_tv_not_a_success() -> None:
@@ -176,6 +252,8 @@ def test_no_answer_is_an_error_that_says_to_check_the_tv_not_a_success() -> None
 
     with pytest.raises(OperationTimeoutError, match="Check the TV"):
         lister(tv, timeout=0.2).launch_app(HOST, "tv.arte.plus7")
+    assert tv.front_reads == 2  # before the launch, then once at the end; never relaunched
+    assert len(tv.links) == 1
 
 
 def test_an_answer_for_another_app_or_request_is_ignored() -> None:
@@ -206,7 +284,7 @@ def test_only_a_package_name_is_ever_put_in_a_launch_link() -> None:
 
 def test_the_front_app_unknown_after_a_start_is_still_a_start() -> None:
     class Unreadable(FakeReceiverTv):
-        def front_app(self, host: str, package: str) -> str | None:
+        def front_app(self, host: str, package: str, limit: float | None = None) -> str | None:
             raise DeviceUnavailableError("the remote dropped")
 
     tv = Unreadable({"package": "tv.arte.plus7", "result": "started"})
