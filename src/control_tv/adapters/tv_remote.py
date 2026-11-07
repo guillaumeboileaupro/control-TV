@@ -411,22 +411,24 @@ class TvRemoteChannel:
 
         return self._run(lambda: self._session(host, send))
 
-    def front_app(self, host: str, package: str) -> str | None:
+    def front_app(self, host: str, package: str, limit: float | None = None) -> str | None:
         """The app the TV reports in front, waited for a short time to become `package`.
 
-        Read only: nothing is sent to the TV. `None` when the TV does not say.
+        Read only: nothing is sent to the TV. `None` when the TV does not say. With `limit`, the
+        whole read, connection included, ends within that many seconds.
         """
         host = _checked_host(host)
         package = checked_package(package)
+        settle = self._power_settle
+        if limit is not None:
+            settle = min(settle, max(0.0, limit - _SETTLE_STEP))
 
         async def read(remote: RemoteClient, fresh: bool) -> str | None:
             del fresh
-            await self._wait_for(
-                lambda: _observe(remote).current_app == package, self._power_settle
-            )
+            await self._wait_for(lambda: _observe(remote).current_app == package, settle)
             return _observe(remote).current_app
 
-        return self._run(lambda: self._session(host, read))
+        return self._run(lambda: self._session(host, read), limit)
 
     def open_receiver_link(self, host: str, link: str) -> None:
         """Open one of ControlTV Receiver's links on the TV, once (see `receiver_apps`).
@@ -648,11 +650,13 @@ class TvRemoteChannel:
         pattern = rf"{re.escape(self._client_name)} [0-9a-f]{{8}}"
         return identity if re.fullmatch(pattern, identity) is not None else None
 
-    def _run(self, make: Callable[[], Coroutine[object, object, T]]) -> T:
+    def _run(
+        self, make: Callable[[], Coroutine[object, object, T]], limit: float | None = None
+    ) -> T:
         cannot_connect, connection_closed, invalid_auth = _library_errors()
         future = asyncio.run_coroutine_threadsafe(make(), self._event_loop())
         try:
-            return future.result(self._timeout)
+            return future.result(self._timeout if limit is None else min(self._timeout, limit))
         except concurrent.futures.TimeoutError:
             future.cancel()
             raise OperationTimeoutError("the TV did not answer in time") from None

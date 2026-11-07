@@ -1045,6 +1045,19 @@ def test_the_app_in_front_is_read_without_sending_anything(
     assert [entry for entry in tv.log if entry[0] in ("key", "launch", "text")] == []
 
 
+def test_reading_the_app_in_front_ends_within_its_limit(
+    channel: TvRemoteChannel, tv: FakeTv
+) -> None:
+    tv.current_app = "com.google.android.tvlauncher"
+    channel.front_app(HOST, "tv.arte.plus7")  # connected once, as for a launch
+
+    started = time.monotonic()
+    front = channel.front_app(HOST, "tv.arte.plus7", limit=0.1)
+
+    assert front == "com.google.android.tvlauncher"
+    assert time.monotonic() - started < 0.3  # not the 0.5 s settle
+
+
 # Voice streaming -------------------------------------------------------------------------------
 
 

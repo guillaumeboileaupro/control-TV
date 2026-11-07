@@ -276,7 +276,7 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   remote opens `controltv-receiver://apps?reply=<this device>&token=<random>`, the receiver posts the list once
   to a one-request local listener (8 s, private addresses only), then closes. Order: debugging, receiver, last
   list, else none. Needs this receiver version installed once per TV; hardware validation open.
-- [ ] Sprint 1 T-02 (recette 2026-10-26, AP-C-03 / AP-A-C-01): opening an app failed on Chambre parentale and
+- [ ] T-02 (recette 2026-10-26, AP-C-03 / AP-A-C-01): opening an app failed on Chambre parentale and
   the window said "sent": the TV's remote refused `market://launch` (`ActivityNotFoundException`,
   `INVALID_ARGUMENT`) and the library reports no error. Implemented, automated checks only: no `market://` link
   is sent any more; the remote opens ControlTV Receiver's `controltv-receiver://launch?package=…` link, the
@@ -285,7 +285,13 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   otherwise, and a launch with no answer is never resent another way. The receiver's invisible screens close
   before any network exchange (video interruption). Review 2026-10-28 (Claude, self-review of its own
   `121f462`; an independent review is still required): the two uncovered error paths (malformed launch answer,
-  listener that cannot bind) got tests. Open: receiver update on each TV and hardware validation with the owner.
+  listener that cannot bind) got tests. Android correction developed 2026-11-01 after Liberté failed 4/4 near
+  the 8 s timeout while Ubuntu passed: the signed receiver POST remains authoritative when it arrives; when an
+  inbound reply to the phone is unavailable, the already-open outbound Android TV Remote channel accepts success
+  only if the TV reports the requested package in front. Explicit refusal still wins, and no reply plus no matching
+  foreground remains a timeout; the launch link and package are sent once, with no fallback or retry. Automated
+  checks only. Chambre parentale is owner-reported OK. Open: independent review, CI after #120/#121, and authorized
+  hardware validation on Liberté; the 30/10 Android failure remains the last measured result.
 - [x] Owner request, 2026-10-25: the Android home-screen widget adds the TV's remote (arrows around OK,
   Back, Home, Power, Google Assistant) below playback, and its Mute and Volume −/+ now press the TV's own
   remote keys (`press_remote_key`, the sound actually heard) instead of Cast volume the TV does not report.
@@ -1868,6 +1874,12 @@ Règle du propriétaire : appliquer la compétence `code-solid` et ne plus avoir
 | Mots « any » / « unknown » restants | 100 % retirés du code | — | inclus | 0 | `DeviceKind.OTHER`, `PlaybackState.UNDETERMINED` (« undetermined »), appairage `not_tried`, livraison MCP `uncertain` ; plus d'appel `any()` ; restent seulement l'étiquette de paquet Python `py3-none-any` et la syntaxe Rust `cfg(any(...))`, formats externes |
 | Audit SOLID (responsabilité unique) | 100 % des 4 écarts relevés traités | — | inclus | 0 | `TvChannels` sorti de `ControlService` ; `lib.rs` découpé en `bridge`, `commands`, `tray`, `android` ; `remote-panel.ts` et `dom.ts` sortis de `main.ts` ; `cast_replies.py` sorti de l'adaptateur Cast ; comportement inchangé (1397 tests Python, 329 UI, 75 Rust ; vérification Android de la crate) |
 | Inversion de dépendance du bridge (audit de `main`, P3-4, 2026-10-13) | 100 % | — | inclus | 0 | le port `TvControl` couvre aussi le canal télécommande et les applications ; les handlers, `dispatch`, `handle_line` et `run` dépendent de `TvControl`, `default_service` reste le seul point qui construit `ControlService` ; test `tests/bridge/test_bridge_port.py` (une implémentation qui n'est pas `ControlService`) ; aucun changement de comportement |
+
+#### Mise à jour T-02 — 2026-11-06
+
+After the one receiver link, foreground observation is retried only within the existing deadline; no launch is resent. Targeted simulated tests: 223 PASS; CI and hardware NOT RUN. Independent review and authorized hardware validation remain open.
+
+Review fixes (Claude, 2026-11-06, PR #125, owner-approved): P1, when the app was already in front before the link, only the receiver's answer confirms it until the end of the window, so a late refusal wins; the quick confirmation applies only when another app was in front. P2, every foreground read, connection included, is bounded by the time left (`front_app(..., limit)`). Local: 2,877 passed / 8 skipped, coverage 98.83%; hardware NOT RUN.
 
 #### Retour de revue Claude, fourni par le propriétaire (2026-10-08)
 
