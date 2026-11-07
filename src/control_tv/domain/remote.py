@@ -60,7 +60,10 @@ class RemoteKey(StrEnum):
     PREVIOUS = "KEYCODE_MEDIA_PREVIOUS"
     NEXT = "KEYCODE_MEDIA_NEXT"
     RECORD = "KEYCODE_MEDIA_RECORD"
-    ASSISTANT = "KEYCODE_ASSIST"  # opens the TV's Google Assistant
+    # Opens the TV's Google Assistant. KEYCODE_ASSIST sent over the remote channel did nothing on
+    # the owner's Google TV, while KEYCODE_SEARCH opened the Assistant (owner-authorized check,
+    # 2026-11-07); it is also the key that starts the protocol's voice session.
+    ASSISTANT = "KEYCODE_SEARCH"
 
 
 VOLUME_KEYS = frozenset({RemoteKey.VOLUME_UP, RemoteKey.VOLUME_DOWN, RemoteKey.VOLUME_MUTE})

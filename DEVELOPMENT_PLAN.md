@@ -390,6 +390,12 @@ Final reconciliation findings (2026-10-25, branch `integration/final-candidate`)
   Info, Guide, channels, subtitles, audio track, colour keys, media keys, Google Assistant key); every
   window key is one the bridge sends (tested). Owner decision of the same day replaces "no microphone"; the
   Android phone-to-TV Assistant stream is implemented as of 2026-11-01 and awaits hardware acceptance.
+  Assistant key fixed 2026-11-07 (branch `fix/assistant-voice`): on the owner's Google TV,
+  `KEYCODE_ASSIST` over the remote channel did nothing (front app unchanged, nothing in the TV's
+  log) while `KEYCODE_SEARCH` opened Google Assistant (owner saw it); the TV announces the VOICE
+  feature. The Assistant key now sends `KEYCODE_SEARCH`, the key the protocol's voice session
+  also starts with; no other key may send it, and microphone/voice-assist codes stay refused.
+  The phone's voice session itself still awaits its hardware run.
 - [x] Audio/latency correction, 2026-10-25: the WebRTC capture lease now owns the same retryable
   `PulseAudioRoute` as HLS and gives its monitor source to the existing Opus FFmpeg process; release
   restores the prior Ubuntu output even when another cleanup step fails. The UI no longer disables

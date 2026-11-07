@@ -585,7 +585,7 @@ KEY_CODES: dict[str, str] = {
     "next": "KEYCODE_MEDIA_NEXT",
     "record": "KEYCODE_MEDIA_RECORD",
     # Google Assistant, from the TV's own microphone.
-    "assistant": "KEYCODE_ASSIST",
+    "assistant": "KEYCODE_SEARCH",  # KEYCODE_ASSIST did nothing on the TV
 }
 
 # Names a person may reasonably try, or misremember, that this remote does not send. Each must be
@@ -645,15 +645,17 @@ def test_the_key_map_matches_every_key_the_bridge_accepts() -> None:
     assert len(set(KEY_CODES.values())) == len(KEY_CODES)  # no two buttons share a key code
 
 
-def test_no_key_code_turns_on_the_microphone_the_voice_assist_or_the_search() -> None:
+def test_no_key_code_turns_on_the_microphone_or_the_voice_assist() -> None:
     sent = set(KEY_CODES.values())
 
     for forbidden in (
         "KEYCODE_MUTE",  # the microphone's mute, not the speaker's
         "KEYCODE_VOICE_ASSIST",
-        "KEYCODE_SEARCH",
     ):
         assert forbidden not in sent
+    # The search key opens the TV's own Google Assistant (owner request of 2026-10-25; this
+    # computer captures no sound for it), and only the Assistant button sends it.
+    assert [name for name, code in KEY_CODES.items() if code == "KEYCODE_SEARCH"] == ["assistant"]
 
 
 @pytest.mark.parametrize("code", sorted(KEY_CODES.values()))

@@ -683,3 +683,6 @@ Correction de revue (Claude, 2026-11-06, PR #125, accord du propriétaire) : P1,
 - [x] **Dupliquer : image partielle et ~2 s de latence (2026-11-07, PR #131) :** panneau du récepteur masqué pendant la diffusion ; capture PulseAudio à 20 ms (`-fragment_size 3840`) au lieu de ses fragments par défaut d'environ 2 s. À revérifier sur la TV, puis mesurer la latence.
 - [ ] **Étendre : la liste des écrans n'est relue qu'à l'ouverture de l'application (2026-11-07) :** après `on-digital`, il a fallu quitter et relancer ControlTV pour que la sortie libre apparaisse ; relire la liste à l'ouverture de « Screen to TV » ou proposer « Actualiser ».
 - [ ] **Latence de diffusion :** environ 1 s en Dupliquer après correction, « un peu de lag » en Étendre ; mesurer et réduire (tâche P1 « Mesurer synchronisation et latence »).
+- [x] **Bouton Google Assistant sans effet (2026-11-07, branche `fix/assistant-voice`) :** la TV ignore `KEYCODE_ASSIST` par le canal de télécommande et ouvre l'Assistant sur `KEYCODE_SEARCH` (constaté sur la TV) ; la touche Assistant envoie désormais `KEYCODE_SEARCH`.
+- [ ] **Session vocale du téléphone (#122) sur la TV :** la TV visible annonce VOICE ; un essai micro depuis le téléphone reste à faire, avec autorisation.
+- [ ] **Journal des commandes :** noter le nom de la touche envoyée (sans donnée privée) pour pouvoir auditer les appuis.
